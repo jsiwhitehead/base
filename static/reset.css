@@ -1,0 +1,47 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  flex-direction: column;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+p {
+  text-wrap: pretty;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  text-wrap: balance;
+}
+
+a {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  font-weight: bold;
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  font-size: 16;
+  line-height: 1.5;
+  font-weight: 400;
+  font-style: normal;
+}

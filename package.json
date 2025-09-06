@@ -1,0 +1,21 @@
+{
+  "name": "base",
+  "type": "module",
+  "scripts": {
+    "app": "bun ./static/index.html"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.3.1",
+    "@preact/signals-react": "^3.3.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  }
+}
