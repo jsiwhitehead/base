@@ -1,56 +1,114 @@
 import { signal, computed, effect, Signal } from "@preact/signals-core";
 
-type CodeNode = CodeNode[] | {};
+const root = document.getElementById("root")!;
+
 type DataNode = Signal<DataNode[] | string>;
-
-function pathsEqual(a: number[], b: number[]): boolean {
-  return a.length === b.length && a.every((x, i) => x === b[i]);
-}
-
-const code: CodeNode = [[{}, {}], {}];
 
 const data: DataNode = signal([
   signal([signal("Hi"), signal("You")]),
   signal("There"),
 ]);
 
-const active = signal({ path: [0], edit: false });
+const signalMap = new WeakMap<HTMLElement, Signal<string>>();
+
+let active = { path: [0], edit: false };
+
+function getPathFromElement(start: HTMLElement): number[] {
+  const path: number[] = [];
+  let cell = start.closest(".cell") as HTMLElement | null;
+  while (cell) {
+    const parent = cell.parentElement!;
+    const i = Array.prototype.indexOf.call(parent.children, cell);
+    path.unshift(i);
+    cell = parent.closest(".cell") as HTMLElement | null;
+  }
+  return path;
+}
+
+function getElementFromPath(path: number[]): HTMLElement {
+  return path.reduce(
+    (res, i) => res.childNodes[i]!.firstElementChild!,
+    root.firstElementChild! as any
+  );
+}
+
+function setActive(path: number[], edit: boolean) {
+  console.log(path);
+
+  const prev = getElementFromPath(active.path);
+  prev.classList.remove("active");
+
+  if (prev.classList.contains("value")) {
+    setValueInner(prev, false);
+  }
+
+  active = { path, edit };
+  const next = getElementFromPath(path);
+  next.classList.add("active");
+
+  if (edit && next.classList.contains("value")) {
+    setValueInner(next, edit);
+  }
+
+  const elem = next.classList.contains("value")
+    ? (next.firstElementChild! as HTMLElement)
+    : next;
+  elem.focus();
+}
 
 const prev = () => {
-  const path = [...active.peek().path];
+  const path = [...active.path];
   const last = path.pop()!;
-  if (last > 0) {
-    active.value = { path: [...path, last - 1], edit: false };
-  } else {
-    active.value = { path: path, edit: false };
-  }
+  if (last > 0) setActive([...path, last - 1], false);
+  // else setActive(path, false);
 };
 const next = () => {
-  const path = [...active.peek().path];
+  const path = [...active.path];
   const last = path.pop()!;
-  const parent = path.reduce(
-    (res, p) => (res as CodeNode[])[p]!,
-    code
-  ) as CodeNode[];
-  if (last < parent.length - 1) {
-    active.value = { path: [...path, last + 1], edit: false };
-  } else {
-    active.value = { path: path, edit: false };
-  }
+  const len = getElementFromPath(path).childNodes.length;
+  if (last < len - 1) setActive([...path, last + 1], false);
+  // else setActive(path, false);
 };
 const up = () => {
-  const path = [...active.peek().path];
-  if (path.length > 0) {
-    active.value = { path: path.slice(0, -1), edit: false };
-  }
+  const path = [...active.path];
+  if (path.length > 0) setActive(path.slice(0, -1), false);
 };
 const down = () => {
-  const path = [...active.peek().path];
-  const item = path.reduce((res, p) => (res as CodeNode[])[p]!, code);
-  if (Array.isArray(item)) {
-    active.value = { path: [...path, 0], edit: false };
-  }
+  const path = [...active.path];
+  const parent = getElementFromPath(path);
+  if (!parent.classList.contains("value")) setActive([...path, 0], false);
 };
+
+root.addEventListener("click", () => {
+  setActive(active.path, false);
+});
+
+root.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    prev();
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    next();
+  }
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    up();
+  }
+  if (e.key === "ArrowRight") {
+    e.preventDefault();
+    down();
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    setActive(active.path, true);
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    setActive(active.path, false);
+  }
+});
 
 // insert: () => {
 //   // Insert new empty value AFTER i
@@ -66,141 +124,73 @@ const down = () => {
 //   // if (i > 0) active.value = { path: [...path, i - 1], edit: false };
 // },
 
-function RenderValue({
-  path,
-  value,
-}: {
-  path: number[];
-  value: Signal<string>;
-}): HTMLDivElement {
+function setValueInner(wrapper: HTMLElement, edit: boolean) {
+  if (
+    (wrapper.firstElementChild as HTMLElement)?.tagName !==
+    (edit ? "INPUT" : "P")
+  ) {
+    const value = signalMap.get(wrapper)!;
+    const elem = document.createElement(edit ? "input" : "p") as HTMLElement;
+    if (edit) {
+      elem.setAttribute("type", "text");
+      elem.addEventListener(
+        "input",
+        () => (value.value = (elem as HTMLInputElement).value)
+      );
+      elem.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft") {
+          e.stopPropagation();
+        }
+        if (e.key === "ArrowRight") {
+          e.stopPropagation();
+        }
+      });
+      (elem as HTMLInputElement).value = value.peek();
+    } else {
+      elem.setAttribute("tabIndex", "0");
+      elem.addEventListener("click", () => {
+        setActive(getPathFromElement(elem), false);
+      });
+      elem.addEventListener("dblclick", () => {
+        setActive(getPathFromElement(elem), true);
+      });
+      elem.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+      });
+      elem.textContent = value.peek();
+    }
+    wrapper.replaceChildren(elem);
+  }
+}
+
+function RenderValue({ value }: { value: Signal<string> }): HTMLDivElement {
   const wrapper = document.createElement("div");
   wrapper.classList.add("value");
-  const isActive = computed(() =>
-    pathsEqual(active.value.path, path) ? active.value.edit : null
-  );
+  signalMap.set(wrapper, value);
+  setValueInner(wrapper, false);
   effect(() => {
-    if (isActive.value === true) {
-      let input = wrapper.firstElementChild as HTMLInputElement | null;
-      if (!input || input.tagName !== "INPUT") {
-        input = document.createElement("input");
-        input.setAttribute("type", "text");
-        input.addEventListener("input", () => {
-          value.value = input!.value;
-        });
-        input.addEventListener("keydown", (e) => {
-          if (e.key === "Escape") {
-            active.value = { path, edit: false };
-          }
-          if (e.key === "ArrowUp") {
-            e.preventDefault();
-            prev();
-          }
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            next();
-          }
-          if (e.key === "ArrowLeft") {
-            e.preventDefault();
-            up();
-          }
-          if (e.key === "ArrowRight") {
-            e.preventDefault();
-            down();
-          }
-          // if (e.key === "Enter") {
-          //   e.preventDefault();
-          //   insert();
-          // }
-          // if (e.key === "Backspace" && input!.selectionStart === 0) {
-          //   e.preventDefault();
-          //   remove();
-          // }
-        });
-        wrapper.replaceChildren(input);
+    const elem = wrapper.firstElementChild! as HTMLElement;
+    if (elem.tagName === "INPUT") {
+      if ((elem as HTMLInputElement).value !== value.value) {
+        (elem as HTMLInputElement).value = value.value;
       }
-      if (input!.value !== value.value) input!.value = value.value;
-      // // Focus only if not already focused; put caret at end, no selection flash.
-      // if (document.activeElement !== input) {
-      //   // Clear any prior selection the dblclick might have created
-      //   window.getSelection()?.removeAllRanges();
-      //   input!.focus({ preventScroll: true });
-      //   const end = input!.value.length;
-      //   input!.setSelectionRange(end, end);
-      // }
-      wrapper.classList.add("edit");
     } else {
-      let p = wrapper.firstElementChild as HTMLParagraphElement | null;
-      if (!p || p.tagName !== "P") {
-        wrapper.replaceChildren();
-        p = document.createElement("p");
-        p.setAttribute("tabIndex", "0");
-        p.addEventListener("click", () => {
-          active.value = { path, edit: false };
-        });
-        p.addEventListener("dblclick", () => {
-          // window.getSelection()?.removeAllRanges();
-          active.value = { path, edit: true };
-        });
-        // p.addEventListener("mousedown", (e) => e.preventDefault());
-        p.addEventListener("keydown", (e) => {
-          if (e.key === "ArrowUp") {
-            e.preventDefault();
-            prev();
-          }
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            next();
-          }
-          if (e.key === "ArrowLeft") {
-            e.preventDefault();
-            up();
-          }
-          if (e.key === "ArrowRight") {
-            e.preventDefault();
-            down();
-          }
-          if (e.key === "Enter") {
-            active.value = { path, edit: true };
-          }
-        });
-        wrapper.appendChild(p);
-      }
-      p.textContent = value.value;
-      if (isActive.value !== null) p.classList.add("active");
-      else p.classList.remove("active");
-      // if (document.activeElement !== p) {
-      //   p.focus({ preventScroll: true });
-      // }
-      wrapper.classList.remove("edit");
+      (elem as HTMLParagraphElement).textContent = value.value;
     }
   });
-
   return wrapper;
 }
 
-function RenderBlock({
-  path,
-  value,
-}: {
-  path: number[];
-  value: Signal<DataNode[]>;
-}): HTMLDivElement {
+function RenderBlock({ value }: { value: Signal<DataNode[]> }): HTMLDivElement {
   const container = document.createElement("div");
   container.classList.add("node");
-  const isActive = computed(() =>
-    pathsEqual(active.value.path, path) ? active.value.edit : null
-  );
-  effect(() => {
-    if (isActive.value !== null) container.classList.add("active");
-    else container.classList.remove("active");
-  });
+  container.setAttribute("tabIndex", "0");
   effect(() => {
     container.replaceChildren(
-      ...value.value.map((v, i) => {
+      ...value.value.map((v) => {
         const cell = document.createElement("div");
         cell.classList.add("cell");
-        const childPath = [...path, i];
-        cell.appendChild(RenderNode({ path: childPath, value: v }));
+        cell.appendChild(RenderNode({ value: v }));
         return cell;
       })
     );
@@ -208,19 +198,12 @@ function RenderBlock({
   return container;
 }
 
-function RenderNode({
-  path,
-  value,
-}: {
-  path: number[];
-  value: DataNode;
-}): HTMLDivElement {
+function RenderNode({ value }: { value: DataNode }): HTMLDivElement {
   const isValue = computed(() => typeof value.value === "string");
   return isValue.value
-    ? RenderValue({ path, value: value as Signal<string> })
-    : RenderBlock({ path, value: value as Signal<DataNode[]> });
+    ? RenderValue({ value: value as Signal<string> })
+    : RenderBlock({ value: value as Signal<DataNode[]> });
 }
 
-document
-  .getElementById("root")!
-  .appendChild(RenderNode({ path: [], value: data }));
+document.getElementById("root")!.appendChild(RenderNode({ value: data }));
+setActive(active.path, active.edit);

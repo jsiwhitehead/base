@@ -3,15 +3,26 @@ body {
   font-size: 14px;
 }
 
+#root {
+  height: 100%;
+}
+
 .value {
   p {
     padding: 5px;
     outline: none;
+    min-height: 34px;
   }
-  p.active {
+  &.active p {
     padding: 4px;
     margin: -1px;
     border: 2px solid #0b57d0;
+  }
+  &:has(input) {
+    position: relative;
+    z-index: 10;
+    margin: -3px;
+    border: 2px solid #a8c7fa;
   }
   input {
     display: block;
@@ -21,12 +32,6 @@ body {
     padding: 4px;
     border: 2px solid #0b57d0;
   }
-  &.edit {
-    position: relative;
-    z-index: 10;
-    margin: -3px;
-    border: 2px solid #a8c7fa;
-  }
 }
 
 .node {
@@ -34,6 +39,7 @@ body {
   gap: 1px;
   background: #ccc;
   padding: 5px;
+  outline: none;
   &.active {
     padding: 3px;
     border: 2px solid #0b57d0;
