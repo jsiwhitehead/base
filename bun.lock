@@ -5,6 +5,7 @@
       "name": "base",
       "dependencies": {
         "@preact/signals": "^2.3.1",
+        "@preact/signals-core": "^1.12.1",
         "@preact/signals-react": "^3.3.0",
         "@types/react": "^19.1.12",
         "@types/react-dom": "^19.1.9",
