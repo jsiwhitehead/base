@@ -1,0 +1,39 @@
+body {
+  font-family: "Atkinson Hyperlegible", sans-serif;
+  font-size: 14px;
+}
+
+p {
+  padding: 5px;
+  outline: none;
+}
+p.active {
+  padding: 4px;
+  margin: -1px;
+  border: 2px solid #0b57d0;
+}
+
+div.active {
+  position: relative;
+  z-index: 10;
+  margin: -3px;
+  border: 2px solid #a8c7fa;
+  input {
+    display: block;
+    padding: 6px;
+    outline: none;
+    width: 100%;
+    padding: 4px;
+    border: 2px solid #0b57d0;
+  }
+}
+
+.node {
+  display: grid;
+  gap: 1px;
+  background: #ccc;
+  padding: 5px;
+}
+.cell {
+  background: #fff;
+}
