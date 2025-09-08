@@ -9,7 +9,7 @@ const data: DataNode = signal([
   signal("There"),
 ]);
 
-const signalMap = new WeakMap<HTMLElement, Signal<string>>();
+const signalMap = new WeakMap<HTMLElement, DataNode>();
 
 let active = { path: [0], edit: false };
 
@@ -27,60 +27,102 @@ function getPathFromElement(start: HTMLElement): number[] {
 
 function getElementFromPath(path: number[]): HTMLElement {
   return path.reduce(
-    (res, i) => res.childNodes[i]!.firstElementChild!,
+    (res, i) => res.children[i]!.firstElementChild!,
     root.firstElementChild! as any
   );
 }
 
-function setActive(path: number[], edit: boolean) {
-  console.log(path);
-
+function doUpdate(
+  newActive: { path: number[]; edit: boolean },
+  update?: () => void
+) {
   const prev = getElementFromPath(active.path);
   prev.classList.remove("active");
-
   if (prev.classList.contains("value")) {
     setValueInner(prev, false);
   }
 
-  active = { path, edit };
-  const next = getElementFromPath(path);
+  active = newActive;
+  if (update) update();
+
+  const next = getElementFromPath(active.path);
   next.classList.add("active");
-
-  if (edit && next.classList.contains("value")) {
-    setValueInner(next, edit);
+  if (active.edit && next.classList.contains("value")) {
+    setValueInner(next, active.edit);
   }
-
   const elem = next.classList.contains("value")
     ? (next.firstElementChild! as HTMLElement)
     : next;
   elem.focus();
 }
 
-const prev = () => {
+function prev() {
   const path = [...active.path];
   const last = path.pop()!;
-  if (last > 0) setActive([...path, last - 1], false);
-  // else setActive(path, false);
-};
-const next = () => {
+  if (last > 0) {
+    doUpdate({ path: [...path, last - 1], edit: false });
+  }
+}
+function next() {
   const path = [...active.path];
   const last = path.pop()!;
-  const len = getElementFromPath(path).childNodes.length;
-  if (last < len - 1) setActive([...path, last + 1], false);
-  // else setActive(path, false);
-};
-const up = () => {
+  const len = getElementFromPath(path).childElementCount;
+  if (last < len - 1) {
+    doUpdate({ path: [...path, last + 1], edit: false });
+  }
+}
+function up() {
   const path = [...active.path];
-  if (path.length > 0) setActive(path.slice(0, -1), false);
-};
-const down = () => {
+  if (path.length > 0) {
+    doUpdate({ path: path.slice(0, -1), edit: false });
+  }
+}
+function down() {
   const path = [...active.path];
   const parent = getElementFromPath(path);
-  if (!parent.classList.contains("value")) setActive([...path, 0], false);
-};
+  if (!parent.classList.contains("value")) {
+    doUpdate({ path: [...path, 0], edit: false });
+  }
+}
+
+function insert(child: HTMLElement) {
+  const path = getPathFromElement(child);
+  if (path.length > 0) {
+    const index = path.pop()!;
+    const parent = child.closest(".cell")!.parentElement as HTMLElement;
+    const value = signalMap.get(parent)! as Signal<DataNode[]>;
+    doUpdate(
+      {
+        path: [...path, index + 1],
+        edit: true,
+      },
+      () => {
+        value.value = value.value.toSpliced(index + 1, 0, signal(""));
+      }
+    );
+  }
+}
+function remove(child: HTMLElement) {
+  const path = getPathFromElement(child);
+  if (path.length > 0) {
+    const index = path.pop()!;
+    const parent = child.closest(".cell")!.parentElement as HTMLElement;
+    const value = signalMap.get(parent)! as Signal<DataNode[]>;
+    const len = parent.childElementCount;
+    doUpdate(
+      {
+        path: len === 1 ? path : [...path, Math.max(0, index - 1)],
+        edit: false,
+      },
+      () => {
+        value.value = value.value.toSpliced(index, 1);
+      }
+    );
+  }
+}
 
 root.addEventListener("click", () => {
-  setActive(active.path, false);
+  doUpdate({ path: active.path, edit: false });
 });
 
 root.addEventListener("keydown", (e) => {
@@ -100,29 +142,7 @@ root.addEventListener("keydown", (e) => {
     e.preventDefault();
     down();
   }
-  if (e.key === "Enter") {
-    e.preventDefault();
-    setActive(active.path, true);
-  }
-  if (e.key === "Escape") {
-    e.preventDefault();
-    setActive(active.path, false);
-  }
 });
-
-// insert: () => {
-//   // Insert new empty value AFTER i
-//   // value.value = [...value.value.slice(0, i + 1), signal(""), ...value.value.slice(i + 1)]; // (fallback for older targets)
-//   // value.value = value.value.toSpliced(i + 1, 0, signal(""));
-//   // ids.splice(i + 1, 0, { id: uid() });
-//   // active.value = { path: [...path, i + 1], edit: true };
-// },
-// remove: () => {
-//   // value.value = [...value.value.slice(0, i), ...value.value.slice(i + 1)]; // (fallback)
-//   // value.value = value.value.toSpliced(i, 1);
-//   // ids.splice(i, 1);
-//   // if (i > 0) active.value = { path: [...path, i - 1], edit: false };
-// },
 
 function setValueInner(wrapper: HTMLElement, edit: boolean) {
   if (
@@ -130,8 +150,30 @@ function setValueInner(wrapper: HTMLElement, edit: boolean) {
     (edit ? "INPUT" : "P")
   ) {
     const value = signalMap.get(wrapper)!;
-    const elem = document.createElement(edit ? "input" : "p") as HTMLElement;
-    if (edit) {
+    const elem = document.createElement(!edit ? "p" : "input") as HTMLElement;
+    if (!edit) {
+      elem.setAttribute("tabIndex", "0");
+      elem.addEventListener("click", () => {
+        doUpdate({ path: getPathFromElement(elem), edit: false });
+      });
+      elem.addEventListener("dblclick", () => {
+        doUpdate({ path: getPathFromElement(elem), edit: true });
+      });
+      elem.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+      });
+      elem.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.stopPropagation();
+          doUpdate({ path: active.path, edit: true });
+        }
+        if (e.key === "Backspace") {
+          e.stopPropagation();
+          remove(wrapper);
+        }
+      });
+      elem.textContent = (value as Signal<string>).peek();
+    } else {
       elem.setAttribute("type", "text");
       elem.addEventListener(
         "input",
@@ -144,20 +186,20 @@ function setValueInner(wrapper: HTMLElement, edit: boolean) {
         if (e.key === "ArrowRight") {
           e.stopPropagation();
         }
+        if (e.key === "Enter") {
+          e.stopPropagation();
+          insert(wrapper);
+        }
+        if (e.key === "Backspace") {
+          e.stopPropagation();
+          remove(wrapper);
+        }
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          doUpdate({ path: active.path, edit: false });
+        }
       });
-      (elem as HTMLInputElement).value = value.peek();
-    } else {
-      elem.setAttribute("tabIndex", "0");
-      elem.addEventListener("click", () => {
-        setActive(getPathFromElement(elem), false);
-      });
-      elem.addEventListener("dblclick", () => {
-        setActive(getPathFromElement(elem), true);
-      });
-      elem.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-      });
-      elem.textContent = value.peek();
+      (elem as HTMLInputElement).value = (value as Signal<string>).peek();
     }
     wrapper.replaceChildren(elem);
   }
@@ -166,8 +208,11 @@ function setValueInner(wrapper: HTMLElement, edit: boolean) {
 function RenderValue({ value }: { value: Signal<string> }): HTMLDivElement {
   const wrapper = document.createElement("div");
   wrapper.classList.add("value");
+
   signalMap.set(wrapper, value);
+
   setValueInner(wrapper, false);
+
   effect(() => {
     const elem = wrapper.firstElementChild! as HTMLElement;
     if (elem.tagName === "INPUT") {
@@ -185,15 +230,47 @@ function RenderBlock({ value }: { value: Signal<DataNode[]> }): HTMLDivElement {
   const container = document.createElement("div");
   container.classList.add("node");
   container.setAttribute("tabIndex", "0");
+
+  container.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.stopPropagation();
+      insert(container);
+    }
+    if (e.key === "Backspace") {
+      e.stopPropagation();
+      remove(container);
+    }
+  });
+
+  signalMap.set(container, value);
+
+  const byKey = new Map<DataNode, HTMLElement>();
   effect(() => {
-    container.replaceChildren(
-      ...value.value.map((v) => {
-        const cell = document.createElement("div");
+    const unseen = new Set(byKey.keys());
+    const orderedCells: HTMLElement[] = [];
+
+    value.value.forEach((v, i) => {
+      let cell = byKey.get(v);
+      if (!cell) {
+        cell = document.createElement("div");
         cell.classList.add("cell");
         cell.appendChild(RenderNode({ value: v }));
-        return cell;
-      })
-    );
+        byKey.set(v, cell);
+      } else {
+        unseen.delete(v);
+      }
+      orderedCells.push(cell);
+    });
+
+    for (const gone of unseen) {
+      const cell = byKey.get(gone)!;
+      cell.remove();
+      byKey.delete(gone);
+    }
+
+    for (const cell of orderedCells) {
+      container.appendChild(cell);
+    }
   });
   return container;
 }
@@ -206,4 +283,4 @@ function RenderNode({ value }: { value: DataNode }): HTMLDivElement {
 }
 
 document.getElementById("root")!.appendChild(RenderNode({ value: data }));
-setActive(active.path, active.edit);
+doUpdate(active);

@@ -17,6 +17,7 @@ body {
     padding: 4px;
     margin: -1px;
     border: 2px solid #0b57d0;
+    min-height: 36px;
   }
   &:has(input) {
     position: relative;
