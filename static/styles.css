@@ -5,12 +5,14 @@
 }
 
 div,
-p {
+p,
+input {
   position: relative;
   border: 1px solid;
   border-color: #ddd #999;
   margin-top: -1px;
   outline: none;
+  width: 100%;
   &:first-child {
     margin-top: 0;
     border-top-color: #999;
@@ -32,7 +34,8 @@ div {
   }
 }
 
-p {
+p,
+input {
   min-height: 27px;
   padding: 2px 5px;
   &:focus {

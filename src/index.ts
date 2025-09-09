@@ -2,15 +2,61 @@ import { Signal, effect, signal } from "@preact/signals-core";
 
 export type DataNode = Signal<DataNode[] | string>;
 
-type Mount = { el: HTMLElement; dispose: () => void };
+type Mount = { readonly el: HTMLElement; dispose: () => void };
 
 type ElInfo = {
   node: DataNode;
   parent: DataNode | null;
-  setEditing?: (v: boolean) => void;
+  setEditing?: (v: boolean, focus?: boolean) => void;
 };
 
 const elInfo = new WeakMap<HTMLElement, ElInfo>();
+
+type ParentIndex = {
+  info: ElInfo;
+  parent: DataNode;
+  parentVal: DataNode[];
+  idx: number;
+};
+
+function getParentIndex(fromEl: HTMLElement): ParentIndex | null {
+  const info = elInfo.get(fromEl);
+  if (!info || !info.parent) return null;
+  const parent = info.parent;
+  const parentVal = parent.peek() as DataNode[];
+  const idx = parentVal.indexOf(info.node);
+  if (idx < 0) return null;
+  return { info, parent, parentVal, idx };
+}
+
+function insertEmptySiblingAfter(el: HTMLElement) {
+  const ctx = getParentIndex(el);
+  if (!ctx) return;
+  const { parent, parentVal, idx } = ctx;
+
+  const container = el.parentElement;
+
+  parent.value = parentVal.toSpliced(idx + 1, 0, signal(""));
+
+  queueMicrotask(() => {
+    const target = container?.children.item(idx + 1) as HTMLElement | null;
+    target?.focus();
+  });
+}
+
+function removeNodeAtElement(el: HTMLElement) {
+  const ctx = getParentIndex(el);
+  if (!ctx) return;
+  const { parent, parentVal, idx } = ctx;
+
+  const next =
+    el.previousElementSibling || el.nextElementSibling || el.parentElement;
+  parent.value = parentVal.toSpliced(idx, 1);
+
+  queueMicrotask(() => {
+    (next as HTMLElement | null)?.focus();
+  });
+}
 
 export function render(data: DataNode, root: HTMLElement): () => void {
   const { el, dispose } = mountNode(data, null);
@@ -54,31 +100,15 @@ export function render(data: DataNode, root: HTMLElement): () => void {
       return;
     }
 
-    const { node, parent } = info;
-    if (!parent) return;
-
-    const parentVal = parent.peek() as DataNode[];
-    const idx = parentVal.indexOf(node);
-
     if (e.key === "Enter") {
       e.preventDefault();
-      parent.value = parentVal.toSpliced(idx + 1, 0, signal(""));
-      queueMicrotask(() => {
-        (active.nextElementSibling as HTMLElement | null)?.focus();
-      });
+      insertEmptySiblingAfter(active);
       return;
     }
 
     if (e.key === "Backspace") {
       e.preventDefault();
-      const next =
-        active.previousElementSibling ||
-        active.nextElementSibling ||
-        active.parentElement;
-      parent.value = parentVal.toSpliced(idx, 1);
-      queueMicrotask(() => {
-        (next as HTMLElement | null)?.focus();
-      });
+      removeNodeAtElement(active);
       return;
     }
   };
@@ -104,21 +134,17 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     el.textContent = "";
   };
 
-  const setElInfo = () => {
-    const info: ElInfo = { node, parent };
-    if (mode === "value") info.setEditing = setEditing;
-    elInfo.set(el, info);
-  };
-
   const replaceEl = (nextEl: HTMLElement, focus = false) => {
     nextEl.tabIndex = 0;
     if (el) el.replaceWith(nextEl);
     el = nextEl;
-    setElInfo();
+    const info: ElInfo = { node, parent };
+    if (mode === "value") info.setEditing = setEditing;
+    elInfo.set(el, info);
     if (focus) el.focus();
   };
 
-  const setEditing = (next: boolean) => {
+  const setEditing = (next: boolean, focus = true) => {
     const wantTag = next ? "input" : "p";
     const v = node.peek() as string;
     const nextEl = document.createElement(wantTag);
@@ -130,16 +156,25 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
         node.value = input.value;
       });
       input.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          insertEmptySiblingAfter(input);
+          setEditing(false, false);
+          return;
+        }
         if (e.key === "Escape") {
           e.preventDefault();
+          e.stopPropagation();
           setEditing(false);
+          return;
         }
       });
     } else {
       nextEl.textContent = v;
     }
 
-    replaceEl(nextEl, true);
+    replaceEl(nextEl, focus);
   };
 
   const setMode = (next: "block" | "value") => {
@@ -186,7 +221,12 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     clearChildren();
   };
 
-  return { el, dispose };
+  return {
+    get el() {
+      return el;
+    },
+    dispose,
+  };
 }
 
 // const leaf1 = signal<DataNode[] | string>("hello");
@@ -219,3 +259,12 @@ const unmount = render(parent, document.getElementById("root")!);
 // setTimeout(() => {
 //   unmount();
 // }, 12000);
+
+function snapshot(node: DataNode): any {
+  const v = node.value;
+  return Array.isArray(v) ? v.map(snapshot) : v;
+}
+effect(() => {
+  const snap = snapshot(parent);
+  console.log(JSON.stringify(snap, null, 2));
+});
