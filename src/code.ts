@@ -9,13 +9,16 @@ export type DataNode = Signal<DataBlock | string>;
 
 type Mount = { el: HTMLElement; dispose: () => void };
 
-type ElInfo = {
-  node: DataNode;
+type NodeMeta = {
   parent: DataNode | null;
   context: Record<string, DataNode>;
+};
+const nodeMeta = new WeakMap<DataNode, NodeMeta>();
+
+type ElInfo = {
+  node: DataNode;
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
-
 const elInfo = new WeakMap<HTMLElement, ElInfo>();
 
 type RegEntry = { mount: Mount; pending?: symbol };
@@ -34,15 +37,18 @@ function isBlock(v: DataBlock | string): v is DataBlock {
 
 function getParentIndex(fromEl: HTMLElement): ParentIndex | null {
   const info = elInfo.get(fromEl);
-  if (!info || !info.parent) return null;
+  if (!info) return null;
 
-  const parentVal = info.parent.peek() as DataBlock;
+  const meta = nodeMeta.get(info.node);
+  if (!meta || !meta.parent) return null;
+
+  const parentVal = meta.parent.peek() as DataBlock;
   if (!isBlock(parentVal)) return null;
 
   const idx = parentVal.items.indexOf(info.node);
   if (idx < 0) return null;
 
-  return { node: info.node, parent: info.parent, parentVal, idx };
+  return { node: info.node, parent: meta.parent, parentVal, idx };
 }
 
 function insertEmptySiblingAfter(el: HTMLElement) {
@@ -106,7 +112,9 @@ function wrapNodeInBlock(el: HTMLElement) {
 }
 
 export function render(data: DataNode, root: HTMLElement): () => void {
-  const { el, dispose } = mountNode(data, null, {});
+  nodeMeta.set(data, { parent: null, context: {} });
+
+  const { el, dispose } = mountNode(data);
   root.appendChild(el);
 
   const arrowTarget = (a: HTMLElement, key: string): HTMLElement | null => {
@@ -170,21 +178,13 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   };
 }
 
-function getOrCreateMountFor(
-  node: DataNode,
-  parent: DataNode,
-  context: Record<string, DataNode>
-): Mount {
+function getOrCreateMountFor(node: DataNode): Mount {
   const entry = registry.get(node);
   if (entry) {
     entry.pending = undefined;
-
-    const existing = elInfo.get(entry.mount.el);
-    if (existing) elInfo.set(entry.mount.el, { ...existing, parent, context });
     return entry.mount;
   }
-
-  const m = mountNode(node, parent, context);
+  const m = mountNode(node);
   registry.set(node, { mount: m });
   return m;
 }
@@ -205,11 +205,7 @@ function detachWithNextTickGC(node: DataNode) {
   });
 }
 
-function mountNode(
-  node: DataNode,
-  parent: DataNode | null,
-  context: Record<string, DataNode>
-): Mount {
+function mountNode(node: DataNode): Mount {
   let el!: HTMLElement;
   let mode: "block" | "value" | null = null;
 
@@ -227,7 +223,7 @@ function mountNode(
     nextEl.tabIndex = 0;
     if (el) el.replaceWith(nextEl);
     el = nextEl;
-    const info: ElInfo = { node, parent, context };
+    const info: ElInfo = { node };
     if (mode === "value") info.setEditing = setEditing;
     elInfo.set(el, info);
     if (focus) el.focus();
@@ -284,8 +280,9 @@ function mountNode(
     if (isBlock(v)) {
       setMode("block");
 
+      const meta = nodeMeta.get(node) ?? { parent: null, context: {} };
       const nextContext: Record<string, DataNode> = {
-        ...context,
+        ...meta.context,
         ...v.values,
       };
 
@@ -300,14 +297,8 @@ function mountNode(
 
       const frag = document.createDocumentFragment();
       for (const sig of v.items) {
-        const childMount = getOrCreateMountFor(sig, node, nextContext);
-        const childInfo = elInfo.get(childMount.el);
-        if (childInfo)
-          elInfo.set(childMount.el, {
-            ...childInfo,
-            parent: node,
-            context: nextContext,
-          });
+        nodeMeta.set(sig, { parent: node, context: nextContext });
+        const childMount = getOrCreateMountFor(sig);
         frag.appendChild(childMount.el);
         attached.add(sig);
       }
