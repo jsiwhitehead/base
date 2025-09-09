@@ -12,6 +12,9 @@ type ElInfo = {
 
 const elInfo = new WeakMap<HTMLElement, ElInfo>();
 
+type RegEntry = { mount: Mount; pending?: symbol };
+const registry = new Map<DataNode, RegEntry>();
+
 type ParentIndex = {
   info: ElInfo;
   parent: DataNode;
@@ -140,15 +143,48 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   };
 }
 
+function getOrCreateMountFor(node: DataNode, parent: DataNode): Mount {
+  const entry = registry.get(node);
+  if (entry) {
+    entry.pending = undefined;
+
+    const existing = elInfo.get(entry.mount.el);
+    if (existing) elInfo.set(entry.mount.el, { ...existing, parent });
+    return entry.mount;
+  }
+
+  const m = mountNode(node, parent);
+  registry.set(node, { mount: m });
+  return m;
+}
+
+function detachWithNextTickGC(node: DataNode) {
+  const entry = registry.get(node);
+  if (!entry) return;
+
+  entry.mount.el.remove();
+  const token = Symbol("pending");
+  entry.pending = token;
+
+  queueMicrotask(() => {
+    const current = registry.get(node);
+    if (!current || current.pending !== token) return;
+    current.mount.dispose();
+    registry.delete(node);
+  });
+}
+
 function mountNode(node: DataNode, parent: DataNode | null): Mount {
   let el!: HTMLElement;
   let mode: "block" | "value" | null = null;
 
-  const children = new Map<DataNode, Mount>();
+  const attached = new Set<DataNode>();
 
   const clearChildren = () => {
-    for (const m of children.values()) m.dispose();
-    children.clear();
+    for (const sig of attached) {
+      detachWithNextTickGC(sig);
+    }
+    attached.clear();
     el.textContent = "";
   };
 
@@ -212,22 +248,24 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     const v = node.value;
     if (Array.isArray(v)) {
       setMode("block");
+
       const nextSet = new Set(v);
-      for (const [sig, m] of children) {
+
+      for (const sig of [...attached]) {
         if (!nextSet.has(sig)) {
-          m.dispose();
-          m.el.remove();
-          children.delete(sig);
+          detachWithNextTickGC(sig);
+          attached.delete(sig);
         }
       }
+
       const frag = document.createDocumentFragment();
       for (const sig of v) {
-        let m = children.get(sig);
-        if (!m) {
-          m = mountNode(sig, node);
-          children.set(sig, m);
-        }
-        frag.appendChild(m.el);
+        const childMount = getOrCreateMountFor(sig, node);
+        const childInfo = elInfo.get(childMount.el);
+        if (childInfo)
+          elInfo.set(childMount.el, { ...childInfo, parent: node });
+        frag.appendChild(childMount.el);
+        attached.add(sig);
       }
       el.appendChild(frag);
     } else {
@@ -243,14 +281,19 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
   const dispose = () => {
     stop();
     clearChildren();
+    const entry = registry.get(node);
+    if (entry?.mount === self) registry.delete(node);
   };
 
-  return {
+  const self: Mount = {
     get el() {
       return el;
     },
     dispose,
   };
+
+  registry.set(node, { mount: self });
+  return self;
 }
 
 // const leaf1 = signal<DataNode[] | string>("hello");
