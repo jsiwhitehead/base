@@ -1,51 +1,40 @@
-body {
+#root {
+  height: 100%;
   font-family: "Atkinson Hyperlegible", sans-serif;
   font-size: 14px;
 }
 
-#root {
-  height: 100%;
-}
-
-.value {
-  p {
-    padding: 5px;
-    outline: none;
-    min-height: 34px;
-  }
-  &.active p {
-    padding: 4px;
-    margin: -1px;
-    border: 2px solid #0b57d0;
-    min-height: 36px;
-  }
-  &:has(input) {
-    position: relative;
-    z-index: 10;
-    margin: -3px;
-    border: 2px solid #a8c7fa;
-  }
-  input {
-    display: block;
-    padding: 6px;
-    outline: none;
-    width: 100%;
-    padding: 4px;
-    border: 2px solid #0b57d0;
-  }
-}
-
-.node {
-  display: grid;
-  gap: 1px;
-  background: #ccc;
-  padding: 5px;
+div,
+p {
+  position: relative;
+  border: 1px solid;
+  border-color: #ddd #999;
+  margin-top: -1px;
   outline: none;
-  &.active {
-    padding: 3px;
-    border: 2px solid #0b57d0;
+  &:first-child {
+    margin-top: 0;
+    border-top-color: #999;
+  }
+  &:last-child {
+    border-bottom-color: #999;
+  }
+  &:focus {
+    border-color: #0b57d0;
+    border-width: 2px;
+    z-index: 10;
   }
 }
-.cell {
-  background: #fff;
+
+div {
+  padding: 5px;
+  &:focus {
+    padding: 4px;
+  }
+}
+
+p {
+  padding: 2px 5px;
+  &:focus {
+    padding: 1px 4px;
+  }
 }
