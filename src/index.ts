@@ -33,7 +33,7 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     }
   };
 
-  const onKey = (e: KeyboardEvent) => {
+  const onKeyDown = (e: KeyboardEvent) => {
     const active = document.activeElement as HTMLElement | null;
     if (!active || !root.contains(active)) return;
     if (active.tagName === "INPUT") return;
@@ -83,18 +83,18 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     }
   };
 
-  root.addEventListener("keydown", onKey);
+  root.addEventListener("keydown", onKeyDown);
 
   return () => {
     dispose();
-    root.removeEventListener("keydown", onKey);
+    root.removeEventListener("keydown", onKeyDown);
     root.textContent = "";
   };
 }
 
 function mountNode(node: DataNode, parent: DataNode | null): Mount {
   let el!: HTMLElement;
-  let mode: "array" | "text" | null = null;
+  let mode: "block" | "value" | null = null;
 
   const children = new Map<DataNode, Mount>();
 
@@ -106,7 +106,7 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
 
   const setElInfo = () => {
     const info: ElInfo = { node, parent };
-    if (mode === "text") info.setEditing = toggleEditing;
+    if (mode === "value") info.setEditing = setEditing;
     elInfo.set(el, info);
   };
 
@@ -118,7 +118,7 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     if (focus) el.focus();
   };
 
-  const toggleEditing = (next: boolean) => {
+  const setEditing = (next: boolean) => {
     const wantTag = next ? "input" : "p";
     const v = node.peek() as string;
     const nextEl = document.createElement(wantTag);
@@ -132,7 +132,7 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
       input.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key === "Escape") {
           e.preventDefault();
-          toggleEditing(false);
+          setEditing(false);
         }
       });
     } else {
@@ -142,17 +142,17 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     replaceEl(nextEl, true);
   };
 
-  const setMode = (next: "array" | "text") => {
+  const setMode = (next: "block" | "value") => {
     if (mode === next) return;
-    if (mode === "array") clearChildren();
+    if (mode === "block") clearChildren();
     mode = next;
-    replaceEl(document.createElement(next === "array" ? "div" : "p"));
+    replaceEl(document.createElement(next === "block" ? "div" : "p"));
   };
 
   const stop = effect(() => {
     const v = node.value;
     if (Array.isArray(v)) {
-      setMode("array");
+      setMode("block");
       const nextSet = new Set(v);
       for (const [sig, m] of children) {
         if (!nextSet.has(sig)) {
@@ -172,7 +172,7 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
       }
       el.appendChild(frag);
     } else {
-      setMode("text");
+      setMode("value");
       if (el.tagName === "INPUT") {
         (el as HTMLInputElement).value = v;
       } else {
