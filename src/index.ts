@@ -34,19 +34,18 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   };
 
   const onKey = (e: KeyboardEvent) => {
-    const a = document.activeElement as HTMLElement | null;
-    if (!a || !root.contains(a)) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || !root.contains(active)) return;
+    if (active.tagName === "INPUT") return;
 
-    if (a.tagName === "INPUT") return;
-
-    const t = arrowTarget(a, e.key);
-    if (t) {
+    const target = arrowTarget(active, e.key);
+    if (target) {
       e.preventDefault();
-      t.focus();
+      target.focus();
       return;
     }
 
-    const info = elInfo.get(a);
+    const info = elInfo.get(active);
     if (!info) return;
 
     if (e.key === "Enter" && info.setEditing) {
@@ -65,7 +64,7 @@ export function render(data: DataNode, root: HTMLElement): () => void {
       e.preventDefault();
       parent.value = parentVal.toSpliced(idx + 1, 0, signal(""));
       queueMicrotask(() => {
-        (a.nextElementSibling as HTMLElement | null)?.focus();
+        (active.nextElementSibling as HTMLElement | null)?.focus();
       });
       return;
     }
@@ -73,7 +72,9 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     if (e.key === "Backspace") {
       e.preventDefault();
       const next =
-        a.previousElementSibling || a.nextElementSibling || a.parentElement;
+        active.previousElementSibling ||
+        active.nextElementSibling ||
+        active.parentElement;
       parent.value = parentVal.toSpliced(idx, 1);
       queueMicrotask(() => {
         (next as HTMLElement | null)?.focus();
@@ -103,22 +104,24 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     el.textContent = "";
   };
 
-  const setElInfo = (target: HTMLElement) => {
+  const setElInfo = () => {
     const info: ElInfo = { node, parent };
-    if (mode === "text") {
-      info.setEditing = (next: boolean) => {
-        toggleEditing(next);
-      };
-    }
-    elInfo.set(target, info);
+    if (mode === "text") info.setEditing = toggleEditing;
+    elInfo.set(el, info);
+  };
+
+  const replaceEl = (nextEl: HTMLElement, focus = false) => {
+    nextEl.tabIndex = 0;
+    if (el) el.replaceWith(nextEl);
+    el = nextEl;
+    setElInfo();
+    if (focus) el.focus();
   };
 
   const toggleEditing = (next: boolean) => {
     const wantTag = next ? "input" : "p";
-
     const v = node.peek() as string;
     const nextEl = document.createElement(wantTag);
-    nextEl.tabIndex = 0;
 
     if (wantTag === "input") {
       const input = nextEl as HTMLInputElement;
@@ -136,26 +139,14 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
       nextEl.textContent = v;
     }
 
-    el.replaceWith(nextEl);
-    el = nextEl;
-    setElInfo(el);
-    el.focus();
+    replaceEl(nextEl, true);
   };
 
   const setMode = (next: "array" | "text") => {
     if (mode === next) return;
-
-    const nextEl = document.createElement(next === "array" ? "div" : "p");
-    nextEl.tabIndex = 0;
-
-    if (el) {
-      if (mode === "array") clearChildren();
-      el.replaceWith(nextEl);
-    }
-    el = nextEl;
-
+    if (mode === "array") clearChildren();
     mode = next;
-    setElInfo(el);
+    replaceEl(document.createElement(next === "array" ? "div" : "p"));
   };
 
   const stop = effect(() => {
