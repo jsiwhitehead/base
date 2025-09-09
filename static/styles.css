@@ -42,3 +42,7 @@ input {
     padding: 1px 4px;
   }
 }
+
+input {
+  background: #e8f0fe;
+}

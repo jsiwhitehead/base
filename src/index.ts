@@ -58,6 +58,23 @@ function removeNodeAtElement(el: HTMLElement) {
   });
 }
 
+function wrapNodeInBlock(el: HTMLElement) {
+  const ctx = getParentIndex(el);
+  if (!ctx) return;
+  const { info, parent, parentVal, idx } = ctx;
+
+  const container = el.parentElement;
+
+  parent.value = parentVal.toSpliced(idx, 1, signal([info.node]));
+
+  queueMicrotask(() => {
+    const blockEl = container?.children
+      .item(idx)!
+      .children.item(0) as HTMLElement | null;
+    blockEl?.focus();
+  });
+}
+
 export function render(data: DataNode, root: HTMLElement): () => void {
   const { el, dispose } = mountNode(data, null);
   root.appendChild(el);
@@ -94,21 +111,22 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     const info = elInfo.get(active);
     if (!info) return;
 
-    if (e.key === "Enter" && info.setEditing) {
-      e.preventDefault();
-      info.setEditing(true);
-      return;
-    }
-
     if (e.key === "Enter") {
       e.preventDefault();
-      insertEmptySiblingAfter(active);
+      if (info.setEditing) info.setEditing(true);
+      else insertEmptySiblingAfter(active);
       return;
     }
 
     if (e.key === "Backspace") {
       e.preventDefault();
       removeNodeAtElement(active);
+      return;
+    }
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      wrapNodeInBlock(active);
       return;
     }
   };
@@ -167,6 +185,12 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
           e.preventDefault();
           e.stopPropagation();
           setEditing(false);
+          return;
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          e.stopPropagation();
+          wrapNodeInBlock(input);
           return;
         }
       });
