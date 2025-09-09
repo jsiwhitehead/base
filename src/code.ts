@@ -1,4 +1,11 @@
-import { Signal, effect, signal } from "@preact/signals-core";
+import { Signal, effect } from "@preact/signals-core";
+
+import {
+  isBlock,
+  insertEmptySiblingAfter,
+  removeNodeAtElement,
+  wrapNodeInBlock,
+} from "./data";
 
 export type DataBlock = {
   values: { [key: string]: DataNode };
@@ -7,109 +14,22 @@ export type DataBlock = {
 
 export type DataNode = Signal<DataBlock | string>;
 
-type Mount = { el: HTMLElement; dispose: () => void };
-
 type NodeMeta = {
   parent: DataNode | null;
   context: Record<string, DataNode>;
 };
-const nodeMeta = new WeakMap<DataNode, NodeMeta>();
+export const nodeMeta = new WeakMap<DataNode, NodeMeta>();
+
+type Mount = { el: HTMLElement; dispose: () => void };
+
+type RegEntry = { mount: Mount; pending?: symbol };
+const registry = new Map<DataNode, RegEntry>();
 
 type ElInfo = {
   node: DataNode;
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
-const elInfo = new WeakMap<HTMLElement, ElInfo>();
-
-type RegEntry = { mount: Mount; pending?: symbol };
-const registry = new Map<DataNode, RegEntry>();
-
-type ParentIndex = {
-  node: DataNode;
-  parent: DataNode;
-  parentVal: DataBlock;
-  idx: number;
-};
-
-function isBlock(v: DataBlock | string): v is DataBlock {
-  return typeof v !== "string";
-}
-
-function getParentIndex(fromEl: HTMLElement): ParentIndex | null {
-  const info = elInfo.get(fromEl);
-  if (!info) return null;
-
-  const meta = nodeMeta.get(info.node);
-  if (!meta || !meta.parent) return null;
-
-  const parentVal = meta.parent.peek() as DataBlock;
-  if (!isBlock(parentVal)) return null;
-
-  const idx = parentVal.items.indexOf(info.node);
-  if (idx < 0) return null;
-
-  return { node: info.node, parent: meta.parent, parentVal, idx };
-}
-
-function insertEmptySiblingAfter(el: HTMLElement) {
-  const ctx = getParentIndex(el);
-  if (!ctx) return;
-  const { parent, parentVal, idx } = ctx;
-
-  const container = el.parentElement;
-
-  parent.value = {
-    ...parentVal,
-    items: parentVal.items.toSpliced(idx + 1, 0, signal("")),
-  };
-
-  queueMicrotask(() => {
-    const target = container?.children.item(idx + 1) as HTMLElement | null;
-    target?.focus();
-  });
-}
-
-function removeNodeAtElement(el: HTMLElement) {
-  const ctx = getParentIndex(el);
-  if (!ctx) return;
-  const { parent, parentVal, idx } = ctx;
-
-  const next =
-    el.previousElementSibling || el.nextElementSibling || el.parentElement;
-
-  parent.value = {
-    ...parentVal,
-    items: parentVal.items.toSpliced(idx, 1),
-  };
-
-  queueMicrotask(() => {
-    (next as HTMLElement | null)?.focus();
-  });
-}
-
-function wrapNodeInBlock(el: HTMLElement) {
-  const ctx = getParentIndex(el);
-  if (!ctx) return;
-  const { node, parent, parentVal, idx } = ctx;
-
-  const container = el.parentElement;
-
-  parent.value = {
-    ...parentVal,
-    items: parentVal.items.toSpliced(
-      idx,
-      1,
-      signal<DataBlock>({ values: {}, items: [node] })
-    ),
-  };
-
-  queueMicrotask(() => {
-    const blockEl = container?.children
-      .item(idx)!
-      .children.item(0) as HTMLElement | null;
-    blockEl?.focus();
-  });
-}
+export const elInfo = new WeakMap<HTMLElement, ElInfo>();
 
 export function render(data: DataNode, root: HTMLElement): () => void {
   nodeMeta.set(data, { parent: null, context: {} });
