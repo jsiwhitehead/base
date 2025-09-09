@@ -4,10 +4,13 @@ export type DataNode = Signal<DataNode[] | string>;
 
 type Mount = { el: HTMLElement; dispose: () => void };
 
-const elInfo = new WeakMap<
-  HTMLElement,
-  { node: DataNode; parent: DataNode | null }
->();
+type ElInfo = {
+  node: DataNode;
+  parent: DataNode | null;
+  setEditing?: (v: boolean) => void;
+};
+
+const elInfo = new WeakMap<HTMLElement, ElInfo>();
 
 export function render(data: DataNode, root: HTMLElement): () => void {
   const { el, dispose } = mountNode(data, null);
@@ -34,6 +37,8 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     const a = document.activeElement as HTMLElement | null;
     if (!a || !root.contains(a)) return;
 
+    if (a.tagName === "INPUT") return;
+
     const t = arrowTarget(a, e.key);
     if (t) {
       e.preventDefault();
@@ -43,6 +48,12 @@ export function render(data: DataNode, root: HTMLElement): () => void {
 
     const info = elInfo.get(a);
     if (!info) return;
+
+    if (e.key === "Enter" && info.setEditing) {
+      e.preventDefault();
+      info.setEditing(true);
+      return;
+    }
 
     const { node, parent } = info;
     if (!parent) return;
@@ -92,15 +103,59 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     el.textContent = "";
   };
 
+  const setElInfo = (target: HTMLElement) => {
+    const info: ElInfo = { node, parent };
+    if (mode === "text") {
+      info.setEditing = (next: boolean) => {
+        toggleEditing(next);
+      };
+    }
+    elInfo.set(target, info);
+  };
+
+  const toggleEditing = (next: boolean) => {
+    const wantTag = next ? "input" : "p";
+
+    const v = node.peek() as string;
+    const nextEl = document.createElement(wantTag);
+    nextEl.tabIndex = 0;
+
+    if (wantTag === "input") {
+      const input = nextEl as HTMLInputElement;
+      input.value = v;
+      input.addEventListener("input", () => {
+        node.value = input.value;
+      });
+      input.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          toggleEditing(false);
+        }
+      });
+    } else {
+      nextEl.textContent = v;
+    }
+
+    el.replaceWith(nextEl);
+    el = nextEl;
+    setElInfo(el);
+    el.focus();
+  };
+
   const setMode = (next: "array" | "text") => {
     if (mode === next) return;
+
     const nextEl = document.createElement(next === "array" ? "div" : "p");
     nextEl.tabIndex = 0;
-    if (mode === "array") clearChildren();
-    if (el) el.replaceWith(nextEl);
+
+    if (el) {
+      if (mode === "array") clearChildren();
+      el.replaceWith(nextEl);
+    }
     el = nextEl;
-    elInfo.set(el, { node, parent });
+
     mode = next;
+    setElInfo(el);
   };
 
   const stop = effect(() => {
@@ -127,7 +182,11 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
       el.appendChild(frag);
     } else {
       setMode("text");
-      el.textContent = v;
+      if (el.tagName === "INPUT") {
+        (el as HTMLInputElement).value = v;
+      } else {
+        el.textContent = v;
+      }
     }
   });
 
