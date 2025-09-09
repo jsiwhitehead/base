@@ -7,10 +7,13 @@ import { render } from "./code";
 // const leaf2 = signal<DataNode[] | string>("world");
 // const parent = signal<DataNode[] | string>([leaf1, leaf2]);
 
-const parent = signal([
-  signal([signal("hi"), signal("there")]),
-  signal("world"),
-]);
+const parent = signal({
+  values: {},
+  items: [
+    signal({ values: {}, items: [signal("hi"), signal("there")] }),
+    signal("world"),
+  ],
+});
 
 const unmount = render(parent, document.getElementById("root")!);
 

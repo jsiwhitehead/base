@@ -1,12 +1,18 @@
 import { Signal, effect, signal } from "@preact/signals-core";
 
-export type DataNode = Signal<DataNode[] | string>;
+export type DataBlock = {
+  values: { [key: string]: DataNode };
+  items: DataNode[];
+};
 
-type Mount = { readonly el: HTMLElement; dispose: () => void };
+export type DataNode = Signal<DataBlock | string>;
+
+type Mount = { el: HTMLElement; dispose: () => void };
 
 type ElInfo = {
   node: DataNode;
   parent: DataNode | null;
+  context: Record<string, DataNode>;
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
 
@@ -16,20 +22,27 @@ type RegEntry = { mount: Mount; pending?: symbol };
 const registry = new Map<DataNode, RegEntry>();
 
 type ParentIndex = {
-  info: ElInfo;
+  node: DataNode;
   parent: DataNode;
-  parentVal: DataNode[];
+  parentVal: DataBlock;
   idx: number;
 };
+
+function isBlock(v: DataBlock | string): v is DataBlock {
+  return typeof v !== "string";
+}
 
 function getParentIndex(fromEl: HTMLElement): ParentIndex | null {
   const info = elInfo.get(fromEl);
   if (!info || !info.parent) return null;
-  const parent = info.parent;
-  const parentVal = parent.peek() as DataNode[];
-  const idx = parentVal.indexOf(info.node);
+
+  const parentVal = info.parent.peek() as DataBlock;
+  if (!isBlock(parentVal)) return null;
+
+  const idx = parentVal.items.indexOf(info.node);
   if (idx < 0) return null;
-  return { info, parent, parentVal, idx };
+
+  return { node: info.node, parent: info.parent, parentVal, idx };
 }
 
 function insertEmptySiblingAfter(el: HTMLElement) {
@@ -39,7 +52,10 @@ function insertEmptySiblingAfter(el: HTMLElement) {
 
   const container = el.parentElement;
 
-  parent.value = parentVal.toSpliced(idx + 1, 0, signal(""));
+  parent.value = {
+    ...parentVal,
+    items: parentVal.items.toSpliced(idx + 1, 0, signal("")),
+  };
 
   queueMicrotask(() => {
     const target = container?.children.item(idx + 1) as HTMLElement | null;
@@ -54,7 +70,11 @@ function removeNodeAtElement(el: HTMLElement) {
 
   const next =
     el.previousElementSibling || el.nextElementSibling || el.parentElement;
-  parent.value = parentVal.toSpliced(idx, 1);
+
+  parent.value = {
+    ...parentVal,
+    items: parentVal.items.toSpliced(idx, 1),
+  };
 
   queueMicrotask(() => {
     (next as HTMLElement | null)?.focus();
@@ -64,11 +84,18 @@ function removeNodeAtElement(el: HTMLElement) {
 function wrapNodeInBlock(el: HTMLElement) {
   const ctx = getParentIndex(el);
   if (!ctx) return;
-  const { info, parent, parentVal, idx } = ctx;
+  const { node, parent, parentVal, idx } = ctx;
 
   const container = el.parentElement;
 
-  parent.value = parentVal.toSpliced(idx, 1, signal([info.node]));
+  parent.value = {
+    ...parentVal,
+    items: parentVal.items.toSpliced(
+      idx,
+      1,
+      signal<DataBlock>({ values: {}, items: [node] })
+    ),
+  };
 
   queueMicrotask(() => {
     const blockEl = container?.children
@@ -79,7 +106,7 @@ function wrapNodeInBlock(el: HTMLElement) {
 }
 
 export function render(data: DataNode, root: HTMLElement): () => void {
-  const { el, dispose } = mountNode(data, null);
+  const { el, dispose } = mountNode(data, null, {});
   root.appendChild(el);
 
   const arrowTarget = (a: HTMLElement, key: string): HTMLElement | null => {
@@ -143,17 +170,21 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   };
 }
 
-function getOrCreateMountFor(node: DataNode, parent: DataNode): Mount {
+function getOrCreateMountFor(
+  node: DataNode,
+  parent: DataNode,
+  context: Record<string, DataNode>
+): Mount {
   const entry = registry.get(node);
   if (entry) {
     entry.pending = undefined;
 
     const existing = elInfo.get(entry.mount.el);
-    if (existing) elInfo.set(entry.mount.el, { ...existing, parent });
+    if (existing) elInfo.set(entry.mount.el, { ...existing, parent, context });
     return entry.mount;
   }
 
-  const m = mountNode(node, parent);
+  const m = mountNode(node, parent, context);
   registry.set(node, { mount: m });
   return m;
 }
@@ -174,7 +205,11 @@ function detachWithNextTickGC(node: DataNode) {
   });
 }
 
-function mountNode(node: DataNode, parent: DataNode | null): Mount {
+function mountNode(
+  node: DataNode,
+  parent: DataNode | null,
+  context: Record<string, DataNode>
+): Mount {
   let el!: HTMLElement;
   let mode: "block" | "value" | null = null;
 
@@ -192,7 +227,7 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
     nextEl.tabIndex = 0;
     if (el) el.replaceWith(nextEl);
     el = nextEl;
-    const info: ElInfo = { node, parent };
+    const info: ElInfo = { node, parent, context };
     if (mode === "value") info.setEditing = setEditing;
     elInfo.set(el, info);
     if (focus) el.focus();
@@ -246,10 +281,15 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
 
   const stop = effect(() => {
     const v = node.value;
-    if (Array.isArray(v)) {
+    if (isBlock(v)) {
       setMode("block");
 
-      const nextSet = new Set(v);
+      const nextContext: Record<string, DataNode> = {
+        ...context,
+        ...v.values,
+      };
+
+      const nextSet = new Set(v.items);
 
       for (const sig of [...attached]) {
         if (!nextSet.has(sig)) {
@@ -259,11 +299,15 @@ function mountNode(node: DataNode, parent: DataNode | null): Mount {
       }
 
       const frag = document.createDocumentFragment();
-      for (const sig of v) {
-        const childMount = getOrCreateMountFor(sig, node);
+      for (const sig of v.items) {
+        const childMount = getOrCreateMountFor(sig, node, nextContext);
         const childInfo = elInfo.get(childMount.el);
         if (childInfo)
-          elInfo.set(childMount.el, { ...childInfo, parent: node });
+          elInfo.set(childMount.el, {
+            ...childInfo,
+            parent: node,
+            context: nextContext,
+          });
         frag.appendChild(childMount.el);
         attached.add(sig);
       }
