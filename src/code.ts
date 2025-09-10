@@ -32,12 +32,10 @@ export function render(data: DataNode, root: HTMLElement): () => void {
 
   const { el, dispose } = mountNode(data);
   root.appendChild(el);
+  el.focus();
 
   const onKeyDown = (e: KeyboardEvent) => handleRootKeyDown(e, root);
-
   root.addEventListener("keydown", onKeyDown);
-
-  mountCache.get(data)!.mount.el.focus();
 
   return () => {
     dispose();
@@ -77,6 +75,25 @@ function mountNode(node: DataNode): Mount {
   };
 
   const attached = new Set<DataNode>();
+
+  const ensureMount = (
+    child: DataNode,
+    context: Record<string, DataNode>
+  ): HTMLElement => {
+    nodeMeta.set(child, { parent: node, context });
+    attached.add(child);
+
+    const existing = mountCache.get(child);
+    if (existing) {
+      existing.pending = undefined;
+      return existing.mount.el;
+    }
+
+    const mount = mountNode(child);
+    mountCache.set(child, { mount });
+    return mount.el;
+  };
+
   function pruneChildren(keep?: Set<DataNode>) {
     for (const sig of Array.from(attached)) {
       if (keep?.has(sig)) continue;
@@ -96,10 +113,9 @@ function mountNode(node: DataNode): Mount {
     }
     mode = next;
     replaceEl(document.createElement(next === "block" ? "div" : "p"));
+    el.classList.add(next);
     if (next === "block") {
-      const valuesEl = document.createElement("div");
-      valuesEl.textContent = "values";
-      el.append(valuesEl, document.createElement("div"));
+      el.append(document.createElement("div"), document.createElement("div"));
     }
   };
 
@@ -140,25 +156,25 @@ function mountNode(node: DataNode): Mount {
         ...v.values,
       };
 
-      const nextSet = new Set(v.items);
+      const nextSet = new Set<DataNode>([
+        ...Object.values(v.values),
+        ...v.items,
+      ]);
       pruneChildren(nextSet);
 
-      const fragment = document.createDocumentFragment();
-      for (const sig of v.items) {
-        nodeMeta.set(sig, { parent: node, context: nextContext });
-        let childMount: Mount;
-        const existing = mountCache.get(sig);
-        if (existing) {
-          existing.pending = undefined;
-          childMount = existing.mount;
-        } else {
-          childMount = mountNode(sig);
-          mountCache.set(sig, { mount: childMount });
-        }
-        fragment.appendChild(childMount.el);
-        attached.add(sig);
+      const valuesFrag = document.createDocumentFragment();
+      for (const [key, sig] of Object.entries(v.values)) {
+        const labelDiv = document.createElement("div");
+        labelDiv.textContent = key;
+        valuesFrag.append(labelDiv, ensureMount(sig, nextContext));
       }
-      (el.children[1] as HTMLElement).appendChild(fragment);
+      (el.children[0] as HTMLElement).replaceChildren(valuesFrag);
+
+      const itemsFrag = document.createDocumentFragment();
+      for (const sig of v.items) {
+        itemsFrag.append(ensureMount(sig, nextContext));
+      }
+      (el.children[1] as HTMLElement).replaceChildren(itemsFrag);
     } else {
       setMode("value");
       if (el.tagName === "INPUT") {

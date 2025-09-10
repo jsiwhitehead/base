@@ -60,3 +60,8 @@ input {
 input {
   background: #e8f0fe;
 }
+
+.block > div:first-child {
+  display: grid;
+  grid-template-columns: auto 1fr;
+}
