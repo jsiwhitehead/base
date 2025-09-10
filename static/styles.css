@@ -21,7 +21,7 @@ input {
     border-bottom-color: #999;
   }
   &:focus {
-    border-color: #0b57d0;
+    border-color: #0b57d0 !important;
     border-width: 2px;
     z-index: 10;
   }
@@ -36,7 +36,14 @@ div {
     > div,
     > p,
     > input {
-      border-color: #0b57d0;
+      border-color: #a8c7fa #0b57d0;
+      &:first-child {
+        margin-top: 0;
+        border-top-color: #0b57d0;
+      }
+      &:last-child {
+        border-bottom-color: #0b57d0;
+      }
     }
   }
 }
@@ -53,5 +60,3 @@ input {
 input {
   background: #e8f0fe;
 }
-
-/* #a8c7fa */

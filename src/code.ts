@@ -25,7 +25,7 @@ export const nodeMeta = new WeakMap<DataNode, NodeMeta>();
 type Mount = { el: HTMLElement; dispose: () => void };
 
 type RegEntry = { mount: Mount; pending?: symbol };
-const registry = new Map<DataNode, RegEntry>();
+export const registry = new Map<DataNode, RegEntry>();
 
 type ElInfo = {
   node: DataNode;

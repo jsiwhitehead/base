@@ -1,6 +1,6 @@
 import { signal } from "@preact/signals-core";
 
-import { elInfo, nodeMeta } from "./code";
+import { elInfo, nodeMeta, registry } from "./code";
 import type { DataBlock, DataNode } from "./code";
 
 type ParentIndex = {
@@ -33,15 +33,13 @@ export function insertEmptyNodeBefore(el: HTMLElement) {
   if (!ctx) return;
   const { parent, parentVal, idx } = ctx;
 
-  const container = el.parentElement;
-
+  const newNode = signal("");
   parent.value = {
     ...parentVal,
-    items: parentVal.items.toSpliced(idx, 0, signal("")),
+    items: parentVal.items.toSpliced(idx, 0, newNode),
   };
-
   queueMicrotask(() => {
-    (container?.children.item(idx) as HTMLElement | null)?.focus();
+    registry.get(newNode)!.mount.el.focus();
   });
 }
 
@@ -50,15 +48,13 @@ export function insertEmptyNodeAfter(el: HTMLElement) {
   if (!ctx) return;
   const { parent, parentVal, idx } = ctx;
 
-  const container = el.parentElement;
-
+  const newNode = signal("");
   parent.value = {
     ...parentVal,
-    items: parentVal.items.toSpliced(idx + 1, 0, signal("")),
+    items: parentVal.items.toSpliced(idx + 1, 0, newNode),
   };
-
   queueMicrotask(() => {
-    (container?.children.item(idx + 1) as HTMLElement | null)?.focus();
+    registry.get(newNode)!.mount.el.focus();
   });
 }
 
@@ -67,16 +63,13 @@ export function removeNodeAtElement(el: HTMLElement) {
   if (!ctx) return;
   const { parent, parentVal, idx } = ctx;
 
-  const next =
-    el.previousElementSibling || el.nextElementSibling || el.parentElement;
-
+  const focus = parentVal.items[idx - 1] || parentVal.items[idx + 1] || parent;
   parent.value = {
     ...parentVal,
     items: parentVal.items.toSpliced(idx, 1),
   };
-
   queueMicrotask(() => {
-    (next as HTMLElement | null)?.focus();
+    registry.get(focus)!.mount.el.focus();
   });
 }
 
@@ -86,8 +79,6 @@ export function wrapNodeInBlock(el: HTMLElement) {
   if (!ctx) return;
   const { parent, parentVal, idx } = ctx;
 
-  const container = el.parentElement;
-
   parent.value = {
     ...parentVal,
     items: parentVal.items.toSpliced(
@@ -96,11 +87,8 @@ export function wrapNodeInBlock(el: HTMLElement) {
       signal({ values: {}, items: [node] })
     ),
   };
-
   queueMicrotask(() => {
-    (
-      container?.children.item(idx)!.children.item(0) as HTMLElement | null
-    )?.focus();
+    registry.get(node)!.mount.el.focus();
   });
 }
 
@@ -111,14 +99,11 @@ export function unwrapNodeFromBlock(el: HTMLElement) {
   if (!parentCtx) return;
   const { parent, parentVal, idx } = parentCtx;
 
-  const container = el.parentElement?.parentElement;
-
   parent.value = {
     ...parentVal,
     items: parentVal.items.toSpliced(idx, 1, node),
   };
-
   queueMicrotask(() => {
-    (container?.children.item(idx) as HTMLElement | null)?.focus();
+    registry.get(node)!.mount.el.focus();
   });
 }
