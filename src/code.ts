@@ -1,17 +1,7 @@
 import { Signal, effect } from "@preact/signals-core";
 
-import {
-  isBlock,
-  focusPreviousSibling,
-  focusNextSibling,
-  focusParent,
-  focusFirstChild,
-  insertEmptyNodeBefore,
-  insertEmptyNodeAfter,
-  removeNodeAtElement,
-  wrapNodeInBlock,
-  unwrapNodeFromBlock,
-} from "./data";
+import { isBlock } from "./data";
+import { handleRootKeyDown } from "./keyboard";
 
 export type DataBlock = {
   values: { [key: string]: DataNode };
@@ -43,87 +33,7 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   const { el, dispose } = mountNode(data);
   root.appendChild(el);
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    const active = document.activeElement as HTMLElement | null;
-    if (!active || !root.contains(active)) return;
-    if (active.tagName === "INPUT") return;
-
-    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-      e.preventDefault();
-      if (e.key === "ArrowUp") {
-        insertEmptyNodeBefore(active);
-      } else {
-        insertEmptyNodeAfter(active);
-      }
-      return;
-    }
-
-    const info = elInfo.get(active);
-    if (
-      info?.setEditing &&
-      e.key.length === 1 &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey
-    ) {
-      e.preventDefault();
-      info.node.value = e.key;
-      info.setEditing(true);
-      return;
-    }
-
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      focusPreviousSibling(active);
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      focusNextSibling(active);
-      return;
-    }
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      focusParent(active);
-      return;
-    }
-    if (e.key === "ArrowRight") {
-      e.preventDefault();
-      focusFirstChild(active);
-      return;
-    }
-
-    if (!info) return;
-
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (info.setEditing) info.setEditing(true);
-      else {
-        if (e.shiftKey) {
-          insertEmptyNodeBefore(active);
-        } else {
-          insertEmptyNodeAfter(active);
-        }
-      }
-      return;
-    }
-
-    if (e.key === "Backspace") {
-      e.preventDefault();
-      removeNodeAtElement(active);
-      return;
-    }
-
-    if (e.key === "Tab") {
-      e.preventDefault();
-      if (e.shiftKey) {
-        unwrapNodeFromBlock(active);
-      } else {
-        wrapNodeInBlock(active);
-      }
-      return;
-    }
-  };
+  const onKeyDown = (e: KeyboardEvent) => handleRootKeyDown(e, root);
 
   root.addEventListener("keydown", onKeyDown);
 
@@ -205,26 +115,10 @@ function mountNode(node: DataNode): Mount {
         node.value = input.value;
       });
       input.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
           setEditing(false);
-          return;
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          setEditing(false);
-          return;
-        }
-        if (e.key === "Tab") {
-          e.preventDefault();
-          e.stopPropagation();
-          if (e.shiftKey) {
-            unwrapNodeFromBlock(input);
-          } else {
-            wrapNodeInBlock(input);
-          }
           return;
         }
       });
