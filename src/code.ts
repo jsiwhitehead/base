@@ -2,6 +2,10 @@ import { Signal, effect } from "@preact/signals-core";
 
 import {
   isBlock,
+  focusPreviousSibling,
+  focusNextSibling,
+  focusParent,
+  focusFirstChild,
   insertEmptyNodeBefore,
   insertEmptyNodeAfter,
   removeNodeAtElement,
@@ -39,23 +43,6 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   const { el, dispose } = mountNode(data);
   root.appendChild(el);
 
-  const arrowTarget = (a: HTMLElement, key: string): HTMLElement | null => {
-    switch (key) {
-      case "ArrowUp":
-        return a.previousElementSibling as HTMLElement | null;
-      case "ArrowDown":
-        return a.nextElementSibling as HTMLElement | null;
-      case "ArrowLeft":
-        return a.parentElement !== root
-          ? (a.parentElement as HTMLElement)
-          : null;
-      case "ArrowRight":
-        return a.firstElementChild as HTMLElement | null;
-      default:
-        return null;
-    }
-  };
-
   const onKeyDown = (e: KeyboardEvent) => {
     const active = document.activeElement as HTMLElement | null;
     if (!active || !root.contains(active)) return;
@@ -85,10 +72,24 @@ export function render(data: DataNode, root: HTMLElement): () => void {
       return;
     }
 
-    const target = arrowTarget(active, e.key);
-    if (target) {
+    if (e.key === "ArrowUp") {
       e.preventDefault();
-      target.focus();
+      focusPreviousSibling(active);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      focusNextSibling(active);
+      return;
+    }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      focusParent(active);
+      return;
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      focusFirstChild(active);
       return;
     }
 
@@ -185,6 +186,11 @@ function mountNode(node: DataNode): Mount {
     }
     mode = next;
     replaceEl(document.createElement(next === "block" ? "div" : "p"));
+    if (next === "block") {
+      const valuesEl = document.createElement("div");
+      valuesEl.textContent = "values";
+      el.append(valuesEl, document.createElement("div"));
+    }
   };
 
   const setEditing = (next: boolean, focus = true) => {
@@ -258,7 +264,7 @@ function mountNode(node: DataNode): Mount {
         fragment.appendChild(childMount.el);
         attached.add(sig);
       }
-      el.appendChild(fragment);
+      (el.children[1] as HTMLElement).appendChild(fragment);
     } else {
       setMode("value");
       if (el.tagName === "INPUT") {

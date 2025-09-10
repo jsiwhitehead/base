@@ -28,6 +28,34 @@ function getParentContext(node?: DataNode): ParentIndex | null {
   return { parent: meta.parent, parentVal, idx };
 }
 
+export function focusPreviousSibling(el: HTMLElement) {
+  const ctx = getParentContext(elInfo.get(el)?.node);
+  if (!ctx) return;
+  const { parentVal, idx } = ctx;
+  if (!parentVal.items[idx - 1]) return;
+  mountCache.get(parentVal.items[idx - 1]!)!.mount.el.focus();
+}
+export function focusNextSibling(el: HTMLElement) {
+  const ctx = getParentContext(elInfo.get(el)?.node);
+  if (!ctx) return;
+  const { parentVal, idx } = ctx;
+  if (!parentVal.items[idx + 1]) return;
+  mountCache.get(parentVal.items[idx + 1]!)!.mount.el.focus();
+}
+export function focusParent(el: HTMLElement) {
+  const ctx = getParentContext(elInfo.get(el)?.node);
+  if (!ctx) return;
+  const { parent } = ctx;
+  if (!parent) return;
+  mountCache.get(parent)!.mount.el.focus();
+}
+export function focusFirstChild(el: HTMLElement) {
+  const { node } = elInfo.get(el)!;
+  const nodeVal = node.peek();
+  if (!isBlock(nodeVal) || nodeVal.items.length === 0) return;
+  mountCache.get(nodeVal.items[0]!)!.mount.el.focus();
+}
+
 export function insertEmptyNodeBefore(el: HTMLElement) {
   const ctx = getParentContext(elInfo.get(el)?.node);
   if (!ctx) return;
@@ -42,7 +70,6 @@ export function insertEmptyNodeBefore(el: HTMLElement) {
     mountCache.get(newNode)!.mount.el.focus();
   });
 }
-
 export function insertEmptyNodeAfter(el: HTMLElement) {
   const ctx = getParentContext(elInfo.get(el)?.node);
   if (!ctx) return;
@@ -57,7 +84,6 @@ export function insertEmptyNodeAfter(el: HTMLElement) {
     mountCache.get(newNode)!.mount.el.focus();
   });
 }
-
 export function removeNodeAtElement(el: HTMLElement) {
   const ctx = getParentContext(elInfo.get(el)?.node);
   if (!ctx) return;
@@ -91,7 +117,6 @@ export function wrapNodeInBlock(el: HTMLElement) {
     mountCache.get(node)!.mount.el.focus();
   });
 }
-
 export function unwrapNodeFromBlock(el: HTMLElement) {
   const node = elInfo.get(el)!.node;
   const ctx = getParentContext(node);

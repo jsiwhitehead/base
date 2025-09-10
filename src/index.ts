@@ -10,7 +10,10 @@ import { render } from "./code";
 const parent = signal({
   values: {},
   items: [
-    signal({ values: {}, items: [signal("hi"), signal("there")] }),
+    signal({
+      values: { x: signal("test") },
+      items: [signal("hi"), signal("there")],
+    }),
     signal("world"),
   ],
 });
