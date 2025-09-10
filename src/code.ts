@@ -2,9 +2,11 @@ import { Signal, effect } from "@preact/signals-core";
 
 import {
   isBlock,
-  insertEmptySiblingAfter,
+  insertEmptyNodeBefore,
+  insertEmptyNodeAfter,
   removeNodeAtElement,
   wrapNodeInBlock,
+  unwrapNodeFromBlock,
 } from "./data";
 
 export type DataBlock = {
@@ -72,7 +74,13 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     if (e.key === "Enter") {
       e.preventDefault();
       if (info.setEditing) info.setEditing(true);
-      else insertEmptySiblingAfter(active);
+      else {
+        if (e.shiftKey) {
+          insertEmptyNodeBefore(active);
+        } else {
+          insertEmptyNodeAfter(active);
+        }
+      }
       return;
     }
 
@@ -84,7 +92,11 @@ export function render(data: DataNode, root: HTMLElement): () => void {
 
     if (e.key === "Tab") {
       e.preventDefault();
-      wrapNodeInBlock(active);
+      if (e.shiftKey) {
+        unwrapNodeFromBlock(active);
+      } else {
+        wrapNodeInBlock(active);
+      }
       return;
     }
   };
@@ -133,7 +145,10 @@ function mountNode(node: DataNode): Mount {
 
   const clearChildren = () => {
     for (const sig of attached) {
-      detachWithNextTickGC(sig);
+      const meta = nodeMeta.get(sig);
+      if (meta?.parent === node) {
+        detachWithNextTickGC(sig);
+      }
     }
     attached.clear();
     el.textContent = "";
@@ -164,7 +179,11 @@ function mountNode(node: DataNode): Mount {
         if (e.key === "Enter") {
           e.preventDefault();
           e.stopPropagation();
-          insertEmptySiblingAfter(input);
+          if (e.shiftKey) {
+            insertEmptyNodeBefore(input);
+          } else {
+            insertEmptyNodeAfter(input);
+          }
           setEditing(false, false);
           return;
         }
@@ -177,7 +196,11 @@ function mountNode(node: DataNode): Mount {
         if (e.key === "Tab") {
           e.preventDefault();
           e.stopPropagation();
-          wrapNodeInBlock(input);
+          if (e.shiftKey) {
+            unwrapNodeFromBlock(input);
+          } else {
+            wrapNodeInBlock(input);
+          }
           return;
         }
       });
@@ -210,7 +233,10 @@ function mountNode(node: DataNode): Mount {
 
       for (const sig of [...attached]) {
         if (!nextSet.has(sig)) {
-          detachWithNextTickGC(sig);
+          const meta = nodeMeta.get(sig);
+          if (meta?.parent === node) {
+            detachWithNextTickGC(sig);
+          }
           attached.delete(sig);
         }
       }

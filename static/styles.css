@@ -32,6 +32,13 @@ div {
   &:focus {
     padding: 4px;
   }
+  &:has(> :focus) {
+    > div,
+    > p,
+    > input {
+      border-color: #0b57d0;
+    }
+  }
 }
 
 p,
@@ -46,3 +53,5 @@ input {
 input {
   background: #e8f0fe;
 }
+
+/* #a8c7fa */
