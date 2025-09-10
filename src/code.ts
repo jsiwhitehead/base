@@ -24,8 +24,8 @@ export const nodeMeta = new WeakMap<DataNode, NodeMeta>();
 
 type Mount = { el: HTMLElement; dispose: () => void };
 
-type RegEntry = { mount: Mount; pending?: symbol };
-export const registry = new Map<DataNode, RegEntry>();
+type MountCache = { mount: Mount; pending?: symbol };
+export const mountCache = new WeakMap<DataNode, MountCache>();
 
 type ElInfo = {
   node: DataNode;
@@ -110,19 +110,8 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   };
 }
 
-function getOrCreateMountFor(node: DataNode): Mount {
-  const entry = registry.get(node);
-  if (entry) {
-    entry.pending = undefined;
-    return entry.mount;
-  }
-  const m = mountNode(node);
-  registry.set(node, { mount: m });
-  return m;
-}
-
-function detachWithNextTickGC(node: DataNode) {
-  const entry = registry.get(node);
+function scheduleDisposeIfUnattached(node: DataNode) {
+  const entry = mountCache.get(node);
   if (!entry) return;
 
   entry.mount.el.remove();
@@ -130,29 +119,16 @@ function detachWithNextTickGC(node: DataNode) {
   entry.pending = token;
 
   queueMicrotask(() => {
-    const current = registry.get(node);
+    const current = mountCache.get(node);
     if (!current || current.pending !== token) return;
     current.mount.dispose();
-    registry.delete(node);
+    mountCache.delete(node);
   });
 }
 
 function mountNode(node: DataNode): Mount {
   let el!: HTMLElement;
   let mode: "block" | "value" | null = null;
-
-  const attached = new Set<DataNode>();
-
-  const clearChildren = () => {
-    for (const sig of attached) {
-      const meta = nodeMeta.get(sig);
-      if (meta?.parent === node) {
-        detachWithNextTickGC(sig);
-      }
-    }
-    attached.clear();
-    el.textContent = "";
-  };
 
   const replaceEl = (nextEl: HTMLElement, focus = false) => {
     nextEl.tabIndex = 0;
@@ -162,6 +138,28 @@ function mountNode(node: DataNode): Mount {
     if (mode === "value") info.setEditing = setEditing;
     elInfo.set(el, info);
     if (focus) el.focus();
+  };
+
+  const attached = new Set<DataNode>();
+  function pruneChildren(keep?: Set<DataNode>) {
+    for (const sig of Array.from(attached)) {
+      if (keep?.has(sig)) continue;
+      const meta = nodeMeta.get(sig);
+      if (meta?.parent === node) {
+        scheduleDisposeIfUnattached(sig);
+      }
+      attached.delete(sig);
+    }
+  }
+
+  const setMode = (next: "block" | "value") => {
+    if (mode === next) return;
+    if (mode === "block") {
+      pruneChildren();
+      el.textContent = "";
+    }
+    mode = next;
+    replaceEl(document.createElement(next === "block" ? "div" : "p"));
   };
 
   const setEditing = (next: boolean, focus = true) => {
@@ -211,13 +209,6 @@ function mountNode(node: DataNode): Mount {
     replaceEl(nextEl, focus);
   };
 
-  const setMode = (next: "block" | "value") => {
-    if (mode === next) return;
-    if (mode === "block") clearChildren();
-    mode = next;
-    replaceEl(document.createElement(next === "block" ? "div" : "p"));
-  };
-
   const stop = effect(() => {
     const v = node.value;
     if (isBlock(v)) {
@@ -230,25 +221,24 @@ function mountNode(node: DataNode): Mount {
       };
 
       const nextSet = new Set(v.items);
+      pruneChildren(nextSet);
 
-      for (const sig of [...attached]) {
-        if (!nextSet.has(sig)) {
-          const meta = nodeMeta.get(sig);
-          if (meta?.parent === node) {
-            detachWithNextTickGC(sig);
-          }
-          attached.delete(sig);
-        }
-      }
-
-      const frag = document.createDocumentFragment();
+      const fragment = document.createDocumentFragment();
       for (const sig of v.items) {
         nodeMeta.set(sig, { parent: node, context: nextContext });
-        const childMount = getOrCreateMountFor(sig);
-        frag.appendChild(childMount.el);
+        let childMount: Mount;
+        const existing = mountCache.get(sig);
+        if (existing) {
+          existing.pending = undefined;
+          childMount = existing.mount;
+        } else {
+          childMount = mountNode(sig);
+          mountCache.set(sig, { mount: childMount });
+        }
+        fragment.appendChild(childMount.el);
         attached.add(sig);
       }
-      el.appendChild(frag);
+      el.appendChild(fragment);
     } else {
       setMode("value");
       if (el.tagName === "INPUT") {
@@ -261,9 +251,10 @@ function mountNode(node: DataNode): Mount {
 
   const dispose = () => {
     stop();
-    clearChildren();
-    const entry = registry.get(node);
-    if (entry?.mount === self) registry.delete(node);
+    pruneChildren();
+    el.textContent = "";
+    const entry = mountCache.get(node);
+    if (entry?.mount === self) mountCache.delete(node);
   };
 
   const self: Mount = {
@@ -273,6 +264,6 @@ function mountNode(node: DataNode): Mount {
     dispose,
   };
 
-  registry.set(node, { mount: self });
+  mountCache.set(node, { mount: self });
   return self;
 }

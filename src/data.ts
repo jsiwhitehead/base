@@ -1,6 +1,6 @@
 import { signal } from "@preact/signals-core";
 
-import { elInfo, nodeMeta, registry } from "./code";
+import { elInfo, nodeMeta, mountCache } from "./code";
 import type { DataBlock, DataNode } from "./code";
 
 type ParentIndex = {
@@ -39,7 +39,7 @@ export function insertEmptyNodeBefore(el: HTMLElement) {
     items: parentVal.items.toSpliced(idx, 0, newNode),
   };
   queueMicrotask(() => {
-    registry.get(newNode)!.mount.el.focus();
+    mountCache.get(newNode)!.mount.el.focus();
   });
 }
 
@@ -54,7 +54,7 @@ export function insertEmptyNodeAfter(el: HTMLElement) {
     items: parentVal.items.toSpliced(idx + 1, 0, newNode),
   };
   queueMicrotask(() => {
-    registry.get(newNode)!.mount.el.focus();
+    mountCache.get(newNode)!.mount.el.focus();
   });
 }
 
@@ -69,7 +69,7 @@ export function removeNodeAtElement(el: HTMLElement) {
     items: parentVal.items.toSpliced(idx, 1),
   };
   queueMicrotask(() => {
-    registry.get(focus)!.mount.el.focus();
+    mountCache.get(focus)!.mount.el.focus();
   });
 }
 
@@ -88,7 +88,7 @@ export function wrapNodeInBlock(el: HTMLElement) {
     ),
   };
   queueMicrotask(() => {
-    registry.get(node)!.mount.el.focus();
+    mountCache.get(node)!.mount.el.focus();
   });
 }
 
@@ -104,6 +104,6 @@ export function unwrapNodeFromBlock(el: HTMLElement) {
     items: parentVal.items.toSpliced(idx, 1, node),
   };
   queueMicrotask(() => {
-    registry.get(node)!.mount.el.focus();
+    mountCache.get(node)!.mount.el.focus();
   });
 }
