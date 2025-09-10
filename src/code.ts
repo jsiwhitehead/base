@@ -61,6 +61,30 @@ export function render(data: DataNode, root: HTMLElement): () => void {
     if (!active || !root.contains(active)) return;
     if (active.tagName === "INPUT") return;
 
+    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      if (e.key === "ArrowUp") {
+        insertEmptyNodeBefore(active);
+      } else {
+        insertEmptyNodeAfter(active);
+      }
+      return;
+    }
+
+    const info = elInfo.get(active);
+    if (
+      info?.setEditing &&
+      e.key.length === 1 &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      info.node.value = e.key;
+      info.setEditing(true);
+      return;
+    }
+
     const target = arrowTarget(active, e.key);
     if (target) {
       e.preventDefault();
@@ -68,7 +92,6 @@ export function render(data: DataNode, root: HTMLElement): () => void {
       return;
     }
 
-    const info = elInfo.get(active);
     if (!info) return;
 
     if (e.key === "Enter") {
@@ -102,6 +125,8 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   };
 
   root.addEventListener("keydown", onKeyDown);
+
+  mountCache.get(data)!.mount.el.focus();
 
   return () => {
     dispose();
@@ -177,12 +202,7 @@ function mountNode(node: DataNode): Mount {
         if (e.key === "Enter") {
           e.preventDefault();
           e.stopPropagation();
-          if (e.shiftKey) {
-            insertEmptyNodeBefore(input);
-          } else {
-            insertEmptyNodeAfter(input);
-          }
-          setEditing(false, false);
+          setEditing(false);
           return;
         }
         if (e.key === "Escape") {

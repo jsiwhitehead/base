@@ -63,7 +63,7 @@ export function removeNodeAtElement(el: HTMLElement) {
   if (!ctx) return;
   const { parent, parentVal, idx } = ctx;
 
-  const focus = parentVal.items[idx - 1] || parentVal.items[idx + 1] || parent;
+  const focus = parentVal.items[idx + 1] || parentVal.items[idx - 1] || parent;
   parent.value = {
     ...parentVal,
     items: parentVal.items.toSpliced(idx, 1),
