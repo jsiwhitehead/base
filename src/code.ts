@@ -136,6 +136,9 @@ function mountNode(node: DataNode): Mount {
           return;
         }
       });
+      input.addEventListener("blur", () => {
+        setEditing(false, false);
+      });
     } else {
       nextEl.textContent = v;
     }
@@ -162,7 +165,7 @@ function mountNode(node: DataNode): Mount {
 
       const frag = document.createDocumentFragment();
       for (const [key, sig] of Object.entries(v.values)) {
-        const labelDiv = document.createElement("div");
+        const labelDiv = document.createElement("span");
         labelDiv.classList.add("key");
         labelDiv.textContent = key + " :";
         frag.append(labelDiv, ensureMount(sig, nextContext));

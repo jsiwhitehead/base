@@ -67,6 +67,7 @@
 }
 
 .key {
+  display: block;
   background: #ddd;
   &:has(+ :focus) {
     z-index: 10;
@@ -84,46 +85,5 @@
 input {
   background: #e8f0fe !important;
 }
-
-/*
-
-.block,
-.key,
-.value {
-  position: relative;
-  outline: none;
-  margin-top: -1px;
-  margin-right: -1px;
-  border: 1px solid #ddd;
-  border-left-width: 5px;
-  background: white;
-  &:has(:focus) {
-    
-    background: #e8f0fe;
-  }
-  &:focus {
-    z-index: 10;
-    border-color: #0b57d0;
-  }
-}
-
-input.value {
-  border: 1px solid #0b57d0;
-  border-left: 5px solid #0b57d0;
-  padding: 1px 5px;
-  background: #e8f0fe;
-}
-
-.values {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  .key:has(+ :focus) {
-    border-color: #0b57d0;
-    background: #a8c7fa;
-  }
-  > .value {
-    border-left: none !important;
-  }
-} */
 
 /* border-color: #a8c7fa; */
