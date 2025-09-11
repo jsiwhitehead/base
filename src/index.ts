@@ -1,7 +1,7 @@
 import { effect, signal } from "@preact/signals-core";
 
-import type { DataNode } from "./code";
-import { render } from "./code";
+import type { DataNode } from "./data";
+import { render } from "./render";
 
 // const leaf1 = signal<DataNode[] | string>("hello");
 // const leaf2 = signal<DataNode[] | string>("world");

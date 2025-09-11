@@ -1,18 +1,12 @@
-import { Signal, effect } from "@preact/signals-core";
+import { effect } from "@preact/signals-core";
 
+import type { DataNode } from "./data";
 import { isBlock } from "./data";
 import {
   handleRootMouseDown,
   handleRootDblClick,
   handleRootKeyDown,
 } from "./input";
-
-export type DataBlock = {
-  values: { [key: string]: DataNode };
-  items: DataNode[];
-};
-
-export type DataNode = Signal<DataBlock | string>;
 
 type NodeMeta = {
   parent: DataNode | null;

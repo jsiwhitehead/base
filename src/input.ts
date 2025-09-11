@@ -1,4 +1,3 @@
-import { elInfo } from "./code";
 import {
   focusFirstChild,
   focusNextSibling,
@@ -10,6 +9,7 @@ import {
   wrapNodeInBlock,
   unwrapNodeFromBlock,
 } from "./data";
+import { elInfo } from "./render";
 
 export function handleRootMouseDown(e: MouseEvent) {
   if (e.detail !== 2) return;

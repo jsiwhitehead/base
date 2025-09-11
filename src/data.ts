@@ -1,7 +1,13 @@
-import { signal } from "@preact/signals-core";
+import { signal, Signal } from "@preact/signals-core";
 
-import { elInfo, nodeMeta, mountCache } from "./code";
-import type { DataBlock, DataNode } from "./code";
+import { elInfo, nodeMeta, mountCache } from "./render";
+
+export type DataBlock = {
+  values: { [key: string]: DataNode };
+  items: DataNode[];
+};
+
+export type DataNode = Signal<DataBlock | string>;
 
 type NodeContext = {
   node: DataNode;
