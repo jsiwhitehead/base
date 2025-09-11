@@ -162,8 +162,15 @@ export function wrapNodeInBlock(el: HTMLElement) {
 export function unwrapNodeFromBlock(el: HTMLElement) {
   const node = elInfo.get(el)!.node;
   const ctx = getNodeContext(node);
-  const parentCtx = getNodeContext(ctx?.parent);
+  if (!ctx) return;
+
+  const wrapperBlock = ctx.parentVal;
+  const children = orderedChildren(wrapperBlock);
+  if (children.length !== 1) return;
+
+  const parentCtx = getNodeContext(ctx.parent);
   if (!parentCtx) return;
+
   const { parent, parentVal, itemIdx, valueKey } = parentCtx;
   if (itemIdx >= 0) {
     parent.value = {

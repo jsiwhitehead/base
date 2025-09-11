@@ -6,9 +6,15 @@
 }
 
 .block {
+  box-sizing: content-box;
+  min-height: 25px;
   display: grid;
   grid-template-columns: auto 1fr;
   padding-left: 10px;
+  background: #f6f6f6;
+  &:focus {
+    background: #e8f0fe;
+  }
 }
 
 .block,
@@ -27,7 +33,6 @@
 .value {
   position: relative;
   outline: none;
-  background: white;
   border: 0px solid #ddd;
   border-left-width: 5px;
   border-bottom-width: 1px;
@@ -61,6 +66,7 @@
 
 .key,
 .value {
+  background: white;
   padding: 2px 5px;
   box-sizing: content-box;
   min-height: 21px;

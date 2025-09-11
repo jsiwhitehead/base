@@ -82,10 +82,6 @@ export function handleRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
   if (e.key === "Enter") {
     e.preventDefault();
     if (info.setEditing) info.setEditing(true);
-    else {
-      if (e.shiftKey) insertEmptyNodeBefore(active);
-      else insertEmptyNodeAfter(active);
-    }
     return;
   }
 
