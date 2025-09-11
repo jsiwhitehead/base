@@ -62,6 +62,8 @@
 .key,
 .value {
   padding: 2px 5px;
+  box-sizing: content-box;
+  min-height: 21px;
 }
 
 .key {
