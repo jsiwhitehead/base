@@ -185,3 +185,24 @@ export function unwrapNodeFromBlock(el: HTMLElement) {
   }
   queueMicrotask(() => focusNode(node));
 }
+
+export function renameChildKey(
+  parent: DataNode,
+  child: DataNode,
+  nextKey: string
+): DataBlock {
+  const parentVal = parent.peek() as DataBlock;
+
+  const currentKey = Object.entries(parentVal.values).find(
+    ([, v]) => v === child
+  )?.[0]!;
+
+  if (!nextKey || nextKey === currentKey) return parentVal;
+  if (nextKey in parentVal.values && nextKey !== currentKey) return parentVal;
+
+  const newValues = { ...parentVal.values };
+  delete newValues[currentKey];
+  newValues[nextKey] = child;
+
+  return { ...parentVal, values: newValues };
+}
