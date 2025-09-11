@@ -1,7 +1,11 @@
 import { Signal, effect } from "@preact/signals-core";
 
 import { isBlock } from "./data";
-import { handleRootKeyDown } from "./keyboard";
+import {
+  handleRootMouseDown,
+  handleRootDblClick,
+  handleRootKeyDown,
+} from "./input";
 
 export type DataBlock = {
   values: { [key: string]: DataNode };
@@ -34,11 +38,16 @@ export function render(data: DataNode, root: HTMLElement): () => void {
   root.appendChild(el);
   el.focus();
 
+  root.addEventListener("mousedown", handleRootMouseDown);
+  root.addEventListener("dblclick", handleRootDblClick);
+
   const onKeyDown = (e: KeyboardEvent) => handleRootKeyDown(e, root);
   root.addEventListener("keydown", onKeyDown);
 
   return () => {
     dispose();
+    root.removeEventListener("mousedown", handleRootMouseDown);
+    root.removeEventListener("dblclick", handleRootDblClick);
     root.removeEventListener("keydown", onKeyDown);
     root.textContent = "";
   };
@@ -125,19 +134,20 @@ function mountNode(node: DataNode): Mount {
     if (wantTag === "input") {
       const input = nextEl as HTMLInputElement;
       input.value = v;
-      input.addEventListener("input", () => {
-        node.value = input.value;
-      });
+      let canceled = false;
+      let focusAfter = false;
       input.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
-          setEditing(false);
-          return;
+          canceled = e.key === "Escape";
+          focusAfter = true;
+          input.blur();
         }
       });
       input.addEventListener("blur", () => {
-        setEditing(false, false);
+        if (!canceled) node.value = input.value;
+        setEditing(false, focusAfter);
       });
     } else {
       nextEl.textContent = v;

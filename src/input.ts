@@ -11,6 +11,24 @@ import {
   unwrapNodeFromBlock,
 } from "./data";
 
+export function handleRootMouseDown(e: MouseEvent) {
+  if (e.detail !== 2) return;
+  const target = e.target as HTMLElement;
+  if (target.tagName === "INPUT") return;
+  e.preventDefault();
+}
+
+export function handleRootDblClick(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (target.tagName === "INPUT") return;
+  const info = elInfo.get(target);
+  if (info?.setEditing) {
+    e.preventDefault();
+    e.stopPropagation();
+    info.setEditing(true, true);
+  }
+}
+
 export function handleRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
   const active = document.activeElement as HTMLElement | null;
   if (!active || !root.contains(active)) return;
