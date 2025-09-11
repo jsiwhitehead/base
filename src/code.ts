@@ -112,17 +112,15 @@ function mountNode(node: DataNode): Mount {
       el.textContent = "";
     }
     mode = next;
-    replaceEl(document.createElement(next === "block" ? "div" : "p"));
+    replaceEl(document.createElement("div"));
     el.classList.add(next);
-    if (next === "block") {
-      el.append(document.createElement("div"), document.createElement("div"));
-    }
   };
 
   const setEditing = (next: boolean, focus = true) => {
-    const wantTag = next ? "input" : "p";
+    const wantTag = next ? "input" : "div";
     const v = node.peek() as string;
     const nextEl = document.createElement(wantTag);
+    nextEl.classList.add("value");
 
     if (wantTag === "input") {
       const input = nextEl as HTMLInputElement;
@@ -162,19 +160,17 @@ function mountNode(node: DataNode): Mount {
       ]);
       pruneChildren(nextSet);
 
-      const valuesFrag = document.createDocumentFragment();
+      const frag = document.createDocumentFragment();
       for (const [key, sig] of Object.entries(v.values)) {
         const labelDiv = document.createElement("div");
-        labelDiv.textContent = key;
-        valuesFrag.append(labelDiv, ensureMount(sig, nextContext));
+        labelDiv.classList.add("key");
+        labelDiv.textContent = key + " :";
+        frag.append(labelDiv, ensureMount(sig, nextContext));
       }
-      (el.children[0] as HTMLElement).replaceChildren(valuesFrag);
-
-      const itemsFrag = document.createDocumentFragment();
       for (const sig of v.items) {
-        itemsFrag.append(ensureMount(sig, nextContext));
+        frag.append(ensureMount(sig, nextContext));
       }
-      (el.children[1] as HTMLElement).replaceChildren(itemsFrag);
+      el.replaceChildren(frag);
     } else {
       setMode("value");
       if (el.tagName === "INPUT") {

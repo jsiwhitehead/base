@@ -19,6 +19,9 @@ button,
 textarea,
 select {
   font: inherit;
+  display: block;
+  outline: none;
+  border: none;
 }
 
 p {
