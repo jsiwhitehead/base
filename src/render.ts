@@ -7,7 +7,6 @@ import {
   renameChildKey,
   convertValueToItem,
 } from "./data";
-import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
 
 type NodeContext = {
   parent: Node | null;
@@ -22,28 +21,6 @@ type NodeBinding = {
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
 export const bindingByElement = new WeakMap<HTMLElement, NodeBinding>();
-
-export function render(data: Node, rootElement: HTMLElement): () => void {
-  contextByNode.set(data, { parent: null, scope: {} });
-
-  const { element, dispose } = new NodeMount(data);
-  rootElement.appendChild(element);
-  queueMicrotask(() => element.focus());
-
-  rootElement.addEventListener("mousedown", onRootMouseDown);
-  rootElement.addEventListener("dblclick", onRootDblClick);
-
-  const onKeyDown = (e: KeyboardEvent) => onRootKeyDown(e, rootElement);
-  rootElement.addEventListener("keydown", onKeyDown);
-
-  return () => {
-    dispose();
-    rootElement.removeEventListener("mousedown", onRootMouseDown);
-    rootElement.removeEventListener("dblclick", onRootDblClick);
-    rootElement.removeEventListener("keydown", onKeyDown);
-    rootElement.textContent = "";
-  };
-}
 
 class InlineEditor {
   element!: HTMLElement;
@@ -117,22 +94,6 @@ class InlineEditor {
   }
 }
 
-function scheduleUnmountIfDetached(node: Node) {
-  const entry = mountByNode.get(node);
-  if (!entry) return;
-
-  entry.element.remove();
-
-  queueMicrotask(() => {
-    const current = mountByNode.get(node);
-    if (!current) return;
-    if (!current.element.isConnected) {
-      current.dispose();
-      mountByNode.delete(node);
-    }
-  });
-}
-
 abstract class NodeView<T> {
   abstract readonly kind: "block" | "value";
   abstract readonly element: HTMLElement;
@@ -197,7 +158,16 @@ class BlockView extends NodeView<Block> {
       if (keep?.has(childNode)) continue;
       const context = contextByNode.get(childNode);
       if (context?.parent === this.node) {
-        scheduleUnmountIfDetached(childNode);
+        const mount = mountByNode.get(childNode);
+        if (mount) {
+          mount.element.remove();
+          queueMicrotask(() => {
+            const current = mountByNode.get(mount.node);
+            if (current === mount && !mount.element.isConnected) {
+              mount.dispose();
+            }
+          });
+        }
       }
       this.attachedChildren.delete(childNode);
     }
@@ -259,7 +229,7 @@ class BlockView extends NodeView<Block> {
   }
 }
 
-class NodeMount {
+export class NodeMount {
   view!: NodeView<Block | string>;
   stop: () => void;
 

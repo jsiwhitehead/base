@@ -1,7 +1,32 @@
 import { effect, signal } from "@preact/signals-core";
 
 import type { Node } from "./data";
-import { render } from "./render";
+import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
+import { contextByNode, NodeMount } from "./render";
+
+export function render(data: Node, rootElement: HTMLElement): () => void {
+  contextByNode.set(data, { parent: null, scope: {} });
+
+  const { element, dispose } = new NodeMount(data);
+  rootElement.appendChild(element);
+  queueMicrotask(() => element.focus());
+
+  rootElement.addEventListener("mousedown", onRootMouseDown);
+  rootElement.addEventListener("dblclick", onRootDblClick);
+
+  const onKeyDown = (e: KeyboardEvent) => onRootKeyDown(e, rootElement);
+  rootElement.addEventListener("keydown", onKeyDown);
+
+  return () => {
+    dispose();
+    rootElement.removeEventListener("mousedown", onRootMouseDown);
+    rootElement.removeEventListener("dblclick", onRootDblClick);
+    rootElement.removeEventListener("keydown", onKeyDown);
+    rootElement.textContent = "";
+  };
+}
+
+// TEST
 
 // const leaf1 = signal<Node[] | string>("hello");
 // const leaf2 = signal<Node[] | string>("world");
