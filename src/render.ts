@@ -23,7 +23,7 @@ export function render(data: Node, rootElement: HTMLElement): () => void {
 
   const { element, dispose } = new NodeMount(data);
   rootElement.appendChild(element);
-  element.focus();
+  queueMicrotask(() => element.focus());
 
   rootElement.addEventListener("mousedown", onRootMouseDown);
   rootElement.addEventListener("dblclick", onRootDblClick);
