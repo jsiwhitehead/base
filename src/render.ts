@@ -10,8 +10,7 @@ type NodeContext = {
 };
 export const contextByNode = new WeakMap<Node, NodeContext>();
 
-type MountInstance = { element: HTMLElement; dispose: () => void };
-export const mountByNode = new WeakMap<Node, MountInstance>();
+export const mountByNode = new WeakMap<Node, NodeMount>();
 
 type NodeBinding = {
   node: Node;
@@ -22,7 +21,7 @@ export const bindingByElement = new WeakMap<HTMLElement, NodeBinding>();
 export function render(data: Node, rootElement: HTMLElement): () => void {
   contextByNode.set(data, { parent: null, scope: {} });
 
-  const { element, dispose } = mountNode(data);
+  const { element, dispose } = new NodeMount(data);
   rootElement.appendChild(element);
   element.focus();
 
@@ -41,85 +40,76 @@ export function render(data: Node, rootElement: HTMLElement): () => void {
   };
 }
 
-type InlineEditor = {
-  element: HTMLElement;
-  update: (text: string) => void;
-  setEditing: (isEditing: boolean, focus?: boolean) => void;
-};
+class InlineEditor {
+  element!: HTMLElement;
 
-function createEditor(
-  node: Node,
-  fieldType: "value" | "key",
-  readText: () => string,
-  applyText: (text: string) => void
-): InlineEditor {
-  let element!: HTMLElement;
-
-  function replaceElement(tag: "div" | "input") {
-    const next = document.createElement(tag) as HTMLElement;
-    next.classList.add(fieldType);
-    next.tabIndex = 0;
-    bindingByElement.set(next, { node, setEditing });
-
-    if (tag === "input") {
-      (next as HTMLInputElement).value = readText();
-    } else {
-      (next as HTMLElement).textContent =
-        readText() + (fieldType === "key" ? " :" : "");
-    }
-
-    if (element) element.replaceWith(next);
-    element = next;
+  constructor(
+    readonly node: Node,
+    readonly fieldType: "value" | "key",
+    readonly readText: () => string,
+    readonly applyText: (text: string) => void
+  ) {
+    this.replace("div");
   }
 
-  const setEditing = (isEditing: boolean, focus = true) => {
+  replace(tag: "div" | "input") {
+    const next = document.createElement(tag) as HTMLElement;
+    next.classList.add(this.fieldType);
+    next.tabIndex = 0;
+
+    bindingByElement.set(next, {
+      node: this.node,
+      setEditing: this.setEditing.bind(this),
+    });
+
+    if (tag === "input") {
+      (next as HTMLInputElement).value = this.readText();
+    } else {
+      next.textContent =
+        this.readText() + (this.fieldType === "key" ? " :" : "");
+    }
+
+    if (this.element) this.element.replaceWith(next);
+    this.element = next;
+  }
+
+  setEditing(isEditing: boolean, focus = true) {
     if (isEditing) {
-      replaceElement("input");
+      this.replace("input");
 
       let canceled = false;
       let focusAfter = false;
 
-      element.addEventListener("keydown", (e: KeyboardEvent) => {
+      this.element.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
           canceled = e.key === "Escape";
           focusAfter = true;
-          element.blur();
+          (this.element as HTMLInputElement).blur();
         }
       });
 
-      element.addEventListener("blur", () => {
-        if (!canceled) applyText((element as HTMLInputElement).value);
-        replaceElement("div");
-        if (focusAfter) element.focus();
+      this.element.addEventListener("blur", () => {
+        if (!canceled) this.applyText((this.element as HTMLInputElement).value);
+        this.replace("div");
+        if (focusAfter) this.element.focus();
       });
-
-      if (focus) element.focus();
     } else {
-      replaceElement("div");
-      if (focus) element.focus();
+      this.replace("div");
     }
-  };
 
-  const update: InlineEditor["update"] = (text) => {
-    if (element.tagName === "INPUT") {
-      (element as HTMLInputElement).value = text;
+    if (focus) this.element.focus();
+  }
+
+  update(text: string) {
+    if (this.element.tagName === "INPUT") {
+      (this.element as HTMLInputElement).value = text;
     } else {
-      element.textContent = readText() + (fieldType === "key" ? " :" : "");
+      this.element.textContent =
+        this.readText() + (this.fieldType === "key" ? " :" : "");
     }
-  };
-
-  const instance: InlineEditor = {
-    get element() {
-      return element;
-    },
-    update,
-    setEditing,
-  };
-
-  replaceElement("div");
-  return instance;
+  }
 }
 
 function scheduleUnmountIfDetached(node: Node) {
@@ -138,69 +128,78 @@ function scheduleUnmountIfDetached(node: Node) {
   });
 }
 
-type NodeView<T> = {
-  kind: "block" | "value";
-  element: HTMLElement;
-  update(next: T): void;
-  dispose(): void;
-};
-
-function createValueView(node: Node): NodeView<string> {
-  const editor = createEditor(
-    node,
-    "value",
-    () => node.peek() as string,
-    (next) => {
-      node.value = next;
-    }
-  );
-
-  return {
-    kind: "value",
-    get element() {
-      return editor.element;
-    },
-    update(text) {
-      editor.update(text);
-    },
-    dispose() {},
-  };
+abstract class NodeView<T> {
+  abstract readonly kind: "block" | "value";
+  abstract readonly element: HTMLElement;
+  abstract update(next: T): void;
+  dispose(): void {}
 }
 
-function createBlockView(node: Node): NodeView<Block> {
-  const container = document.createElement("div");
-  container.classList.add("block");
-  container.tabIndex = 0;
-  bindingByElement.set(container, { node });
+class ValueView extends NodeView<string> {
+  readonly kind = "value";
+  editor: InlineEditor;
 
-  const attachedChildren = new Set<Node>();
-  const keyEditors = new Map<Node, InlineEditor>();
+  constructor(readonly node: Node) {
+    super();
+    this.editor = new InlineEditor(
+      node,
+      "value",
+      () => node.peek() as string,
+      (next) => {
+        node.value = next;
+      }
+    );
+  }
 
-  function ensureMounted(child: Node, scope: Record<string, Node>) {
-    contextByNode.set(child, { parent: node, scope });
-    attachedChildren.add(child);
+  get element() {
+    return this.editor.element;
+  }
+
+  update(text: string) {
+    this.editor.update(text);
+  }
+}
+
+class BlockView extends NodeView<Block> {
+  readonly kind = "block";
+  readonly element: HTMLElement;
+
+  attachedChildren = new Set<Node>();
+  keyEditors = new Map<Node, InlineEditor>();
+
+  constructor(readonly node: Node) {
+    super();
+    this.element = document.createElement("div");
+    this.element.classList.add("block");
+    this.element.tabIndex = 0;
+    bindingByElement.set(this.element, { node });
+  }
+
+  ensureMounted(child: Node, scope: Record<string, Node>) {
+    contextByNode.set(child, { parent: this.node, scope });
+    this.attachedChildren.add(child);
 
     const existing = mountByNode.get(child);
     if (existing) return existing.element;
 
-    const mount = mountNode(child);
+    const mount = new NodeMount(child);
     mountByNode.set(child, mount);
     return mount.element;
   }
 
-  function pruneChildren(keep?: Set<Node>) {
-    for (const childNode of Array.from(attachedChildren)) {
+  pruneChildren(keep?: Set<Node>) {
+    for (const childNode of Array.from(this.attachedChildren)) {
       if (keep?.has(childNode)) continue;
       const context = contextByNode.get(childNode);
-      if (context?.parent === node) {
+      if (context?.parent === this.node) {
         scheduleUnmountIfDetached(childNode);
       }
-      attachedChildren.delete(childNode);
+      this.attachedChildren.delete(childNode);
     }
   }
 
-  function updateBlock(v: Block) {
-    const context = contextByNode.get(node)!;
+  update(v: Block) {
+    const context = contextByNode.get(this.node)!;
     const nextScope: Record<string, Node> = {
       ...context.scope,
       ...v.values,
@@ -210,84 +209,81 @@ function createBlockView(node: Node): NodeView<Block> {
       ...Object.values(v.values),
       ...v.items,
     ]);
-    pruneChildren(keepChildren);
+    this.pruneChildren(keepChildren);
 
     const keepKeys = new Set(Object.values(v.values));
-    for (const s of keyEditors.keys()) {
-      if (!keepKeys.has(s)) keyEditors.delete(s);
+    for (const s of this.keyEditors.keys()) {
+      if (!keepKeys.has(s)) this.keyEditors.delete(s);
     }
 
     const frag = document.createDocumentFragment();
 
     for (const [key, childNode] of Object.entries(v.values)) {
-      let editor = keyEditors.get(childNode);
+      let editor = this.keyEditors.get(childNode);
       if (!editor) {
-        editor = createEditor(
+        editor = new InlineEditor(
           childNode,
           "key",
           () =>
-            Object.entries((node.peek() as Block).values).find(
+            Object.entries((this.node.peek() as Block).values).find(
               ([, c]) => c === childNode
             )![0],
           (nextKey) => {
-            node.value = renameChildKey(node, childNode, nextKey.trim());
+            this.node.value = renameChildKey(
+              this.node,
+              childNode,
+              nextKey.trim()
+            );
           }
         );
-        keyEditors.set(childNode, editor);
+        this.keyEditors.set(childNode, editor);
       }
       editor.update(key);
-      frag.append(editor.element, ensureMounted(childNode, nextScope));
+      frag.append(editor.element, this.ensureMounted(childNode, nextScope));
     }
 
     for (const childNode of v.items) {
-      frag.append(ensureMounted(childNode, nextScope));
+      frag.append(this.ensureMounted(childNode, nextScope));
     }
 
-    container.replaceChildren(frag);
+    this.element.replaceChildren(frag);
   }
 
-  return {
-    kind: "block",
-    element: container,
-    update: updateBlock,
-    dispose() {
-      pruneChildren();
-      container.textContent = "";
-    },
-  };
+  dispose() {
+    this.pruneChildren();
+    this.element.textContent = "";
+  }
 }
 
-function mountNode(node: Node): MountInstance {
-  let view: NodeView<Block | string>;
+class NodeMount {
+  view!: NodeView<Block | string>;
+  stop: () => void;
 
-  const stop = effect(() => {
-    const v = node.value;
+  constructor(readonly node: Node) {
+    this.stop = effect(() => {
+      const v = node.value;
+      const nextKind = isBlock(v) ? "block" : "value";
 
-    const nextKind = isBlock(v) ? "block" : "value";
+      if (!this.view || nextKind !== this.view.kind) {
+        this.view?.dispose();
+        this.view =
+          nextKind === "block" ? new BlockView(node) : new ValueView(node);
+      }
 
-    if (!view || nextKind !== view.kind) {
-      view?.dispose();
-      view =
-        nextKind === "block" ? createBlockView(node) : createValueView(node);
-    }
+      this.view.update(v as any);
+    });
 
-    view.update(v);
-  });
+    mountByNode.set(node, this);
+  }
 
-  const dispose = () => {
-    stop();
-    view.dispose();
-    const entry = mountByNode.get(node);
-    if (entry === instance) mountByNode.delete(node);
+  get element() {
+    return this.view.element;
+  }
+
+  dispose = () => {
+    this.stop();
+    this.view.dispose();
+    const entry = mountByNode.get(this.node);
+    if (entry === this) mountByNode.delete(this.node);
   };
-
-  const instance: MountInstance = {
-    get element() {
-      return view.element;
-    },
-    dispose,
-  };
-
-  mountByNode.set(node, instance);
-  return instance;
 }
