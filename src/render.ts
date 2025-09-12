@@ -1,7 +1,12 @@
 import { effect } from "@preact/signals-core";
 
 import type { Block, Node } from "./data";
-import { isBlock, getChildKey, renameChildKey } from "./data";
+import {
+  isBlock,
+  getChildKey,
+  renameChildKey,
+  convertValueToItem,
+} from "./data";
 import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
 
 type NodeContext = {
@@ -226,11 +231,13 @@ class BlockView extends NodeView<Block> {
           "key",
           () => getChildKey(this.node.peek() as Block, childNode),
           (nextKey) => {
-            this.node.value = renameChildKey(
-              this.node.peek() as Block,
-              childNode,
-              nextKey.trim()
-            );
+            const current = this.node.peek() as Block;
+            const trimmed = nextKey.trim();
+            if (trimmed === "") {
+              this.node.value = convertValueToItem(current, childNode);
+            } else {
+              this.node.value = renameChildKey(current, childNode, trimmed);
+            }
           }
         );
         this.keyEditors.set(childNode, editor);

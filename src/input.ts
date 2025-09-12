@@ -7,6 +7,7 @@ import {
   insertEmptyNodeAfter,
   insertEmptyNodeBefore,
   removeNodeAtElement,
+  itemToEmptyKeyValue,
   wrapNodeInBlock,
   unwrapNodeFromBlock,
 } from "./data";
@@ -88,16 +89,25 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
 
   if (e.key === "Tab") {
     e.preventDefault();
-    focusToggleKeyValue(active);
-    const newBinding = bindingByElement.get(
-      document.activeElement as HTMLElement
-    );
     if (
-      document.activeElement?.classList.contains("key") &&
-      newBinding?.setEditing
+      active.classList.contains("key") ||
+      active.previousElementSibling?.classList.contains("key")
     ) {
-      newBinding.setEditing(true, true);
+      focusToggleKeyValue(active);
+    } else {
+      itemToEmptyKeyValue(active);
     }
+    queueMicrotask(() => {
+      const newBinding = bindingByElement.get(
+        document.activeElement as HTMLElement
+      );
+      if (
+        document.activeElement?.classList.contains("key") &&
+        newBinding?.setEditing
+      ) {
+        newBinding.setEditing(true, true);
+      }
+    });
     return;
   }
 

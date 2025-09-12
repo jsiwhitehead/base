@@ -24,7 +24,7 @@ export function isBlock(v: Block | string): v is Block {
 }
 
 export function getChildKey(block: Block, child: Node): string {
-  return Object.entries(block.values).find(([, v]) => v === child)?.[0]!;
+  return Object.entries(block.values).find(([, n]) => n === child)?.[0]!;
 }
 export function renameChildKey(
   block: Block,
@@ -41,6 +41,15 @@ export function renameChildKey(
   newValues[nextKey] = child;
 
   return { ...block, values: newValues };
+}
+export function convertValueToItem(block: Block, child: Node): Block {
+  const oldKey = getChildKey(block, child);
+  const { [oldKey]: _removed, ...restValues } = block.values;
+  return {
+    ...block,
+    values: restValues,
+    items: [child, ...block.items],
+  };
 }
 
 const focusNode = (node?: Node) => {
@@ -163,6 +172,22 @@ export function removeNodeAtElement(el: HTMLElement) {
       queueMicrotask(() => focusNode(focus));
     }
   );
+}
+
+export function itemToEmptyKeyValue(el: HTMLElement) {
+  withNodeCtx(el, ({ node, parent, parentVal, itemIdx }) => {
+    if (itemIdx < 0) return;
+    parent.value = {
+      ...parentVal,
+      items: parentVal.items.toSpliced(itemIdx, 1),
+      values: { ...parentVal.values, "": node },
+    };
+    queueMicrotask(() => {
+      (
+        mountByNode.get(node)?.element.previousElementSibling as HTMLElement
+      ).focus();
+    });
+  });
 }
 
 export function wrapNodeInBlock(el: HTMLElement) {
