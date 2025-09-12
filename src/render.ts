@@ -16,7 +16,7 @@ export const nodeToContext = new WeakMap<DataNode, NodeContext>();
 
 type Mount = { el: HTMLElement; dispose: () => void };
 
-type MountCache = { mount: Mount; pending?: symbol };
+type MountCache = { mount: Mount };
 export const nodeToMount = new WeakMap<DataNode, MountCache>();
 
 type ElementContext = {
@@ -132,14 +132,14 @@ function scheduleDisposeIfUnattached(node: DataNode) {
   if (!entry) return;
 
   entry.mount.el.remove();
-  const token = Symbol("pending");
-  entry.pending = token;
 
   queueMicrotask(() => {
     const current = nodeToMount.get(node);
-    if (!current || current.pending !== token) return;
-    current.mount.dispose();
-    nodeToMount.delete(node);
+    if (!current) return;
+    if (!current.mount.el.isConnected) {
+      current.mount.dispose();
+      nodeToMount.delete(node);
+    }
   });
 }
 
@@ -186,10 +186,7 @@ function createBlockView(node: DataNode): View<DataBlock> {
     attachedChildren.add(child);
 
     const existing = nodeToMount.get(child);
-    if (existing) {
-      existing.pending = undefined;
-      return existing.mount.el;
-    }
+    if (existing) return existing.mount.el;
 
     const mount = mountNode(child);
     nodeToMount.set(child, { mount });
