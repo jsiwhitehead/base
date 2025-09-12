@@ -1,7 +1,7 @@
 import { effect } from "@preact/signals-core";
 
 import type { Block, Node } from "./data";
-import { isBlock, renameChildKey } from "./data";
+import { isBlock, getChildKey, renameChildKey } from "./data";
 import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
 
 type NodeContext = {
@@ -224,13 +224,10 @@ class BlockView extends NodeView<Block> {
         editor = new InlineEditor(
           childNode,
           "key",
-          () =>
-            Object.entries((this.node.peek() as Block).values).find(
-              ([, c]) => c === childNode
-            )![0],
+          () => getChildKey(this.node.peek() as Block, childNode),
           (nextKey) => {
             this.node.value = renameChildKey(
-              this.node,
+              this.node.peek() as Block,
               childNode,
               nextKey.trim()
             );

@@ -23,6 +23,26 @@ export function isBlock(v: Block | string): v is Block {
   return typeof v !== "string";
 }
 
+export function getChildKey(block: Block, child: Node): string {
+  return Object.entries(block.values).find(([, v]) => v === child)?.[0]!;
+}
+export function renameChildKey(
+  block: Block,
+  child: Node,
+  nextKey: string
+): Block {
+  const currentKey = getChildKey(block, child);
+
+  if (!nextKey || nextKey === currentKey) return block;
+  if (nextKey in block.values && nextKey !== currentKey) return block;
+
+  const newValues = { ...block.values };
+  delete newValues[currentKey];
+  newValues[nextKey] = child;
+
+  return { ...block, values: newValues };
+}
+
 const focusNode = (node?: Node) => {
   if (node) mountByNode.get(node)?.element.focus();
 };
@@ -30,13 +50,6 @@ const focusNode = (node?: Node) => {
 function orderedChildren(block: Block): Node[] {
   const valueNodes = Object.keys(block.values).map((k) => block.values[k]!);
   return [...valueNodes, ...block.items];
-}
-
-function valueKeyForNode(block: Block, node: Node): string | null {
-  for (const [k, v] of Object.entries(block.values)) {
-    if (v === node) return k;
-  }
-  return null;
 }
 
 function getNodeContext(node?: Node): NodeContext | null {
@@ -53,7 +66,7 @@ function getNodeContext(node?: Node): NodeContext | null {
   if (allIdx < 0) return null;
 
   const itemIdx = parentVal.items.indexOf(node);
-  const valueKey = valueKeyForNode(parentVal, node);
+  const valueKey = getChildKey(parentVal, node);
 
   return {
     node,
@@ -184,25 +197,4 @@ export function unwrapNodeFromBlock(el: HTMLElement) {
     };
   }
   queueMicrotask(() => focusNode(node));
-}
-
-export function renameChildKey(
-  parent: Node,
-  child: Node,
-  nextKey: string
-): Block {
-  const parentVal = parent.peek() as Block;
-
-  const currentKey = Object.entries(parentVal.values).find(
-    ([, v]) => v === child
-  )?.[0]!;
-
-  if (!nextKey || nextKey === currentKey) return parentVal;
-  if (nextKey in parentVal.values && nextKey !== currentKey) return parentVal;
-
-  const newValues = { ...parentVal.values };
-  delete newValues[currentKey];
-  newValues[nextKey] = child;
-
-  return { ...parentVal, values: newValues };
 }
