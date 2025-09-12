@@ -1,11 +1,11 @@
 import { effect, signal } from "@preact/signals-core";
 
-import type { DataNode } from "./data";
+import type { Node } from "./data";
 import { render } from "./render";
 
-// const leaf1 = signal<DataNode[] | string>("hello");
-// const leaf2 = signal<DataNode[] | string>("world");
-// const parent = signal<DataNode[] | string>([leaf1, leaf2]);
+// const leaf1 = signal<Node[] | string>("hello");
+// const leaf2 = signal<Node[] | string>("world");
+// const parent = signal<Node[] | string>([leaf1, leaf2]);
 
 const parent = signal({
   values: {},
@@ -40,7 +40,7 @@ const unmount = render(parent, document.getElementById("root")!);
 //   unmount();
 // }, 12000);
 
-function snapshot(node: DataNode): any {
+function snapshot(node: Node): any {
   const v = node.value;
   return Array.isArray(v) ? v.map(snapshot) : v;
 }

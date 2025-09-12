@@ -1,51 +1,51 @@
 import { signal, Signal } from "@preact/signals-core";
 
-import { elementToNode, nodeToContext, nodeToMount } from "./render";
+import { contextByNode, mountByNode, bindingByElement } from "./render";
 
-export type DataBlock = {
-  values: { [key: string]: DataNode };
-  items: DataNode[];
+export type Block = {
+  values: { [key: string]: Node };
+  items: Node[];
 };
 
-export type DataNode = Signal<DataBlock | string>;
+export type Node = Signal<Block | string>;
 
 type NodeContext = {
-  node: DataNode;
-  parent: DataNode;
-  parentVal: DataBlock;
-  all: DataNode[];
+  node: Node;
+  parent: Node;
+  parentVal: Block;
+  all: Node[];
   allIdx: number;
   itemIdx: number;
   valueKey: string | null;
 };
 
-export function isBlock(v: DataBlock | string): v is DataBlock {
+export function isBlock(v: Block | string): v is Block {
   return typeof v !== "string";
 }
 
-const focusNode = (node?: DataNode) => {
-  if (node) nodeToMount.get(node)?.mount.el.focus();
+const focusNode = (node?: Node) => {
+  if (node) mountByNode.get(node)?.element.focus();
 };
 
-function orderedChildren(block: DataBlock): DataNode[] {
+function orderedChildren(block: Block): Node[] {
   const valueNodes = Object.keys(block.values).map((k) => block.values[k]!);
   return [...valueNodes, ...block.items];
 }
 
-function valueKeyForNode(block: DataBlock, node: DataNode): string | null {
+function valueKeyForNode(block: Block, node: Node): string | null {
   for (const [k, v] of Object.entries(block.values)) {
     if (v === node) return k;
   }
   return null;
 }
 
-function getNodeContext(node?: DataNode): NodeContext | null {
+function getNodeContext(node?: Node): NodeContext | null {
   if (!node) return null;
 
-  const meta = nodeToContext.get(node);
-  if (!meta || !meta.parent) return null;
+  const context = contextByNode.get(node);
+  if (!context || !context.parent) return null;
 
-  const parentVal = meta.parent.peek() as DataBlock;
+  const parentVal = context.parent.peek() as Block;
   if (!isBlock(parentVal)) return null;
 
   const all = orderedChildren(parentVal);
@@ -57,7 +57,7 @@ function getNodeContext(node?: DataNode): NodeContext | null {
 
   return {
     node,
-    parent: meta.parent,
+    parent: context.parent,
     parentVal,
     all,
     allIdx,
@@ -67,7 +67,7 @@ function getNodeContext(node?: DataNode): NodeContext | null {
 }
 
 function withNodeCtx(el: HTMLElement, fn: (ctx: NodeContext) => void) {
-  const ctx = getNodeContext(elementToNode.get(el)?.node);
+  const ctx = getNodeContext(bindingByElement.get(el)?.node);
   if (ctx) fn(ctx);
 }
 
@@ -85,7 +85,7 @@ export function focusParent(el: HTMLElement) {
   withNodeCtx(el, ({ parent }) => focusNode(parent));
 }
 export function focusFirstChild(el: HTMLElement) {
-  const { node } = elementToNode.get(el)!;
+  const { node } = bindingByElement.get(el)!;
   const nodeVal = node.peek();
   if (isBlock(nodeVal)) focusNode(orderedChildren(nodeVal)[0]);
 }
@@ -160,7 +160,7 @@ export function wrapNodeInBlock(el: HTMLElement) {
   });
 }
 export function unwrapNodeFromBlock(el: HTMLElement) {
-  const node = elementToNode.get(el)!.node;
+  const node = bindingByElement.get(el)!.node;
   const ctx = getNodeContext(node);
   if (!ctx) return;
 
@@ -187,11 +187,11 @@ export function unwrapNodeFromBlock(el: HTMLElement) {
 }
 
 export function renameChildKey(
-  parent: DataNode,
-  child: DataNode,
+  parent: Node,
+  child: Node,
   nextKey: string
-): DataBlock {
-  const parentVal = parent.peek() as DataBlock;
+): Block {
+  const parentVal = parent.peek() as Block;
 
   const currentKey = Object.entries(parentVal.values).find(
     ([, v]) => v === child

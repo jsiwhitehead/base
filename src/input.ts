@@ -9,27 +9,27 @@ import {
   wrapNodeInBlock,
   unwrapNodeFromBlock,
 } from "./data";
-import { elementToNode } from "./render";
+import { bindingByElement } from "./render";
 
-export function handleRootMouseDown(e: MouseEvent) {
+export function onRootMouseDown(e: MouseEvent) {
   if (e.detail !== 2) return;
   const target = e.target as HTMLElement;
   if (target.tagName === "INPUT") return;
   e.preventDefault();
 }
 
-export function handleRootDblClick(e: MouseEvent) {
+export function onRootDblClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (target.tagName === "INPUT") return;
-  const info = elementToNode.get(target);
-  if (info?.setEditing) {
+  const binding = bindingByElement.get(target);
+  if (binding?.setEditing) {
     e.preventDefault();
     e.stopPropagation();
-    info.setEditing(true, true);
+    binding.setEditing(true, true);
   }
 }
 
-export function handleRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
+export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
   const active = document.activeElement as HTMLElement | null;
   if (!active || !root.contains(active)) return;
 
@@ -42,17 +42,17 @@ export function handleRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     return;
   }
 
-  const info = elementToNode.get(active);
+  const binding = bindingByElement.get(active);
   if (
-    info?.setEditing &&
+    binding?.setEditing &&
     e.key.length === 1 &&
     !e.ctrlKey &&
     !e.metaKey &&
     !e.altKey
   ) {
     e.preventDefault();
-    info.node.value = e.key;
-    info.setEditing(true);
+    binding.node.value = e.key;
+    binding.setEditing(true);
     return;
   }
 
@@ -77,11 +77,11 @@ export function handleRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     return;
   }
 
-  if (!info) return;
+  if (!binding) return;
 
   if (e.key === "Enter") {
     e.preventDefault();
-    if (info.setEditing) info.setEditing(true);
+    if (binding.setEditing) binding.setEditing(true);
     return;
   }
 

@@ -1,157 +1,152 @@
 import { effect } from "@preact/signals-core";
 
-import type { DataBlock, DataNode } from "./data";
+import type { Block, Node } from "./data";
 import { isBlock, renameChildKey } from "./data";
-import {
-  handleRootMouseDown,
-  handleRootDblClick,
-  handleRootKeyDown,
-} from "./input";
+import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
 
 type NodeContext = {
-  parent: DataNode | null;
-  context: Record<string, DataNode>;
+  parent: Node | null;
+  scope: Record<string, Node>;
 };
-export const nodeToContext = new WeakMap<DataNode, NodeContext>();
+export const contextByNode = new WeakMap<Node, NodeContext>();
 
-type Mount = { el: HTMLElement; dispose: () => void };
+type MountInstance = { element: HTMLElement; dispose: () => void };
+export const mountByNode = new WeakMap<Node, MountInstance>();
 
-type MountCache = { mount: Mount };
-export const nodeToMount = new WeakMap<DataNode, MountCache>();
-
-type ElementContext = {
-  node: DataNode;
+type NodeBinding = {
+  node: Node;
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
-export const elementToNode = new WeakMap<HTMLElement, ElementContext>();
+export const bindingByElement = new WeakMap<HTMLElement, NodeBinding>();
 
-export function render(data: DataNode, root: HTMLElement): () => void {
-  nodeToContext.set(data, { parent: null, context: {} });
+export function render(data: Node, rootElement: HTMLElement): () => void {
+  contextByNode.set(data, { parent: null, scope: {} });
 
-  const { el, dispose } = mountNode(data);
-  root.appendChild(el);
-  el.focus();
+  const { element, dispose } = mountNode(data);
+  rootElement.appendChild(element);
+  element.focus();
 
-  root.addEventListener("mousedown", handleRootMouseDown);
-  root.addEventListener("dblclick", handleRootDblClick);
+  rootElement.addEventListener("mousedown", onRootMouseDown);
+  rootElement.addEventListener("dblclick", onRootDblClick);
 
-  const onKeyDown = (e: KeyboardEvent) => handleRootKeyDown(e, root);
-  root.addEventListener("keydown", onKeyDown);
+  const onKeyDown = (e: KeyboardEvent) => onRootKeyDown(e, rootElement);
+  rootElement.addEventListener("keydown", onKeyDown);
 
   return () => {
     dispose();
-    root.removeEventListener("mousedown", handleRootMouseDown);
-    root.removeEventListener("dblclick", handleRootDblClick);
-    root.removeEventListener("keydown", onKeyDown);
-    root.textContent = "";
+    rootElement.removeEventListener("mousedown", onRootMouseDown);
+    rootElement.removeEventListener("dblclick", onRootDblClick);
+    rootElement.removeEventListener("keydown", onKeyDown);
+    rootElement.textContent = "";
   };
 }
 
-type Editable = {
-  el: HTMLElement;
-  sync: (text: string) => void;
+type InlineEditor = {
+  element: HTMLElement;
+  update: (text: string) => void;
+  setEditing: (isEditing: boolean, focus?: boolean) => void;
 };
 
-function createEditable(
-  node: DataNode,
+function createEditor(
+  node: Node,
   fieldType: "value" | "key",
-  getText: () => string,
-  commitText: (text: string) => void
-): Editable {
-  let el!: HTMLElement;
+  readText: () => string,
+  applyText: (text: string) => void
+): InlineEditor {
+  let element!: HTMLElement;
 
-  function replaceEl(tag: "div" | "input") {
+  function replaceElement(tag: "div" | "input") {
     const next = document.createElement(tag) as HTMLElement;
     next.classList.add(fieldType);
     next.tabIndex = 0;
-    elementToNode.set(next, { node, setEditing });
+    bindingByElement.set(next, { node, setEditing });
 
     if (tag === "input") {
-      (next as HTMLInputElement).value = getText();
+      (next as HTMLInputElement).value = readText();
     } else {
       (next as HTMLElement).textContent =
-        getText() + (fieldType === "key" ? " :" : "");
+        readText() + (fieldType === "key" ? " :" : "");
     }
 
-    if (el) el.replaceWith(next);
-    el = next;
+    if (element) element.replaceWith(next);
+    element = next;
   }
 
   const setEditing = (isEditing: boolean, focus = true) => {
     if (isEditing) {
-      replaceEl("input");
-      const input = el as HTMLInputElement;
+      replaceElement("input");
 
       let canceled = false;
       let focusAfter = false;
 
-      input.addEventListener("keydown", (e: KeyboardEvent) => {
+      element.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
           canceled = e.key === "Escape";
           focusAfter = true;
-          input.blur();
+          element.blur();
         }
       });
 
-      input.addEventListener("blur", () => {
-        if (!canceled) commitText(input.value);
-        replaceEl("div");
-        if (focusAfter) el.focus();
+      element.addEventListener("blur", () => {
+        if (!canceled) applyText((element as HTMLInputElement).value);
+        replaceElement("div");
+        if (focusAfter) element.focus();
       });
 
-      if (focus) input.focus();
+      if (focus) element.focus();
     } else {
-      replaceEl("div");
-      if (focus) el.focus();
+      replaceElement("div");
+      if (focus) element.focus();
     }
   };
 
-  const sync: Editable["sync"] = (text) => {
-    if (el.tagName === "INPUT") {
-      (el as HTMLInputElement).value = text;
+  const update: InlineEditor["update"] = (text) => {
+    if (element.tagName === "INPUT") {
+      (element as HTMLInputElement).value = text;
     } else {
-      el.textContent = getText() + (fieldType === "key" ? " :" : "");
+      element.textContent = readText() + (fieldType === "key" ? " :" : "");
     }
   };
 
-  const api: Editable = {
-    get el() {
-      return el;
+  const instance: InlineEditor = {
+    get element() {
+      return element;
     },
-    sync,
+    update,
+    setEditing,
   };
 
-  replaceEl("div");
-  return api;
+  replaceElement("div");
+  return instance;
 }
 
-function scheduleDisposeIfUnattached(node: DataNode) {
-  const entry = nodeToMount.get(node);
+function scheduleUnmountIfDetached(node: Node) {
+  const entry = mountByNode.get(node);
   if (!entry) return;
 
-  entry.mount.el.remove();
+  entry.element.remove();
 
   queueMicrotask(() => {
-    const current = nodeToMount.get(node);
+    const current = mountByNode.get(node);
     if (!current) return;
-    if (!current.mount.el.isConnected) {
-      current.mount.dispose();
-      nodeToMount.delete(node);
+    if (!current.element.isConnected) {
+      current.dispose();
+      mountByNode.delete(node);
     }
   });
 }
 
-type View<T> = {
+type NodeView<T> = {
   kind: "block" | "value";
-  el: HTMLElement;
-  sync(next: T): void;
+  element: HTMLElement;
+  update(next: T): void;
   dispose(): void;
 };
 
-function createValueView(node: DataNode): View<string> {
-  const editable = createEditable(
+function createValueView(node: Node): NodeView<string> {
+  const editor = createEditor(
     node,
     "value",
     () => node.peek() as string,
@@ -162,56 +157,56 @@ function createValueView(node: DataNode): View<string> {
 
   return {
     kind: "value",
-    get el() {
-      return editable.el;
+    get element() {
+      return editor.element;
     },
-    sync(text) {
-      editable.sync(text);
+    update(text) {
+      editor.update(text);
     },
     dispose() {},
   };
 }
 
-function createBlockView(node: DataNode): View<DataBlock> {
-  const root = document.createElement("div");
-  root.classList.add("block");
-  root.tabIndex = 0;
-  elementToNode.set(root, { node });
+function createBlockView(node: Node): NodeView<Block> {
+  const container = document.createElement("div");
+  container.classList.add("block");
+  container.tabIndex = 0;
+  bindingByElement.set(container, { node });
 
-  const attachedChildren = new Set<DataNode>();
-  const keyEditors = new Map<DataNode, Editable>();
+  const attachedChildren = new Set<Node>();
+  const keyEditors = new Map<Node, InlineEditor>();
 
-  function ensureMounted(child: DataNode, context: Record<string, DataNode>) {
-    nodeToContext.set(child, { parent: node, context });
+  function ensureMounted(child: Node, scope: Record<string, Node>) {
+    contextByNode.set(child, { parent: node, scope });
     attachedChildren.add(child);
 
-    const existing = nodeToMount.get(child);
-    if (existing) return existing.mount.el;
+    const existing = mountByNode.get(child);
+    if (existing) return existing.element;
 
     const mount = mountNode(child);
-    nodeToMount.set(child, { mount });
-    return mount.el;
+    mountByNode.set(child, mount);
+    return mount.element;
   }
 
-  function pruneChildren(keep?: Set<DataNode>) {
+  function pruneChildren(keep?: Set<Node>) {
     for (const childNode of Array.from(attachedChildren)) {
       if (keep?.has(childNode)) continue;
-      const meta = nodeToContext.get(childNode);
-      if (meta?.parent === node) {
-        scheduleDisposeIfUnattached(childNode);
+      const context = contextByNode.get(childNode);
+      if (context?.parent === node) {
+        scheduleUnmountIfDetached(childNode);
       }
       attachedChildren.delete(childNode);
     }
   }
 
-  function syncBlock(v: DataBlock) {
-    const meta = nodeToContext.get(node) ?? { parent: null, context: {} };
-    const nextContext: Record<string, DataNode> = {
-      ...meta.context,
+  function updateBlock(v: Block) {
+    const context = contextByNode.get(node)!;
+    const nextScope: Record<string, Node> = {
+      ...context.scope,
       ...v.values,
     };
 
-    const keepChildren = new Set<DataNode>([
+    const keepChildren = new Set<Node>([
       ...Object.values(v.values),
       ...v.items,
     ]);
@@ -225,50 +220,50 @@ function createBlockView(node: DataNode): View<DataBlock> {
     const frag = document.createDocumentFragment();
 
     for (const [key, childNode] of Object.entries(v.values)) {
-      let ed = keyEditors.get(childNode);
-      if (!ed) {
-        ed = createEditable(
+      let editor = keyEditors.get(childNode);
+      if (!editor) {
+        editor = createEditor(
           childNode,
           "key",
           () =>
-            Object.entries((node.peek() as DataBlock).values).find(
+            Object.entries((node.peek() as Block).values).find(
               ([, c]) => c === childNode
             )![0],
           (nextKey) => {
             node.value = renameChildKey(node, childNode, nextKey.trim());
           }
         );
-        keyEditors.set(childNode, ed);
+        keyEditors.set(childNode, editor);
       }
-      ed.sync(key);
-      frag.append(ed.el, ensureMounted(childNode, nextContext));
+      editor.update(key);
+      frag.append(editor.element, ensureMounted(childNode, nextScope));
     }
 
     for (const childNode of v.items) {
-      frag.append(ensureMounted(childNode, nextContext));
+      frag.append(ensureMounted(childNode, nextScope));
     }
 
-    root.replaceChildren(frag);
+    container.replaceChildren(frag);
   }
 
   return {
     kind: "block",
-    el: root,
-    sync: syncBlock,
+    element: container,
+    update: updateBlock,
     dispose() {
       pruneChildren();
-      root.textContent = "";
+      container.textContent = "";
     },
   };
 }
 
-function mountNode(node: DataNode): Mount {
-  let view: View<any>;
+function mountNode(node: Node): MountInstance {
+  let view: NodeView<Block | string>;
 
   const stop = effect(() => {
     const v = node.value;
 
-    const nextKind: View<any>["kind"] = isBlock(v) ? "block" : "value";
+    const nextKind = isBlock(v) ? "block" : "value";
 
     if (!view || nextKind !== view.kind) {
       view?.dispose();
@@ -276,23 +271,23 @@ function mountNode(node: DataNode): Mount {
         nextKind === "block" ? createBlockView(node) : createValueView(node);
     }
 
-    view.sync(v);
+    view.update(v);
   });
 
   const dispose = () => {
     stop();
     view.dispose();
-    const entry = nodeToMount.get(node);
-    if (entry?.mount === self) nodeToMount.delete(node);
+    const entry = mountByNode.get(node);
+    if (entry === instance) mountByNode.delete(node);
   };
 
-  const self: Mount = {
-    get el() {
-      return view.el;
+  const instance: MountInstance = {
+    get element() {
+      return view.element;
     },
     dispose,
   };
 
-  nodeToMount.set(node, { mount: self });
-  return self;
+  mountByNode.set(node, instance);
+  return instance;
 }
