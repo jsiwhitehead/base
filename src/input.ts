@@ -3,6 +3,7 @@ import {
   focusNextSibling,
   focusParent,
   focusPreviousSibling,
+  focusToggleKeyValue,
   insertEmptyNodeAfter,
   insertEmptyNodeBefore,
   removeNodeAtElement,
@@ -35,10 +36,18 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
 
   if (active.tagName === "INPUT") return;
 
-  if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+  if (
+    e.shiftKey &&
+    (e.key === "ArrowUp" ||
+      e.key === "ArrowDown" ||
+      e.key === "ArrowLeft" ||
+      e.key === "ArrowRight")
+  ) {
     e.preventDefault();
     if (e.key === "ArrowUp") insertEmptyNodeBefore(active);
-    else insertEmptyNodeAfter(active);
+    else if (e.key === "ArrowDown") insertEmptyNodeAfter(active);
+    else if (e.key === "ArrowLeft") unwrapNodeFromBlock(active);
+    else wrapNodeInBlock(active);
     return;
   }
 
@@ -77,11 +86,18 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     return;
   }
 
-  if (!binding) return;
-
-  if (e.key === "Enter") {
+  if (e.key === "Tab") {
     e.preventDefault();
-    if (binding.setEditing) binding.setEditing(true);
+    focusToggleKeyValue(active);
+    const newBinding = bindingByElement.get(
+      document.activeElement as HTMLElement
+    );
+    if (
+      document.activeElement?.classList.contains("key") &&
+      newBinding?.setEditing
+    ) {
+      newBinding.setEditing(true, true);
+    }
     return;
   }
 
@@ -91,10 +107,11 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     return;
   }
 
-  if (e.key === "Tab") {
+  if (!binding) return;
+
+  if (e.key === "Enter") {
     e.preventDefault();
-    if (e.shiftKey) unwrapNodeFromBlock(active);
-    else wrapNodeInBlock(active);
+    if (binding.setEditing) binding.setEditing(true);
     return;
   }
 }

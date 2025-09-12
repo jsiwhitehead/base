@@ -102,6 +102,16 @@ export function focusFirstChild(el: HTMLElement) {
   const nodeVal = node.peek();
   if (isBlock(nodeVal)) focusNode(orderedChildren(nodeVal)[0]);
 }
+export function focusToggleKeyValue(el: Element) {
+  if (el.classList.contains("key")) {
+    (el.nextElementSibling as HTMLElement).focus();
+  } else if (
+    el.classList.contains("value") &&
+    el.previousElementSibling?.classList.contains("key")
+  ) {
+    (el.previousElementSibling as HTMLElement).focus();
+  }
+}
 
 export function insertEmptyNodeBefore(el: HTMLElement) {
   withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {

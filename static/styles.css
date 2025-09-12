@@ -74,6 +74,9 @@
 .key {
   display: block;
   background: #ddd;
+  &:focus {
+    background: #a8c7fa;
+  }
   &:has(+ :focus) {
     z-index: 10;
     background: #a8c7fa;
