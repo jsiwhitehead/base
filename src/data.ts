@@ -1,6 +1,6 @@
 import { signal, Signal } from "@preact/signals-core";
 
-import { elInfo, nodeMeta, mountCache } from "./render";
+import { elementToNode, nodeToContext, nodeToMount } from "./render";
 
 export type DataBlock = {
   values: { [key: string]: DataNode };
@@ -24,7 +24,7 @@ export function isBlock(v: DataBlock | string): v is DataBlock {
 }
 
 const focusNode = (node?: DataNode) => {
-  if (node) mountCache.get(node)?.mount.el.focus();
+  if (node) nodeToMount.get(node)?.mount.el.focus();
 };
 
 function orderedChildren(block: DataBlock): DataNode[] {
@@ -42,7 +42,7 @@ function valueKeyForNode(block: DataBlock, node: DataNode): string | null {
 function getNodeContext(node?: DataNode): NodeContext | null {
   if (!node) return null;
 
-  const meta = nodeMeta.get(node);
+  const meta = nodeToContext.get(node);
   if (!meta || !meta.parent) return null;
 
   const parentVal = meta.parent.peek() as DataBlock;
@@ -67,7 +67,7 @@ function getNodeContext(node?: DataNode): NodeContext | null {
 }
 
 function withNodeCtx(el: HTMLElement, fn: (ctx: NodeContext) => void) {
-  const ctx = getNodeContext(elInfo.get(el)?.node);
+  const ctx = getNodeContext(elementToNode.get(el)?.node);
   if (ctx) fn(ctx);
 }
 
@@ -85,7 +85,7 @@ export function focusParent(el: HTMLElement) {
   withNodeCtx(el, ({ parent }) => focusNode(parent));
 }
 export function focusFirstChild(el: HTMLElement) {
-  const { node } = elInfo.get(el)!;
+  const { node } = elementToNode.get(el)!;
   const nodeVal = node.peek();
   if (isBlock(nodeVal)) focusNode(orderedChildren(nodeVal)[0]);
 }
@@ -160,7 +160,7 @@ export function wrapNodeInBlock(el: HTMLElement) {
   });
 }
 export function unwrapNodeFromBlock(el: HTMLElement) {
-  const node = elInfo.get(el)!.node;
+  const node = elementToNode.get(el)!.node;
   const ctx = getNodeContext(node);
   if (!ctx) return;
 

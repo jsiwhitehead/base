@@ -9,7 +9,7 @@ import {
   wrapNodeInBlock,
   unwrapNodeFromBlock,
 } from "./data";
-import { elInfo } from "./render";
+import { elementToNode } from "./render";
 
 export function handleRootMouseDown(e: MouseEvent) {
   if (e.detail !== 2) return;
@@ -21,7 +21,7 @@ export function handleRootMouseDown(e: MouseEvent) {
 export function handleRootDblClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (target.tagName === "INPUT") return;
-  const info = elInfo.get(target);
+  const info = elementToNode.get(target);
   if (info?.setEditing) {
     e.preventDefault();
     e.stopPropagation();
@@ -42,7 +42,7 @@ export function handleRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     return;
   }
 
-  const info = elInfo.get(active);
+  const info = elementToNode.get(active);
   if (
     info?.setEditing &&
     e.key.length === 1 &&

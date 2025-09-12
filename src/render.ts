@@ -8,25 +8,25 @@ import {
   handleRootKeyDown,
 } from "./input";
 
-type NodeMeta = {
+type NodeContext = {
   parent: DataNode | null;
   context: Record<string, DataNode>;
 };
-export const nodeMeta = new WeakMap<DataNode, NodeMeta>();
+export const nodeToContext = new WeakMap<DataNode, NodeContext>();
 
 type Mount = { el: HTMLElement; dispose: () => void };
 
 type MountCache = { mount: Mount; pending?: symbol };
-export const mountCache = new WeakMap<DataNode, MountCache>();
+export const nodeToMount = new WeakMap<DataNode, MountCache>();
 
-type ElInfo = {
+type ElementContext = {
   node: DataNode;
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
-export const elInfo = new WeakMap<HTMLElement, ElInfo>();
+export const elementToNode = new WeakMap<HTMLElement, ElementContext>();
 
 export function render(data: DataNode, root: HTMLElement): () => void {
-  nodeMeta.set(data, { parent: null, context: {} });
+  nodeToContext.set(data, { parent: null, context: {} });
 
   const { el, dispose } = mountNode(data);
   root.appendChild(el);
@@ -54,31 +54,34 @@ type Editable = {
 
 function createEditable(
   node: DataNode,
-  type: "value" | "key",
+  fieldType: "value" | "key",
   getText: () => string,
-  commitText: (next: string) => void
+  commitText: (text: string) => void
 ): Editable {
   let el!: HTMLElement;
 
-  function renderStatic(focusAfter?: boolean) {
-    const prev = el;
-    const next = document.createElement("div");
-    next.classList.add(type);
+  function replaceEl(tag: "div" | "input") {
+    const next = document.createElement(tag) as HTMLElement;
+    next.classList.add(fieldType);
     next.tabIndex = 0;
-    next.textContent = getText() + (type === "key" ? " :" : "");
-    elInfo.set(next, { node, setEditing });
+    elementToNode.set(next, { node, setEditing });
 
-    if (prev) prev.replaceWith(next);
-    if (focusAfter) next.focus();
+    if (tag === "input") {
+      (next as HTMLInputElement).value = getText();
+    } else {
+      (next as HTMLElement).textContent =
+        getText() + (fieldType === "key" ? " :" : "");
+    }
+
+    if (el) el.replaceWith(next);
     el = next;
-    return next;
   }
 
-  const setEditing = (next: boolean, focus = true) => {
-    if (next) {
-      const input = document.createElement("input");
-      input.classList.add(type);
-      input.value = getText();
+  const setEditing = (isEditing: boolean, focus = true) => {
+    if (isEditing) {
+      replaceEl("input");
+      const input = el as HTMLInputElement;
+
       let canceled = false;
       let focusAfter = false;
 
@@ -94,16 +97,14 @@ function createEditable(
 
       input.addEventListener("blur", () => {
         if (!canceled) commitText(input.value);
-        renderStatic(focusAfter);
+        replaceEl("div");
+        if (focusAfter) el.focus();
       });
 
-      elInfo.set(input, { node, setEditing });
-      const prev = el;
-      if (prev && prev.isConnected) prev.replaceWith(input);
       if (focus) input.focus();
-      el = input;
     } else {
-      renderStatic(focus);
+      replaceEl("div");
+      if (focus) el.focus();
     }
   };
 
@@ -111,7 +112,7 @@ function createEditable(
     if (el.tagName === "INPUT") {
       (el as HTMLInputElement).value = text;
     } else {
-      el.textContent = text + (type === "key" ? " :" : "");
+      el.textContent = getText() + (fieldType === "key" ? " :" : "");
     }
   };
 
@@ -122,12 +123,12 @@ function createEditable(
     sync,
   };
 
-  el = renderStatic();
+  replaceEl("div");
   return api;
 }
 
 function scheduleDisposeIfUnattached(node: DataNode) {
-  const entry = mountCache.get(node);
+  const entry = nodeToMount.get(node);
   if (!entry) return;
 
   entry.mount.el.remove();
@@ -135,10 +136,10 @@ function scheduleDisposeIfUnattached(node: DataNode) {
   entry.pending = token;
 
   queueMicrotask(() => {
-    const current = mountCache.get(node);
+    const current = nodeToMount.get(node);
     if (!current || current.pending !== token) return;
     current.mount.dispose();
-    mountCache.delete(node);
+    nodeToMount.delete(node);
   });
 }
 
@@ -175,39 +176,39 @@ function createBlockView(node: DataNode): View<DataBlock> {
   const root = document.createElement("div");
   root.classList.add("block");
   root.tabIndex = 0;
-  elInfo.set(root, { node });
+  elementToNode.set(root, { node });
 
-  const attached = new Set<DataNode>();
+  const attachedChildren = new Set<DataNode>();
   const keyEditors = new Map<DataNode, Editable>();
 
-  function ensureMount(child: DataNode, context: Record<string, DataNode>) {
-    nodeMeta.set(child, { parent: node, context });
-    attached.add(child);
+  function ensureMounted(child: DataNode, context: Record<string, DataNode>) {
+    nodeToContext.set(child, { parent: node, context });
+    attachedChildren.add(child);
 
-    const existing = mountCache.get(child);
+    const existing = nodeToMount.get(child);
     if (existing) {
       existing.pending = undefined;
       return existing.mount.el;
     }
 
     const mount = mountNode(child);
-    mountCache.set(child, { mount });
+    nodeToMount.set(child, { mount });
     return mount.el;
   }
 
   function pruneChildren(keep?: Set<DataNode>) {
-    for (const sig of Array.from(attached)) {
-      if (keep?.has(sig)) continue;
-      const meta = nodeMeta.get(sig);
+    for (const childNode of Array.from(attachedChildren)) {
+      if (keep?.has(childNode)) continue;
+      const meta = nodeToContext.get(childNode);
       if (meta?.parent === node) {
-        scheduleDisposeIfUnattached(sig);
+        scheduleDisposeIfUnattached(childNode);
       }
-      attached.delete(sig);
+      attachedChildren.delete(childNode);
     }
   }
 
   function syncBlock(v: DataBlock) {
-    const meta = nodeMeta.get(node) ?? { parent: null, context: {} };
+    const meta = nodeToContext.get(node) ?? { parent: null, context: {} };
     const nextContext: Record<string, DataNode> = {
       ...meta.context,
       ...v.values,
@@ -226,28 +227,28 @@ function createBlockView(node: DataNode): View<DataBlock> {
 
     const frag = document.createDocumentFragment();
 
-    for (const [key, sig] of Object.entries(v.values)) {
-      let ed = keyEditors.get(sig);
+    for (const [key, childNode] of Object.entries(v.values)) {
+      let ed = keyEditors.get(childNode);
       if (!ed) {
         ed = createEditable(
-          sig,
+          childNode,
           "key",
           () =>
             Object.entries((node.peek() as DataBlock).values).find(
-              ([, c]) => c === sig
+              ([, c]) => c === childNode
             )![0],
           (nextKey) => {
-            node.value = renameChildKey(node, sig, nextKey.trim());
+            node.value = renameChildKey(node, childNode, nextKey.trim());
           }
         );
-        keyEditors.set(sig, ed);
+        keyEditors.set(childNode, ed);
       }
       ed.sync(key);
-      frag.append(ed.el, ensureMount(sig, nextContext));
+      frag.append(ed.el, ensureMounted(childNode, nextContext));
     }
 
-    for (const sig of v.items) {
-      frag.append(ensureMount(sig, nextContext));
+    for (const childNode of v.items) {
+      frag.append(ensureMounted(childNode, nextContext));
     }
 
     root.replaceChildren(frag);
@@ -270,12 +271,12 @@ function mountNode(node: DataNode): Mount {
   const stop = effect(() => {
     const v = node.value;
 
-    const wantKind: View<any>["kind"] = isBlock(v) ? "block" : "value";
+    const nextKind: View<any>["kind"] = isBlock(v) ? "block" : "value";
 
-    if (!view || wantKind !== view.kind) {
+    if (!view || nextKind !== view.kind) {
       view?.dispose();
       view =
-        wantKind === "block" ? createBlockView(node) : createValueView(node);
+        nextKind === "block" ? createBlockView(node) : createValueView(node);
     }
 
     view.sync(v);
@@ -284,8 +285,8 @@ function mountNode(node: DataNode): Mount {
   const dispose = () => {
     stop();
     view.dispose();
-    const entry = mountCache.get(node);
-    if (entry?.mount === self) mountCache.delete(node);
+    const entry = nodeToMount.get(node);
+    if (entry?.mount === self) nodeToMount.delete(node);
   };
 
   const self: Mount = {
@@ -295,6 +296,6 @@ function mountNode(node: DataNode): Mount {
     dispose,
   };
 
-  mountCache.set(node, { mount: self });
+  nodeToMount.set(node, { mount: self });
   return self;
 }
