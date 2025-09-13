@@ -1,12 +1,8 @@
 import { effect } from "@preact/signals-core";
 
 import type { Block, Node } from "./data";
-import {
-  isBlock,
-  getChildKey,
-  renameChildKey,
-  convertValueToItem,
-} from "./data";
+import { isBlock } from "./data";
+import { getChildKey, renameChildKey, convertValueToItem } from "./utils";
 
 type NodeContext = {
   parent: Node | null;

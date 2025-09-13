@@ -1,3 +1,4 @@
+import { bindingByElement } from "./render";
 import {
   focusFirstChild,
   focusNextSibling,
@@ -10,8 +11,7 @@ import {
   itemToEmptyKeyValue,
   wrapNodeInBlock,
   unwrapNodeFromBlock,
-} from "./data";
-import { bindingByElement } from "./render";
+} from "./utils";
 
 export function onRootMouseDown(e: MouseEvent) {
   if (e.detail !== 2) return;

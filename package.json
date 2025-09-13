@@ -16,6 +16,7 @@
     "@preact/signals-react": "^3.3.0",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "ohm-js": "^17.2.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   }

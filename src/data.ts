@@ -1,235 +1,201 @@
-import { signal, Signal } from "@preact/signals-core";
-
-import { contextByNode, mountByNode, bindingByElement } from "./render";
+import {
+  signal,
+  computed,
+  type Signal,
+  type ReadonlySignal,
+} from "@preact/signals-core";
+import { evalExpr } from "./code";
 
 export type Block = {
   values: { [key: string]: Node };
   items: Node[];
 };
 
-export type Node = Signal<Block | string>;
-
-type NodeContext = {
-  node: Node;
-  parent: Node;
-  parentVal: Block;
-  all: Node[];
-  allIdx: number;
-  itemIdx: number;
-  valueKey: string | null;
+export type Code = {
+  kind: "code";
+  code: Signal<string>;
+  result: ReadonlySignal<any>;
 };
 
-export function isBlock(v: Block | string): v is Block {
-  return typeof v !== "string";
+export type Value = Block | Code | string | number | boolean;
+export type Node = Signal<Value>;
+
+export function isBlock(v: Value): v is Block {
+  return !!v && typeof v === "object" && (v as any).kind === undefined;
+}
+export function isCode(v: Value): v is Code {
+  return !!v && typeof v === "object" && (v as any).kind === "code";
 }
 
-export function getChildKey(block: Block, child: Node): string {
-  return Object.entries(block.values).find(([, n]) => n === child)?.[0]!;
-}
-export function renameChildKey(
-  block: Block,
-  child: Node,
-  nextKey: string
-): Block {
-  const currentKey = getChildKey(block, child);
-
-  if (!nextKey || nextKey === currentKey) return block;
-  if (nextKey in block.values && nextKey !== currentKey) return block;
-
-  const newValues = { ...block.values };
-  delete newValues[currentKey];
-  newValues[nextKey] = child;
-
-  return { ...block, values: newValues };
-}
-export function convertValueToItem(block: Block, child: Node): Block {
-  const oldKey = getChildKey(block, child);
-  const { [oldKey]: _removed, ...restValues } = block.values;
-  return {
-    ...block,
-    values: restValues,
-    items: [child, ...block.items],
-  };
+export type Binding = ReadonlySignal<Node | undefined>;
+export interface Scope {
+  getBinding(name: string): Binding;
+  asObject(): Record<string, any>;
+  extend(frame: Signal<Block>): Scope;
 }
 
-const focusNode = (node?: Node) => {
-  if (node) mountByNode.get(node)?.element.focus();
-};
+class FrameScope implements Scope {
+  private parent?: Scope;
+  private frame?: Signal<Block>;
+  private bindingCache = new Map<string, Binding>();
 
-function orderedChildren(block: Block): Node[] {
-  const valueNodes = Object.keys(block.values).map((k) => block.values[k]!);
-  return [...valueNodes, ...block.items];
-}
-
-function getNodeContext(node?: Node): NodeContext | null {
-  if (!node) return null;
-
-  const context = contextByNode.get(node);
-  if (!context || !context.parent) return null;
-
-  const parentVal = context.parent.peek() as Block;
-  if (!isBlock(parentVal)) return null;
-
-  const all = orderedChildren(parentVal);
-  const allIdx = all.indexOf(node);
-  if (allIdx < 0) return null;
-
-  const itemIdx = parentVal.items.indexOf(node);
-  const valueKey = getChildKey(parentVal, node);
-
-  return {
-    node,
-    parent: context.parent,
-    parentVal,
-    all,
-    allIdx,
-    itemIdx,
-    valueKey,
-  };
-}
-
-function withNodeCtx(el: HTMLElement, fn: (ctx: NodeContext) => void) {
-  const ctx = getNodeContext(bindingByElement.get(el)?.node);
-  if (ctx) fn(ctx);
-}
-
-export function focusPreviousSibling(el: HTMLElement) {
-  withNodeCtx(el, ({ all, allIdx }) => {
-    focusNode(all[allIdx - 1]);
-  });
-}
-export function focusNextSibling(el: HTMLElement) {
-  withNodeCtx(el, ({ all, allIdx }) => {
-    focusNode(all[allIdx + 1]);
-  });
-}
-export function focusParent(el: HTMLElement) {
-  withNodeCtx(el, ({ parent }) => focusNode(parent));
-}
-export function focusFirstChild(el: HTMLElement) {
-  const { node } = bindingByElement.get(el)!;
-  const nodeVal = node.peek();
-  if (isBlock(nodeVal)) focusNode(orderedChildren(nodeVal)[0]);
-}
-export function focusToggleKeyValue(el: Element) {
-  if (el.classList.contains("key")) {
-    (el.nextElementSibling as HTMLElement).focus();
-  } else if (
-    el.classList.contains("value") &&
-    el.previousElementSibling?.classList.contains("key")
-  ) {
-    (el.previousElementSibling as HTMLElement).focus();
+  constructor(frame?: Signal<Block>, parent?: Scope) {
+    this.frame = frame;
+    this.parent = parent;
   }
-}
 
-export function insertEmptyNodeBefore(el: HTMLElement) {
-  withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {
-    const newNode = signal("");
-    const insertAt = itemIdx >= 0 ? itemIdx : 0;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(insertAt, 0, newNode),
-    };
-    queueMicrotask(() => focusNode(newNode));
-  });
-}
-export function insertEmptyNodeAfter(el: HTMLElement) {
-  withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {
-    const newNode = signal("");
-    const insertAt = itemIdx >= 0 ? itemIdx + 1 : 0;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(insertAt, 0, newNode),
-    };
-    queueMicrotask(() => focusNode(newNode));
-  });
-}
-export function removeNodeAtElement(el: HTMLElement) {
-  withNodeCtx(
-    el,
-    ({
-      parent,
-      parentVal,
-      itemIdx,
-      valueKey,
-      all,
-      allIdx,
-      parent: parentNode,
-    }) => {
-      const focus = all[allIdx - 1] || all[allIdx + 1] || parentNode;
-      if (itemIdx >= 0) {
-        parent.value = {
-          ...parentVal,
-          items: parentVal.items.toSpliced(itemIdx, 1),
-        };
-      } else if (valueKey) {
-        const { [valueKey]: _removed, ...restValues } = parentVal.values;
-        parent.value = {
-          ...parentVal,
-          values: restValues,
-        };
+  getBinding(name: string): Binding {
+    let b = this.bindingCache.get(name);
+    if (!b) {
+      const parentB = this.parent?.getBinding(name);
+      b = computed<Node | undefined>(() => {
+        const local = this.frame ? this.frame.value.values[name] : undefined;
+        return local ?? parentB?.value;
+      });
+      this.bindingCache.set(name, b);
+    }
+    return b;
+  }
+
+  extend(frame: Signal<Block>): Scope {
+    return new FrameScope(frame, this);
+  }
+
+  asObject(): Record<string, any> {
+    return new Proxy(
+      {},
+      {
+        get: (_t, prop) => {
+          if (prop === "__proto__" || prop === "toString" || prop === "valueOf")
+            return undefined;
+          const node = this.getBinding(String(prop)).value;
+          if (!node) return undefined;
+          const val = node.value;
+          if (isCode(val)) return val.result.value;
+          if (isBlock(val)) return val;
+          return val; // primitive
+        },
+        has: (_t, prop) => this.getBinding(String(prop)).value !== undefined,
       }
-      queueMicrotask(() => focusNode(focus));
-    }
-  );
-}
-
-export function itemToEmptyKeyValue(el: HTMLElement) {
-  withNodeCtx(el, ({ node, parent, parentVal, itemIdx }) => {
-    if (itemIdx < 0) return;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(itemIdx, 1),
-      values: { ...parentVal.values, "": node },
-    };
-    queueMicrotask(() => {
-      (
-        mountByNode.get(node)?.element.previousElementSibling as HTMLElement
-      ).focus();
-    });
-  });
-}
-
-export function wrapNodeInBlock(el: HTMLElement) {
-  withNodeCtx(el, ({ node, parent, parentVal, itemIdx, valueKey }) => {
-    const wrapper = signal({ values: {}, items: [node] });
-    if (itemIdx >= 0) {
-      parent.value = {
-        ...parentVal,
-        items: parentVal.items.toSpliced(itemIdx, 1, wrapper),
-      };
-    } else if (valueKey) {
-      parent.value = {
-        ...parentVal,
-        values: { ...parentVal.values, [valueKey]: wrapper },
-      };
-    }
-    queueMicrotask(() => focusNode(node));
-  });
-}
-export function unwrapNodeFromBlock(el: HTMLElement) {
-  const node = bindingByElement.get(el)!.node;
-  const ctx = getNodeContext(node);
-  if (!ctx) return;
-
-  const wrapperBlock = ctx.parentVal;
-  const children = orderedChildren(wrapperBlock);
-  if (children.length !== 1) return;
-
-  const parentCtx = getNodeContext(ctx.parent);
-  if (!parentCtx) return;
-
-  const { parent, parentVal, itemIdx, valueKey } = parentCtx;
-  if (itemIdx >= 0) {
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(itemIdx, 1, node),
-    };
-  } else if (valueKey) {
-    parent.value = {
-      ...parentVal,
-      values: { ...parentVal.values, [valueKey]: node },
-    };
+    );
   }
-  queueMicrotask(() => focusNode(node));
+}
+
+const ROOT_SCOPE: Scope = new FrameScope();
+
+const scopeSigOf = new WeakMap<Node, Signal<Scope>>();
+function ensureScopeSig(n: Node): Signal<Scope> {
+  let s = scopeSigOf.get(n);
+  if (!s) {
+    s = signal<Scope>(ROOT_SCOPE);
+    scopeSigOf.set(n, s);
+  }
+  return s;
+}
+
+const visibleScopeOf = new WeakMap<Node, ReadonlySignal<Scope>>();
+function getVisibleScope(n: Node): ReadonlySignal<Scope> {
+  let s = visibleScopeOf.get(n);
+  if (!s) {
+    s = computed<Scope>(() => {
+      const parentScope = ensureScopeSig(n).value;
+      const v = n.value;
+      return isBlock(v) ? parentScope.extend(n as Signal<Block>) : parentScope;
+    });
+    visibleScopeOf.set(n, s);
+  }
+  return s;
+}
+
+/* Factories */
+
+export function makeBlock(init?: Partial<Block>): Node {
+  const node = signal<Value>({
+    values: init?.values ?? {},
+    items: init?.items ?? [],
+  });
+  ensureScopeSig(node).value = ROOT_SCOPE;
+  return node;
+}
+
+export function makeCode(expr: Signal<string>): Node {
+  const node = signal<Value>(null as any);
+
+  const result = computed(() => {
+    const scope = ensureScopeSig(node).value;
+    const obj = scope.asObject();
+    const src = expr.value;
+    return evalExpr(src, obj);
+  });
+
+  node.value = {
+    kind: "code",
+    code: expr,
+    result,
+  } satisfies Code;
+
+  ensureScopeSig(node).value = ROOT_SCOPE;
+  return node;
+}
+
+export function makeValue(v: string | number | boolean): Node {
+  const n = signal<Value>(v);
+  ensureScopeSig(n).value = ROOT_SCOPE;
+  return n;
+}
+
+/* Mutators */
+
+export function setValue(block: Node, key: string, child: Node) {
+  const b = block.value;
+  if (!isBlock(b)) throw new Error("setValue: target is not a Block");
+  block.value = { ...b, values: { ...b.values, [key]: child } };
+  ensureScopeSig(child).value = getVisibleScope(block).value;
+}
+
+export function delValue(block: Node, key: string) {
+  const b = block.value;
+  if (!isBlock(b)) throw new Error("delValue: target is not a Block");
+  const { [key]: _removed, ...rest } = b.values;
+  block.value = { ...b, values: rest };
+}
+
+export function pushItem(block: Node, child: Node) {
+  const b = block.value;
+  if (!isBlock(b)) throw new Error("pushItem: target is not a Block");
+  block.value = { ...b, items: [...b.items, child] };
+  ensureScopeSig(child).value = getVisibleScope(block).value;
+}
+
+export function insertItem(block: Node, index: number, child: Node) {
+  const b = block.value;
+  if (!isBlock(b)) throw new Error("insertItem: target is not a Block");
+  const next = b.items.slice();
+  next.splice(index, 0, child);
+  block.value = { ...b, items: next };
+  ensureScopeSig(child).value = getVisibleScope(block).value;
+}
+
+export function moveNode(
+  child: Node,
+  newParent: Node,
+  into: "values" | "items",
+  keyOrIndex?: string | number
+) {
+  if (!isBlock(newParent.value))
+    throw new Error("moveNode: newParent is not a Block");
+
+  if (into === "values") {
+    if (typeof keyOrIndex !== "string")
+      throw new Error("moveNode(values): key required");
+    setValue(newParent, keyOrIndex, child);
+  } else {
+    insertItem(
+      newParent,
+      typeof keyOrIndex === "number"
+        ? keyOrIndex
+        : newParent.value.items.length,
+      child
+    );
+  }
 }
