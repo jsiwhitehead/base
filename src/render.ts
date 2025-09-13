@@ -1,13 +1,13 @@
 import { effect } from "@preact/signals-core";
 
-import { type Block, type Value, isBlock } from "./data";
-import { getChildKey, renameChildKey, convertValueToItem } from "./utils";
-
-type NodeContext = {
-  parent: Value | null;
-  scope: Record<string, Value>;
-};
-export const contextByNode = new WeakMap<Value, NodeContext>();
+import {
+  type Block,
+  type Value,
+  isBlock,
+  keyOfChild,
+  renameChildKey,
+  convertValueToItem,
+} from "./data";
 
 export const mountByNode = new WeakMap<Value, NodeMount>();
 
@@ -79,9 +79,9 @@ class InlineEditor {
     if (focus) this.element.focus();
   }
 
-  update(text: string) {
+  update(_text: string) {
     if (this.element.tagName === "INPUT") {
-      (this.element as HTMLInputElement).value = text;
+      (this.element as HTMLInputElement).value = this.readText();
     } else {
       this.element.textContent =
         this.readText() + (this.fieldType === "key" ? " :" : "");
@@ -105,9 +105,10 @@ class ValueView extends NodeView<string> {
     this.editor = new InlineEditor(
       node,
       "value",
-      () => node.peek() as string,
+      // Assumes `node` is a signal-like value node; adapt as needed.
+      () => (node as any).peek() as string,
       (next) => {
-        node.value = next;
+        (node as any).value = next;
       }
     );
   }
@@ -125,6 +126,7 @@ class BlockView extends NodeView<Block> {
   readonly kind = "block";
   readonly element: HTMLElement;
 
+  // We track which children *this* BlockView attached, so we can clean them up later.
   attachedChildren = new Set<Value>();
   keyEditors = new Map<Value, InlineEditor>();
 
@@ -136,8 +138,7 @@ class BlockView extends NodeView<Block> {
     bindingByElement.set(this.element, { node });
   }
 
-  ensureMounted(child: Value, scope: Record<string, Value>) {
-    contextByNode.set(child, { parent: this.node, scope });
+  ensureMounted(child: Value) {
     this.attachedChildren.add(child);
 
     const existing = mountByNode.get(child);
@@ -151,30 +152,23 @@ class BlockView extends NodeView<Block> {
   pruneChildren(keep?: Set<Value>) {
     for (const childNode of Array.from(this.attachedChildren)) {
       if (keep?.has(childNode)) continue;
-      const context = contextByNode.get(childNode);
-      if (context?.parent === this.node) {
-        const mount = mountByNode.get(childNode);
-        if (mount) {
-          mount.element.remove();
-          queueMicrotask(() => {
-            const current = mountByNode.get(mount.node);
-            if (current === mount && !mount.element.isConnected) {
-              mount.dispose();
-            }
-          });
-        }
+
+      const mount = mountByNode.get(childNode);
+      if (mount) {
+        mount.element.remove();
+        queueMicrotask(() => {
+          const current = mountByNode.get(mount.node);
+          if (current === mount && !mount.element.isConnected) {
+            mount.dispose();
+          }
+        });
       }
+
       this.attachedChildren.delete(childNode);
     }
   }
 
   update(v: Block) {
-    const context = contextByNode.get(this.node)!;
-    const nextScope: Record<string, Value> = {
-      ...context.scope,
-      ...v.values,
-    };
-
     const keepChildren = new Set<Value>([
       ...Object.values(v.values),
       ...v.items,
@@ -194,25 +188,29 @@ class BlockView extends NodeView<Block> {
         editor = new InlineEditor(
           childNode,
           "key",
-          () => getChildKey(this.node.peek() as Block, childNode),
+          () => keyOfChild((this.node as any).peek() as Block, childNode) ?? "",
           (nextKey) => {
-            const current = this.node.peek() as Block;
+            const current = (this.node as any).peek() as Block;
             const trimmed = nextKey.trim();
             if (trimmed === "") {
-              this.node.value = convertValueToItem(current, childNode);
+              (this.node as any).value = convertValueToItem(current, childNode);
             } else {
-              this.node.value = renameChildKey(current, childNode, trimmed);
+              (this.node as any).value = renameChildKey(
+                current,
+                childNode,
+                trimmed
+              );
             }
           }
         );
         this.keyEditors.set(childNode, editor);
       }
       editor.update(key);
-      frag.append(editor.element, this.ensureMounted(childNode, nextScope));
+      frag.append(editor.element, this.ensureMounted(childNode));
     }
 
     for (const childNode of v.items) {
-      frag.append(this.ensureMounted(childNode, nextScope));
+      frag.append(this.ensureMounted(childNode));
     }
 
     this.element.replaceChildren(frag);
@@ -230,7 +228,7 @@ export class NodeMount {
 
   constructor(readonly node: Value) {
     this.stop = effect(() => {
-      const v = node.value;
+      const v = (node as any).value;
       const nextKind = isBlock(v) ? "block" : "value";
 
       if (!this.view || nextKind !== this.view.kind) {

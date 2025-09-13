@@ -1,6 +1,12 @@
 import { effect } from "@preact/signals-core";
 
-import { type Value, makeBlock, makeSignal, resolveDeep } from "./data";
+import {
+  type Value,
+  makeLiteral,
+  makeBlock,
+  makeSignal,
+  resolveDeep,
+} from "./data";
 import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
 import { contextByNode, NodeMount } from "./render";
 
@@ -29,8 +35,11 @@ export function render(data: Value, rootElement: HTMLElement): () => void {
 // TEST
 
 const value = makeBlock({}, [
-  makeBlock({ x: makeSignal("test") }, [makeSignal("hi"), makeSignal("there")]),
-  makeSignal("world"),
+  makeBlock({ x: makeSignal(makeLiteral("test")) }, [
+    makeSignal(makeLiteral("hi")),
+    makeSignal(makeLiteral("there")),
+  ]),
+  makeSignal(makeLiteral("world")),
 ]);
 
 const unmount = render(value, document.getElementById("root")!);
