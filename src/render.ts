@@ -1,23 +1,18 @@
 import { effect } from "@preact/signals-core";
 
-import type { Block, Node } from "./data";
-import {
-  isBlock,
-  getChildKey,
-  renameChildKey,
-  convertValueToItem,
-} from "./data";
+import { type Block, type Value, isBlock } from "./data";
+import { getChildKey, renameChildKey, convertValueToItem } from "./utils";
 
 type NodeContext = {
-  parent: Node | null;
-  scope: Record<string, Node>;
+  parent: Value | null;
+  scope: Record<string, Value>;
 };
-export const contextByNode = new WeakMap<Node, NodeContext>();
+export const contextByNode = new WeakMap<Value, NodeContext>();
 
-export const mountByNode = new WeakMap<Node, NodeMount>();
+export const mountByNode = new WeakMap<Value, NodeMount>();
 
 type NodeBinding = {
-  node: Node;
+  node: Value;
   setEditing?: (v: boolean, focus?: boolean) => void;
 };
 export const bindingByElement = new WeakMap<HTMLElement, NodeBinding>();
@@ -26,7 +21,7 @@ class InlineEditor {
   element!: HTMLElement;
 
   constructor(
-    readonly node: Node,
+    readonly node: Value,
     readonly fieldType: "value" | "key",
     readonly readText: () => string,
     readonly applyText: (text: string) => void
@@ -105,7 +100,7 @@ class ValueView extends NodeView<string> {
   readonly kind = "value";
   editor: InlineEditor;
 
-  constructor(readonly node: Node) {
+  constructor(readonly node: Value) {
     super();
     this.editor = new InlineEditor(
       node,
@@ -130,10 +125,10 @@ class BlockView extends NodeView<Block> {
   readonly kind = "block";
   readonly element: HTMLElement;
 
-  attachedChildren = new Set<Node>();
-  keyEditors = new Map<Node, InlineEditor>();
+  attachedChildren = new Set<Value>();
+  keyEditors = new Map<Value, InlineEditor>();
 
-  constructor(readonly node: Node) {
+  constructor(readonly node: Value) {
     super();
     this.element = document.createElement("div");
     this.element.classList.add("block");
@@ -141,7 +136,7 @@ class BlockView extends NodeView<Block> {
     bindingByElement.set(this.element, { node });
   }
 
-  ensureMounted(child: Node, scope: Record<string, Node>) {
+  ensureMounted(child: Value, scope: Record<string, Value>) {
     contextByNode.set(child, { parent: this.node, scope });
     this.attachedChildren.add(child);
 
@@ -153,7 +148,7 @@ class BlockView extends NodeView<Block> {
     return mount.element;
   }
 
-  pruneChildren(keep?: Set<Node>) {
+  pruneChildren(keep?: Set<Value>) {
     for (const childNode of Array.from(this.attachedChildren)) {
       if (keep?.has(childNode)) continue;
       const context = contextByNode.get(childNode);
@@ -175,12 +170,12 @@ class BlockView extends NodeView<Block> {
 
   update(v: Block) {
     const context = contextByNode.get(this.node)!;
-    const nextScope: Record<string, Node> = {
+    const nextScope: Record<string, Value> = {
       ...context.scope,
       ...v.values,
     };
 
-    const keepChildren = new Set<Node>([
+    const keepChildren = new Set<Value>([
       ...Object.values(v.values),
       ...v.items,
     ]);
@@ -233,7 +228,7 @@ export class NodeMount {
   view!: NodeView<Block | string>;
   stop: () => void;
 
-  constructor(readonly node: Node) {
+  constructor(readonly node: Value) {
     this.stop = effect(() => {
       const v = node.value;
       const nextKind = isBlock(v) ? "block" : "value";

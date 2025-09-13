@@ -1,235 +1,125 @@
-import { signal, Signal } from "@preact/signals-core";
+import {
+  type Signal as BaseSignal,
+  computed,
+  signal,
+} from "@preact/signals-core";
+import { evalExpr } from "./code";
 
-import { contextByNode, mountByNode, bindingByElement } from "./render";
+/* Types */
+
+export type Primitive = string | number | boolean;
+
+export type ResolvedBlock = {
+  kind: "block";
+  values: Record<string, ResolvedDeep>;
+  items: ResolvedDeep[];
+};
 
 export type Block = {
-  values: { [key: string]: Node };
-  items: Node[];
+  kind: "block";
+  parent: BaseSignal<Block | undefined>;
+  values: Record<string, Value>;
+  items: Value[];
 };
 
-export type Node = Signal<Block | string>;
-
-type NodeContext = {
-  node: Node;
-  parent: Node;
-  parentVal: Block;
-  all: Node[];
-  allIdx: number;
-  itemIdx: number;
-  valueKey: string | null;
+export type Code = {
+  kind: "code";
+  parent: BaseSignal<Block | undefined>;
+  code: BaseSignal<string>;
+  result: BaseSignal<Value>;
 };
 
-export function isBlock(v: Block | string): v is Block {
-  return typeof v !== "string";
+export type Signal = {
+  kind: "signal";
+  value: BaseSignal<Value>;
+};
+
+export type ResolvedDeep = ResolvedBlock | Primitive;
+export type Resolved = Block | Primitive;
+export type Value = Signal | Code | Resolved;
+
+/* Type Guards */
+
+export function isBlock(v: Value): v is Block {
+  return typeof v === "object" && v !== null && (v as any).kind === "block";
 }
 
-export function getChildKey(block: Block, child: Node): string {
-  return Object.entries(block.values).find(([, n]) => n === child)?.[0]!;
+export function isCode(v: Value): v is Code {
+  return typeof v === "object" && v !== null && (v as any).kind === "code";
 }
-export function renameChildKey(
-  block: Block,
-  child: Node,
-  nextKey: string
+
+export function isSignal(v: Value): v is Signal {
+  return typeof v === "object" && v !== null && (v as any).kind === "signal";
+}
+
+/* Resolve */
+
+export function resolve(v: Value): Resolved {
+  if (isCode(v)) return resolve(v.result.value);
+  if (isSignal(v)) return resolve(v.value.value);
+  return v;
+}
+
+export function resolveDeep(v: Value): ResolvedDeep {
+  const r = resolve(v);
+  if (isBlock(r)) {
+    const values: Record<string, ResolvedDeep> = {};
+    for (const [key, val] of Object.entries(r.values)) {
+      values[key] = resolveDeep(val);
+    }
+    const items = r.items.map((item) => resolveDeep(item));
+    return { kind: "block", values, items };
+  }
+  return r;
+}
+
+/* Scope */
+
+export function lookup(start: Block | undefined, name: string): Value {
+  let cur: Block | undefined = start;
+  while (cur) {
+    const hit = cur.values[name];
+    if (hit !== undefined) return hit;
+    cur = cur.parent.value;
+  }
+  throw new Error(`Unbound identifier: ${name}`);
+}
+
+/* Code */
+
+export function makeBlock(
+  values: Record<string, Value> = {},
+  items: Value[] = [],
+  parent?: Block | undefined
 ): Block {
-  const currentKey = getChildKey(block, child);
-
-  if (!nextKey || nextKey === currentKey) return block;
-  if (nextKey in block.values && nextKey !== currentKey) return block;
-
-  const newValues = { ...block.values };
-  delete newValues[currentKey];
-  newValues[nextKey] = child;
-
-  return { ...block, values: newValues };
-}
-export function convertValueToItem(block: Block, child: Node): Block {
-  const oldKey = getChildKey(block, child);
-  const { [oldKey]: _removed, ...restValues } = block.values;
-  return {
-    ...block,
-    values: restValues,
-    items: [child, ...block.items],
+  const block: Block = {
+    kind: "block",
+    parent: signal(parent),
+    values: {},
+    items: [],
   };
-}
-
-const focusNode = (node?: Node) => {
-  if (node) mountByNode.get(node)?.element.focus();
-};
-
-function orderedChildren(block: Block): Node[] {
-  const valueNodes = Object.keys(block.values).map((k) => block.values[k]!);
-  return [...valueNodes, ...block.items];
-}
-
-function getNodeContext(node?: Node): NodeContext | null {
-  if (!node) return null;
-
-  const context = contextByNode.get(node);
-  if (!context || !context.parent) return null;
-
-  const parentVal = context.parent.peek() as Block;
-  if (!isBlock(parentVal)) return null;
-
-  const all = orderedChildren(parentVal);
-  const allIdx = all.indexOf(node);
-  if (allIdx < 0) return null;
-
-  const itemIdx = parentVal.items.indexOf(node);
-  const valueKey = getChildKey(parentVal, node);
-
-  return {
-    node,
-    parent: context.parent,
-    parentVal,
-    all,
-    allIdx,
-    itemIdx,
-    valueKey,
-  };
-}
-
-function withNodeCtx(el: HTMLElement, fn: (ctx: NodeContext) => void) {
-  const ctx = getNodeContext(bindingByElement.get(el)?.node);
-  if (ctx) fn(ctx);
-}
-
-export function focusPreviousSibling(el: HTMLElement) {
-  withNodeCtx(el, ({ all, allIdx }) => {
-    focusNode(all[allIdx - 1]);
-  });
-}
-export function focusNextSibling(el: HTMLElement) {
-  withNodeCtx(el, ({ all, allIdx }) => {
-    focusNode(all[allIdx + 1]);
-  });
-}
-export function focusParent(el: HTMLElement) {
-  withNodeCtx(el, ({ parent }) => focusNode(parent));
-}
-export function focusFirstChild(el: HTMLElement) {
-  const { node } = bindingByElement.get(el)!;
-  const nodeVal = node.peek();
-  if (isBlock(nodeVal)) focusNode(orderedChildren(nodeVal)[0]);
-}
-export function focusToggleKeyValue(el: Element) {
-  if (el.classList.contains("key")) {
-    (el.nextElementSibling as HTMLElement).focus();
-  } else if (
-    el.classList.contains("value") &&
-    el.previousElementSibling?.classList.contains("key")
-  ) {
-    (el.previousElementSibling as HTMLElement).focus();
+  for (const [key, v] of Object.entries(values)) {
+    if (isBlock(v) || isCode(v)) v.parent.value = block;
+    block.values[key] = isSignal(v) ? v : makeSignal(v);
   }
-}
-
-export function insertEmptyNodeBefore(el: HTMLElement) {
-  withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {
-    const newNode = signal("");
-    const insertAt = itemIdx >= 0 ? itemIdx : 0;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(insertAt, 0, newNode),
-    };
-    queueMicrotask(() => focusNode(newNode));
-  });
-}
-export function insertEmptyNodeAfter(el: HTMLElement) {
-  withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {
-    const newNode = signal("");
-    const insertAt = itemIdx >= 0 ? itemIdx + 1 : 0;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(insertAt, 0, newNode),
-    };
-    queueMicrotask(() => focusNode(newNode));
-  });
-}
-export function removeNodeAtElement(el: HTMLElement) {
-  withNodeCtx(
-    el,
-    ({
-      parent,
-      parentVal,
-      itemIdx,
-      valueKey,
-      all,
-      allIdx,
-      parent: parentNode,
-    }) => {
-      const focus = all[allIdx - 1] || all[allIdx + 1] || parentNode;
-      if (itemIdx >= 0) {
-        parent.value = {
-          ...parentVal,
-          items: parentVal.items.toSpliced(itemIdx, 1),
-        };
-      } else if (valueKey) {
-        const { [valueKey]: _removed, ...restValues } = parentVal.values;
-        parent.value = {
-          ...parentVal,
-          values: restValues,
-        };
-      }
-      queueMicrotask(() => focusNode(focus));
-    }
-  );
-}
-
-export function itemToEmptyKeyValue(el: HTMLElement) {
-  withNodeCtx(el, ({ node, parent, parentVal, itemIdx }) => {
-    if (itemIdx < 0) return;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(itemIdx, 1),
-      values: { ...parentVal.values, "": node },
-    };
-    queueMicrotask(() => {
-      (
-        mountByNode.get(node)?.element.previousElementSibling as HTMLElement
-      ).focus();
-    });
-  });
-}
-
-export function wrapNodeInBlock(el: HTMLElement) {
-  withNodeCtx(el, ({ node, parent, parentVal, itemIdx, valueKey }) => {
-    const wrapper = signal({ values: {}, items: [node] });
-    if (itemIdx >= 0) {
-      parent.value = {
-        ...parentVal,
-        items: parentVal.items.toSpliced(itemIdx, 1, wrapper),
-      };
-    } else if (valueKey) {
-      parent.value = {
-        ...parentVal,
-        values: { ...parentVal.values, [valueKey]: wrapper },
-      };
-    }
-    queueMicrotask(() => focusNode(node));
-  });
-}
-export function unwrapNodeFromBlock(el: HTMLElement) {
-  const node = bindingByElement.get(el)!.node;
-  const ctx = getNodeContext(node);
-  if (!ctx) return;
-
-  const wrapperBlock = ctx.parentVal;
-  const children = orderedChildren(wrapperBlock);
-  if (children.length !== 1) return;
-
-  const parentCtx = getNodeContext(ctx.parent);
-  if (!parentCtx) return;
-
-  const { parent, parentVal, itemIdx, valueKey } = parentCtx;
-  if (itemIdx >= 0) {
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(itemIdx, 1, node),
-    };
-  } else if (valueKey) {
-    parent.value = {
-      ...parentVal,
-      values: { ...parentVal.values, [valueKey]: node },
-    };
+  for (const v of items) {
+    if (isBlock(v) || isCode(v)) v.parent.value = block;
+    block.items.push(isSignal(v) ? v : makeSignal(v));
   }
-  queueMicrotask(() => focusNode(node));
+  return block;
+}
+
+export function makeCode(
+  expr: BaseSignal<string>,
+  parent: BaseSignal<Block | undefined>
+): Code {
+  const result = computed<Value>(() => {
+    const getter = (name: string): Value => lookup(parent.value, name);
+    return evalExpr(expr.value, getter);
+  });
+  return { kind: "code", parent, code: expr, result };
+}
+
+export function makeSignal(initial: Value): Signal {
+  return { kind: "signal", value: signal(initial) };
 }
