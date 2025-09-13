@@ -1,19 +1,22 @@
 import { effect } from "@preact/signals-core";
 
 import {
-  type Value,
+  type Primitive,
+  type Box,
+  type BlockBox,
   makeLiteral,
   makeBlock,
-  makeSignal,
+  makeBox,
   resolveDeep,
 } from "./data";
 import { onRootMouseDown, onRootDblClick, onRootKeyDown } from "./input";
-import { contextByNode, NodeMount } from "./render";
+import { BoxMount } from "./render";
 
-export function render(data: Value, rootElement: HTMLElement): () => void {
-  contextByNode.set(data, { parent: null, scope: {} });
-
-  const { element, dispose } = new NodeMount(data);
+export function render(
+  rootBox: BlockBox,
+  rootElement: HTMLElement
+): () => void {
+  const { element, dispose } = new BoxMount(rootBox);
   rootElement.appendChild(element);
   queueMicrotask(() => element.focus());
 
@@ -34,16 +37,31 @@ export function render(data: Value, rootElement: HTMLElement): () => void {
 
 // TEST
 
-const value = makeBlock({}, [
-  makeBlock({ x: makeSignal(makeLiteral("test")) }, [
-    makeSignal(makeLiteral("hi")),
-    makeSignal(makeLiteral("there")),
+function makeLiteralBox(value: Primitive) {
+  return makeBox(makeLiteral(value));
+}
+
+function makeBlockBox(
+  values: Record<string, Box> = {},
+  items: Box[] = []
+): BlockBox {
+  const blockBox = makeBox(makeBlock()) as BlockBox;
+  for (const child of Object.values(values)) child.parent = blockBox;
+  for (const child of items) child.parent = blockBox;
+  blockBox.value.value = makeBlock(values, items);
+  return blockBox;
+}
+
+const root = makeBlockBox({}, [
+  makeBlockBox({ x: makeLiteralBox("test") }, [
+    makeLiteralBox("hi"),
+    makeLiteralBox("there"),
   ]),
-  makeSignal(makeLiteral("world")),
+  makeLiteralBox("world"),
 ]);
 
-const unmount = render(value, document.getElementById("root")!);
+const unmount = render(root, document.getElementById("root")!);
 
 effect(() => {
-  console.log(JSON.stringify(resolveDeep(value), null, 2));
+  console.log(JSON.stringify(resolveDeep(root), null, 2));
 });

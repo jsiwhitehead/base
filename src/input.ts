@@ -1,3 +1,4 @@
+import { makeLiteral } from "./data";
 import { bindingByElement } from "./render";
 import {
   focusFirstChild,
@@ -61,7 +62,7 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     !e.altKey
   ) {
     e.preventDefault();
-    binding.node.value = e.key;
+    binding.box.value.value = makeLiteral(e.key);
     binding.setEditing(true);
     return;
   }

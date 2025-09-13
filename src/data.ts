@@ -167,7 +167,7 @@ function insertItemAt(block: BlockNode, index: number, item: Box): BlockNode {
   return makeBlock(block.values, block.items.toSpliced(index, 0, item));
 }
 
-function orderedChildren(block: BlockNode): Box[] {
+export function orderedChildren(block: BlockNode): Box[] {
   return [...Object.values(block.values), ...block.items];
 }
 

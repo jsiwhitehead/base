@@ -1,6 +1,6 @@
 import * as ohm from "ohm-js";
 
-import { makeLiteral, resolveShallow, type Box, type Resolved } from "./data";
+import { type Box, type Resolved, makeLiteral, resolveShallow } from "./data";
 
 const grammar = ohm.grammar(String.raw`Script {
 

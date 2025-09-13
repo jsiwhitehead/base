@@ -1,225 +1,151 @@
-import { signal } from "@preact/signals-core";
+import {
+  type Box,
+  type BlockBox,
+  type BlockNode,
+  isBlock,
+  makeLiteral,
+  makeBox,
+  orderedChildren,
+  keyOfChild,
+  insertItemBefore,
+  insertItemAfter,
+  removeChild,
+  itemToKeyValue,
+  wrapChildInShallowBlock,
+  unwrapSingleChildBlock,
+} from "./data";
 
-import { type Block, type Value, isBlock } from "./data";
-import { contextByNode, mountByNode, bindingByElement } from "./render";
+import { mountByBox, bindingByElement } from "./render";
 
-export function getChildKey(block: Block, child: Value): string {
-  return Object.entries(block.values).find(([, n]) => n === child)?.[0]!;
-}
-export function renameChildKey(
-  block: Block,
-  child: Value,
-  nextKey: string
-): Block {
-  const currentKey = getChildKey(block, child);
-
-  if (!nextKey || nextKey === currentKey) return block;
-  if (nextKey in block.values && nextKey !== currentKey) return block;
-
-  const newValues = { ...block.values };
-  delete newValues[currentKey];
-  newValues[nextKey] = child;
-
-  return { ...block, values: newValues };
-}
-export function convertValueToItem(block: Block, child: Value): Block {
-  const oldKey = getChildKey(block, child);
-  const { [oldKey]: _removed, ...restValues } = block.values;
-  return {
-    ...block,
-    values: restValues,
-    items: [child, ...block.items],
-  };
-}
-
-const focusNode = (node?: Value) => {
-  if (node) mountByNode.get(node)?.element.focus();
-};
-
-function orderedChildren(block: Block): Value[] {
-  const valueNodes = Object.keys(block.values).map((k) => block.values[k]!);
-  return [...valueNodes, ...block.items];
-}
-
-type NodeContext = {
-  node: Value;
-  parent: Value;
-  parentVal: Block;
-  all: Value[];
+type BoxContext = {
+  box: Box;
+  parentBox: BlockBox;
+  all: Box[];
   allIdx: number;
   itemIdx: number;
-  valueKey: string | null;
+  valueKey: string | undefined;
 };
 
-function getNodeContext(node?: Value): NodeContext | null {
-  if (!node) return null;
+function getBoxContext(box?: Box): BoxContext | null {
+  if (!box) return null;
+  const parentBox = box.parent;
+  if (!parentBox) return null;
 
-  const context = contextByNode.get(node);
-  if (!context || !context.parent) return null;
-
-  const parentVal = context.parent.peek() as Block;
-  if (!isBlock(parentVal)) return null;
-
-  const all = orderedChildren(parentVal);
-  const allIdx = all.indexOf(node);
+  const block = parentBox.value.peek() as BlockNode;
+  const all = orderedChildren(block);
+  const allIdx = all.indexOf(box);
   if (allIdx < 0) return null;
 
-  const itemIdx = parentVal.items.indexOf(node);
-  const valueKey = getChildKey(parentVal, node);
+  const itemIdx = block.items.indexOf(box);
+  const valueKey = keyOfChild(box);
 
-  return {
-    node,
-    parent: context.parent,
-    parentVal,
-    all,
-    allIdx,
-    itemIdx,
-    valueKey,
-  };
+  return { box, parentBox, all, allIdx, itemIdx, valueKey };
 }
 
-function withNodeCtx(el: HTMLElement, fn: (ctx: NodeContext) => void) {
-  const ctx = getNodeContext(bindingByElement.get(el)?.node);
+function withBoxCtx(el: HTMLElement, fn: (ctx: BoxContext) => void) {
+  const binding = bindingByElement.get(el);
+  if (!binding) return;
+  const ctx = getBoxContext(binding.box);
   if (ctx) fn(ctx);
 }
 
+const focusBox = (box?: Box) => {
+  if (box) mountByBox.get(box)?.element.focus();
+};
+
+/* Navigation */
+
 export function focusPreviousSibling(el: HTMLElement) {
-  withNodeCtx(el, ({ all, allIdx }) => {
-    focusNode(all[allIdx - 1]);
-  });
+  withBoxCtx(el, ({ all, allIdx }) => focusBox(all[allIdx - 1]));
 }
+
 export function focusNextSibling(el: HTMLElement) {
-  withNodeCtx(el, ({ all, allIdx }) => {
-    focusNode(all[allIdx + 1]);
-  });
+  withBoxCtx(el, ({ all, allIdx }) => focusBox(all[allIdx + 1]));
 }
+
 export function focusParent(el: HTMLElement) {
-  withNodeCtx(el, ({ parent }) => focusNode(parent));
+  withBoxCtx(el, ({ parentBox }) => focusBox(parentBox));
 }
+
 export function focusFirstChild(el: HTMLElement) {
-  const { node } = bindingByElement.get(el)!;
-  const nodeVal = node.peek();
-  if (isBlock(nodeVal)) focusNode(orderedChildren(nodeVal)[0]);
+  const binding = bindingByElement.get(el);
+  if (!binding) return;
+
+  const n = binding.box.value.peek();
+  if (!isBlock(n)) return;
+
+  const first = orderedChildren(n)[0];
+  if (first) focusBox(first);
 }
+
 export function focusToggleKeyValue(el: Element) {
   if (el.classList.contains("key")) {
-    (el.nextElementSibling as HTMLElement).focus();
+    (el.nextElementSibling as HTMLElement | null)?.focus();
   } else if (
     el.classList.contains("value") &&
     el.previousElementSibling?.classList.contains("key")
   ) {
-    (el.previousElementSibling as HTMLElement).focus();
+    (el.previousElementSibling as HTMLElement | null)?.focus();
   }
 }
 
+/* Mutations */
+
 export function insertEmptyNodeBefore(el: HTMLElement) {
-  withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {
-    const newNode = signal("");
-    const insertAt = itemIdx >= 0 ? itemIdx : 0;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(insertAt, 0, newNode),
-    };
-    queueMicrotask(() => focusNode(newNode));
+  withBoxCtx(el, ({ box, parentBox }) => {
+    const newItem = makeBox(makeLiteral(""), parentBox);
+    insertItemBefore(box, newItem);
+    queueMicrotask(() => focusBox(newItem));
   });
 }
+
 export function insertEmptyNodeAfter(el: HTMLElement) {
-  withNodeCtx(el, ({ parent, parentVal, itemIdx }) => {
-    const newNode = signal("");
-    const insertAt = itemIdx >= 0 ? itemIdx + 1 : 0;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(insertAt, 0, newNode),
-    };
-    queueMicrotask(() => focusNode(newNode));
+  withBoxCtx(el, ({ box, parentBox }) => {
+    const newItem = makeBox(makeLiteral(""), parentBox);
+    insertItemAfter(box, newItem);
+    queueMicrotask(() => focusBox(newItem));
   });
 }
+
 export function removeNodeAtElement(el: HTMLElement) {
-  withNodeCtx(
-    el,
-    ({
-      parent,
-      parentVal,
-      itemIdx,
-      valueKey,
-      all,
-      allIdx,
-      parent: parentNode,
-    }) => {
-      const focus = all[allIdx - 1] || all[allIdx + 1] || parentNode;
-      if (itemIdx >= 0) {
-        parent.value = {
-          ...parentVal,
-          items: parentVal.items.toSpliced(itemIdx, 1),
-        };
-      } else if (valueKey) {
-        const { [valueKey]: _removed, ...restValues } = parentVal.values;
-        parent.value = {
-          ...parentVal,
-          values: restValues,
-        };
-      }
-      queueMicrotask(() => focusNode(focus));
-    }
-  );
+  withBoxCtx(el, ({ box, parentBox, all, allIdx }) => {
+    const focusTarget = all[allIdx - 1] ?? all[allIdx + 1] ?? parentBox;
+    removeChild(box);
+    queueMicrotask(() => focusBox(focusTarget));
+  });
 }
 
 export function itemToEmptyKeyValue(el: HTMLElement) {
-  withNodeCtx(el, ({ node, parent, parentVal, itemIdx }) => {
+  withBoxCtx(el, ({ box, itemIdx }) => {
     if (itemIdx < 0) return;
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(itemIdx, 1),
-      values: { ...parentVal.values, "": node },
-    };
+    itemToKeyValue(box, "");
     queueMicrotask(() => {
       (
-        mountByNode.get(node)?.element.previousElementSibling as HTMLElement
+        mountByBox.get(box)?.element.previousElementSibling as HTMLElement
       ).focus();
     });
   });
 }
 
 export function wrapNodeInBlock(el: HTMLElement) {
-  withNodeCtx(el, ({ node, parent, parentVal, itemIdx, valueKey }) => {
-    const wrapper = signal({ values: {}, items: [node] });
-    if (itemIdx >= 0) {
-      parent.value = {
-        ...parentVal,
-        items: parentVal.items.toSpliced(itemIdx, 1, wrapper),
-      };
-    } else if (valueKey) {
-      parent.value = {
-        ...parentVal,
-        values: { ...parentVal.values, [valueKey]: wrapper },
-      };
-    }
-    queueMicrotask(() => focusNode(node));
+  withBoxCtx(el, ({ box }) => {
+    wrapChildInShallowBlock(box);
+    queueMicrotask(() => focusBox(box));
   });
 }
-export function unwrapNodeFromBlock(el: HTMLElement) {
-  const node = bindingByElement.get(el)!.node;
-  const ctx = getNodeContext(node);
-  if (!ctx) return;
 
-  const wrapperBlock = ctx.parentVal;
-  const children = orderedChildren(wrapperBlock);
+export function unwrapNodeFromBlock(el: HTMLElement) {
+  const binding = bindingByElement.get(el);
+  if (!binding) return;
+
+  const wrapper = binding.box as BlockBox;
+  const n = wrapper.value.peek();
+  if (!isBlock(n)) return;
+
+  const children = orderedChildren(n);
   if (children.length !== 1) return;
 
-  const parentCtx = getNodeContext(ctx.parent);
-  if (!parentCtx) return;
-
-  const { parent, parentVal, itemIdx, valueKey } = parentCtx;
-  if (itemIdx >= 0) {
-    parent.value = {
-      ...parentVal,
-      items: parentVal.items.toSpliced(itemIdx, 1, node),
-    };
-  } else if (valueKey) {
-    parent.value = {
-      ...parentVal,
-      values: { ...parentVal.values, [valueKey]: node },
-    };
-  }
-  queueMicrotask(() => focusNode(node));
+  const onlyChild = children[0]!;
+  unwrapSingleChildBlock(wrapper);
+  queueMicrotask(() => focusBox(onlyChild));
 }
