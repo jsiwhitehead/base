@@ -84,8 +84,7 @@ export function makeBlock(
   values: Record<string, Box> = {},
   items: Box[] = []
 ): BlockNode {
-  const block: BlockNode = { kind: "block", values: {}, items: [] };
-  return build(block, values, items);
+  return { kind: "block", values, items };
 }
 
 export function makeCode(code: Signal<string>, parent?: BlockBox): CodeNode {
@@ -120,145 +119,139 @@ export function resolveDeep(b: Box): ResolvedDeep {
 
 /* Helpers */
 
-function build(
-  block: BlockNode,
-  values: BlockNode["values"],
-  items: BlockNode["items"]
-): BlockNode {
-  const next: BlockNode = {
-    kind: "block",
-    values,
-    items,
-  };
-  return next;
+type ChildLoc =
+  | { kind: "item"; index: number }
+  | { kind: "value"; key: string };
+
+function withParentBlock(child: Box, f: (block: BlockNode) => BlockNode) {
+  if (!child.parent) return;
+  child.parent.value.value = f(child.parent.value.peek());
 }
 
-function insertItemAt(
-  block: BlockNode,
-  index: number,
-  newItem: Box
-): BlockNode {
-  return build(block, block.values, block.items.toSpliced(index, 0, newItem));
+function locateChildIn(block: BlockNode, child: Box): ChildLoc | undefined {
+  const idx = block.items.indexOf(child);
+  if (idx >= 0) return { kind: "item", index: idx };
+  const key = Object.entries(block.values).find(([, v]) => v === child)?.[0];
+  return key ? { kind: "value", key } : undefined;
 }
 
-/* Queries */
-
-export function keyOfChild(block: BlockNode, child: Box): string | undefined {
-  return Object.entries(block.values).find(([, v]) => v === child)?.[0];
+function withoutKey<T>(obj: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _removed, ...rest } = obj;
+  return rest;
 }
 
-export function orderedChildren(block: BlockNode): Box[] {
+function updateParentAt(
+  child: Box,
+  op: (block: BlockNode, loc: ChildLoc) => BlockNode
+) {
+  withParentBlock(child, (block) => {
+    const loc = locateChildIn(block, child);
+    if (!loc) return block;
+    return op(block, loc);
+  });
+}
+
+function replaceAt(block: BlockNode, loc: ChildLoc, next: Box): BlockNode {
+  return loc.kind === "item"
+    ? makeBlock(block.values, block.items.toSpliced(loc.index, 1, next))
+    : makeBlock({ ...block.values, [loc.key]: next }, block.items);
+}
+
+function removeAt(block: BlockNode, loc: ChildLoc): BlockNode {
+  return loc.kind === "item"
+    ? makeBlock(block.values, block.items.toSpliced(loc.index, 1))
+    : makeBlock(withoutKey(block.values, loc.key), block.items);
+}
+
+function insertItemAt(block: BlockNode, index: number, item: Box): BlockNode {
+  return makeBlock(block.values, block.items.toSpliced(index, 0, item));
+}
+
+function orderedChildren(block: BlockNode): Box[] {
   return [...Object.values(block.values), ...block.items];
+}
+
+export function keyOfChild(child: Box): string | undefined {
+  if (!child.parent) return undefined;
+  const block = child.parent.value.peek();
+  const loc = locateChildIn(block, child);
+  return loc?.kind === "value" ? loc.key : undefined;
 }
 
 /* Transformations */
 
-export function renameChildKey(
-  block: BlockNode,
-  child: Box,
-  nextKey: string
-): BlockNode {
-  const currentKey = keyOfChild(block, child);
-  if (!currentKey) return block;
-  if (!nextKey || nextKey === currentKey) return block;
-  if (nextKey in block.values && nextKey !== currentKey) return block;
+export function renameChildKey(child: Box, nextKey: string) {
+  updateParentAt(child, (block, loc) => {
+    if (loc.kind !== "value") return block;
+    const currentKey = loc.key;
+    if (!nextKey || nextKey === currentKey) return block;
+    if (nextKey in block.values && nextKey !== currentKey) return block;
 
-  const newValues = { ...block.values };
-  delete newValues[currentKey];
-  newValues[nextKey] = child;
-  return build(block, newValues, block.items);
+    const rest = withoutKey(block.values, currentKey);
+    return makeBlock({ ...rest, [nextKey]: child }, block.items);
+  });
 }
 
-export function convertValueToItem(block: BlockNode, child: Box): BlockNode {
-  const key = keyOfChild(block, child);
-  if (!key) return block;
-  const { [key]: _removed, ...rest } = block.values;
-  return build(block, rest, [child, ...block.items]);
+export function convertValueToItem(child: Box) {
+  updateParentAt(child, (block, loc) => {
+    if (loc.kind !== "value") return block;
+    const rest = withoutKey(block.values, loc.key);
+    return insertItemAt(makeBlock(rest, block.items), 0, child);
+  });
 }
 
-export function removeChild(block: BlockNode, child: Box): BlockNode {
-  const idx = block.items.indexOf(child);
-  if (idx >= 0) {
-    return build(block, block.values, block.items.toSpliced(idx, 1));
-  }
-  const key = keyOfChild(block, child);
-  if (key) {
-    const { [key]: _removed, ...rest } = block.values;
-    return build(block, rest, block.items);
-  }
-  return block;
+export function removeChild(child: Box) {
+  updateParentAt(child, (block, loc) => removeAt(block, loc));
 }
 
-export function replaceChild(
-  block: BlockNode,
-  target: Box,
-  next: Box
-): BlockNode {
-  const idx = block.items.indexOf(target);
-  if (idx >= 0) {
-    return build(block, block.values, block.items.toSpliced(idx, 1, next));
-  }
-  const key = keyOfChild(block, target);
-  if (key) {
-    return build(block, { ...block.values, [key]: next }, block.items);
-  }
-  return block;
+export function replaceChild(target: Box, next: Box) {
+  updateParentAt(target, (block, loc) => replaceAt(block, loc, next));
 }
 
-export function insertItemBefore(
-  block: BlockNode,
-  referenceItem: Box,
-  newItem: Box
-): BlockNode {
-  const idx = block.items.indexOf(referenceItem);
-  if (idx < 0) return block;
-  return insertItemAt(block, idx, newItem);
+export function insertItemBefore(referenceItem: Box, newItem: Box) {
+  updateParentAt(referenceItem, (block, loc) => {
+    if (loc.kind !== "item") return block;
+    return insertItemAt(block, loc.index, newItem);
+  });
 }
 
-export function insertItemAfter(
-  block: BlockNode,
-  referenceItem: Box,
-  newItem: Box
-): BlockNode {
-  const idx = block.items.indexOf(referenceItem);
-  if (idx < 0) return block;
-  return insertItemAt(block, idx + 1, newItem);
+export function insertItemAfter(referenceItem: Box, newItem: Box) {
+  updateParentAt(referenceItem, (block, loc) => {
+    if (loc.kind !== "item") return block;
+    return insertItemAt(block, loc.index + 1, newItem);
+  });
 }
 
-export function itemToKeyValue(
-  block: BlockNode,
-  item: Box,
-  key: string
-): BlockNode {
-  const idx = block.items.indexOf(item);
-  if (idx < 0) return block;
-  return build(
-    block,
-    { ...block.values, [key]: item },
-    block.items.toSpliced(idx, 1)
-  );
+export function itemToKeyValue(item: Box, key: string) {
+  updateParentAt(item, (block, loc) => {
+    if (loc.kind !== "item" || !key) return block;
+    return makeBlock(
+      { ...block.values, [key]: item },
+      block.items.toSpliced(loc.index, 1)
+    );
+  });
 }
 
-export function keyValueToItem(block: BlockNode, key: string): BlockNode {
-  if (!(key in block.values)) return block;
-  const { [key]: value, ...rest } = block.values;
-  const idx = Math.max(0, Math.min(0, block.items.length));
-  return build(block, rest, block.items.toSpliced(idx, 0, value!));
+export function keyValueToItem(contextChild: Box, key: string) {
+  withParentBlock(contextChild, (block) => {
+    if (!(key in block.values)) return block;
+    const value = block.values[key]!;
+    const rest = withoutKey(block.values, key);
+    return insertItemAt(makeBlock(rest, block.items), 0, value);
+  });
 }
 
-export function wrapChildInShallowBlock(
-  block: BlockNode,
-  child: Box
-): BlockNode {
-  const wrapperBox = makeBox(makeBlock({}, [child]), child.parent);
-  return replaceChild(block, child, wrapperBox);
+export function wrapChildInShallowBlock(child: Box) {
+  const parentBox = child.parent;
+  if (!parentBox) return;
+  const wrapperBox = makeBox(makeBlock({}, [child]), parentBox);
+  replaceChild(child, wrapperBox);
 }
 
-export function unwrapSingleChildBlock(
-  block: BlockNode,
-  wrapper: BlockBox
-): BlockNode {
+export function unwrapSingleChildBlock(wrapper: BlockBox) {
+  const parentBox = wrapper.parent;
+  if (!parentBox) return;
   const children = orderedChildren(wrapper.value.value);
-  if (children.length !== 1) return block;
-  return replaceChild(block, wrapper, children[0]!);
+  if (children.length !== 1) return;
+  replaceChild(wrapper, children[0]!);
 }
