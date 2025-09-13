@@ -1,8 +1,4 @@
-import {
-  type Signal as BaseSignal,
-  computed,
-  signal,
-} from "@preact/signals-core";
+import { type Signal, computed, signal } from "@preact/signals-core";
 import { evalExpr } from "./code";
 
 /* Static Types */
@@ -17,81 +13,62 @@ export type ResolvedBlock = {
 
 export type ResolvedDeep = ResolvedBlock | Primitive;
 
-/* Resolved Types */
+/* Node Types */
 
-export type Literal = {
+export type LiteralNode = {
   kind: "literal";
-  parentContainer?: BaseSignal<NonSignal>;
   value: Primitive;
 };
 
-export type Block = {
+export type BlockNode = {
   kind: "block";
-  parentContainer?: BaseSignal<NonSignal>;
-  container?: BaseSignal<NonSignal>;
-  values: Record<string, Value>;
-  items: Value[];
+  values: Record<string, Box>;
+  items: Box[];
 };
 
-export type Resolved = Block | Literal;
+export type Resolved = BlockNode | LiteralNode;
 
-/* Signal Types */
-
-export type Code = {
+export type CodeNode = {
   kind: "code";
-  parentContainer?: BaseSignal<NonSignal>;
-  code: BaseSignal<string>;
-  result: BaseSignal<Resolved>;
+  code: Signal<string>;
+  result: Signal<Resolved>;
 };
 
-export type Signal = {
-  kind: "signal";
-  parentContainer?: BaseSignal<NonSignal>;
-  value: BaseSignal<NonSignal>;
+export type Node = CodeNode | Resolved;
+
+/* Box Types */
+
+export type Box<T extends Node = Node> = {
+  kind: "box";
+  value: Signal<T>;
+  parent?: BlockBox;
 };
 
-export type NonSignal = Code | Resolved;
-
-export type Value = Signal | Code | Resolved;
+export type BlockBox = Box<BlockNode>;
 
 /* Type Guards */
 
-const hasKind = (v: unknown, k: string): boolean =>
-  typeof v === "object" && v !== null && (v as any).kind === k;
+function hasKind(v: unknown, k: string): boolean {
+  return typeof v === "object" && v !== null && (v as any).kind === k;
+}
 
-export function isLiteral(v: Value): v is Literal {
+export function isLiteral(v: Node): v is LiteralNode {
   return hasKind(v, "literal");
 }
 
-export function isBlock(v: Value): v is Block {
+export function isBlock(v: Node): v is BlockNode {
   return hasKind(v, "block");
 }
 
-export function isCode(v: Value): v is Code {
+export function isCode(v: Node): v is CodeNode {
   return hasKind(v, "code");
-}
-
-export function isSignal(v: Value): v is Signal {
-  return hasKind(v, "signal");
 }
 
 /* Scope */
 
-function parentBlockFromContainer(
-  parentContainer?: BaseSignal<NonSignal>
-): Block | undefined {
-  if (!parentContainer) return undefined;
-  const maybe = parentContainer.value;
-  return isBlock(maybe) ? maybe : undefined;
-}
-
-export function lookupScope(start: Block | undefined, name: string): Value {
-  for (
-    let cur = start;
-    cur;
-    cur = parentBlockFromContainer(cur.parentContainer)
-  ) {
-    const hit = cur.values[name];
+export function lookupInScope(start: BlockBox | undefined, name: string): Box {
+  for (let cur = start; cur; cur = cur.parent) {
+    const hit = cur.value.value.values[name];
     if (hit !== undefined) return hit;
   }
   throw new Error(`Unbound identifier: ${name}`);
@@ -99,119 +76,88 @@ export function lookupScope(start: Block | undefined, name: string): Value {
 
 /* Constructors */
 
-export function makeLiteral(
-  value: Primitive,
-  parent?: Block | undefined
-): Literal {
-  return { kind: "literal", parentContainer: parent?.container, value };
+export function makeLiteral(value: Primitive): LiteralNode {
+  return { kind: "literal", value };
 }
 
 export function makeBlock(
-  values: Record<string, Value> = {},
-  items: Value[] = [],
-  parent?: Block | undefined
-): Block {
-  const base: Block = {
-    kind: "block",
-    parentContainer: parent?.container,
-    values: {},
-    items: [],
-  };
-  return build(base, values, items);
+  values: Record<string, Box> = {},
+  items: Box[] = []
+): BlockNode {
+  const block: BlockNode = { kind: "block", values: {}, items: [] };
+  return build(block, values, items);
 }
 
-export function makeCode(expr: BaseSignal<string>, parent?: Block): Code {
-  const parentContainer = parent?.parentContainer;
+export function makeCode(code: Signal<string>, parent?: BlockBox): CodeNode {
   const result = computed(() => {
-    const start = parentBlockFromContainer(parentContainer);
-    const getter = (name: string): Value => lookupScope(start, name);
-    return evalExpr(expr.value, getter);
+    const getter = (name: string): Box => lookupInScope(parent, name);
+    return evalExpr(code.value, getter);
   });
-  return { kind: "code", parentContainer, code: expr, result };
+  return { kind: "code", code, result };
 }
 
-export function makeSignal(
-  initial: NonSignal,
-  parent?: Block | undefined
-): Signal {
-  const valueSignal = signal(initial);
-  if (isBlock(initial)) initial.container = valueSignal;
-  const parentContainer = parent?.container;
-  const sig: Signal = { kind: "signal", parentContainer, value: valueSignal };
-  setParentContainerIfNeeded(sig, parent);
-  return sig;
+export function makeBox<T extends Node>(initial: T, parent?: BlockBox): Box<T> {
+  return { kind: "box", value: signal<T>(initial), parent };
 }
 
 /* Resolve */
 
-export function resolve(v: Value): Resolved {
-  if (isCode(v)) {
-    return v.result.value;
-  }
-  if (isSignal(v)) {
-    const inner = v.value.value;
-    if (isCode(inner)) return inner.result.value;
-    return inner;
-  }
+export function resolveShallow(b: Box): Resolved {
+  const v = b.value.value;
+  if (isCode(v)) return v.result.value;
   return v;
 }
 
-export function resolveDeep(v: Value): ResolvedDeep {
-  const r = resolve(v);
-  if (isLiteral(r)) return r.value;
+export function resolveDeep(b: Box): ResolvedDeep {
+  const n = resolveShallow(b);
+  if (n.kind === "literal") return n.value;
   const values = Object.fromEntries(
-    Object.entries(r.values).map(([k, val]) => [k, resolveDeep(val)])
+    Object.entries(n.values).map(([k, v]) => [k, resolveDeep(v)])
   );
-  const items = r.items.map(resolveDeep);
+  const items = n.items.map(resolveDeep);
   return { kind: "block", values, items };
 }
 
 /* Helpers */
 
-function setParentContainerIfNeeded(v: Value, to?: Block): void {
-  const parentContainer = to?.container;
-  (v as any).parentContainer = parentContainer;
-  if (isSignal(v)) {
-    const x = v.value.peek();
-    if (isLiteral(x) || isBlock(x) || isCode(x)) {
-      (x as any).parentContainer = parentContainer;
-      if (isBlock(x)) x.container = v.value;
-    }
-  }
-}
-
 function build(
-  block: Block,
-  values: Block["values"],
-  items: Block["items"]
-): Block {
-  const next: Block = { ...block, values, items };
-  for (const v of Object.values(values)) setParentContainerIfNeeded(v, next);
-  for (const i of items) setParentContainerIfNeeded(i, next);
+  block: BlockNode,
+  values: BlockNode["values"],
+  items: BlockNode["items"]
+): BlockNode {
+  const next: BlockNode = {
+    kind: "block",
+    values,
+    items,
+  };
   return next;
 }
 
-function insertItemAt(block: Block, index: number, newItem: Value): Block {
+function insertItemAt(
+  block: BlockNode,
+  index: number,
+  newItem: Box
+): BlockNode {
   return build(block, block.values, block.items.toSpliced(index, 0, newItem));
 }
 
 /* Queries */
 
-export function keyOfChild(block: Block, child: Value): string | undefined {
+export function keyOfChild(block: BlockNode, child: Box): string | undefined {
   return Object.entries(block.values).find(([, v]) => v === child)?.[0];
 }
 
-export function orderedChildren(block: Block): Value[] {
+export function orderedChildren(block: BlockNode): Box[] {
   return [...Object.values(block.values), ...block.items];
 }
 
 /* Transformations */
 
 export function renameChildKey(
-  block: Block,
-  child: Value,
+  block: BlockNode,
+  child: Box,
   nextKey: string
-): Block {
+): BlockNode {
   const currentKey = keyOfChild(block, child);
   if (!currentKey) return block;
   if (!nextKey || nextKey === currentKey) return block;
@@ -223,14 +169,14 @@ export function renameChildKey(
   return build(block, newValues, block.items);
 }
 
-export function convertValueToItem(block: Block, child: Value): Block {
+export function convertValueToItem(block: BlockNode, child: Box): BlockNode {
   const key = keyOfChild(block, child);
   if (!key) return block;
   const { [key]: _removed, ...rest } = block.values;
   return build(block, rest, [child, ...block.items]);
 }
 
-export function removeChild(block: Block, child: Value): Block {
+export function removeChild(block: BlockNode, child: Box): BlockNode {
   const idx = block.items.indexOf(child);
   if (idx >= 0) {
     return build(block, block.values, block.items.toSpliced(idx, 1));
@@ -243,7 +189,11 @@ export function removeChild(block: Block, child: Value): Block {
   return block;
 }
 
-export function replaceChild(block: Block, target: Value, next: Value): Block {
+export function replaceChild(
+  block: BlockNode,
+  target: Box,
+  next: Box
+): BlockNode {
   const idx = block.items.indexOf(target);
   if (idx >= 0) {
     return build(block, block.values, block.items.toSpliced(idx, 1, next));
@@ -256,26 +206,30 @@ export function replaceChild(block: Block, target: Value, next: Value): Block {
 }
 
 export function insertItemBefore(
-  block: Block,
-  referenceItem: Value,
-  newItem: Value
-): Block {
+  block: BlockNode,
+  referenceItem: Box,
+  newItem: Box
+): BlockNode {
   const idx = block.items.indexOf(referenceItem);
   if (idx < 0) return block;
   return insertItemAt(block, idx, newItem);
 }
 
 export function insertItemAfter(
-  block: Block,
-  referenceItem: Value,
-  newItem: Value
-): Block {
+  block: BlockNode,
+  referenceItem: Box,
+  newItem: Box
+): BlockNode {
   const idx = block.items.indexOf(referenceItem);
   if (idx < 0) return block;
   return insertItemAt(block, idx + 1, newItem);
 }
 
-export function itemToKeyValue(block: Block, item: Value, key: string): Block {
+export function itemToKeyValue(
+  block: BlockNode,
+  item: Box,
+  key: string
+): BlockNode {
   const idx = block.items.indexOf(item);
   if (idx < 0) return block;
   return build(
@@ -285,19 +239,26 @@ export function itemToKeyValue(block: Block, item: Value, key: string): Block {
   );
 }
 
-export function keyValueToItem(block: Block, key: string, atIndex = 0): Block {
+export function keyValueToItem(block: BlockNode, key: string): BlockNode {
   if (!(key in block.values)) return block;
   const { [key]: value, ...rest } = block.values;
-  const idx = Math.max(0, Math.min(atIndex, block.items.length));
+  const idx = Math.max(0, Math.min(0, block.items.length));
   return build(block, rest, block.items.toSpliced(idx, 0, value!));
 }
 
-export function wrapChildInShallowBlock(block: Block, child: Value): Block {
-  return replaceChild(block, child, makeBlock({}, [child], block));
+export function wrapChildInShallowBlock(
+  block: BlockNode,
+  child: Box
+): BlockNode {
+  const wrapperBox = makeBox(makeBlock({}, [child]), child.parent);
+  return replaceChild(block, child, wrapperBox);
 }
 
-export function unwrapSingleChildBlock(block: Block, wrapper: Block): Block {
-  const children = orderedChildren(wrapper);
+export function unwrapSingleChildBlock(
+  block: BlockNode,
+  wrapper: BlockBox
+): BlockNode {
+  const children = orderedChildren(wrapper.value.value);
   if (children.length !== 1) return block;
   return replaceChild(block, wrapper, children[0]!);
 }

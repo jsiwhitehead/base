@@ -1,6 +1,6 @@
 import * as ohm from "ohm-js";
 
-import { makeLiteral, resolve, type Value, type Resolved } from "./data";
+import { makeLiteral, resolveShallow, type Box, type Resolved } from "./data";
 
 const grammar = ohm.grammar(String.raw`Script {
 
@@ -23,8 +23,8 @@ const grammar = ohm.grammar(String.raw`Script {
 
 }`);
 
-function toNum(v: Value): number {
-  const r = resolve(v);
+function toNum(v: Box): number {
+  const r = resolveShallow(v);
   const n = typeof r === "number" ? r : Number(r);
   if (Number.isNaN(n)) {
     throw new TypeError(`Expected a number, got ${String(r)}`);
@@ -70,10 +70,7 @@ const semantics = grammar
     },
   });
 
-export function evalExpr(
-  src: string,
-  scope: (name: string) => Value
-): Resolved {
+export function evalExpr(src: string, scope: (name: string) => Box): Resolved {
   const m = grammar.match(src, "Exp");
   if (m.failed()) {
     throw new SyntaxError(m.message);
