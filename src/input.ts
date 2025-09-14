@@ -14,7 +14,6 @@ import {
   wrapChildInShallowBlock,
   unwrapSingleChildBlock,
 } from "./data";
-
 import { mountByBox, bindingByElement } from "./render";
 
 /* Helpers */
@@ -28,12 +27,18 @@ type BoxContext = {
   valueKey: string | undefined;
 };
 
-function getBoxContext(box?: Box): BoxContext | null {
-  if (!box) return null;
-  const parentBox = box.parent;
-  if (!parentBox) return null;
+const isTextInput = (el: Element | null): el is HTMLInputElement =>
+  !!el && el.tagName === "INPUT";
 
-  const block = parentBox.value.peek() as BlockNode;
+const isTypingChar = (e: KeyboardEvent) =>
+  e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+
+const focusBox = (box?: Box) => box && mountByBox.get(box)?.element.focus();
+
+function getBoxContext(box?: Box): BoxContext | null {
+  if (!box?.parent) return null;
+
+  const block = box.parent.value.peek() as BlockNode;
   const all = orderedChildren(block);
   const allIdx = all.indexOf(box);
   if (allIdx < 0) return null;
@@ -41,13 +46,12 @@ function getBoxContext(box?: Box): BoxContext | null {
   const itemIdx = block.items.indexOf(box);
   const valueKey = keyOfChild(box);
 
-  return { box, parentBox, all, allIdx, itemIdx, valueKey };
+  return { box, parentBox: box.parent, all, allIdx, itemIdx, valueKey };
 }
 
-function withBoxCtx(el: HTMLElement, fn: (ctx: BoxContext) => void) {
+function withBoxContext(el: HTMLElement, fn: (ctx: BoxContext) => void) {
   const binding = bindingByElement.get(el);
-  if (!binding) return;
-  const ctx = getBoxContext(binding.box);
+  const ctx = getBoxContext(binding?.box);
   if (ctx) fn(ctx);
 }
 
@@ -57,125 +61,94 @@ function runMutationOnElement(
 ) {
   const binding = bindingByElement.get(el);
   if (!binding) return;
-
   const next = mutate(binding.box);
-  if (next) queueMicrotask(() => mountByBox.get(next)?.element.focus());
+  if (next) queueMicrotask(() => focusBox(next));
 }
 
 /* Handlers */
 
 export function onRootMouseDown(e: MouseEvent) {
-  if (e.detail !== 2) return;
-  const target = e.target as HTMLElement;
-  if (target.tagName === "INPUT") return;
-  e.preventDefault();
+  if (e.detail === 2 && !isTextInput(e.target as HTMLElement)) {
+    e.preventDefault();
+  }
 }
 
 export function onRootDblClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
-  if (target.tagName === "INPUT") return;
+  if (isTextInput(target)) return;
+
   const binding = bindingByElement.get(target);
-  if (binding?.setEditing) {
-    e.preventDefault();
-    e.stopPropagation();
-    binding.setEditing(true, true);
-  }
+  if (!binding?.setEditing) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  binding.setEditing(true, true);
 }
 
 export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
   const active = document.activeElement as HTMLElement | null;
-  if (!active || !root.contains(active)) return;
-
-  if (active.tagName === "INPUT") return;
+  if (!active || !root.contains(active) || isTextInput(active)) return;
 
   if (
     e.shiftKey &&
-    (e.key === "ArrowUp" ||
-      e.key === "ArrowDown" ||
-      e.key === "ArrowLeft" ||
-      e.key === "ArrowRight")
+    ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
   ) {
     e.preventDefault();
-    if (e.key === "ArrowUp") {
-      runMutationOnElement(active, (box) =>
-        insertItemBefore(box, makeBox(makeLiteral(""), box.parent!))
-      );
-    } else if (e.key === "ArrowDown") {
-      runMutationOnElement(active, (box) =>
-        insertItemAfter(box, makeBox(makeLiteral(""), box.parent!))
-      );
-    } else if (e.key === "ArrowLeft") {
-      runMutationOnElement(active, (box) => unwrapSingleChildBlock(box));
-    } else {
-      runMutationOnElement(active, (box) => wrapChildInShallowBlock(box));
-    }
+    const shiftHandlers: Record<string, () => void> = {
+      ArrowUp: () =>
+        runMutationOnElement(active, (box) =>
+          insertItemBefore(box, makeBox(makeLiteral(""), box.parent!))
+        ),
+      ArrowDown: () =>
+        runMutationOnElement(active, (box) =>
+          insertItemAfter(box, makeBox(makeLiteral(""), box.parent!))
+        ),
+      ArrowLeft: () => runMutationOnElement(active, unwrapSingleChildBlock),
+      ArrowRight: () => runMutationOnElement(active, wrapChildInShallowBlock),
+    };
+    shiftHandlers[e.key]?.();
     return;
   }
 
   const binding = bindingByElement.get(active);
-  if (
-    binding?.setEditing &&
-    e.key.length === 1 &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey
-  ) {
+
+  if (binding?.setEditing && isTypingChar(e)) {
     e.preventDefault();
     binding.box.value.value = makeLiteral(e.key);
     binding.setEditing(true);
     return;
   }
 
-  if (e.key === "ArrowUp") {
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
-    withBoxCtx(active, ({ all, allIdx }) => {
-      const prev = all[allIdx - 1];
-      if (prev) mountByBox.get(prev)?.element.focus();
-    });
-    return;
-  }
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    withBoxCtx(active, ({ all, allIdx }) => {
-      const next = all[allIdx + 1];
-      if (next) mountByBox.get(next)?.element.focus();
-    });
-    return;
-  }
-  if (e.key === "ArrowLeft") {
-    e.preventDefault();
-    withBoxCtx(active, ({ parentBox }) => {
-      mountByBox.get(parentBox)?.element.focus();
-    });
-    return;
-  }
-  if (e.key === "ArrowRight") {
-    e.preventDefault();
-    const b = bindingByElement.get(active);
-    if (b) {
-      const n = b.box.value.peek();
-      if (isBlock(n)) {
-        const first = orderedChildren(n)[0];
-        if (first) mountByBox.get(first)?.element.focus();
-      }
-    }
+    const navHandlers: Record<string, () => void> = {
+      ArrowUp: () =>
+        withBoxContext(active, ({ all, allIdx }) => focusBox(all[allIdx - 1])),
+      ArrowDown: () =>
+        withBoxContext(active, ({ all, allIdx }) => focusBox(all[allIdx + 1])),
+      ArrowLeft: () =>
+        withBoxContext(active, ({ parentBox }) => focusBox(parentBox)),
+      ArrowRight: () => {
+        const b = bindingByElement.get(active);
+        const n = b?.box.value.peek();
+        if (n && isBlock(n)) focusBox(orderedChildren(n)[0]);
+      },
+    };
+    navHandlers[e.key]?.();
     return;
   }
 
   if (e.key === "Tab") {
     e.preventDefault();
-    if (
-      active.classList.contains("key") ||
-      active.previousElementSibling?.classList.contains("key")
-    ) {
-      if (active.classList.contains("key")) {
-        (active.nextElementSibling as HTMLElement | null)?.focus();
-      } else if (
-        active.classList.contains("value") &&
-        active.previousElementSibling?.classList.contains("key")
-      ) {
-        (active.previousElementSibling as HTMLElement | null)?.focus();
-      }
+
+    const isKey = active.classList.contains("key");
+    const prevIsKey = active.previousElementSibling?.classList.contains("key");
+
+    if (isKey || prevIsKey) {
+      const nextEl = isKey
+        ? (active.nextElementSibling as HTMLElement | null)
+        : (active.previousElementSibling as HTMLElement | null);
+      nextEl?.focus();
     } else {
       runMutationOnElement(active, (box) => itemToKeyValue(box, ""));
     }
@@ -196,15 +169,12 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
 
   if (e.key === "Backspace") {
     e.preventDefault();
-    runMutationOnElement(active, (box) => removeChild(box));
+    runMutationOnElement(active, removeChild);
     return;
   }
 
-  if (!binding) return;
-
-  if (e.key === "Enter") {
+  if (e.key === "Enter" && binding?.setEditing) {
     e.preventDefault();
-    if (binding.setEditing) binding.setEditing(true);
-    return;
+    binding.setEditing(true);
   }
 }
