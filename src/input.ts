@@ -63,12 +63,6 @@ function runMutationOnElement(
 
 /* Handlers */
 
-export function onRootMouseDown(e: MouseEvent) {
-  if (e.detail === 2 && !isTextInput(e.target as HTMLElement)) {
-    e.preventDefault();
-  }
-}
-
 export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
   const active = document.activeElement as HTMLElement | null;
   if (!active || !root.contains(active) || isTextInput(active)) return;

@@ -9,7 +9,6 @@ import {
   isBlock,
   isCode,
   makeLiteral,
-  makeBox,
   keyOfChild,
   renameChildKey,
   moveValueToItems,
@@ -19,19 +18,50 @@ import {
 export const mountByBox = new WeakMap<Box, BoxMount>();
 export const boxByElement = new WeakMap<HTMLElement, Box>();
 
-function isTypingChar(e: KeyboardEvent) {
+function createEl(
+  tag: string,
+  className?: string,
+  focusable?: boolean
+): HTMLElement {
+  const node = document.createElement(tag);
+  if (className) node.classList.add(className);
+  if (focusable) node.tabIndex = 0;
+  return node;
+}
+
+function isCharKey(e: KeyboardEvent) {
   return e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 }
 
 abstract class View<T> {
-  abstract readonly nodeKind: "code" | "block" | "literal";
+  abstract readonly viewKind: "code" | "block" | "literal" | "readonly";
   abstract readonly element: HTMLElement;
   abstract update(next: T): void;
   dispose() {}
 }
 
+class ReadonlyStringView extends View<string> {
+  readonly viewKind = "readonly";
+  element: HTMLElement;
+
+  constructor(
+    readonly fieldRole: "value" | "key",
+    readonly registerElement: (el: HTMLElement) => void,
+    initial: string
+  ) {
+    super();
+    this.element = createEl("div", this.fieldRole);
+    this.element.textContent = initial + (this.fieldRole === "key" ? " :" : "");
+    this.registerElement(this.element);
+  }
+
+  update(text: string) {
+    this.element.textContent = text + (this.fieldRole === "key" ? " :" : "");
+  }
+}
+
 class StringView extends View<string> {
-  readonly nodeKind = "literal";
+  readonly viewKind = "literal";
   element!: HTMLElement;
 
   constructor(
@@ -41,13 +71,11 @@ class StringView extends View<string> {
     readonly registerElement: (el: HTMLElement) => void
   ) {
     super();
-    this.switchElement("div");
+    this.toggleEditor("div");
   }
 
-  switchElement(tag: "div" | "input", initialText?: string) {
-    const nextEl = document.createElement(tag) as HTMLElement;
-    nextEl.classList.add(this.fieldRole);
-    nextEl.tabIndex = 0;
+  toggleEditor(tag: "div" | "input", initialText?: string) {
+    const nextEl = createEl(tag, this.fieldRole, true);
 
     if (tag === "input") {
       const inputEl = nextEl as HTMLInputElement;
@@ -68,17 +96,21 @@ class StringView extends View<string> {
 
       inputEl.addEventListener("blur", () => {
         if (!canceled) this.commitText(inputEl.value);
-        this.switchElement("div");
+        this.toggleEditor("div");
         if (focusAfter) this.element.focus();
       });
     } else {
       nextEl.textContent =
         this.getText() + (this.fieldRole === "key" ? " :" : "");
 
+      nextEl.addEventListener("mousedown", (e) => {
+        if (e.detail === 2) e.preventDefault();
+      });
+
       nextEl.addEventListener("dblclick", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.switchElement("input");
+        this.toggleEditor("input");
         this.element.focus();
       });
 
@@ -86,15 +118,15 @@ class StringView extends View<string> {
         if (e.key === "Enter") {
           e.preventDefault();
           e.stopPropagation();
-          this.switchElement("input");
+          this.toggleEditor("input");
           this.element.focus();
           return;
         }
 
-        if (isTypingChar(e)) {
+        if (isCharKey(e)) {
           e.preventDefault();
           e.stopPropagation();
-          this.switchElement("input", e.key);
+          this.toggleEditor("input", e.key);
           this.element.focus();
         }
       });
@@ -114,7 +146,7 @@ class StringView extends View<string> {
 }
 
 class BlockView extends View<BlockNode> {
-  readonly nodeKind = "block";
+  readonly viewKind = "block";
   readonly element: HTMLElement;
 
   mountedChildBoxes = new Set<Box>();
@@ -122,9 +154,7 @@ class BlockView extends View<BlockNode> {
 
   constructor(registerElement: (el: HTMLElement) => void) {
     super();
-    this.element = document.createElement("div");
-    this.element.classList.add("block");
-    this.element.tabIndex = 0;
+    this.element = createEl("div", "block", true);
     registerElement(this.element);
   }
 
@@ -202,26 +232,21 @@ class BlockView extends View<BlockNode> {
   }
 }
 
-type CodeUpdate = { code: string; resolved: Resolved };
-
-class CodeView extends View<CodeUpdate> {
-  readonly nodeKind = "code";
+class CodeView extends View<string> {
+  readonly viewKind = "code";
   readonly element: HTMLElement;
 
   codeEditor: StringView;
-  resultValueBox: Box;
-  resultBoxMount: BoxMount;
+  resultMount: ResolvedMount;
 
   constructor(
     readCode: () => string,
     applyCode: (text: string) => void,
     registerElement: (el: HTMLElement) => void,
-    initialResolved: Resolved
+    readResolved: () => Resolved
   ) {
     super();
-    this.element = document.createElement("div");
-    this.element.classList.add("code");
-    this.element.tabIndex = 0;
+    this.element = createEl("div", "code", true);
     registerElement(this.element);
 
     this.codeEditor = new StringView(
@@ -230,32 +255,71 @@ class CodeView extends View<CodeUpdate> {
       applyCode,
       registerElement
     );
+    this.resultMount = new ResolvedMount(readResolved);
 
-    this.resultValueBox = makeBox(initialResolved);
-    this.resultBoxMount = new BoxMount(this.resultValueBox);
-
-    this.element.append(this.codeEditor.element, this.resultBoxMount.element);
+    this.element.append(this.codeEditor.element, this.resultMount.element);
   }
 
-  update({ code, resolved }: CodeUpdate) {
+  update(code: string) {
     this.codeEditor.update(code);
-    this.resultValueBox.value.value = resolved;
   }
 
   dispose() {
-    this.resultBoxMount.dispose();
+    this.resultMount.dispose();
     this.element.textContent = "";
   }
 }
 
+export class ResolvedMount {
+  nodeView!: View<BlockNode | string>;
+  disposeEffect: () => void;
+
+  constructor(readResolved: () => Resolved) {
+    const registerElement = () => {};
+
+    this.disposeEffect = effect(() => {
+      const resolved = readResolved();
+      const nextKind = isBlock(resolved as any) ? "block" : "readonly";
+
+      if (!this.nodeView || nextKind !== this.nodeView.viewKind) {
+        const prevEl = this.nodeView?.element;
+        this.nodeView?.dispose();
+
+        this.nodeView =
+          nextKind === "block"
+            ? new BlockView(registerElement)
+            : new ReadonlyStringView(
+                "value",
+                registerElement,
+                String((resolved as LiteralNode).value)
+              );
+
+        if (prevEl) prevEl.replaceWith(this.nodeView.element);
+      }
+
+      if (nextKind === "block") this.nodeView.update(resolved as BlockNode);
+      else this.nodeView.update(String((resolved as LiteralNode).value));
+    });
+  }
+
+  get element() {
+    return this.nodeView.element;
+  }
+
+  dispose() {
+    this.disposeEffect();
+    this.nodeView?.dispose();
+  }
+}
+
 export class BoxMount {
-  nodeView!: View<CodeUpdate | BlockNode | string>;
-  stopEffect: () => void;
+  nodeView!: View<BlockNode | string>;
+  disposeEffect: () => void;
 
   constructor(readonly box: Box) {
-    this.stopEffect = effect(() => {
+    this.disposeEffect = effect(() => {
       const currentNode = box.value.value;
-      const nextNodeKind = isCode(currentNode)
+      const nextKind = isCode(currentNode)
         ? "code"
         : isBlock(currentNode)
         ? "block"
@@ -263,19 +327,19 @@ export class BoxMount {
 
       const registerElementBox = (el: HTMLElement) => boxByElement.set(el, box);
 
-      if (!this.nodeView || nextNodeKind !== this.nodeView.nodeKind) {
+      if (!this.nodeView || nextKind !== this.nodeView.viewKind) {
         this.nodeView?.dispose();
         this.nodeView =
-          nextNodeKind === "code"
+          nextKind === "code"
             ? new CodeView(
                 () => (box.value.peek() as CodeNode).code,
                 (next) => {
                   box.value.value = { kind: "code", code: next };
                 },
                 registerElementBox,
-                resolveShallow(box)
+                () => resolveShallow(box)
               )
-            : nextNodeKind === "block"
+            : nextKind === "block"
             ? new BlockView(registerElementBox)
             : new StringView(
                 "value",
@@ -287,12 +351,9 @@ export class BoxMount {
               );
       }
 
-      if (nextNodeKind === "code") {
-        this.nodeView.update({
-          code: (currentNode as CodeNode).code,
-          resolved: resolveShallow(box),
-        });
-      } else if (nextNodeKind === "block") {
+      if (nextKind === "code") {
+        this.nodeView.update((currentNode as CodeNode).code);
+      } else if (nextKind === "block") {
         this.nodeView.update(currentNode as BlockNode);
       } else {
         this.nodeView.update(String((currentNode as LiteralNode).value));
@@ -306,10 +367,10 @@ export class BoxMount {
     return this.nodeView.element;
   }
 
-  dispose = () => {
-    this.stopEffect();
+  dispose() {
+    this.disposeEffect();
     this.nodeView.dispose();
     const entry = mountByBox.get(this.box);
     if (entry === this) mountByBox.delete(this.box);
-  };
+  }
 }
