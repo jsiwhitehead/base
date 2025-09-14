@@ -35,7 +35,7 @@ export function render(
   };
 }
 
-// TEST
+/* Test */
 
 function makeLiteralBox(value: Primitive) {
   return makeBox(makeLiteral(value));
