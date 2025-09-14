@@ -17,6 +17,8 @@ import {
 
 import { mountByBox, bindingByElement } from "./render";
 
+/* Navigation */
+
 type BoxContext = {
   box: Box;
   parentBox: BlockBox;
@@ -52,8 +54,6 @@ function withBoxCtx(el: HTMLElement, fn: (ctx: BoxContext) => void) {
 const focusBox = (box?: Box) => {
   if (box) mountByBox.get(box)?.element.focus();
 };
-
-/* Navigation */
 
 export function focusPreviousSibling(el: HTMLElement) {
   withBoxCtx(el, ({ all, allIdx }) => focusBox(all[allIdx - 1]));
@@ -91,61 +91,41 @@ export function focusToggleKeyValue(el: Element) {
 
 /* Mutations */
 
-export function insertEmptyNodeBefore(el: HTMLElement) {
-  withBoxCtx(el, ({ box, parentBox }) => {
-    const newItem = makeBox(makeLiteral(""), parentBox);
-    insertItemBefore(box, newItem);
-    queueMicrotask(() => focusBox(newItem));
-  });
-}
-
-export function insertEmptyNodeAfter(el: HTMLElement) {
-  withBoxCtx(el, ({ box, parentBox }) => {
-    const newItem = makeBox(makeLiteral(""), parentBox);
-    insertItemAfter(box, newItem);
-    queueMicrotask(() => focusBox(newItem));
-  });
-}
-
-export function removeNodeAtElement(el: HTMLElement) {
-  withBoxCtx(el, ({ box, parentBox, all, allIdx }) => {
-    const focusTarget = all[allIdx - 1] ?? all[allIdx + 1] ?? parentBox;
-    removeChild(box);
-    queueMicrotask(() => focusBox(focusTarget));
-  });
-}
-
-export function itemToEmptyKeyValue(el: HTMLElement) {
-  withBoxCtx(el, ({ box, itemIdx }) => {
-    if (itemIdx < 0) return;
-    itemToKeyValue(box, "");
-    queueMicrotask(() => {
-      (
-        mountByBox.get(box)?.element.previousElementSibling as HTMLElement
-      ).focus();
-    });
-  });
-}
-
-export function wrapNodeInBlock(el: HTMLElement) {
-  withBoxCtx(el, ({ box }) => {
-    wrapChildInShallowBlock(box);
-    queueMicrotask(() => focusBox(box));
-  });
-}
-
-export function unwrapNodeFromBlock(el: HTMLElement) {
+function runMutationOnElement(
+  el: HTMLElement,
+  mutate: (box: Box) => Box | undefined
+) {
   const binding = bindingByElement.get(el);
   if (!binding) return;
 
-  const wrapper = binding.box as BlockBox;
-  const n = wrapper.value.peek();
-  if (!isBlock(n)) return;
+  const next = mutate(binding.box);
+  if (next) queueMicrotask(() => mountByBox.get(next)?.element.focus());
+}
 
-  const children = orderedChildren(n);
-  if (children.length !== 1) return;
+export function insertEmptyNodeBefore(el: HTMLElement) {
+  runMutationOnElement(el, (box) =>
+    insertItemBefore(box, makeBox(makeLiteral(""), box.parent!))
+  );
+}
 
-  const onlyChild = children[0]!;
-  unwrapSingleChildBlock(wrapper);
-  queueMicrotask(() => focusBox(onlyChild));
+export function insertEmptyNodeAfter(el: HTMLElement) {
+  runMutationOnElement(el, (box) =>
+    insertItemAfter(box, makeBox(makeLiteral(""), box.parent!))
+  );
+}
+
+export function removeNodeAtElement(el: HTMLElement) {
+  runMutationOnElement(el, (box) => removeChild(box));
+}
+
+export function itemToEmptyKeyValue(el: HTMLElement) {
+  runMutationOnElement(el, (box) => itemToKeyValue(box, ""));
+}
+
+export function wrapNodeInBlock(el: HTMLElement) {
+  runMutationOnElement(el, (box) => wrapChildInShallowBlock(box));
+}
+
+export function unwrapNodeFromBlock(el: HTMLElement) {
+  runMutationOnElement(el, (box) => unwrapSingleChildBlock(box));
 }
