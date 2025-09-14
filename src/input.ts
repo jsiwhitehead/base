@@ -14,7 +14,7 @@ import {
   wrapChildInShallowBlock,
   unwrapSingleChildBlock,
 } from "./data";
-import { mountByBox, bindingByElement } from "./render";
+import { mountByBox, boxByElement } from "./render";
 
 /* Helpers */
 
@@ -29,9 +29,6 @@ type BoxContext = {
 
 const isTextInput = (el: Element | null): el is HTMLInputElement =>
   !!el && el.tagName === "INPUT";
-
-const isTypingChar = (e: KeyboardEvent) =>
-  e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 
 const focusBox = (box?: Box) => box && mountByBox.get(box)?.element.focus();
 
@@ -50,8 +47,7 @@ function getBoxContext(box?: Box): BoxContext | null {
 }
 
 function withBoxContext(el: HTMLElement, fn: (ctx: BoxContext) => void) {
-  const binding = bindingByElement.get(el);
-  const ctx = getBoxContext(binding?.box);
+  const ctx = getBoxContext(boxByElement.get(el));
   if (ctx) fn(ctx);
 }
 
@@ -59,9 +55,9 @@ function runMutationOnElement(
   el: HTMLElement,
   mutate: (box: Box) => Box | undefined
 ) {
-  const binding = bindingByElement.get(el);
-  if (!binding) return;
-  const next = mutate(binding.box);
+  const box = boxByElement.get(el);
+  if (!box) return;
+  const next = mutate(box);
   if (next) queueMicrotask(() => focusBox(next));
 }
 
@@ -71,18 +67,6 @@ export function onRootMouseDown(e: MouseEvent) {
   if (e.detail === 2 && !isTextInput(e.target as HTMLElement)) {
     e.preventDefault();
   }
-}
-
-export function onRootDblClick(e: MouseEvent) {
-  const target = e.target as HTMLElement;
-  if (isTextInput(target)) return;
-
-  const binding = bindingByElement.get(target);
-  if (!binding?.setEditing) return;
-
-  e.preventDefault();
-  e.stopPropagation();
-  binding.setEditing(true, true);
 }
 
 export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
@@ -110,15 +94,6 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     return;
   }
 
-  const binding = bindingByElement.get(active);
-
-  if (binding?.setEditing && isTypingChar(e)) {
-    e.preventDefault();
-    binding.box.value.value = makeLiteral(e.key);
-    binding.setEditing(true);
-    return;
-  }
-
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
     const navHandlers: Record<string, () => void> = {
@@ -129,8 +104,8 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
       ArrowLeft: () =>
         withBoxContext(active, ({ parentBox }) => focusBox(parentBox)),
       ArrowRight: () => {
-        const b = bindingByElement.get(active);
-        const n = b?.box.value.peek();
+        const b = boxByElement.get(active);
+        const n = b?.value.peek();
         if (n && isBlock(n)) focusBox(orderedChildren(n)[0]);
       },
     };
@@ -153,17 +128,6 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
       runMutationOnElement(active, (box) => itemToKeyValue(box, ""));
     }
 
-    queueMicrotask(() => {
-      const newBinding = bindingByElement.get(
-        document.activeElement as HTMLElement
-      );
-      if (
-        document.activeElement?.classList.contains("key") &&
-        newBinding?.setEditing
-      ) {
-        newBinding.setEditing(true, true);
-      }
-    });
     return;
   }
 
@@ -171,10 +135,5 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     e.preventDefault();
     runMutationOnElement(active, removeChild);
     return;
-  }
-
-  if (e.key === "Enter" && binding?.setEditing) {
-    e.preventDefault();
-    binding.setEditing(true);
   }
 }

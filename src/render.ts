@@ -3,11 +3,13 @@ import { effect } from "@preact/signals-core";
 import {
   type LiteralNode,
   type BlockNode,
+  type CodeNode,
   type Box,
-  isLiteral,
+  type Resolved,
+  isBlock,
   isCode,
-  resolveShallow,
   makeLiteral,
+  makeBox,
   keyOfChild,
   renameChildKey,
   convertValueToItem,
@@ -15,109 +17,125 @@ import {
 
 export const mountByBox = new WeakMap<Box, BoxMount>();
 
-type BoxBinding = {
-  box: Box;
-  setEditing?: (v: boolean, focus?: boolean) => void;
-};
-export const bindingByElement = new WeakMap<HTMLElement, BoxBinding>();
+export const boxByElement = new WeakMap<HTMLElement, Box>();
+
+function isTypingChar(e: KeyboardEvent) {
+  return e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+}
+
+// queueMicrotask(() => {
+//   const newBinding = bindingByElement.get(
+//     document.activeElement as HTMLElement
+//   );
+//   if (
+//     document.activeElement?.classList.contains("key") &&
+//     newBinding?.setEditing
+//   ) {
+//     newBinding.setEditing(true, true);
+//   }
+// });
 
 class InlineEditor {
   element!: HTMLElement;
 
   constructor(
-    readonly box: Box,
-    readonly fieldType: "value" | "key",
+    readonly fieldType: "code" | "value" | "key",
     readonly readText: () => string,
-    readonly applyText: (text: string) => void
+    readonly applyText: (text: string) => void,
+    readonly onElementChange: (el: HTMLElement) => void
   ) {
     this.replace("div");
   }
 
-  replace(tag: "div" | "input") {
+  replace(tag: "div" | "input", initialText?: string) {
     const next = document.createElement(tag) as HTMLElement;
     next.classList.add(this.fieldType);
     next.tabIndex = 0;
 
-    bindingByElement.set(next, {
-      box: this.box,
-      setEditing: this.setEditing.bind(this),
-    });
-
     if (tag === "input") {
-      (next as HTMLInputElement).value = this.readText();
-    } else {
-      next.textContent =
-        this.readText() + (this.fieldType === "key" ? " :" : "");
-    }
-
-    if (this.element) this.element.replaceWith(next);
-    this.element = next;
-  }
-
-  setEditing(isEditing: boolean, focus = true) {
-    if (isEditing) {
-      this.replace("input");
+      const inputEl = next as HTMLInputElement;
+      inputEl.value = initialText ?? this.readText();
 
       let canceled = false;
       let focusAfter = false;
 
-      this.element.addEventListener("keydown", (e: KeyboardEvent) => {
+      inputEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
           canceled = e.key === "Escape";
           focusAfter = true;
-          (this.element as HTMLInputElement).blur();
+          inputEl.blur();
         }
       });
 
-      this.element.addEventListener("blur", () => {
-        if (!canceled) this.applyText((this.element as HTMLInputElement).value);
+      inputEl.addEventListener("blur", () => {
+        if (!canceled) this.applyText(inputEl.value);
         this.replace("div");
-        if (focusAfter) this.element.focus();
+        if (focusAfter) (this.element as HTMLElement).focus();
       });
     } else {
-      this.replace("div");
+      next.textContent =
+        this.readText() + (this.fieldType === "key" ? " :" : "");
+
+      next.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.replace("input");
+        this.element.focus();
+      });
+
+      next.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          this.replace("input");
+          this.element.focus();
+          return;
+        }
+
+        if (isTypingChar(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.replace("input", e.key);
+          this.element.focus();
+        }
+      });
     }
 
-    if (focus) this.element.focus();
+    if (this.element) this.element.replaceWith(next);
+    this.element = next;
+
+    this.onElementChange(this.element);
   }
 
-  update(_text: string) {
-    if (this.element.tagName === "INPUT") {
-      (this.element as HTMLInputElement).value = this.readText();
-    } else {
-      this.element.textContent =
-        this.readText() + (this.fieldType === "key" ? " :" : "");
+  update(text: string) {
+    if (this.element.tagName === "DIV") {
+      this.element.textContent = text + (this.fieldType === "key" ? " :" : "");
     }
   }
 }
 
 abstract class BoxView<T> {
-  abstract readonly kind: "block" | "value";
+  abstract readonly kind: "code" | "block" | "literal";
   abstract readonly element: HTMLElement;
-  abstract update(next: T): void;
-  dispose(): void {}
+  update(_next: T) {}
+  dispose() {}
 }
 
-class ValueView extends BoxView<string> {
-  readonly kind = "value";
+class LiteralView extends BoxView<string> {
+  readonly kind = "literal";
   editor: InlineEditor;
 
   constructor(readonly box: Box) {
     super();
     this.editor = new InlineEditor(
-      box,
       "value",
-      () => {
-        const n = box.value.peek();
-        return isCode(n) ? n.code.peek() : isLiteral(n) ? String(n.value) : "";
-      },
+      () => String((box.value.peek() as LiteralNode).value),
       (next) => {
-        const n = box.value.peek();
-        if (isCode(n)) n.code.value = next;
-        else box.value.value = makeLiteral(next);
-      }
+        box.value.value = makeLiteral(next);
+      },
+      (el) => boxByElement.set(el, box)
     );
   }
 
@@ -142,7 +160,7 @@ class BlockView extends BoxView<BlockNode> {
     this.element = document.createElement("div");
     this.element.classList.add("block");
     this.element.tabIndex = 0;
-    bindingByElement.set(this.element, { box });
+    boxByElement.set(this.element, box);
   }
 
   ensureMounted(child: Box) {
@@ -190,7 +208,6 @@ class BlockView extends BoxView<BlockNode> {
       let editor = this.keyEditors.get(childBox);
       if (!editor) {
         editor = new InlineEditor(
-          childBox,
           "key",
           () => keyOfChild(childBox) ?? "",
           (nextKey) => {
@@ -200,7 +217,8 @@ class BlockView extends BoxView<BlockNode> {
             } else {
               renameChildKey(childBox, trimmed);
             }
-          }
+          },
+          (el) => boxByElement.set(el, childBox)
         );
         this.keyEditors.set(childBox, editor);
       }
@@ -221,25 +239,79 @@ class BlockView extends BoxView<BlockNode> {
   }
 }
 
+class CodeView extends BoxView<Resolved | string> {
+  readonly kind = "code";
+  readonly element: HTMLElement;
+
+  private editor: InlineEditor;
+  private outputBox: Box;
+  private outputMount: BoxMount;
+  private stopMirror: () => void;
+
+  constructor(readonly box: Box) {
+    super();
+
+    this.element = document.createElement("div");
+    this.element.classList.add("code");
+    this.element.tabIndex = 0;
+    boxByElement.set(this.element, box);
+
+    this.editor = new InlineEditor(
+      "code",
+      () => (box.value.peek() as CodeNode).code.peek(),
+      (next) => {
+        (box.value.peek() as CodeNode).code.value = next;
+      },
+      (el) => boxByElement.set(el, box)
+    );
+
+    this.outputBox = makeBox((box.value.peek() as CodeNode).result.peek());
+
+    this.outputMount = new BoxMount(this.outputBox);
+
+    this.element.append(this.editor.element, this.outputMount.element);
+
+    this.stopMirror = effect(() => {
+      const cur = box.value.value as CodeNode;
+      this.editor.update(cur.code.value);
+      this.outputBox.value.value = cur.result.value;
+    });
+  }
+
+  dispose() {
+    this.stopMirror?.();
+    this.outputMount?.dispose();
+    this.element.textContent = "";
+  }
+}
+
 export class BoxMount {
-  view!: BoxView<BlockNode | string>;
+  view!: BoxView<BlockNode | string | Resolved>;
   stop: () => void;
 
   constructor(readonly box: Box) {
     this.stop = effect(() => {
-      const r = resolveShallow(box);
-      const nextKind = r.kind === "block" ? "block" : "value";
+      const node = box.value.value;
+      const nextKind = isCode(node)
+        ? "code"
+        : isBlock(node)
+        ? "block"
+        : "literal";
 
       if (!this.view || nextKind !== this.view.kind) {
         this.view?.dispose();
         this.view =
-          nextKind === "block" ? new BlockView(box) : new ValueView(box);
+          nextKind === "block"
+            ? new BlockView(box)
+            : nextKind === "literal"
+            ? new LiteralView(box)
+            : new CodeView(box);
       }
 
       if (nextKind === "block") {
-        this.view.update(r as BlockNode);
-      } else {
-        this.view.update(String((r as LiteralNode).value));
+        this.view.update(node as BlockNode);
+      } else if (nextKind === "literal") {
+        this.view.update(String((node as LiteralNode).value));
       }
     });
 

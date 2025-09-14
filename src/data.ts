@@ -1,4 +1,10 @@
-import { type Signal, computed, signal } from "@preact/signals-core";
+import {
+  type Signal,
+  type ReadonlySignal,
+  computed,
+  signal,
+} from "@preact/signals-core";
+
 import { evalExpr } from "./code";
 
 /* Static Types */
@@ -31,7 +37,7 @@ export type Resolved = BlockNode | LiteralNode;
 export type CodeNode = {
   kind: "code";
   code: Signal<string>;
-  result: Signal<Resolved>;
+  result: ReadonlySignal<Resolved>;
 };
 
 export type Node = CodeNode | Resolved;
