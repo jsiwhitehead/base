@@ -201,7 +201,7 @@ export function renameChildKey(child: Box, nextKey: string): Box | undefined {
   return result;
 }
 
-export function convertValueToItem(child: Box): Box | undefined {
+export function moveValueToItems(child: Box): Box | undefined {
   let result: Box | undefined = child;
   updateParentAt(child, (block, loc) => {
     if (loc.kind !== "value") return block;
