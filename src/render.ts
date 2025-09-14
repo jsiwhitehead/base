@@ -13,6 +13,7 @@ import {
   keyOfChild,
   renameChildKey,
   moveValueToItems,
+  resolveShallow,
 } from "./data";
 
 export const mountByBox = new WeakMap<Box, BoxMount>();
@@ -201,7 +202,9 @@ class BlockView extends View<BlockNode> {
   }
 }
 
-class CodeView extends View<CodeNode> {
+type CodeUpdate = { code: string; resolved: Resolved };
+
+class CodeView extends View<CodeUpdate> {
   readonly nodeKind = "code";
   readonly element: HTMLElement;
 
@@ -213,7 +216,7 @@ class CodeView extends View<CodeNode> {
     readCode: () => string,
     applyCode: (text: string) => void,
     registerElement: (el: HTMLElement) => void,
-    initialResult: Resolved
+    initialResolved: Resolved
   ) {
     super();
     this.element = document.createElement("div");
@@ -228,15 +231,15 @@ class CodeView extends View<CodeNode> {
       registerElement
     );
 
-    this.resultValueBox = makeBox(initialResult);
+    this.resultValueBox = makeBox(initialResolved);
     this.resultBoxMount = new BoxMount(this.resultValueBox);
 
     this.element.append(this.codeEditor.element, this.resultBoxMount.element);
   }
 
-  update({ code, result }: CodeNode) {
-    this.codeEditor.update(code.value);
-    this.resultValueBox.value.value = result.value;
+  update({ code, resolved }: CodeUpdate) {
+    this.codeEditor.update(code);
+    this.resultValueBox.value.value = resolved;
   }
 
   dispose() {
@@ -246,7 +249,7 @@ class CodeView extends View<CodeNode> {
 }
 
 export class BoxMount {
-  nodeView!: View<CodeNode | BlockNode | string>;
+  nodeView!: View<CodeUpdate | BlockNode | string>;
   stopEffect: () => void;
 
   constructor(readonly box: Box) {
@@ -265,12 +268,12 @@ export class BoxMount {
         this.nodeView =
           nextNodeKind === "code"
             ? new CodeView(
-                () => (box.value.peek() as CodeNode).code.peek(),
+                () => (box.value.peek() as CodeNode).code,
                 (next) => {
-                  (box.value.peek() as CodeNode).code.value = next;
+                  box.value.value = { kind: "code", code: next };
                 },
                 registerElementBox,
-                (box.value.peek() as CodeNode).result.peek()
+                resolveShallow(box)
               )
             : nextNodeKind === "block"
             ? new BlockView(registerElementBox)
@@ -285,7 +288,10 @@ export class BoxMount {
       }
 
       if (nextNodeKind === "code") {
-        this.nodeView.update(currentNode as CodeNode);
+        this.nodeView.update({
+          code: (currentNode as CodeNode).code,
+          resolved: resolveShallow(box),
+        });
       } else if (nextNodeKind === "block") {
         this.nodeView.update(currentNode as BlockNode);
       } else {

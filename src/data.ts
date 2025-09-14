@@ -1,11 +1,6 @@
-import {
-  type Signal,
-  type ReadonlySignal,
-  computed,
-  signal,
-} from "@preact/signals-core";
+import { type Signal, signal } from "@preact/signals-core";
 
-import { evalExpr } from "./code";
+import { evalCode } from "./code";
 
 /* Static Types */
 
@@ -36,8 +31,7 @@ export type Resolved = BlockNode | LiteralNode;
 
 export type CodeNode = {
   kind: "code";
-  code: Signal<string>;
-  result: ReadonlySignal<Resolved>;
+  code: string;
 };
 
 export type Node = CodeNode | Resolved;
@@ -54,20 +48,24 @@ export type BlockBox = Box<BlockNode>;
 
 /* Type Guards */
 
-function hasKind(v: unknown, k: string): boolean {
+export function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
 }
 
-export function isLiteral(v: Node): v is LiteralNode {
+export function isLiteral(v: unknown): v is LiteralNode {
   return hasKind(v, "literal");
 }
 
-export function isBlock(v: Node): v is BlockNode {
+export function isBlock(v: unknown): v is BlockNode {
   return hasKind(v, "block");
 }
 
-export function isCode(v: Node): v is CodeNode {
+export function isCode(v: unknown): v is CodeNode {
   return hasKind(v, "code");
+}
+
+export function isBox(v: unknown): v is Box {
+  return hasKind(v, "box");
 }
 
 /* Scope */
@@ -93,12 +91,8 @@ export function makeBlock(
   return { kind: "block", values, items };
 }
 
-export function makeCode(code: Signal<string>, parent?: BlockBox): CodeNode {
-  const result = computed(() => {
-    const getter = (name: string): Box => lookupInScope(parent, name);
-    return evalExpr(code.value, getter);
-  });
-  return { kind: "code", code, result };
+export function makeCode(code: string): CodeNode {
+  return { kind: "code", code };
 }
 
 export function makeBox<T extends Node>(initial: T, parent?: BlockBox): Box<T> {
@@ -109,7 +103,10 @@ export function makeBox<T extends Node>(initial: T, parent?: BlockBox): Box<T> {
 
 export function resolveShallow(b: Box): Resolved {
   const v = b.value.value;
-  if (isCode(v)) return v.result.value;
+  if (isCode(v)) {
+    const getter = (name: string): Box => lookupInScope(b.parent, name);
+    return evalCode(v.code, getter);
+  }
   return v;
 }
 

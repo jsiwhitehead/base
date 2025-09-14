@@ -6,6 +6,7 @@ import {
   type BlockBox,
   makeLiteral,
   makeBlock,
+  makeCode,
   makeBox,
   resolveDeep,
 } from "./data";
@@ -51,11 +52,7 @@ function makeBlockBox(
 }
 
 const root = makeBlockBox({}, [
-  makeBlockBox({ x: makeLiteralBox("test") }, [
-    makeLiteralBox("hi"),
-    makeLiteralBox("there"),
-  ]),
-  makeLiteralBox("world"),
+  makeBlockBox({ x: makeLiteralBox("10") }, [makeBox(makeCode("x + 10"))]),
 ]);
 
 const unmount = render(root, document.getElementById("root")!);
