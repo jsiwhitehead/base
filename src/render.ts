@@ -255,7 +255,12 @@ class CodeView extends View<string> {
       applyCode,
       registerElement
     );
-    this.resultMount = new ResolvedMount(readResolved);
+
+    this.resultMount = new ResolvedMount(
+      readResolved,
+      () => this.element.classList.remove("error"),
+      () => this.element.classList.add("error")
+    );
 
     this.element.append(this.codeEditor.element, this.resultMount.element);
   }
@@ -271,44 +276,66 @@ class CodeView extends View<string> {
 }
 
 export class ResolvedMount {
-  nodeView!: View<BlockNode | string>;
+  nodeView?: View<BlockNode | string>;
   disposeEffect: () => void;
+  container: HTMLElement;
 
-  constructor(readResolved: () => Resolved) {
+  constructor(
+    readResolved: () => Resolved,
+    onOk: () => void,
+    onError: () => void
+  ) {
+    this.container = createEl("div", "result");
+
     const registerElement = () => {};
 
-    this.disposeEffect = effect(() => {
-      const resolved = readResolved();
-      const nextKind = isBlock(resolved as any) ? "block" : "readonly";
-
-      if (!this.nodeView || nextKind !== this.nodeView.viewKind) {
-        const prevEl = this.nodeView?.element;
+    const ensureKind = (
+      kind: "block" | "readonly",
+      build: () => View<BlockNode | string>
+    ) => {
+      if (!this.nodeView || this.nodeView.viewKind !== kind) {
         this.nodeView?.dispose();
+        this.nodeView = build();
+        this.container.replaceChildren(this.nodeView.element);
+      }
+    };
 
-        this.nodeView =
-          nextKind === "block"
-            ? new BlockView(registerElement)
-            : new ReadonlyStringView(
+    this.disposeEffect = effect(() => {
+      try {
+        const resolved = readResolved();
+        onOk();
+        if (isBlock(resolved)) {
+          ensureKind("block", () => new BlockView(registerElement));
+          this.nodeView!.update(resolved as BlockNode);
+        } else {
+          ensureKind(
+            "readonly",
+            () =>
+              new ReadonlyStringView(
                 "value",
                 registerElement,
                 String((resolved as LiteralNode).value)
-              );
-
-        if (prevEl) prevEl.replaceWith(this.nodeView.element);
+              )
+          );
+          this.nodeView!.update(String((resolved as LiteralNode).value));
+        }
+      } catch {
+        onError();
+        this.nodeView?.dispose();
+        this.nodeView = undefined;
+        this.container.replaceChildren();
       }
-
-      if (nextKind === "block") this.nodeView.update(resolved as BlockNode);
-      else this.nodeView.update(String((resolved as LiteralNode).value));
     });
   }
 
   get element() {
-    return this.nodeView.element;
+    return this.container;
   }
 
   dispose() {
-    this.disposeEffect();
+    this.disposeEffect?.();
     this.nodeView?.dispose();
+    this.container.replaceChildren();
   }
 }
 
@@ -317,46 +344,48 @@ export class BoxMount {
   disposeEffect: () => void;
 
   constructor(readonly box: Box) {
-    this.disposeEffect = effect(() => {
-      const currentNode = box.value.value;
-      const nextKind = isCode(currentNode)
-        ? "code"
-        : isBlock(currentNode)
-        ? "block"
-        : "literal";
+    const registerElementBox = (el: HTMLElement) => boxByElement.set(el, box);
 
-      const registerElementBox = (el: HTMLElement) => boxByElement.set(el, box);
-
-      if (!this.nodeView || nextKind !== this.nodeView.viewKind) {
+    const ensureKind = (
+      kind: "code" | "block" | "literal",
+      build: () => View<BlockNode | string>
+    ) => {
+      if (!this.nodeView || this.nodeView.viewKind !== kind) {
         this.nodeView?.dispose();
-        this.nodeView =
-          nextKind === "code"
-            ? new CodeView(
-                () => (box.value.peek() as CodeNode).code,
-                (next) => {
-                  box.value.value = { kind: "code", code: next };
-                },
-                registerElementBox,
-                () => resolveShallow(box)
-              )
-            : nextKind === "block"
-            ? new BlockView(registerElementBox)
-            : new StringView(
-                "value",
-                () => String((box.value.peek() as LiteralNode).value),
-                (next) => {
-                  box.value.value = makeLiteral(next);
-                },
-                registerElementBox
-              );
+        this.nodeView = build();
       }
+    };
 
-      if (nextKind === "code") {
-        this.nodeView.update((currentNode as CodeNode).code);
-      } else if (nextKind === "block") {
-        this.nodeView.update(currentNode as BlockNode);
+    this.disposeEffect = effect(() => {
+      const n = this.box.value.value;
+
+      if (isCode(n)) {
+        ensureKind(
+          "code",
+          () =>
+            new CodeView(
+              () => (this.box.value.peek() as CodeNode).code,
+              (next) => (this.box.value.value = { kind: "code", code: next }),
+              registerElementBox,
+              () => resolveShallow(this.box)
+            )
+        );
+        this.nodeView.update((n as CodeNode).code);
+      } else if (isBlock(n)) {
+        ensureKind("block", () => new BlockView(registerElementBox));
+        this.nodeView.update(n as BlockNode);
       } else {
-        this.nodeView.update(String((currentNode as LiteralNode).value));
+        ensureKind(
+          "literal",
+          () =>
+            new StringView(
+              "value",
+              () => String((this.box.value.peek() as LiteralNode).value),
+              (next) => (this.box.value.value = makeLiteral(next)),
+              registerElementBox
+            )
+        );
+        this.nodeView.update(String((n as LiteralNode).value));
       }
     });
 

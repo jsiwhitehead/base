@@ -111,13 +111,20 @@ export function resolveShallow(b: Box): Resolved {
 }
 
 export function resolveDeep(b: Box): ResolvedDeep {
-  const n = resolveShallow(b);
-  if (n.kind === "literal") return n.value;
-  const values = Object.fromEntries(
-    Object.entries(n.values).map(([k, v]) => [k, resolveDeep(v)])
-  );
-  const items = n.items.map(resolveDeep);
-  return { kind: "block", values, items };
+  const v = b.value.value;
+  try {
+    const n = resolveShallow(b);
+    if (n.kind === "literal") return n.value;
+    return {
+      kind: "block",
+      values: Object.fromEntries(
+        Object.entries(n.values).map(([k, vb]) => [k, resolveDeep(vb)])
+      ),
+      items: n.items.map(resolveDeep),
+    };
+  } catch (err) {
+    return `Error in code: '${(v as CodeNode).code}'`;
+  }
 }
 
 /* Helpers */
@@ -234,8 +241,10 @@ export function insertItemBefore(
 ): Box | undefined {
   let result: Box | undefined = newItem;
   updateParentAt(referenceItem, (block, loc) => {
-    if (loc.kind !== "item") return block;
-    return insertItemAt(block, loc.index, newItem);
+    if (loc.kind === "item") {
+      return insertItemAt(block, loc.index, newItem);
+    }
+    return insertItemAt(block, 0, newItem);
   });
   return result;
 }
@@ -246,8 +255,10 @@ export function insertItemAfter(
 ): Box | undefined {
   let result: Box | undefined = newItem;
   updateParentAt(referenceItem, (block, loc) => {
-    if (loc.kind !== "item") return block;
-    return insertItemAt(block, loc.index + 1, newItem);
+    if (loc.kind === "item") {
+      return insertItemAt(block, loc.index + 1, newItem);
+    }
+    return insertItemAt(block, 0, newItem);
   });
   return result;
 }
@@ -255,7 +266,7 @@ export function insertItemAfter(
 export function itemToKeyValue(item: Box, key: string): Box | undefined {
   let result: Box | undefined = item;
   updateParentAt(item, (block, loc) => {
-    if (loc.kind !== "item" || !key) return block;
+    if (loc.kind !== "item") return block;
     return makeBlock(
       { ...block.values, [key]: item },
       block.items.toSpliced(loc.index, 1)
