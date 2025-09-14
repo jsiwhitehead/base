@@ -1,4 +1,4 @@
-import { effect } from "@preact/signals-core";
+import { effect, Signal } from "@preact/signals-core";
 
 import {
   type LiteralNode,
@@ -127,15 +127,18 @@ class LiteralView extends BoxView<string> {
   readonly kind = "literal";
   editor: InlineEditor;
 
-  constructor(readonly box: Box) {
+  constructor(
+    readonly signal: Signal<LiteralNode>,
+    onElementChange: (el: HTMLElement) => void
+  ) {
     super();
     this.editor = new InlineEditor(
       "value",
-      () => String((box.value.peek() as LiteralNode).value),
+      () => String(signal.peek().value),
       (next) => {
-        box.value.value = makeLiteral(next);
+        signal.value = makeLiteral(next);
       },
-      (el) => boxByElement.set(el, box)
+      onElementChange
     );
   }
 
@@ -155,20 +158,21 @@ class BlockView extends BoxView<BlockNode> {
   attachedChildren = new Set<Box>();
   keyEditors = new Map<Box, InlineEditor>();
 
-  constructor(readonly box: Box) {
+  constructor(
+    readonly signal: Signal<BlockNode>,
+    onElementChange: (el: HTMLElement) => void
+  ) {
     super();
     this.element = document.createElement("div");
     this.element.classList.add("block");
     this.element.tabIndex = 0;
-    boxByElement.set(this.element, box);
+    onElementChange(this.element);
   }
 
   ensureMounted(child: Box) {
     this.attachedChildren.add(child);
-
     const existing = mountByBox.get(child);
     if (existing) return existing.element;
-
     const mount = new BoxMount(child);
     mountByBox.set(child, mount);
     return mount.element;
@@ -243,36 +247,38 @@ class CodeView extends BoxView<Resolved | string> {
   readonly kind = "code";
   readonly element: HTMLElement;
 
-  private editor: InlineEditor;
-  private outputBox: Box;
-  private outputMount: BoxMount;
-  private stopMirror: () => void;
+  editor: InlineEditor;
+  outputBox: Box;
+  outputMount: BoxMount;
+  stopMirror: () => void;
 
-  constructor(readonly box: Box) {
+  constructor(
+    readonly signal: Signal<CodeNode>,
+    onElementChange: (el: HTMLElement) => void
+  ) {
     super();
 
     this.element = document.createElement("div");
     this.element.classList.add("code");
     this.element.tabIndex = 0;
-    boxByElement.set(this.element, box);
+    onElementChange(this.element);
 
     this.editor = new InlineEditor(
       "code",
-      () => (box.value.peek() as CodeNode).code.peek(),
+      () => this.signal.peek().code.peek(),
       (next) => {
-        (box.value.peek() as CodeNode).code.value = next;
+        this.signal.peek().code.value = next;
       },
-      (el) => boxByElement.set(el, box)
+      onElementChange
     );
 
-    this.outputBox = makeBox((box.value.peek() as CodeNode).result.peek());
-
+    this.outputBox = makeBox(this.signal.peek().result.peek());
     this.outputMount = new BoxMount(this.outputBox);
 
     this.element.append(this.editor.element, this.outputMount.element);
 
     this.stopMirror = effect(() => {
-      const cur = box.value.value as CodeNode;
+      const cur = this.signal.value;
       this.editor.update(cur.code.value);
       this.outputBox.value.value = cur.result.value;
     });
@@ -302,10 +308,16 @@ export class BoxMount {
         this.view?.dispose();
         this.view =
           nextKind === "block"
-            ? new BlockView(box)
+            ? new BlockView(this.box.value as Signal<BlockNode>, (el) =>
+                boxByElement.set(el, box)
+              )
             : nextKind === "literal"
-            ? new LiteralView(box)
-            : new CodeView(box);
+            ? new LiteralView(this.box.value as Signal<LiteralNode>, (el) =>
+                boxByElement.set(el, box)
+              )
+            : new CodeView(this.box.value as Signal<CodeNode>, (el) =>
+                boxByElement.set(el, box)
+              );
       }
 
       if (nextKind === "block") {
