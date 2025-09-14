@@ -8,8 +8,8 @@
 .block {
   display: grid;
   grid-template-columns: auto 1fr;
-  padding-left: 10px;
-  min-height: 25px;
+  padding: 5px 5px 5px 7px;
+  min-height: 15px;
   box-sizing: content-box;
   background: #f6f6f6;
   &:focus {
@@ -32,24 +32,19 @@
 .value {
   position: relative;
   outline: none;
-  border: 0 solid #ddd;
+  border: 1px solid #ddd;
   border-left-width: 5px;
-  border-bottom-width: 1px;
+  border-bottom-width: 0;
   > *:last-child,
   > .key:nth-last-child(2) {
-    border-bottom-width: 0;
-    &:focus {
-      border-bottom-width: 1px;
-      margin-bottom: -1px;
-    }
+    border-bottom-width: 1px;
+    margin-bottom: 0 !important;
   }
   &:focus {
     z-index: 10;
     border-color: #0b57d0;
-    border-top-width: 1px;
-    border-right-width: 1px;
-    margin-top: -1px;
-    margin-right: -1px;
+    border-bottom-width: 1px;
+    margin-bottom: -1px;
   }
   &:has(:focus) {
     background: #e8f0fe;
@@ -57,10 +52,7 @@
 }
 
 #root > .block {
-  border-top-width: 1px;
-  border-right-width: 1px;
-  margin-top: 0 !important;
-  margin-right: 0 !important;
+  border-bottom-width: 1px;
 }
 
 .key,
@@ -81,12 +73,8 @@
     z-index: 10;
     background: #a8c7fa;
     border-color: #0b57d0;
-    border-top-width: 1px;
-    margin-top: -1px;
-    &:nth-last-child(2) {
-      border-bottom-width: 1px;
-      margin-bottom: -1px;
-    }
+    border-bottom-width: 1px;
+    margin-bottom: -1px;
   }
 }
 
