@@ -35,7 +35,7 @@ class StringView extends View<string> {
   element!: HTMLElement;
 
   constructor(
-    readonly fieldRole: "code" | "value" | "key",
+    readonly fieldRole: "expr" | "value" | "key",
     readonly getText: () => string,
     readonly commitText: (text: string) => void,
     readonly registerElement: (el: HTMLElement) => void
@@ -225,7 +225,7 @@ class CodeView extends View<CodeUpdate> {
     registerElement(this.element);
 
     this.codeEditor = new StringView(
-      "code",
+      "expr",
       readCode,
       applyCode,
       registerElement
