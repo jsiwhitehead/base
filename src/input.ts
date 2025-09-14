@@ -30,7 +30,7 @@ type BoxContext = {
 const isTextInput = (el: Element | null): el is HTMLInputElement =>
   !!el && el.tagName === "INPUT";
 
-const focusBox = (box?: Box) => box && mountByBox.get(box)?.element.focus();
+const focusBox = (box?: Box) => box && mountByBox.get(box)?.focus();
 
 function getBoxContext(box?: Box): BoxContext | null {
   if (!box?.parent) return null;

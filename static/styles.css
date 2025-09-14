@@ -36,6 +36,7 @@
   display: grid;
   grid-template-columns: auto 1fr;
   padding: 5px 5px 5px 7px;
+  box-sizing: content-box;
   min-height: 15px;
   background: var(--grey-light);
   &:focus {
@@ -87,8 +88,13 @@
 .value,
 .key {
   padding: 2px 5px;
-  min-height: 21px;
+
   background: white;
+}
+
+div:is(.expr, .value, .key) {
+  box-sizing: content-box;
+  min-height: 21px;
 }
 
 input:is(.expr, .value, .key) {

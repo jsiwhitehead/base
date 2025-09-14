@@ -246,8 +246,7 @@ class CodeView extends View<string> {
     readResolved: () => Resolved
   ) {
     super();
-    this.element = createEl("div", "code", true);
-    registerElement(this.element);
+    this.element = createEl("div", "code");
 
     this.codeEditor = new StringView(
       "expr",
@@ -263,6 +262,11 @@ class CodeView extends View<string> {
     );
 
     this.element.append(this.codeEditor.element, this.resultMount.element);
+
+    this.element.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      this.codeEditor.element.focus();
+    });
   }
 
   update(code: string) {
@@ -394,6 +398,13 @@ export class BoxMount {
 
   get element() {
     return this.nodeView.element;
+  }
+
+  focus() {
+    if (this.nodeView.viewKind === "code") {
+      (this.nodeView as CodeView).codeEditor.element.focus();
+    }
+    this.nodeView.element.focus();
   }
 
   dispose() {
