@@ -99,7 +99,7 @@ class StringView extends View<string> {
         this.toggleEditor("div");
         if (focusAfter) {
           if (this.fieldRole === "key") {
-            (this.element.nextElementSibling as HTMLElement).focus();
+            mountByBox.get(boxByElement.get(this.element)!)!.focus();
           } else {
             this.element.focus();
           }
