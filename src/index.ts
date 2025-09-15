@@ -2,8 +2,8 @@ import { effect } from "@preact/signals-core";
 
 import {
   type Primitive,
+  type BlockNode,
   type Box,
-  type BlockBox,
   makeLiteral,
   makeBlock,
   makeCode,
@@ -14,7 +14,7 @@ import { onRootKeyDown } from "./input";
 import { BoxMount } from "./render";
 
 export function render(
-  rootBox: BlockBox,
+  rootBox: Box<BlockNode>,
   rootElement: HTMLElement
 ): () => void {
   const { element, dispose } = new BoxMount(rootBox);
@@ -40,7 +40,7 @@ function makeLiteralBox(value: Primitive) {
 function makeBlockBox(
   values: [string, Box][] = [],
   items: Box[] = []
-): BlockBox {
+): Box<BlockNode> {
   const blockBox = makeBox(makeBlock([], []));
   for (const [, child] of values) child.parent = blockBox;
   for (const child of items) child.parent = blockBox;

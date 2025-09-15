@@ -1,18 +1,17 @@
 import {
-  type Box,
-  type BlockBox,
   type BlockNode,
+  type Box,
   isBlock,
   makeLiteral,
   makeBox,
-  orderedChildren,
-  keyOfChild,
-  insertItemBefore,
-  insertItemAfter,
-  removeChild,
-  itemToKeyValue,
-  wrapChildInShallowBlock,
-  unwrapSingleChildBlock,
+  getChildrenInOrder,
+  getChildKey,
+  insertBefore,
+  insertAfter,
+  deleteChild,
+  convertItemToKeyValue,
+  wrapInBlock,
+  unwrapBlockIfSingleChild,
 } from "./data";
 import { mountByBox, boxByElement } from "./render";
 
@@ -20,7 +19,7 @@ import { mountByBox, boxByElement } from "./render";
 
 type BoxContext = {
   box: Box;
-  parentBox: BlockBox;
+  parentBox: Box<BlockNode>;
   all: Box[];
   allIdx: number;
   itemIdx: number;
@@ -36,12 +35,12 @@ function getBoxContext(box?: Box): BoxContext | null {
   if (!box?.parent) return null;
 
   const block = box.parent.value.peek() as BlockNode;
-  const all = orderedChildren(block);
+  const all = getChildrenInOrder(block);
   const allIdx = all.indexOf(box);
   if (allIdx < 0) return null;
 
   const itemIdx = block.items.indexOf(box);
-  const valueKey = keyOfChild(box);
+  const valueKey = getChildKey(box);
 
   return { box, parentBox: box.parent, all, allIdx, itemIdx, valueKey };
 }
@@ -81,14 +80,14 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     const shiftHandlers: Record<string, () => void> = {
       ArrowUp: () =>
         runMutationOnElement(active, (box) =>
-          insertItemBefore(box, makeBox(makeLiteral(""), box.parent!))
+          insertBefore(box, makeBox(makeLiteral(""), box.parent!))
         ),
       ArrowDown: () =>
         runMutationOnElement(active, (box) =>
-          insertItemAfter(box, makeBox(makeLiteral(""), box.parent!))
+          insertAfter(box, makeBox(makeLiteral(""), box.parent!))
         ),
-      ArrowLeft: () => runMutationOnElement(active, unwrapSingleChildBlock),
-      ArrowRight: () => runMutationOnElement(active, wrapChildInShallowBlock),
+      ArrowLeft: () => runMutationOnElement(active, unwrapBlockIfSingleChild),
+      ArrowRight: () => runMutationOnElement(active, wrapInBlock),
     };
     shiftHandlers[e.key]?.();
     return;
@@ -106,7 +105,7 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
       ArrowRight: () => {
         const b = boxByElement.get(active);
         const n = b?.value.peek();
-        if (n && isBlock(n)) focusBox(orderedChildren(n)[0]);
+        if (n && isBlock(n)) focusBox(getChildrenInOrder(n)[0]);
       },
     };
     navHandlers[e.key]?.();
@@ -127,7 +126,7 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     } else {
       runMutationOnElement(
         active,
-        (box) => itemToKeyValue(box, ""),
+        (box) => convertItemToKeyValue(box, ""),
         (nextBox) =>
           (
             mountByBox.get(nextBox)!.element
@@ -141,7 +140,7 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
 
   if (e.key === "Backspace") {
     e.preventDefault();
-    runMutationOnElement(active, removeChild);
+    runMutationOnElement(active, deleteChild);
     return;
   }
 }

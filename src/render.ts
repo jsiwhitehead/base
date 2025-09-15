@@ -9,9 +9,9 @@ import {
   isBlock,
   isCode,
   makeLiteral,
-  keyOfChild,
-  renameChildKey,
-  moveValueToItems,
+  getChildKey,
+  renameKey,
+  convertKeyValueToItem,
   resolveShallow,
 } from "./data";
 
@@ -218,13 +218,13 @@ class BlockView extends View<BlockNode> {
       if (!editor) {
         editor = new StringView(
           "key",
-          () => keyOfChild(childBox) ?? "",
+          () => getChildKey(childBox) ?? "",
           (newKey) => {
             const trimmedKey = newKey.trim();
             if (trimmedKey === "") {
-              moveValueToItems(childBox);
+              convertKeyValueToItem(childBox);
             } else {
-              renameChildKey(childBox, trimmedKey);
+              renameKey(childBox, trimmedKey);
             }
           },
           (el) => boxByElement.set(el, childBox)
