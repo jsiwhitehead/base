@@ -141,8 +141,8 @@ function withParentBlock(child: Box, f: (block: BlockNode) => BlockNode) {
 function locateChildIn(block: BlockNode, child: Box): ChildLoc | undefined {
   const idx = block.items.indexOf(child);
   if (idx >= 0) return { kind: "item", index: idx };
-  const key = Object.entries(block.values).find(([, v]) => v === child)?.[0];
-  return key ? { kind: "value", key } : undefined;
+  const entry = Object.entries(block.values).find(([, v]) => v === child);
+  return entry ? { kind: "value", key: entry[0] } : undefined;
 }
 
 function withoutKey<T>(obj: Record<string, T>, key: string): Record<string, T> {

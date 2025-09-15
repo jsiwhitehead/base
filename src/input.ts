@@ -53,12 +53,18 @@ function withBoxContext(el: HTMLElement, fn: (ctx: BoxContext) => void) {
 
 function runMutationOnElement(
   el: HTMLElement,
-  mutate: (box: Box) => Box | undefined
+  mutate: (box: Box) => Box | undefined,
+  focusOverride?: (next: Box) => void
 ) {
   const box = boxByElement.get(el);
   if (!box) return;
   const next = mutate(box);
-  if (next) queueMicrotask(() => focusBox(next));
+  if (next) {
+    queueMicrotask(() => {
+      if (focusOverride) focusOverride(next);
+      else focusBox(next);
+    });
+  }
 }
 
 /* Handlers */
@@ -119,7 +125,15 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
         : (active.previousElementSibling as HTMLElement | null);
       nextEl?.focus();
     } else {
-      runMutationOnElement(active, (box) => itemToKeyValue(box, ""));
+      runMutationOnElement(
+        active,
+        (box) => itemToKeyValue(box, ""),
+        (nextBox) =>
+          (
+            mountByBox.get(nextBox)!.element
+              .previousElementSibling as HTMLElement
+          ).focus()
+      );
     }
 
     return;

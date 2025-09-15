@@ -85,7 +85,7 @@ class StringView extends View<string> {
       let focusAfter = false;
 
       inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === "Escape") {
+        if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
           e.preventDefault();
           e.stopPropagation();
           canceled = e.key === "Escape";
@@ -97,7 +97,13 @@ class StringView extends View<string> {
       inputEl.addEventListener("blur", () => {
         if (!canceled) this.commitText(inputEl.value);
         this.toggleEditor("div");
-        if (focusAfter) this.element.focus();
+        if (focusAfter) {
+          if (this.fieldRole === "key") {
+            (this.element.nextElementSibling as HTMLElement).focus();
+          } else {
+            this.element.focus();
+          }
+        }
       });
     } else {
       nextEl.textContent =
@@ -127,6 +133,13 @@ class StringView extends View<string> {
           e.preventDefault();
           e.stopPropagation();
           this.toggleEditor("input", e.key);
+          this.element.focus();
+        }
+      });
+
+      nextEl.addEventListener("focus", () => {
+        if (this.fieldRole === "key") {
+          this.toggleEditor("input");
           this.element.focus();
         }
       });
