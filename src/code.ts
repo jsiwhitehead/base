@@ -206,8 +206,9 @@ const semantics = grammar
         const r = isBox(cur) ? resolveShallow(cur) : cur;
 
         if (isBlock(r)) {
-          const next = r.values[key];
-          if (!next) throw new ReferenceError(`Unknown property '${key}'`);
+          const pair = r.values.find(([k]) => k === key);
+          if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
+          const [, next] = pair;
           cur = next;
         } else {
           throw new TypeError(

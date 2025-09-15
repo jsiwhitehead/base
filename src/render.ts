@@ -200,17 +200,20 @@ class BlockView extends View<BlockNode> {
   }
 
   update({ values, items }: BlockNode) {
-    const childrenToKeep = new Set<Box>([...Object.values(values), ...items]);
+    const childrenToKeep = new Set<Box>([
+      ...values.map(([, v]) => v),
+      ...items,
+    ]);
     this.unmountAllChildrenExcept(childrenToKeep);
 
-    const keyedValuesToKeep = new Set(Object.values(values));
+    const keyedValuesToKeep = new Set(values.map(([, v]) => v));
     for (const b of this.keyEditorByBox.keys()) {
       if (!keyedValuesToKeep.has(b)) this.keyEditorByBox.delete(b);
     }
 
     const frag = document.createDocumentFragment();
 
-    for (const [key, childBox] of Object.entries(values)) {
+    for (const [key, childBox] of values) {
       let editor = this.keyEditorByBox.get(childBox);
       if (!editor) {
         editor = new StringView(
@@ -323,7 +326,7 @@ export class ResolvedMount {
         onOk();
         if (isBlock(resolved)) {
           ensureKind("block", () => new BlockView(registerElement));
-          this.nodeView!.update(resolved as BlockNode);
+          this.nodeView!.update(resolved);
         } else {
           ensureKind(
             "readonly",
@@ -331,10 +334,10 @@ export class ResolvedMount {
               new ReadonlyStringView(
                 "value",
                 registerElement,
-                String((resolved as LiteralNode).value)
+                String(resolved.value)
               )
           );
-          this.nodeView!.update(String((resolved as LiteralNode).value));
+          this.nodeView!.update(String(resolved.value));
         }
       } catch {
         onError();
@@ -387,10 +390,10 @@ export class BoxMount {
               () => resolveShallow(this.box)
             )
         );
-        this.nodeView.update((n as CodeNode).code);
+        this.nodeView.update(n.code);
       } else if (isBlock(n)) {
         ensureKind("block", () => new BlockView(registerElementBox));
-        this.nodeView.update(n as BlockNode);
+        this.nodeView.update(n);
       } else {
         ensureKind(
           "literal",
@@ -402,7 +405,7 @@ export class BoxMount {
               registerElementBox
             )
         );
-        this.nodeView.update(String((n as LiteralNode).value));
+        this.nodeView.update(String(n.value));
       }
     });
 

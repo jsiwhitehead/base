@@ -8,7 +8,7 @@ export type Primitive = string | number | boolean;
 
 export type ResolvedBlock = {
   kind: "block";
-  values: Record<string, ResolvedDeep>;
+  values: [string, ResolvedDeep][];
   items: ResolvedDeep[];
 };
 
@@ -23,7 +23,7 @@ export type LiteralNode = {
 
 export type BlockNode = {
   kind: "block";
-  values: Record<string, Box>;
+  values: [string, Box][];
   items: Box[];
 };
 
@@ -72,8 +72,8 @@ export function isBox(v: unknown): v is Box {
 
 export function lookupInScope(start: BlockBox | undefined, name: string): Box {
   for (let cur = start; cur; cur = cur.parent) {
-    const hit = cur.value.value.values[name];
-    if (hit !== undefined) return hit;
+    const kv = cur.value.value.values.find(([k]) => k === name);
+    if (kv) return kv[1];
   }
   throw new Error(`Unbound identifier: ${name}`);
 }
@@ -85,7 +85,7 @@ export function makeLiteral(value: Primitive): LiteralNode {
 }
 
 export function makeBlock(
-  values: Record<string, Box> = {},
+  values: [string, Box][] = [],
   items: Box[] = []
 ): BlockNode {
   return { kind: "block", values, items };
@@ -117,12 +117,10 @@ export function resolveDeep(b: Box): ResolvedDeep {
     if (n.kind === "literal") return n.value;
     return {
       kind: "block",
-      values: Object.fromEntries(
-        Object.entries(n.values).map(([k, vb]) => [k, resolveDeep(vb)])
-      ),
+      values: n.values.map(([k, vb]) => [k, resolveDeep(vb)]),
       items: n.items.map(resolveDeep),
     };
-  } catch (err) {
+  } catch (_err) {
     return `Error in code: '${(v as CodeNode).code}'`;
   }
 }
@@ -131,7 +129,7 @@ export function resolveDeep(b: Box): ResolvedDeep {
 
 type ChildLoc =
   | { kind: "item"; index: number }
-  | { kind: "value"; key: string };
+  | { kind: "value"; index: number };
 
 function withParentBlock(child: Box, f: (block: BlockNode) => BlockNode) {
   if (!child.parent) return;
@@ -139,15 +137,13 @@ function withParentBlock(child: Box, f: (block: BlockNode) => BlockNode) {
 }
 
 function locateChildIn(block: BlockNode, child: Box): ChildLoc | undefined {
-  const idx = block.items.indexOf(child);
-  if (idx >= 0) return { kind: "item", index: idx };
-  const entry = Object.entries(block.values).find(([, v]) => v === child);
-  return entry ? { kind: "value", key: entry[0] } : undefined;
-}
+  const itemIdx = block.items.indexOf(child);
+  if (itemIdx >= 0) return { kind: "item", index: itemIdx };
 
-function withoutKey<T>(obj: Record<string, T>, key: string): Record<string, T> {
-  const { [key]: _removed, ...rest } = obj;
-  return rest;
+  const valIdx = block.values.findIndex(([, v]) => v === child);
+  if (valIdx >= 0) return { kind: "value", index: valIdx };
+
+  return undefined;
 }
 
 function updateParentAt(
@@ -162,15 +158,21 @@ function updateParentAt(
 }
 
 function replaceAt(block: BlockNode, loc: ChildLoc, next: Box): BlockNode {
-  return loc.kind === "item"
-    ? makeBlock(block.values, block.items.toSpliced(loc.index, 1, next))
-    : makeBlock({ ...block.values, [loc.key]: next }, block.items);
+  if (loc.kind === "item") {
+    return makeBlock(block.values, block.items.toSpliced(loc.index, 1, next));
+  } else {
+    const curKey = block.values[loc.index]![0];
+    const nextValues = block.values.toSpliced(loc.index, 1, [curKey, next]);
+    return makeBlock(nextValues, block.items);
+  }
 }
 
 function removeAt(block: BlockNode, loc: ChildLoc): BlockNode {
-  return loc.kind === "item"
-    ? makeBlock(block.values, block.items.toSpliced(loc.index, 1))
-    : makeBlock(withoutKey(block.values, loc.key), block.items);
+  if (loc.kind === "item") {
+    return makeBlock(block.values, block.items.toSpliced(loc.index, 1));
+  } else {
+    return makeBlock(block.values.toSpliced(loc.index, 1), block.items);
+  }
 }
 
 function insertItemAt(block: BlockNode, index: number, item: Box): BlockNode {
@@ -178,14 +180,15 @@ function insertItemAt(block: BlockNode, index: number, item: Box): BlockNode {
 }
 
 export function orderedChildren(block: BlockNode): Box[] {
-  return [...Object.values(block.values), ...block.items];
+  return [...block.values.map(([, v]) => v), ...block.items];
 }
 
 export function keyOfChild(child: Box): string | undefined {
   if (!child.parent) return;
   const block = child.parent.value.peek();
   const loc = locateChildIn(block, child);
-  return loc?.kind === "value" ? loc.key : undefined;
+  if (loc?.kind === "value") return block.values[loc.index]![0];
+  return undefined;
 }
 
 /* Transformations */
@@ -194,13 +197,15 @@ export function renameChildKey(child: Box, nextKey: string): Box | undefined {
   let result: Box | undefined = child;
   updateParentAt(child, (block, loc) => {
     if (loc.kind !== "value") return block;
-    const currentKey = loc.key;
-    if (!nextKey || nextKey === currentKey) return block;
-    if (nextKey in block.values && nextKey !== currentKey) return block;
 
-    const rest = withoutKey(block.values, currentKey);
+    const currentKey = block.values[loc.index]![0];
+    if (!nextKey || nextKey === currentKey) return block;
+    if (block.values.some(([k]) => k === nextKey)) return block;
+
+    const [, val] = block.values[loc.index]!;
+    const nextValues = block.values.toSpliced(loc.index, 1, [nextKey, val]);
     result = child;
-    return makeBlock({ ...rest, [nextKey]: child }, block.items);
+    return makeBlock(nextValues, block.items);
   });
   return result;
 }
@@ -209,9 +214,10 @@ export function moveValueToItems(child: Box): Box | undefined {
   let result: Box | undefined = child;
   updateParentAt(child, (block, loc) => {
     if (loc.kind !== "value") return block;
-    const rest = withoutKey(block.values, loc.key);
+    const [, val] = block.values[loc.index]!;
+    const nextValues = block.values.toSpliced(loc.index, 1);
     result = child;
-    return insertItemAt(makeBlock(rest, block.items), 0, child);
+    return insertItemAt(makeBlock(nextValues, block.items), 0, val);
   });
   return result;
 }
@@ -220,7 +226,7 @@ export function removeChild(child: Box): Box | undefined {
   const parentBox = child.parent;
   if (!parentBox) return;
 
-  const block = parentBox.value.peek() as BlockNode;
+  const block = parentBox.value.peek();
   const all = orderedChildren(block);
   const idx = all.indexOf(child);
   const focusTarget: Box | undefined =
@@ -267,10 +273,11 @@ export function itemToKeyValue(item: Box, key: string): Box | undefined {
   let result: Box | undefined = item;
   updateParentAt(item, (block, loc) => {
     if (loc.kind !== "item") return block;
-    return makeBlock(
-      { ...block.values, [key]: item },
-      block.items.toSpliced(loc.index, 1)
-    );
+    if (block.values.some(([k]) => k === key)) return block;
+
+    const nextItems = block.items.toSpliced(loc.index, 1);
+    const nextValues = [...block.values, [key, item] as [string, Box]];
+    return makeBlock(nextValues, nextItems);
   });
   return result;
 }
@@ -281,11 +288,13 @@ export function keyValueToItem(
 ): Box | undefined {
   let result: Box | undefined;
   withParentBlock(contextChild, (block) => {
-    if (!(key in block.values)) return block;
-    const value = block.values[key]!;
-    const rest = withoutKey(block.values, key);
+    const idx = block.values.findIndex(([k]) => k === key);
+    if (idx < 0) return block;
+
+    const [, value] = block.values[idx]!;
+    const nextValues = block.values.toSpliced(idx, 1);
     result = value;
-    return insertItemAt(makeBlock(rest, block.items), 0, value);
+    return insertItemAt(makeBlock(nextValues, block.items), 0, value);
   });
   return result;
 }
@@ -293,7 +302,7 @@ export function keyValueToItem(
 export function wrapChildInShallowBlock(child: Box): Box | undefined {
   const parentBox = child.parent;
   if (!parentBox) return;
-  const wrapperBox = makeBox(makeBlock({}, [child]), parentBox);
+  const wrapperBox = makeBox(makeBlock([], [child]), parentBox);
   replaceChild(child, wrapperBox);
   return child;
 }

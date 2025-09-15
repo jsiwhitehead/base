@@ -38,19 +38,20 @@ function makeLiteralBox(value: Primitive) {
 }
 
 function makeBlockBox(
-  values: Record<string, Box> = {},
+  values: [string, Box][] = [],
   items: Box[] = []
 ): BlockBox {
-  const blockBox = makeBox(makeBlock()) as BlockBox;
-  for (const child of Object.values(values)) child.parent = blockBox;
+  const blockBox = makeBox(makeBlock([], []));
+  for (const [, child] of values) child.parent = blockBox;
   for (const child of items) child.parent = blockBox;
   blockBox.value.value = makeBlock(values, items);
   return blockBox;
 }
 
-const root = makeBlockBox({}, [
-  makeBlockBox({ x: makeLiteralBox("10") }, [makeBox(makeCode("x + 10"))]),
-]);
+const root = makeBlockBox(
+  [],
+  [makeBlockBox([["x", makeLiteralBox("10")]], [makeBox(makeCode("x + 10"))])]
+);
 
 const unmount = render(root, document.getElementById("root")!);
 
