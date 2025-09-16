@@ -122,13 +122,6 @@ export function onRootDblClick(e: MouseEvent) {
   requestEdit(t, { kind: "begin-edit" });
 }
 
-export function onRootFocusOut(e: FocusEvent) {
-  const t = e.target as HTMLElement | null;
-  if (t?.tagName === "INPUT") {
-    requestEdit(t, { kind: "commit" });
-  }
-}
-
 export function onRootKeyDown(e: KeyboardEvent) {
   const active = document.activeElement as HTMLElement | null;
   if (!active) return;

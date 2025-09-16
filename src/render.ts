@@ -59,7 +59,6 @@ class ReadonlyStringView extends View<string> {
 class StringView extends View<string> {
   readonly viewKind = "literal";
   element!: HTMLElement;
-  justCancelled = false;
 
   constructor(
     readonly fieldRole: "expr" | "value" | "key",
@@ -69,58 +68,59 @@ class StringView extends View<string> {
   ) {
     super();
     this.toggleEditor("div");
-
-    this.element.addEventListener("editcommand", (ev: Event) => {
-      const e = ev as EditCommandEvent;
-      const { kind } = e.detail;
-
-      switch (kind) {
-        case "begin-edit": {
-          e.stopPropagation();
-          if (this.element.tagName !== "INPUT") {
-            this.toggleEditor("input", e.detail.seed);
-            this.element.focus();
-          }
-          break;
-        }
-
-        case "commit": {
-          e.stopPropagation();
-          if (this.justCancelled) {
-            this.justCancelled = false;
-            return;
-          }
-          if (this.element.tagName === "INPUT") {
-            const input = this.element as HTMLInputElement;
-            this.commitText(input.value);
-            this.toggleEditor("div");
-            this.element.focus();
-          }
-          break;
-        }
-
-        case "cancel": {
-          e.stopPropagation();
-          if (this.element.tagName === "INPUT") {
-            this.justCancelled = true;
-            this.toggleEditor("div");
-            this.element.focus();
-          }
-          break;
-        }
-      }
-    });
   }
 
   toggleEditor(tag: "div" | "input", initialText?: string) {
     const nextEl = createEl(tag, this.fieldRole, true);
 
-    if (tag === "input") {
-      const inputEl = nextEl as HTMLInputElement;
-      inputEl.value = initialText ?? this.getText();
-    } else {
+    if (tag === "div") {
       nextEl.textContent =
         this.getText() + (this.fieldRole === "key" ? " :" : "");
+
+      nextEl.addEventListener("editcommand", (ev: Event) => {
+        const e = ev as EditCommandEvent;
+        if (e.detail.kind === "begin-edit") {
+          e.stopPropagation();
+          this.toggleEditor("input", e.detail.seed);
+          this.element.focus();
+        }
+      });
+    } else {
+      const inputEl = nextEl as HTMLInputElement;
+      inputEl.value = initialText ?? this.getText();
+
+      let refocusAfterBlur = false;
+      let skipCommitOnBlur = false;
+
+      inputEl.addEventListener("editcommand", (ev: Event) => {
+        const e = ev as EditCommandEvent;
+        switch (e.detail.kind) {
+          case "commit": {
+            e.stopPropagation();
+            refocusAfterBlur = true;
+            inputEl.blur();
+            break;
+          }
+          case "cancel": {
+            e.stopPropagation();
+            inputEl.value = this.getText();
+            skipCommitOnBlur = true;
+            refocusAfterBlur = true;
+            inputEl.blur();
+            break;
+          }
+        }
+      });
+
+      inputEl.addEventListener("blur", () => {
+        if (!skipCommitOnBlur) {
+          this.commitText(inputEl.value);
+        }
+        this.toggleEditor("div");
+        if (refocusAfterBlur) {
+          this.element.focus();
+        }
+      });
     }
 
     if (this.element) this.element.replaceWith(nextEl);

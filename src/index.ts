@@ -10,7 +10,7 @@ import {
   makeBox,
   resolveDeep,
 } from "./data";
-import { onRootDblClick, onRootFocusOut, onRootKeyDown } from "./input";
+import { onRootDblClick, onRootKeyDown } from "./input";
 import { BoxMount } from "./render";
 
 export function render(
@@ -22,13 +22,11 @@ export function render(
   queueMicrotask(() => element.focus());
 
   rootElement.addEventListener("dblclick", onRootDblClick);
-  rootElement.addEventListener("focusout", onRootFocusOut);
   rootElement.addEventListener("keydown", onRootKeyDown);
 
   return () => {
     dispose();
     rootElement.removeEventListener("dblclick", onRootDblClick);
-    rootElement.removeEventListener("focusout", onRootFocusOut);
     rootElement.removeEventListener("keydown", onRootKeyDown);
     rootElement.textContent = "";
   };
