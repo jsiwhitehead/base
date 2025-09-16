@@ -186,13 +186,15 @@ class BlockView extends View<BlockNode> {
 
       const mount = mountByBox.get(childBox);
       if (mount) {
-        mount.element.remove();
-        queueMicrotask(() => {
-          const current = mountByBox.get(mount.box);
-          if (current === mount && !mount.element.isConnected) {
-            mount.dispose();
-          }
-        });
+        if (this.element.contains(mount.element)) {
+          mount.element.remove();
+          queueMicrotask(() => {
+            const current = mountByBox.get(mount.box);
+            if (current === mount && !mount.element.isConnected) {
+              mount.dispose();
+            }
+          });
+        }
       }
 
       this.mountedChildBoxes.delete(childBox);
