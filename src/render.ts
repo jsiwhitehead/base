@@ -10,10 +10,11 @@ import {
   isCode,
   makeLiteral,
   getChildKey,
-  renameKey,
-  convertKeyValueToItem,
+  assignKey,
+  removeKey,
   resolveShallow,
 } from "./data";
+import { type FocusRequest, requestFocusNav } from "./input";
 
 export const boxByElement = new WeakMap<HTMLElement, Box>();
 
@@ -67,8 +68,7 @@ class StringView extends View<string> {
     readonly fieldRole: "expr" | "value" | "key",
     readonly getText: () => string,
     readonly commitText: (text: string) => void,
-    readonly registerElement: (el: HTMLElement) => void,
-    readonly onFocusSibling?: () => void
+    readonly registerElement: (el: HTMLElement) => void
   ) {
     super();
     this.toggleEditor("div");
@@ -99,7 +99,7 @@ class StringView extends View<string> {
         this.toggleEditor("div");
         if (focusAfter) {
           if (this.fieldRole === "key") {
-            this.onFocusSibling!();
+            requestFocusNav(this.element, "next");
           } else {
             this.element.focus();
           }
@@ -164,10 +164,87 @@ class BlockView extends View<BlockNode> {
   childMountByBox = new Map<Box, BoxMount>();
   keyEditorByBox = new Map<Box, StringView>();
 
+  currentChildren: Box[] = [];
+
   constructor(registerElement: (el: HTMLElement) => void) {
     super();
     this.element = createEl("div", "block", true);
     registerElement(this.element);
+
+    this.element.addEventListener("focusrequest", (ev: Event) => {
+      const e = ev as CustomEvent<FocusRequest>;
+      const { detail } = e;
+
+      const stop = () => {
+        e.stopPropagation();
+        (e as Event).preventDefault?.();
+      };
+
+      if (detail.kind === "to") {
+        const { target, role } = detail;
+
+        if (target === boxByElement.get(this.element)) {
+          stop();
+          this.element.focus();
+          return;
+        }
+
+        const mount = this.childMountByBox.get(target);
+        if (mount) {
+          stop();
+
+          if (role === "key") {
+            this.keyEditorByBox.get(target)?.element.focus();
+            return;
+          }
+
+          if (role === "container") {
+            this.element.focus();
+            return;
+          }
+
+          mount.focus();
+        }
+        return;
+      }
+
+      if (detail.kind === "nav") {
+        const { dir } = detail;
+        const origin = e.target as HTMLElement;
+
+        const fromBox = boxByElement.get(origin)!;
+        if (!this.currentChildren.includes(fromBox)) return;
+
+        const idx = this.currentChildren.indexOf(fromBox);
+        if (idx < 0) return;
+
+        const len = this.currentChildren.length;
+        let nextIdx = idx;
+        switch (dir) {
+          case "first":
+            nextIdx = 0;
+            break;
+          case "last":
+            nextIdx = Math.max(0, len - 1);
+            break;
+          case "next":
+            nextIdx = Math.min(len - 1, idx + 1);
+            break;
+          case "prev":
+            nextIdx = Math.max(0, idx - 1);
+            break;
+        }
+
+        const target = this.currentChildren[nextIdx];
+        if (!target) return;
+
+        const mount = this.childMountByBox.get(target);
+        if (!mount) return;
+
+        stop();
+        mount.focus();
+      }
+    });
   }
 
   mountChildIfNeeded(child: Box) {
@@ -204,6 +281,8 @@ class BlockView extends View<BlockNode> {
       if (!keyedValuesToKeep.has(b)) this.keyEditorByBox.delete(b);
     }
 
+    this.currentChildren = [...values.map(([, v]) => v), ...items];
+
     const frag = document.createDocumentFragment();
 
     for (const [key, childBox] of values) {
@@ -215,16 +294,12 @@ class BlockView extends View<BlockNode> {
           (newKey) => {
             const trimmedKey = newKey.trim();
             if (trimmedKey === "") {
-              convertKeyValueToItem(childBox);
+              removeKey(childBox);
             } else {
-              renameKey(childBox, trimmedKey);
+              assignKey(childBox, trimmedKey);
             }
           },
-          (el) => boxByElement.set(el, childBox),
-          () => {
-            const mount = this.childMountByBox.get(childBox);
-            if (mount) mount.focus();
-          }
+          (el) => boxByElement.set(el, childBox)
         );
         this.keyEditorByBox.set(childBox, editor);
       }

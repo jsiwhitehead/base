@@ -242,37 +242,30 @@ export function replaceChildWith(target: Box, next: Box): Box | undefined {
   return next;
 }
 
-export function renameKey(child: Box, nextKey: string): Box | undefined {
+export function assignKey(child: Box, nextKey: string): Box | undefined {
   let result: Box | undefined = child;
   updateChildInParent(child, (block, loc) => {
-    if (loc.kind !== "value") return block;
-
-    const currentKey = block.values[loc.index]![0];
-    if (!nextKey || nextKey === currentKey) return block;
     if (block.values.some(([k]) => k === nextKey)) return block;
 
-    const [, val] = block.values[loc.index]!;
-    const nextValues = block.values.toSpliced(loc.index, 1, [nextKey, val]);
-    result = child;
-    return makeBlock(nextValues, block.items);
-  });
-  return result;
-}
+    if (loc.kind === "value") {
+      const currentKey = block.values[loc.index]![0];
+      if (nextKey === currentKey) return block;
 
-export function convertItemToKeyValue(item: Box, key: string): Box | undefined {
-  let result: Box | undefined = item;
-  updateChildInParent(item, (block, loc) => {
-    if (loc.kind !== "item") return block;
-    if (block.values.some(([k]) => k === key)) return block;
+      const [, val] = block.values[loc.index]!;
+      const nextValues = block.values.toSpliced(loc.index, 1, [nextKey, val]);
+      result = child;
+      return makeBlock(nextValues, block.items);
+    }
 
     const nextItems = block.items.toSpliced(loc.index, 1);
-    const nextValues = [...block.values, [key, item] as [string, Box]];
+    const nextValues = [...block.values, [nextKey, child] as [string, Box]];
+    result = child;
     return makeBlock(nextValues, nextItems);
   });
   return result;
 }
 
-export function convertKeyValueToItem(child: Box): Box | undefined {
+export function removeKey(child: Box): Box | undefined {
   let result: Box | undefined = child;
   updateChildInParent(child, (block, loc) => {
     if (loc.kind !== "value") return block;
@@ -284,7 +277,7 @@ export function convertKeyValueToItem(child: Box): Box | undefined {
   return result;
 }
 
-export function deleteChild(child: Box): Box | undefined {
+export function removeChild(child: Box): Box | undefined {
   const parentBox = child.parent;
   if (!parentBox) return;
 
@@ -300,7 +293,7 @@ export function deleteChild(child: Box): Box | undefined {
   return focusTarget;
 }
 
-export function wrapInBlock(child: Box): Box | undefined {
+export function wrapWithBlock(child: Box): Box | undefined {
   const parentBox = child.parent;
   if (!parentBox) return;
 

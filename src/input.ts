@@ -8,12 +8,44 @@ import {
   getChildKey,
   insertBefore,
   insertAfter,
-  deleteChild,
-  convertItemToKeyValue,
-  wrapInBlock,
+  assignKey,
+  removeChild,
+  wrapWithBlock,
   unwrapBlockIfSingleChild,
 } from "./data";
 import { boxByElement } from "./render";
+
+/* Focus Event */
+
+export type FocusDir = "next" | "prev" | "first" | "last";
+export type FocusTargetRole = "auto" | "key" | "container";
+
+type FocusRequestNav = { kind: "nav"; dir: FocusDir };
+type FocusRequestTo = { kind: "to"; target: Box; role: FocusTargetRole };
+
+export type FocusRequest = FocusRequestNav | FocusRequestTo;
+
+export class FocusRequestEvent extends CustomEvent<FocusRequest> {
+  constructor(detail: FocusRequest) {
+    super("focusrequest", {
+      bubbles: true,
+      composed: false,
+      detail,
+    });
+  }
+}
+
+export function requestFocusNav(fromEl: HTMLElement, dir: FocusDir) {
+  fromEl.dispatchEvent(new FocusRequestEvent({ kind: "nav", dir }));
+}
+
+export function requestFocusTo(
+  fromEl: HTMLElement,
+  target: Box,
+  role: FocusTargetRole = "auto"
+) {
+  fromEl.dispatchEvent(new FocusRequestEvent({ kind: "to", target, role }));
+}
 
 /* Helpers */
 
@@ -28,60 +60,6 @@ type BoxContext = {
 
 const isTextInput = (el: Element | null): el is HTMLInputElement =>
   !!el && el.tagName === "INPUT";
-
-function closestElementForBox(
-  start: HTMLElement,
-  targetBox: Box
-): HTMLElement | null {
-  let el: HTMLElement | null = start;
-  while (el) {
-    if (boxByElement.get(el) === targetBox) return el;
-    el = el.parentElement;
-  }
-  return null;
-}
-
-function findFocusableForBoxInContainer(
-  container: HTMLElement,
-  box: Box
-): HTMLElement | null {
-  if (boxByElement.get(container) === box && container.tabIndex >= 0)
-    return container;
-
-  const all = container.querySelectorAll<HTMLElement>("*");
-
-  for (const el of all) {
-    if (boxByElement.get(el) === box && el.classList.contains("key")) {
-      const maybeMount = el.nextElementSibling as HTMLElement | null;
-      if (maybeMount && boxByElement.get(maybeMount) === box) {
-        if (maybeMount.tabIndex >= 0) return maybeMount;
-        return el;
-      }
-    }
-  }
-
-  for (const el of all) {
-    if (boxByElement.get(el) === box && el.tabIndex >= 0) return el;
-  }
-
-  for (const el of all) {
-    if (boxByElement.get(el) === box) return el;
-  }
-
-  return null;
-}
-
-function focusBoxInSameRender(
-  fromEl: HTMLElement,
-  parentBox: Box<BlockNode>,
-  targetBox?: Box
-) {
-  if (!targetBox) return;
-  const parentContainer = closestElementForBox(fromEl, parentBox);
-  if (!parentContainer) return;
-  const toFocus = findFocusableForBoxInContainer(parentContainer, targetBox);
-  toFocus?.focus();
-}
 
 function getBoxContext(box?: Box): BoxContext | null {
   if (!box?.parent) return null;
@@ -117,7 +95,7 @@ function runMutationOnElement(
     if (focusOverride) {
       focusOverride(next, ctx);
     } else {
-      focusBoxInSameRender(el, ctx.parentBox, next);
+      requestFocusTo(el, next, "auto");
     }
   });
 }
@@ -143,34 +121,34 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
           insertAfter(box, makeBox(makeLiteral(""), box.parent!))
         ),
       ArrowLeft: () => runMutationOnElement(active, unwrapBlockIfSingleChild),
-      ArrowRight: () => runMutationOnElement(active, wrapInBlock),
+      ArrowRight: () => runMutationOnElement(active, wrapWithBlock),
     };
     shiftHandlers[e.key]?.();
     return;
   }
 
-  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+  if (["ArrowUp", "ArrowDown"].includes(e.key)) {
+    e.preventDefault();
+    if (e.key === "ArrowUp") requestFocusNav(active, "prev");
+    else requestFocusNav(active, "next");
+    return;
+  }
+
+  if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
     const navHandlers: Record<string, () => void> = {
-      ArrowUp: () =>
-        withBoxContext(active, ({ all, allIdx, parentBox }) =>
-          focusBoxInSameRender(active, parentBox, all[allIdx - 1])
-        ),
-      ArrowDown: () =>
-        withBoxContext(active, ({ all, allIdx, parentBox }) =>
-          focusBoxInSameRender(active, parentBox, all[allIdx + 1])
-        ),
       ArrowLeft: () =>
-        withBoxContext(active, ({ parentBox }) =>
-          focusBoxInSameRender(active, parentBox, parentBox)
-        ),
+        withBoxContext(active, ({ parentBox }) => {
+          requestFocusTo(active, parentBox, "container");
+        }),
       ArrowRight: () => {
         const b = boxByElement.get(active);
         const n = b?.value.peek();
         if (n && isBlock(n)) {
           const first = getChildrenInOrder(n)[0];
-          const parentBox = b as Box<BlockNode>;
-          focusBoxInSameRender(active, parentBox, first);
+          if (first) {
+            requestFocusTo(active, first, "auto");
+          }
         }
       },
     };
@@ -192,22 +170,9 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
     } else {
       runMutationOnElement(
         active,
-        (box) => convertItemToKeyValue(box, ""),
-        (nextBox, ctx) => {
-          const parentContainer = closestElementForBox(active, ctx.parentBox);
-          if (!parentContainer) return;
-          const all = parentContainer.querySelectorAll<HTMLElement>(".key");
-          for (const el of all) {
-            if (boxByElement.get(el) === nextBox) {
-              el.focus();
-              return;
-            }
-          }
-          const fallback = findFocusableForBoxInContainer(
-            parentContainer,
-            nextBox
-          );
-          fallback?.focus();
+        (box) => assignKey(box, ""),
+        (nextBox) => {
+          requestFocusTo(active, nextBox, "key");
         }
       );
     }
@@ -217,7 +182,7 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
 
   if (e.key === "Backspace") {
     e.preventDefault();
-    runMutationOnElement(active, deleteChild);
+    runMutationOnElement(active, removeChild);
     return;
   }
 }
