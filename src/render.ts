@@ -15,7 +15,6 @@ import {
   resolveShallow,
 } from "./data";
 
-export const mountByBox = new WeakMap<Box, BoxMount>();
 export const boxByElement = new WeakMap<HTMLElement, Box>();
 
 function createEl(
@@ -68,7 +67,8 @@ class StringView extends View<string> {
     readonly fieldRole: "expr" | "value" | "key",
     readonly getText: () => string,
     readonly commitText: (text: string) => void,
-    readonly registerElement: (el: HTMLElement) => void
+    readonly registerElement: (el: HTMLElement) => void,
+    readonly onFocusSibling?: () => void
   ) {
     super();
     this.toggleEditor("div");
@@ -99,7 +99,7 @@ class StringView extends View<string> {
         this.toggleEditor("div");
         if (focusAfter) {
           if (this.fieldRole === "key") {
-            mountByBox.get(boxByElement.get(this.element)!)!.focus();
+            this.onFocusSibling!();
           } else {
             this.element.focus();
           }
@@ -161,8 +161,7 @@ class StringView extends View<string> {
 class BlockView extends View<BlockNode> {
   readonly viewKind = "block";
   readonly element: HTMLElement;
-
-  mountedChildBoxes = new Set<Box>();
+  childMountByBox = new Map<Box, BoxMount>();
   keyEditorByBox = new Map<Box, StringView>();
 
   constructor(registerElement: (el: HTMLElement) => void) {
@@ -172,32 +171,24 @@ class BlockView extends View<BlockNode> {
   }
 
   mountChildIfNeeded(child: Box) {
-    this.mountedChildBoxes.add(child);
-    const existing = mountByBox.get(child);
-    if (existing) return existing.element;
-    const mount = new BoxMount(child);
-    mountByBox.set(child, mount);
+    let mount = this.childMountByBox.get(child);
+    if (!mount) {
+      mount = new BoxMount(child);
+      this.childMountByBox.set(child, mount);
+    }
     return mount.element;
   }
 
   unmountAllChildrenExcept(keep?: Set<Box>) {
-    for (const childBox of Array.from(this.mountedChildBoxes)) {
+    for (const [childBox, mount] of Array.from(this.childMountByBox)) {
       if (keep?.has(childBox)) continue;
 
-      const mount = mountByBox.get(childBox);
-      if (mount) {
-        if (this.element.contains(mount.element)) {
-          mount.element.remove();
-          queueMicrotask(() => {
-            const current = mountByBox.get(mount.box);
-            if (current === mount && !mount.element.isConnected) {
-              mount.dispose();
-            }
-          });
-        }
+      if (this.element.contains(mount.element)) {
+        mount.element.remove();
       }
 
-      this.mountedChildBoxes.delete(childBox);
+      mount.dispose();
+      this.childMountByBox.delete(childBox);
     }
   }
 
@@ -229,7 +220,11 @@ class BlockView extends View<BlockNode> {
               renameKey(childBox, trimmedKey);
             }
           },
-          (el) => boxByElement.set(el, childBox)
+          (el) => boxByElement.set(el, childBox),
+          () => {
+            const mount = this.childMountByBox.get(childBox);
+            if (mount) mount.focus();
+          }
         );
         this.keyEditorByBox.set(childBox, editor);
       }
@@ -253,7 +248,6 @@ class BlockView extends View<BlockNode> {
 class CodeView extends View<string> {
   readonly viewKind = "code";
   readonly element: HTMLElement;
-
   codeEditor: StringView;
   resultMount: ResolvedMount;
 
@@ -410,8 +404,6 @@ export class BoxMount {
         this.nodeView.update(String(n.value));
       }
     });
-
-    mountByBox.set(box, this);
   }
 
   get element() {
@@ -428,7 +420,5 @@ export class BoxMount {
   dispose() {
     this.disposeEffect();
     this.nodeView.dispose();
-    const entry = mountByBox.get(this.box);
-    if (entry === this) mountByBox.delete(this.box);
   }
 }

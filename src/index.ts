@@ -49,8 +49,8 @@ function makeBlockBox(
 }
 
 const root = makeBlockBox(
-  [],
-  [makeBlockBox([["x", makeLiteralBox("10")]], [makeBox(makeCode("x + 10"))])]
+  [["x", makeBlockBox([], [makeLiteralBox("10"), makeLiteralBox("20")])]],
+  [makeBox(makeCode("x"))]
 );
 
 const unmount = render(root, document.getElementById("root")!);
