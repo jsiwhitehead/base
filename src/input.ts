@@ -17,34 +17,46 @@ import { boxByElement } from "./render";
 
 /* Focus Event */
 
-export type FocusDir = "next" | "prev" | "first" | "last";
-export type FocusTargetRole = "auto" | "key" | "container";
+type FocusDir = "next" | "prev" | "first" | "last";
+type FocusTargetRole = "auto" | "key" | "container";
 
 type FocusRequestNav = { kind: "nav"; dir: FocusDir };
 type FocusRequestTo = { kind: "to"; target: Box; role: FocusTargetRole };
-
-export type FocusRequest = FocusRequestNav | FocusRequestTo;
+type FocusRequest = FocusRequestNav | FocusRequestTo;
 
 export class FocusRequestEvent extends CustomEvent<FocusRequest> {
   constructor(detail: FocusRequest) {
-    super("focusrequest", {
-      bubbles: true,
-      composed: false,
-      detail,
-    });
+    super("focusrequest", { bubbles: true, composed: false, detail });
   }
 }
 
-export function requestFocusNav(fromEl: HTMLElement, dir: FocusDir) {
+function requestFocusNav(fromEl: HTMLElement, dir: FocusDir) {
   fromEl.dispatchEvent(new FocusRequestEvent({ kind: "nav", dir }));
 }
 
-export function requestFocusTo(
+function requestFocusTo(
   fromEl: HTMLElement,
   target: Box,
   role: FocusTargetRole = "auto"
 ) {
   fromEl.dispatchEvent(new FocusRequestEvent({ kind: "to", target, role }));
+}
+
+/* Edit Event */
+
+type EditCommand =
+  | { kind: "begin-edit"; seed?: string }
+  | { kind: "commit" }
+  | { kind: "cancel" };
+
+export class EditCommandEvent extends CustomEvent<EditCommand> {
+  constructor(detail: EditCommand) {
+    super("editcommand", { bubbles: true, composed: false, detail });
+  }
+}
+
+function requestEdit(fromEl: HTMLElement, cmd: EditCommand) {
+  fromEl.dispatchEvent(new EditCommandEvent(cmd));
 }
 
 /* Helpers */
@@ -57,6 +69,9 @@ type BoxContext = {
   itemIdx: number;
   valueKey: string | undefined;
 };
+
+const isCharKey = (e: KeyboardEvent) =>
+  e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 
 const isTextInput = (el: Element | null): el is HTMLInputElement =>
   !!el && el.tagName === "INPUT";
@@ -92,76 +107,99 @@ function runMutationOnElement(
   if (!next) return;
 
   queueMicrotask(() => {
-    if (focusOverride) {
-      focusOverride(next, ctx);
-    } else {
-      requestFocusTo(el, next, "auto");
-    }
+    if (focusOverride) focusOverride(next, ctx);
+    else requestFocusTo(el, next, "auto");
   });
 }
 
-/* Handlers */
+/* Root Handlers */
 
-export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
+export function onRootDblClick(e: MouseEvent) {
+  const t = e.target as HTMLElement | null;
+  if (!t) return;
+  e.preventDefault();
+  e.stopPropagation();
+  requestEdit(t, { kind: "begin-edit" });
+}
+
+export function onRootFocusOut(e: FocusEvent) {
+  const t = e.target as HTMLElement | null;
+  if (t?.tagName === "INPUT") {
+    requestEdit(t, { kind: "commit" });
+  }
+}
+
+export function onRootKeyDown(e: KeyboardEvent) {
   const active = document.activeElement as HTMLElement | null;
-  if (!active || !root.contains(active) || isTextInput(active)) return;
+  if (!active) return;
+
+  if (isTextInput(active)) {
+    switch (e.key) {
+      case "Enter":
+      case "Tab":
+        e.preventDefault();
+        requestEdit(active, { kind: "commit" });
+        break;
+      case "Escape":
+        e.preventDefault();
+        requestEdit(active, { kind: "cancel" });
+        break;
+    }
+    return;
+  }
 
   if (
     e.shiftKey &&
     ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
   ) {
     e.preventDefault();
-    const shiftHandlers: Record<string, () => void> = {
-      ArrowUp: () =>
+    switch (e.key) {
+      case "ArrowUp":
         runMutationOnElement(active, (box) =>
           insertBefore(box, makeBox(makeLiteral(""), box.parent!))
-        ),
-      ArrowDown: () =>
+        );
+        break;
+      case "ArrowDown":
         runMutationOnElement(active, (box) =>
           insertAfter(box, makeBox(makeLiteral(""), box.parent!))
-        ),
-      ArrowLeft: () => runMutationOnElement(active, unwrapBlockIfSingleChild),
-      ArrowRight: () => runMutationOnElement(active, wrapWithBlock),
-    };
-    shiftHandlers[e.key]?.();
+        );
+        break;
+      case "ArrowLeft":
+        runMutationOnElement(active, unwrapBlockIfSingleChild);
+        break;
+      case "ArrowRight":
+        runMutationOnElement(active, wrapWithBlock);
+        break;
+    }
     return;
   }
 
   if (["ArrowUp", "ArrowDown"].includes(e.key)) {
     e.preventDefault();
-    if (e.key === "ArrowUp") requestFocusNav(active, "prev");
-    else requestFocusNav(active, "next");
+    requestFocusNav(active, e.key === "ArrowUp" ? "prev" : "next");
     return;
   }
-
   if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
-    const navHandlers: Record<string, () => void> = {
-      ArrowLeft: () =>
-        withBoxContext(active, ({ parentBox }) => {
-          requestFocusTo(active, parentBox, "container");
-        }),
-      ArrowRight: () => {
-        const b = boxByElement.get(active);
-        const n = b?.value.peek();
-        if (n && isBlock(n)) {
-          const first = getChildrenInOrder(n)[0];
-          if (first) {
-            requestFocusTo(active, first, "auto");
-          }
-        }
-      },
-    };
-    navHandlers[e.key]?.();
+    if (e.key === "ArrowLeft") {
+      withBoxContext(active, ({ parentBox }) => {
+        requestFocusTo(active, parentBox, "container");
+      });
+    } else {
+      const b = boxByElement.get(active);
+      const n = b?.value.peek();
+      if (n && isBlock(n)) {
+        const first = getChildrenInOrder(n)[0];
+        if (first) requestFocusTo(active, first, "auto");
+      }
+    }
     return;
   }
 
   if (e.key === "Tab") {
     e.preventDefault();
-
     const isKey = active.classList.contains("key");
     const prevIsKey = active.previousElementSibling?.classList.contains("key");
-
     if (isKey || prevIsKey) {
       const nextEl = isKey
         ? (active.nextElementSibling as HTMLElement | null)
@@ -171,18 +209,27 @@ export function onRootKeyDown(e: KeyboardEvent, root: HTMLElement) {
       runMutationOnElement(
         active,
         (box) => assignKey(box, ""),
-        (nextBox) => {
-          requestFocusTo(active, nextBox, "key");
-        }
+        (nextBox) => requestFocusTo(active, nextBox, "key")
       );
     }
-
     return;
   }
 
   if (e.key === "Backspace") {
     e.preventDefault();
     runMutationOnElement(active, removeChild);
+    return;
+  }
+
+  if (e.key === "Enter") {
+    e.preventDefault();
+    requestEdit(active, { kind: "begin-edit" });
+    return;
+  }
+
+  if (isCharKey(e)) {
+    e.preventDefault();
+    requestEdit(active, { kind: "begin-edit", seed: e.key });
     return;
   }
 }

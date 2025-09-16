@@ -10,7 +10,7 @@ import {
   makeBox,
   resolveDeep,
 } from "./data";
-import { onRootKeyDown } from "./input";
+import { onRootDblClick, onRootFocusOut, onRootKeyDown } from "./input";
 import { BoxMount } from "./render";
 
 export function render(
@@ -21,12 +21,15 @@ export function render(
   rootElement.appendChild(element);
   queueMicrotask(() => element.focus());
 
-  const onKeyDown = (e: KeyboardEvent) => onRootKeyDown(e, rootElement);
-  rootElement.addEventListener("keydown", onKeyDown);
+  rootElement.addEventListener("dblclick", onRootDblClick);
+  rootElement.addEventListener("focusout", onRootFocusOut);
+  rootElement.addEventListener("keydown", onRootKeyDown);
 
   return () => {
     dispose();
-    rootElement.removeEventListener("keydown", onKeyDown);
+    rootElement.removeEventListener("dblclick", onRootDblClick);
+    rootElement.removeEventListener("focusout", onRootFocusOut);
+    rootElement.removeEventListener("keydown", onRootKeyDown);
     rootElement.textContent = "";
   };
 }

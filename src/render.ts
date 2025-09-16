@@ -14,7 +14,7 @@ import {
   removeKey,
   resolveShallow,
 } from "./data";
-import { type FocusRequest, requestFocusNav } from "./input";
+import { FocusRequestEvent, EditCommandEvent } from "./input";
 
 export const boxByElement = new WeakMap<HTMLElement, Box>();
 
@@ -27,10 +27,6 @@ function createEl(
   if (className) node.classList.add(className);
   if (focusable) node.tabIndex = 0;
   return node;
-}
-
-function isCharKey(e: KeyboardEvent) {
-  return e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 }
 
 abstract class View<T> {
@@ -63,6 +59,7 @@ class ReadonlyStringView extends View<string> {
 class StringView extends View<string> {
   readonly viewKind = "literal";
   element!: HTMLElement;
+  justCancelled = false;
 
   constructor(
     readonly fieldRole: "expr" | "value" | "key",
@@ -72,6 +69,47 @@ class StringView extends View<string> {
   ) {
     super();
     this.toggleEditor("div");
+
+    this.element.addEventListener("editcommand", (ev: Event) => {
+      const e = ev as EditCommandEvent;
+      const { kind } = e.detail;
+
+      switch (kind) {
+        case "begin-edit": {
+          e.stopPropagation();
+          if (this.element.tagName !== "INPUT") {
+            this.toggleEditor("input", e.detail.seed);
+            this.element.focus();
+          }
+          break;
+        }
+
+        case "commit": {
+          e.stopPropagation();
+          if (this.justCancelled) {
+            this.justCancelled = false;
+            return;
+          }
+          if (this.element.tagName === "INPUT") {
+            const input = this.element as HTMLInputElement;
+            this.commitText(input.value);
+            this.toggleEditor("div");
+            this.element.focus();
+          }
+          break;
+        }
+
+        case "cancel": {
+          e.stopPropagation();
+          if (this.element.tagName === "INPUT") {
+            this.justCancelled = true;
+            this.toggleEditor("div");
+            this.element.focus();
+          }
+          break;
+        }
+      }
+    });
   }
 
   toggleEditor(tag: "div" | "input", initialText?: string) {
@@ -80,69 +118,9 @@ class StringView extends View<string> {
     if (tag === "input") {
       const inputEl = nextEl as HTMLInputElement;
       inputEl.value = initialText ?? this.getText();
-
-      let canceled = false;
-      let focusAfter = false;
-
-      inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
-          e.preventDefault();
-          e.stopPropagation();
-          canceled = e.key === "Escape";
-          focusAfter = true;
-          inputEl.blur();
-        }
-      });
-
-      inputEl.addEventListener("blur", () => {
-        if (!canceled) this.commitText(inputEl.value);
-        this.toggleEditor("div");
-        if (focusAfter) {
-          if (this.fieldRole === "key") {
-            requestFocusNav(this.element, "next");
-          } else {
-            this.element.focus();
-          }
-        }
-      });
     } else {
       nextEl.textContent =
         this.getText() + (this.fieldRole === "key" ? " :" : "");
-
-      nextEl.addEventListener("mousedown", (e) => {
-        if (e.detail === 2) e.preventDefault();
-      });
-
-      nextEl.addEventListener("dblclick", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.toggleEditor("input");
-        this.element.focus();
-      });
-
-      nextEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          this.toggleEditor("input");
-          this.element.focus();
-          return;
-        }
-
-        if (isCharKey(e)) {
-          e.preventDefault();
-          e.stopPropagation();
-          this.toggleEditor("input", e.key);
-          this.element.focus();
-        }
-      });
-
-      nextEl.addEventListener("focus", () => {
-        if (this.fieldRole === "key") {
-          this.toggleEditor("input");
-          this.element.focus();
-        }
-      });
     }
 
     if (this.element) this.element.replaceWith(nextEl);
@@ -172,7 +150,7 @@ class BlockView extends View<BlockNode> {
     registerElement(this.element);
 
     this.element.addEventListener("focusrequest", (ev: Event) => {
-      const e = ev as CustomEvent<FocusRequest>;
+      const e = ev as FocusRequestEvent;
       const { detail } = e;
 
       const stop = () => {
