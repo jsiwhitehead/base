@@ -8,7 +8,6 @@ import {
   getChildKey,
   insertBefore,
   insertAfter,
-  assignKey,
   removeChild,
   wrapWithBlock,
   unwrapBlockIfSingleChild,
@@ -21,7 +20,7 @@ type FocusDir = "next" | "prev" | "first" | "last";
 type FocusTargetRole = "auto" | "key" | "container";
 
 type FocusRequestNav = { kind: "nav"; dir: FocusDir };
-type FocusRequestTo = { kind: "to"; target: Box; role: FocusTargetRole };
+type FocusRequestTo = { kind: "to"; targetBox: Box; role: FocusTargetRole };
 type FocusRequest = FocusRequestNav | FocusRequestTo;
 
 export class FocusRequestEvent extends CustomEvent<FocusRequest> {
@@ -36,10 +35,10 @@ function requestFocusNav(fromEl: HTMLElement, dir: FocusDir) {
 
 function requestFocusTo(
   fromEl: HTMLElement,
-  target: Box,
+  targetBox: Box,
   role: FocusTargetRole = "auto"
 ) {
-  fromEl.dispatchEvent(new FocusRequestEvent({ kind: "to", target, role }));
+  fromEl.dispatchEvent(new FocusRequestEvent({ kind: "to", targetBox, role }));
 }
 
 /* Edit Event */
@@ -78,12 +77,15 @@ const isTextInput = (el: Element | null): el is HTMLInputElement =>
 
 function getBoxContext(box?: Box): BoxContext | null {
   if (!box?.parent) return null;
+
   const block = box.parent.value.peek() as BlockNode;
   const all = getChildrenInOrder(block);
   const allIdx = all.indexOf(box);
   if (allIdx < 0) return null;
+
   const itemIdx = block.items.indexOf(box);
   const valueKey = getChildKey(box);
+
   return { box, parentBox: box.parent, all, allIdx, itemIdx, valueKey };
 }
 
@@ -107,8 +109,11 @@ function runMutationOnElement(
   if (!next) return;
 
   queueMicrotask(() => {
-    if (focusOverride) focusOverride(next, ctx);
-    else requestFocusTo(el, next, "auto");
+    if (focusOverride) {
+      focusOverride(next, ctx);
+    } else {
+      requestFocusTo(el, next, "auto");
+    }
   });
 }
 
@@ -117,8 +122,10 @@ function runMutationOnElement(
 export function onRootDblClick(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (!t) return;
+
   e.preventDefault();
   e.stopPropagation();
+
   requestEdit(t, { kind: "begin-edit" });
 }
 
@@ -129,10 +136,19 @@ export function onRootKeyDown(e: KeyboardEvent) {
   if (isTextInput(active)) {
     switch (e.key) {
       case "Enter":
-      case "Tab":
+      case "Tab": {
         e.preventDefault();
-        requestEdit(active, { kind: "commit" });
+
+        const isKeyInput = active.classList.contains("key");
+        const box = boxByElement.get(active);
+
+        if (isKeyInput && box) {
+          requestFocusTo(active, box, "auto");
+        } else {
+          requestEdit(active, { kind: "commit" });
+        }
         break;
+      }
       case "Escape":
         e.preventDefault();
         requestEdit(active, { kind: "cancel" });
@@ -146,6 +162,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
     ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
   ) {
     e.preventDefault();
+
     switch (e.key) {
       case "ArrowUp":
         runMutationOnElement(active, (box) =>
@@ -172,8 +189,10 @@ export function onRootKeyDown(e: KeyboardEvent) {
     requestFocusNav(active, e.key === "ArrowUp" ? "prev" : "next");
     return;
   }
+
   if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
+
     if (e.key === "ArrowLeft") {
       withBoxContext(active, ({ parentBox }) => {
         requestFocusTo(active, parentBox, "container");
@@ -181,6 +200,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
     } else {
       const b = boxByElement.get(active);
       const n = b?.value.peek();
+
       if (n && isBlock(n)) {
         const first = getChildrenInOrder(n)[0];
         if (first) requestFocusTo(active, first, "auto");
@@ -191,19 +211,15 @@ export function onRootKeyDown(e: KeyboardEvent) {
 
   if (e.key === "Tab") {
     e.preventDefault();
+
     const isKey = active.classList.contains("key");
-    const prevIsKey = active.previousElementSibling?.classList.contains("key");
-    if (isKey || prevIsKey) {
-      const nextEl = isKey
-        ? (active.nextElementSibling as HTMLElement | null)
-        : (active.previousElementSibling as HTMLElement | null);
+    if (isKey) {
+      const nextEl = active.nextElementSibling as HTMLElement | null;
       nextEl?.focus();
     } else {
-      runMutationOnElement(
-        active,
-        (box) => assignKey(box, ""),
-        (nextBox) => requestFocusTo(active, nextBox, "key")
-      );
+      withBoxContext(active, ({ box }) => {
+        requestFocusTo(active, box, "key");
+      });
     }
     return;
   }
