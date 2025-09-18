@@ -1,121 +1,68 @@
-import {
-  type BlockNode,
-  type Box,
-  isBlock,
-  makeLiteral,
-  makeBox,
-  getChildrenInOrder,
-  getChildKey,
-  insertBefore,
-  insertAfter,
-  removeChild,
-  wrapWithBlock,
-  unwrapBlockIfSingleChild,
-} from "./data";
+import { type Box } from "./data";
 import { boxByElement } from "./render";
 
-/* Focus Event */
+/* Focus Events */
 
-type FocusDir = "next" | "prev" | "first" | "last";
-type FocusTargetRole = "auto" | "key" | "container";
+type FocusDir = "next" | "prev" | "into" | "out";
+type FocusTargetRole = "auto" | "key";
 
-type FocusRequestNav = { kind: "nav"; dir: FocusDir };
-type FocusRequestTo = { kind: "to"; targetBox: Box; role: FocusTargetRole };
-type FocusRequest = FocusRequestNav | FocusRequestTo;
+type FocusCommandNav = { kind: "nav"; dir: FocusDir; from: Box };
+type FocusCommandTo = { kind: "to"; targetBox: Box; role: FocusTargetRole };
+type FocusCommand = FocusCommandNav | FocusCommandTo;
 
-export class FocusRequestEvent extends CustomEvent<FocusRequest> {
-  constructor(detail: FocusRequest) {
-    super("focusrequest", { bubbles: true, composed: false, detail });
+export class FocusCommandEvent extends CustomEvent<FocusCommand> {
+  constructor(detail: FocusCommand) {
+    super("focus-command", { bubbles: true, composed: false, detail });
   }
 }
 
-function requestFocusNav(fromEl: HTMLElement, dir: FocusDir) {
-  fromEl.dispatchEvent(new FocusRequestEvent({ kind: "nav", dir }));
+function requestFocusCommand(fromEl: HTMLElement, cmd: FocusCommand) {
+  fromEl.dispatchEvent(new FocusCommandEvent(cmd));
 }
 
-function requestFocusTo(
-  fromEl: HTMLElement,
-  targetBox: Box,
-  role: FocusTargetRole = "auto"
-) {
-  fromEl.dispatchEvent(new FocusRequestEvent({ kind: "to", targetBox, role }));
-}
+/* String Events */
 
-/* Edit Event */
-
-type EditCommand =
-  | { kind: "begin-edit"; seed?: string }
+type StringCommand =
+  | { kind: "begin"; seed?: string }
   | { kind: "commit" }
   | { kind: "cancel" };
 
-export class EditCommandEvent extends CustomEvent<EditCommand> {
-  constructor(detail: EditCommand) {
-    super("editcommand", { bubbles: true, composed: false, detail });
+export class StringCommandEvent extends CustomEvent<StringCommand> {
+  constructor(detail: StringCommand) {
+    super("string-command", { bubbles: true, composed: false, detail });
   }
 }
 
-function requestEdit(fromEl: HTMLElement, cmd: EditCommand) {
-  fromEl.dispatchEvent(new EditCommandEvent(cmd));
+function requestStringCommand(fromEl: HTMLElement, cmd: StringCommand) {
+  fromEl.dispatchEvent(new StringCommandEvent(cmd));
+}
+
+/* Block Events */
+
+type BlockCommand =
+  | { kind: "insert-before"; target: Box }
+  | { kind: "insert-after"; target: Box }
+  | { kind: "wrap"; target: Box }
+  | { kind: "unwrap"; target: Box }
+  | { kind: "remove"; target: Box };
+
+export class BlockCommandEvent extends CustomEvent<BlockCommand> {
+  constructor(detail: BlockCommand) {
+    super("block-command", { bubbles: true, composed: false, detail });
+  }
+}
+
+function requestBlockCommand(fromEl: HTMLElement, cmd: BlockCommand) {
+  fromEl.dispatchEvent(new BlockCommandEvent(cmd));
 }
 
 /* Helpers */
 
-type BoxContext = {
-  box: Box;
-  parentBox: Box<BlockNode>;
-  all: Box[];
-  allIdx: number;
-  itemIdx: number;
-  valueKey: string | undefined;
-};
-
 const isCharKey = (e: KeyboardEvent) =>
   e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 
-const isTextInput = (el: Element | null): el is HTMLInputElement =>
+const isStringInput = (el: Element | null): el is HTMLInputElement =>
   !!el && el.tagName === "INPUT";
-
-function getBoxContext(box?: Box): BoxContext | null {
-  if (!box?.parent) return null;
-
-  const block = box.parent.value.peek() as BlockNode;
-  const all = getChildrenInOrder(block);
-  const allIdx = all.indexOf(box);
-  if (allIdx < 0) return null;
-
-  const itemIdx = block.items.indexOf(box);
-  const valueKey = getChildKey(box);
-
-  return { box, parentBox: box.parent, all, allIdx, itemIdx, valueKey };
-}
-
-function withBoxContext(el: HTMLElement, fn: (ctx: BoxContext) => void) {
-  const ctx = getBoxContext(boxByElement.get(el));
-  if (ctx) fn(ctx);
-}
-
-function runMutationOnElement(
-  el: HTMLElement,
-  mutate: (box: Box) => Box | undefined,
-  focusOverride?: (next: Box, ctx: BoxContext) => void
-) {
-  const box = boxByElement.get(el);
-  if (!box) return;
-
-  const ctx = getBoxContext(box);
-  if (!ctx) return;
-
-  const next = mutate(box);
-  if (!next) return;
-
-  queueMicrotask(() => {
-    if (focusOverride) {
-      focusOverride(next, ctx);
-    } else {
-      requestFocusTo(el, next, "auto");
-    }
-  });
-}
 
 /* Root Handlers */
 
@@ -126,14 +73,14 @@ export function onRootDblClick(e: MouseEvent) {
   e.preventDefault();
   e.stopPropagation();
 
-  requestEdit(t, { kind: "begin-edit" });
+  requestStringCommand(t, { kind: "begin" });
 }
 
 export function onRootKeyDown(e: KeyboardEvent) {
   const active = document.activeElement as HTMLElement | null;
   if (!active) return;
 
-  if (isTextInput(active)) {
+  if (isStringInput(active)) {
     switch (e.key) {
       case "Enter":
       case "Tab": {
@@ -143,15 +90,19 @@ export function onRootKeyDown(e: KeyboardEvent) {
         const box = boxByElement.get(active);
 
         if (isKeyInput && box) {
-          requestFocusTo(active, box, "auto");
+          requestFocusCommand(active, {
+            kind: "to",
+            targetBox: box,
+            role: "auto",
+          });
         } else {
-          requestEdit(active, { kind: "commit" });
+          requestStringCommand(active, { kind: "commit" });
         }
         break;
       }
       case "Escape":
         e.preventDefault();
-        requestEdit(active, { kind: "cancel" });
+        requestStringCommand(active, { kind: "cancel" });
         break;
     }
     return;
@@ -162,23 +113,27 @@ export function onRootKeyDown(e: KeyboardEvent) {
     ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
   ) {
     e.preventDefault();
+    const activeBox = boxByElement.get(active);
+    if (!activeBox) return;
 
     switch (e.key) {
       case "ArrowUp":
-        runMutationOnElement(active, (box) =>
-          insertBefore(box, makeBox(makeLiteral(""), box.parent!))
-        );
+        requestBlockCommand(active, {
+          kind: "insert-before",
+          target: activeBox,
+        });
         break;
       case "ArrowDown":
-        runMutationOnElement(active, (box) =>
-          insertAfter(box, makeBox(makeLiteral(""), box.parent!))
-        );
+        requestBlockCommand(active, {
+          kind: "insert-after",
+          target: activeBox,
+        });
         break;
       case "ArrowLeft":
-        runMutationOnElement(active, unwrapBlockIfSingleChild);
+        requestBlockCommand(active, { kind: "unwrap", target: activeBox });
         break;
       case "ArrowRight":
-        runMutationOnElement(active, wrapWithBlock);
+        requestBlockCommand(active, { kind: "wrap", target: activeBox });
         break;
     }
     return;
@@ -186,26 +141,25 @@ export function onRootKeyDown(e: KeyboardEvent) {
 
   if (["ArrowUp", "ArrowDown"].includes(e.key)) {
     e.preventDefault();
-    requestFocusNav(active, e.key === "ArrowUp" ? "prev" : "next");
+    const activeBox = boxByElement.get(active);
+    if (!activeBox) return;
+    requestFocusCommand(active, {
+      kind: "nav",
+      dir: e.key === "ArrowUp" ? "prev" : "next",
+      from: activeBox,
+    });
     return;
   }
 
   if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
-
-    if (e.key === "ArrowLeft") {
-      withBoxContext(active, ({ parentBox }) => {
-        requestFocusTo(active, parentBox, "container");
-      });
-    } else {
-      const b = boxByElement.get(active);
-      const n = b?.value.peek();
-
-      if (n && isBlock(n)) {
-        const first = getChildrenInOrder(n)[0];
-        if (first) requestFocusTo(active, first, "auto");
-      }
-    }
+    const activeBox = boxByElement.get(active);
+    if (!activeBox) return;
+    requestFocusCommand(active, {
+      kind: "nav",
+      dir: e.key === "ArrowLeft" ? "out" : "into",
+      from: activeBox,
+    });
     return;
   }
 
@@ -217,28 +171,36 @@ export function onRootKeyDown(e: KeyboardEvent) {
       const nextEl = active.nextElementSibling as HTMLElement | null;
       nextEl?.focus();
     } else {
-      withBoxContext(active, ({ box }) => {
-        requestFocusTo(active, box, "key");
-      });
+      const activeBox = boxByElement.get(active);
+      if (activeBox) {
+        requestFocusCommand(active, {
+          kind: "to",
+          targetBox: activeBox,
+          role: "key",
+        });
+      }
     }
     return;
   }
 
   if (e.key === "Backspace") {
     e.preventDefault();
-    runMutationOnElement(active, removeChild);
+    const activeBox = boxByElement.get(active);
+    if (activeBox) {
+      requestBlockCommand(active, { kind: "remove", target: activeBox });
+    }
     return;
   }
 
   if (e.key === "Enter") {
     e.preventDefault();
-    requestEdit(active, { kind: "begin-edit" });
+    requestStringCommand(active, { kind: "begin" });
     return;
   }
 
   if (isCharKey(e)) {
     e.preventDefault();
-    requestEdit(active, { kind: "begin-edit", seed: e.key });
+    requestStringCommand(active, { kind: "begin", seed: e.key });
     return;
   }
 }

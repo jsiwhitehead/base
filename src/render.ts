@@ -3,9 +3,9 @@ import { effect } from "@preact/signals-core";
 import {
   type LiteralNode,
   type BlockNode,
+  type EvalNode,
   type CodeNode,
   type Box,
-  type Resolved,
   isBlock,
   isCode,
   makeLiteral,
@@ -13,8 +13,18 @@ import {
   assignKey,
   removeKey,
   resolveShallow,
+  makeBox,
+  insertBefore,
+  insertAfter,
+  wrapWithBlock,
+  unwrapBlockIfSingleChild,
+  removeChild,
 } from "./data";
-import { FocusRequestEvent, EditCommandEvent } from "./input";
+import {
+  FocusCommandEvent,
+  StringCommandEvent,
+  BlockCommandEvent,
+} from "./input";
 
 export const boxByElement = new WeakMap<HTMLElement, Box>();
 
@@ -78,9 +88,9 @@ class StringView extends View<string> {
       nextEl.textContent =
         this.getText() + (this.fieldRole === "key" ? " :" : "");
 
-      nextEl.addEventListener("editcommand", (ev: Event) => {
-        const e = ev as EditCommandEvent;
-        if (e.detail.kind === "begin-edit") {
+      nextEl.addEventListener("string-command", (ev: Event) => {
+        const e = ev as StringCommandEvent;
+        if (e.detail.kind === "begin") {
           e.stopPropagation();
           this.toggleEditor("input", e.detail.seed);
           this.element.focus();
@@ -93,8 +103,8 @@ class StringView extends View<string> {
       let refocusAfterBlur = false;
       let cancelled = false;
 
-      inputEl.addEventListener("editcommand", (ev: Event) => {
-        const e = ev as EditCommandEvent;
+      inputEl.addEventListener("string-command", (ev: Event) => {
+        const e = ev as StringCommandEvent;
         switch (e.detail.kind) {
           case "commit": {
             e.stopPropagation();
@@ -139,6 +149,139 @@ class StringView extends View<string> {
   }
 }
 
+class ReadonlyBlockView extends View<BlockNode> {
+  readonly viewKind = "block";
+  readonly element: HTMLElement;
+  childMountByBox = new Map<Box, BoxMount>();
+  orderedChildren: Box[] = [];
+  lastNode?: BlockNode;
+
+  constructor(registerElement: (el: HTMLElement) => void) {
+    super();
+    this.element = createEl("div", "block readonly", true);
+    registerElement(this.element);
+
+    this.element.addEventListener("focus-command", (ev: Event) => {
+      const e = ev as FocusCommandEvent;
+      const stop = () => {
+        e.stopPropagation();
+        e.preventDefault?.();
+      };
+
+      if (e.detail.kind === "to") {
+        const { targetBox, role } = e.detail;
+        const mount = this.childMountByBox.get(targetBox);
+        if (!mount) return;
+
+        if (role === "key") {
+          stop();
+          mount.focus();
+          return;
+        }
+
+        stop();
+        mount.focus();
+        return;
+      }
+
+      if (e.detail.kind === "nav") {
+        const { dir, from: fromBox } = e.detail;
+
+        if (dir === "into") {
+          stop();
+          const first = this.orderedChildren[0];
+          if (!first) return;
+          const mount = this.childMountByBox.get(first);
+          mount?.focus();
+          return;
+        }
+
+        if (!this.orderedChildren.includes(fromBox)) return;
+
+        const idx = this.orderedChildren.indexOf(fromBox);
+        if (idx < 0) return;
+
+        const len = this.orderedChildren.length;
+        let targetIndex = idx;
+
+        switch (dir) {
+          case "next":
+            targetIndex = Math.min(len - 1, idx + 1);
+            break;
+          case "prev":
+            targetIndex = Math.max(0, idx - 1);
+            break;
+          case "out":
+            stop();
+            this.element.focus();
+            return;
+        }
+
+        const target = this.orderedChildren[targetIndex];
+        if (!target) return;
+
+        const mount = this.childMountByBox.get(target);
+        if (!mount) return;
+
+        stop();
+        mount.focus();
+      }
+    });
+  }
+
+  mountChildIfNeeded(child: Box) {
+    let mount = this.childMountByBox.get(child);
+    if (!mount) {
+      mount = new BoxMount(child);
+      this.childMountByBox.set(child, mount);
+    }
+    return mount.element;
+  }
+
+  unmountAllChildrenExcept(keep?: Set<Box>) {
+    for (const [childBox, mount] of Array.from(this.childMountByBox)) {
+      if (keep?.has(childBox)) continue;
+
+      if (this.element.contains(mount.element)) {
+        mount.element.remove();
+      }
+      mount.dispose();
+      this.childMountByBox.delete(childBox);
+    }
+  }
+
+  update(node: BlockNode) {
+    this.lastNode = node;
+    const { values, items } = node;
+
+    const childrenToKeep = new Set<Box>([
+      ...values.map(([, v]) => v),
+      ...items,
+    ]);
+    this.unmountAllChildrenExcept(childrenToKeep);
+
+    this.orderedChildren = [...values.map(([, v]) => v), ...items];
+
+    const frag = document.createDocumentFragment();
+
+    for (const [key, childBox] of values) {
+      const keyLabel = new ReadonlyStringView("key", () => {}, key);
+      frag.append(keyLabel.element, this.mountChildIfNeeded(childBox));
+    }
+
+    for (const childBox of items) {
+      frag.append(this.mountChildIfNeeded(childBox));
+    }
+
+    this.element.replaceChildren(frag);
+  }
+
+  dispose() {
+    this.unmountAllChildrenExcept();
+    this.element.textContent = "";
+  }
+}
+
 class BlockView extends View<BlockNode> {
   readonly viewKind = "block";
   readonly element: HTMLElement;
@@ -149,16 +292,19 @@ class BlockView extends View<BlockNode> {
   orderedChildren: Box[] = [];
   lastNode?: BlockNode;
 
-  constructor(registerElement: (el: HTMLElement) => void) {
+  constructor(
+    readonly ownerBox: Box<BlockNode>,
+    registerElement: (el: HTMLElement) => void
+  ) {
     super();
     this.element = createEl("div", "block", true);
     registerElement(this.element);
 
-    this.element.addEventListener("focusrequest", (ev: Event) => {
-      const e = ev as FocusRequestEvent;
+    this.element.addEventListener("focus-command", (ev: Event) => {
+      const e = ev as FocusCommandEvent;
       const stop = () => {
         e.stopPropagation();
-        (e as Event).preventDefault?.();
+        e.preventDefault?.();
       };
 
       if (e.detail.kind === "to") {
@@ -180,19 +326,29 @@ class BlockView extends View<BlockNode> {
           return;
         }
 
-        if (role === "container") {
-          this.element.focus();
-          return;
-        }
-
+        stop();
         mount.focus();
         return;
       }
 
       if (e.detail.kind === "nav") {
-        const { dir } = e.detail;
-        const origin = e.target as HTMLElement;
-        const fromBox = boxByElement.get(origin)!;
+        const { dir, from: fromBox } = e.detail;
+
+        if (dir === "into" && fromBox === this.ownerBox) {
+          stop();
+          const first = this.orderedChildren[0];
+          if (!first) return;
+          const mount = this.childMountByBox.get(first);
+          mount?.focus();
+          return;
+        }
+
+        if (dir === "out" && this.childMountByBox.has(fromBox)) {
+          stop();
+          this.element.focus();
+          return;
+        }
+
         if (!this.orderedChildren.includes(fromBox)) return;
 
         const idx = this.orderedChildren.indexOf(fromBox);
@@ -200,13 +356,8 @@ class BlockView extends View<BlockNode> {
 
         const len = this.orderedChildren.length;
         let targetIndex = idx;
+
         switch (dir) {
-          case "first":
-            targetIndex = 0;
-            break;
-          case "last":
-            targetIndex = Math.max(0, len - 1);
-            break;
           case "next":
             targetIndex = Math.min(len - 1, idx + 1);
             break;
@@ -225,6 +376,79 @@ class BlockView extends View<BlockNode> {
         mount.focus();
       }
     });
+
+    this.element.addEventListener("block-command", (ev: Event) => {
+      const e = ev as BlockCommandEvent;
+      const { kind, target } = e.detail;
+
+      if (!this.childMountByBox.has(target)) return;
+
+      e.stopPropagation();
+
+      const parentBox = this.ownerBox;
+      const parentBlock = parentBox.value.peek();
+
+      const orderedBefore = [
+        ...parentBlock.values.map(([, v]) => v),
+        ...parentBlock.items,
+      ];
+      const idx = orderedBefore.indexOf(target);
+
+      let nextFocus: Box | undefined;
+      let updated: BlockNode = parentBlock;
+
+      switch (kind) {
+        case "insert-before": {
+          const newItem = makeBox(makeLiteral(""), parentBox);
+          updated = insertBefore(parentBox, parentBlock, target, newItem);
+          nextFocus = newItem;
+          break;
+        }
+        case "insert-after": {
+          const newItem = makeBox(makeLiteral(""), parentBox);
+          updated = insertAfter(parentBox, parentBlock, target, newItem);
+          nextFocus = newItem;
+          break;
+        }
+        case "wrap": {
+          updated = wrapWithBlock(parentBox, parentBlock, target);
+          nextFocus = target;
+          break;
+        }
+        case "unwrap": {
+          const beforeNode = target.value.peek();
+          updated = unwrapBlockIfSingleChild(parentBox, parentBlock, target);
+          if (updated !== parentBlock && isBlock(beforeNode)) {
+            const { items, values } = beforeNode;
+            if (values.length === 0 && items.length === 1) {
+              nextFocus = items[0]!;
+            }
+          }
+          break;
+        }
+        case "remove": {
+          const neighbor =
+            orderedBefore[idx - 1] ?? orderedBefore[idx + 1] ?? parentBox;
+          updated = removeChild(parentBox, parentBlock, target);
+          nextFocus = neighbor;
+          break;
+        }
+      }
+
+      if (updated !== parentBlock) {
+        parentBox.value.value = updated;
+      }
+
+      if (nextFocus) {
+        this.element.dispatchEvent(
+          new FocusCommandEvent({
+            kind: "to",
+            targetBox: nextFocus,
+            role: "auto",
+          })
+        );
+      }
+    });
   }
 
   ensureKeyEditor(box: Box): StringView {
@@ -234,9 +458,19 @@ class BlockView extends View<BlockNode> {
         "key",
         () => getChildKey(box) ?? "",
         (nextKey) => {
+          const parentBox = this.ownerBox;
+          const parentBlock = parentBox.value.peek();
+
           const trimmed = nextKey.trim();
-          if (trimmed === "") removeKey(box);
-          else assignKey(box, trimmed);
+          const updated =
+            trimmed === ""
+              ? removeKey(parentBox, parentBlock, box)
+              : assignKey(parentBox, parentBlock, box, trimmed);
+
+          if (updated !== parentBlock) {
+            parentBox.value.value = updated;
+          }
+
           this.tempKeyBox = null;
           if (this.lastNode) this.update(this.lastNode);
         },
@@ -327,7 +561,7 @@ class CodeView extends View<string> {
     readCode: () => string,
     applyCode: (text: string) => void,
     registerElement: (el: HTMLElement) => void,
-    readResolved: () => Resolved
+    readResolved: () => EvalNode
   ) {
     super();
     this.element = createEl("div", "code");
@@ -346,8 +580,8 @@ class CodeView extends View<string> {
         this.resultContainer.classList.remove("error");
 
         if (isBlock(resolved)) {
-          this.ensureResultKind("block", () => new BlockView(() => {}));
-          this.resultView!.update(resolved);
+          this.ensureResultKind("block", () => new ReadonlyBlockView(() => {}));
+          (this.resultView as ReadonlyBlockView).update(resolved);
         } else {
           this.ensureResultKind(
             "readonly",
@@ -427,7 +661,10 @@ export class BoxMount {
         );
         this.nodeView.update(n.code);
       } else if (isBlock(n)) {
-        ensureKind("block", () => new BlockView(registerElementBox));
+        ensureKind(
+          "block",
+          () => new BlockView(this.box as Box<BlockNode>, registerElementBox)
+        );
         this.nodeView.update(n);
       } else {
         ensureKind(
@@ -452,6 +689,7 @@ export class BoxMount {
   focus() {
     if (this.nodeView.viewKind === "code") {
       (this.nodeView as CodeView).codeEditor.element.focus();
+      return;
     }
     this.nodeView.element.focus();
   }

@@ -1,9 +1,9 @@
 import * as ohm from "ohm-js";
 
 import {
-  type Box,
   type Primitive,
-  type Resolved,
+  type EvalNode,
+  type Box,
   isLiteral,
   isBlock,
   isBox,
@@ -64,18 +64,18 @@ const grammar = ohm.grammar(String.raw`Script {
 
 /* Coercion */
 
-function asPrimitive(x: Box | Resolved | Primitive): Primitive {
+function asPrimitive(x: Box | EvalNode | Primitive): Primitive {
   const r = isBox(x) ? resolveShallow(x) : x;
   if (isLiteral(r)) return r.value;
   if (isBlock(r)) throw new TypeError("Expected a primitive, got a block");
   return r;
 }
 
-function toBool(x: Box | Resolved | Primitive): boolean {
+function toBool(x: Box | EvalNode | Primitive): boolean {
   return Boolean(asPrimitive(x));
 }
 
-function toNum(x: Box | Resolved | Primitive): number {
+function toNum(x: Box | EvalNode | Primitive): number {
   const v = asPrimitive(x);
   const n = typeof v === "number" ? v : Number(v);
   if (Number.isNaN(n)) {
@@ -84,21 +84,21 @@ function toNum(x: Box | Resolved | Primitive): number {
   return n;
 }
 
-function toStr(x: Box | Resolved | Primitive): string {
+function toStr(x: Box | EvalNode | Primitive): string {
   const v = asPrimitive(x);
   return typeof v === "string" ? v : String(v);
 }
 
 function eq(
-  a: Box | Resolved | Primitive,
-  b: Box | Resolved | Primitive
+  a: Box | EvalNode | Primitive,
+  b: Box | EvalNode | Primitive
 ): boolean {
   return asPrimitive(a) === asPrimitive(b);
 }
 
 function cmp(
-  a: Box | Resolved | Primitive,
-  b: Box | Resolved | Primitive,
+  a: Box | EvalNode | Primitive,
+  b: Box | EvalNode | Primitive,
   op: "<" | "<=" | ">" | ">="
 ): boolean {
   const na = toNum(a);
@@ -230,7 +230,7 @@ const semantics = grammar
 
 /* Evaluate */
 
-export function evalCode(src: string, scope: (name: string) => Box): Resolved {
+export function evalCode(src: string, scope: (name: string) => Box): EvalNode {
   const m = grammar.match(src, "Exp");
   if (m.failed()) {
     throw new SyntaxError(m.message);
