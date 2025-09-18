@@ -147,7 +147,7 @@ class BlockView extends View<BlockNode> {
   tempKeyBox: Box | null = null;
 
   orderedChildren: Box[] = [];
-  private lastNode?: BlockNode;
+  lastNode?: BlockNode;
 
   constructor(registerElement: (el: HTMLElement) => void) {
     super();
@@ -318,8 +318,10 @@ class BlockView extends View<BlockNode> {
 class CodeView extends View<string> {
   readonly viewKind = "code";
   readonly element: HTMLElement;
+  resultContainer: HTMLElement;
   codeEditor: StringView;
-  resultMount: ResolvedMount;
+  resultView?: View<BlockNode | string>;
+  disposeResultEffect?: () => void;
 
   constructor(
     readCode: () => string,
@@ -329,6 +331,7 @@ class CodeView extends View<string> {
   ) {
     super();
     this.element = createEl("div", "code");
+    this.resultContainer = createEl("div", "result");
 
     this.codeEditor = new StringView(
       "expr",
@@ -337,13 +340,31 @@ class CodeView extends View<string> {
       registerElement
     );
 
-    this.resultMount = new ResolvedMount(
-      readResolved,
-      () => this.element.classList.remove("error"),
-      () => this.element.classList.add("error")
-    );
+    this.disposeResultEffect = effect(() => {
+      try {
+        const resolved = readResolved();
+        this.resultContainer.classList.remove("error");
 
-    this.element.append(this.codeEditor.element, this.resultMount.element);
+        if (isBlock(resolved)) {
+          this.ensureResultKind("block", () => new BlockView(() => {}));
+          this.resultView!.update(resolved);
+        } else {
+          this.ensureResultKind(
+            "readonly",
+            () =>
+              new ReadonlyStringView("value", () => {}, String(resolved.value))
+          );
+          this.resultView!.update(String(resolved.value));
+        }
+      } catch {
+        this.resultContainer.classList.add("error");
+        this.resultView?.dispose();
+        this.resultView = undefined;
+        this.resultContainer.textContent = "";
+      }
+    });
+
+    this.element.append(this.codeEditor.element, this.resultContainer);
 
     this.element.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -351,77 +372,25 @@ class CodeView extends View<string> {
     });
   }
 
+  ensureResultKind(
+    kind: "block" | "readonly",
+    build: () => View<BlockNode | string>
+  ) {
+    if (!this.resultView || this.resultView.viewKind !== kind) {
+      this.resultView?.dispose();
+      this.resultView = build();
+      this.resultContainer.replaceChildren(this.resultView.element);
+    }
+  }
+
   update(code: string) {
     this.codeEditor.update(code);
   }
 
   dispose() {
-    this.resultMount.dispose();
+    this.disposeResultEffect?.();
+    this.resultView?.dispose();
     this.element.textContent = "";
-  }
-}
-
-export class ResolvedMount {
-  nodeView?: View<BlockNode | string>;
-  disposeEffect: () => void;
-  container: HTMLElement;
-
-  constructor(
-    readResolved: () => Resolved,
-    onOk: () => void,
-    onError: () => void
-  ) {
-    this.container = createEl("div", "result");
-
-    const registerElement = () => {};
-
-    const ensureKind = (
-      kind: "block" | "readonly",
-      build: () => View<BlockNode | string>
-    ) => {
-      if (!this.nodeView || this.nodeView.viewKind !== kind) {
-        this.nodeView?.dispose();
-        this.nodeView = build();
-        this.container.replaceChildren(this.nodeView.element);
-      }
-    };
-
-    this.disposeEffect = effect(() => {
-      try {
-        const resolved = readResolved();
-        onOk();
-        if (isBlock(resolved)) {
-          ensureKind("block", () => new BlockView(registerElement));
-          this.nodeView!.update(resolved);
-        } else {
-          ensureKind(
-            "readonly",
-            () =>
-              new ReadonlyStringView(
-                "value",
-                registerElement,
-                String(resolved.value)
-              )
-          );
-          this.nodeView!.update(String(resolved.value));
-        }
-      } catch {
-        onError();
-        this.nodeView?.dispose();
-        this.nodeView = undefined;
-        this.container.replaceChildren();
-      }
-    });
-  }
-
-  get element() {
-    return this.container;
-  }
-
-  dispose() {
-    this.disposeEffect?.();
-    this.nodeView?.dispose();
-    this.container.replaceChildren();
   }
 }
 
