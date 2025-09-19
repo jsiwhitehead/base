@@ -1,4 +1,5 @@
 import { type Signal, signal } from "@preact/signals-core";
+
 import { evalCode } from "./code";
 
 /* Node Types */
@@ -28,7 +29,6 @@ export type Node = CodeNode | EvalNode;
 export type Box<T extends Node = Node> = {
   kind: "box";
   value: Signal<T>;
-  parent?: Box<BlockNode>;
 };
 
 /* Static Types */
@@ -45,6 +45,21 @@ export type StaticError = {
 };
 
 export type StaticNode = StaticBlock | StaticError | Primitive;
+
+/* Parent Store */
+
+type ParentSig = Signal<Box<BlockNode> | undefined>;
+
+const parentMap = new WeakMap<Box, ParentSig>();
+
+function getParentSignal(b: Box): ParentSig {
+  let s = parentMap.get(b);
+  if (!s) {
+    s = signal<Box<BlockNode> | undefined>(undefined);
+    parentMap.set(b, s);
+  }
+  return s;
+}
 
 /* Type Guards */
 
@@ -68,19 +83,6 @@ export function isBox(v: unknown): v is Box {
   return hasKind(v, "box");
 }
 
-/* Scope */
-
-export function lookupInScope(
-  start: Box<BlockNode> | undefined,
-  name: string
-): Box {
-  for (let cur = start; cur; cur = cur.parent) {
-    const kv = cur.value.value.values.find(([k]) => k === name);
-    if (kv) return kv[1];
-  }
-  throw new Error(`Unbound identifier: ${name}`);
-}
-
 /* Constructors */
 
 export function makeLiteral(value: Primitive): LiteralNode {
@@ -98,22 +100,39 @@ export function makeCode(code: string): CodeNode {
   return { kind: "code", code };
 }
 
-export function makeBox<T extends Node>(
-  initial: T,
-  parent?: Box<BlockNode>
-): Box<T> {
-  return { kind: "box", value: signal<T>(initial), parent };
+export function makeBox<T extends Node>(initial: T): Box<T> {
+  return { kind: "box", value: signal<T>(initial) };
+}
+
+export function makeBlockBox(
+  values: [string, Box][] = [],
+  items: Box[] = []
+): Box<BlockNode> {
+  const parent = makeBox(makeBlock([], []));
+  for (const [_, v] of values) getParentSignal(v).value = parent;
+  for (const v of items) getParentSignal(v).value = parent;
+  parent.value.value = makeBlock(values, items);
+  return parent;
 }
 
 /* Resolve */
 
 export function resolveShallow(b: Box): EvalNode {
   const v = b.value.value;
-  if (isCode(v)) {
-    const getter = (name: string): Box => lookupInScope(b.parent, name);
-    return evalCode(v.code, getter);
-  }
-  return v;
+  if (!isCode(v)) return v;
+
+  return evalCode(v.code, (name: string) => {
+    let scope: Box<BlockNode> | undefined = getParentSignal(b).value;
+
+    while (scope) {
+      const currentBlock = scope.value.value;
+      const binding = currentBlock.values.find(([k]) => k === name);
+      if (binding) return binding[1];
+      scope = getParentSignal(scope).value;
+    }
+
+    throw new Error(`Unbound identifier: ${name}`);
+  });
 }
 
 export function resolveDeep(b: Box): StaticNode {
@@ -150,6 +169,20 @@ function findChildLocation(block: BlockNode, child: Box): ChildLoc | undefined {
   return undefined;
 }
 
+function withLocatedChild(
+  parentBlock: BlockNode,
+  child: Box,
+  fn: (ctx: { parentBox: Box<BlockNode>; loc: ChildLoc }) => BlockNode
+): BlockNode {
+  const parentBox = getParentSignal(child).peek();
+  if (!parentBox) return parentBlock;
+
+  const loc = findChildLocation(parentBlock, child);
+  if (!loc) return parentBlock;
+
+  return fn({ parentBox, loc });
+}
+
 function insertItemAtIndex(
   block: BlockNode,
   index: number,
@@ -180,152 +213,124 @@ export function getChildrenInOrder(block: BlockNode): Box[] {
   return [...block.values.map(([, v]) => v), ...block.items];
 }
 
-export function getChildKey(child: Box): string | undefined {
-  if (!child.parent) return;
-  const block = child.parent.value.peek();
-  const loc = findChildLocation(block, child);
-  if (loc?.kind === "value") return block.values[loc.index]![0];
+export function getChildKey(
+  parentBlock: BlockNode,
+  child: Box
+): string | undefined {
+  const loc = findChildLocation(parentBlock, child);
+  if (loc?.kind === "value") return parentBlock.values[loc.index]![0];
   return undefined;
 }
 
 /* Transformations */
 
 export function insertBefore(
-  parentBox: Box<BlockNode>,
   parentBlock: BlockNode,
   reference: Box,
   newItem: Box
 ): BlockNode {
-  const loc = findChildLocation(parentBlock, reference);
-  if (!loc) return parentBlock;
-
-  newItem.parent = parentBox;
-
-  if (loc.kind === "item") {
-    return insertItemAtIndex(parentBlock, loc.index, newItem);
-  }
-  return insertItemAtIndex(parentBlock, 0, newItem);
+  return withLocatedChild(parentBlock, reference, ({ parentBox, loc }) => {
+    getParentSignal(newItem).value = parentBox;
+    if (loc.kind === "item") {
+      return insertItemAtIndex(parentBlock, loc.index, newItem);
+    }
+    return insertItemAtIndex(parentBlock, 0, newItem);
+  });
 }
 
 export function insertAfter(
-  parentBox: Box<BlockNode>,
   parentBlock: BlockNode,
   reference: Box,
   newItem: Box
 ): BlockNode {
-  const loc = findChildLocation(parentBlock, reference);
-  if (!loc) return parentBlock;
-
-  newItem.parent = parentBox;
-
-  if (loc.kind === "item") {
-    return insertItemAtIndex(parentBlock, loc.index + 1, newItem);
-  }
-  return insertItemAtIndex(parentBlock, 0, newItem);
+  return withLocatedChild(parentBlock, reference, ({ parentBox, loc }) => {
+    getParentSignal(newItem).value = parentBox;
+    if (loc.kind === "item") {
+      return insertItemAtIndex(parentBlock, loc.index + 1, newItem);
+    }
+    return insertItemAtIndex(parentBlock, 0, newItem);
+  });
 }
 
 export function replaceChildWith(
-  parentBox: Box<BlockNode>,
   parentBlock: BlockNode,
   target: Box,
   next: Box
 ): BlockNode {
-  const loc = findChildLocation(parentBlock, target);
-  if (!loc) return parentBlock;
-
-  next.parent = parentBox;
-  if (target.parent === parentBox) target.parent = undefined;
-
-  return replaceChildAt(parentBlock, loc, next);
+  return withLocatedChild(parentBlock, target, ({ parentBox, loc }) => {
+    getParentSignal(target).value = undefined;
+    getParentSignal(next).value = parentBox;
+    return replaceChildAt(parentBlock, loc, next);
+  });
 }
 
 export function assignKey(
-  parentBox: Box<BlockNode>,
   parentBlock: BlockNode,
   child: Box,
   nextKey: string
 ): BlockNode {
-  const trimmed = nextKey.trim();
-  if (!trimmed) return parentBlock;
+  if (parentBlock.values.some(([k]) => k === nextKey)) return parentBlock;
 
-  if (parentBlock.values.some(([k]) => k === trimmed)) return parentBlock;
+  return withLocatedChild(parentBlock, child, ({ loc }) => {
+    if (loc.kind === "value") {
+      const [currentKey, val] = parentBlock.values[loc.index]!;
+      if (currentKey === nextKey) return parentBlock;
+      const nextValues = parentBlock.values.toSpliced(loc.index, 1, [
+        nextKey,
+        val,
+      ]);
+      return makeBlock(nextValues, parentBlock.items);
+    }
 
-  const loc = findChildLocation(parentBlock, child);
-  if (!loc) return parentBlock;
-
-  if (loc.kind === "value") {
-    const currentKey = parentBlock.values[loc.index]![0];
-    if (currentKey === trimmed) return parentBlock;
-    const [, val] = parentBlock.values[loc.index]!;
-    const nextValues = parentBlock.values.toSpliced(loc.index, 1, [
-      trimmed,
-      val,
-    ]);
-    return makeBlock(nextValues, parentBlock.items);
-  }
-
-  const nextItems = parentBlock.items.toSpliced(loc.index, 1);
-  const nextValues = [...parentBlock.values, [trimmed, child] as [string, Box]];
-  return makeBlock(nextValues, nextItems);
+    const nextItems = parentBlock.items.toSpliced(loc.index, 1);
+    const nextValues = [
+      ...parentBlock.values,
+      [nextKey, child] as [string, Box],
+    ];
+    return makeBlock(nextValues, nextItems);
+  });
 }
 
-export function removeKey(
-  parentBox: Box<BlockNode>,
-  parentBlock: BlockNode,
-  child: Box
-): BlockNode {
-  const loc = findChildLocation(parentBlock, child);
-  if (!loc || loc.kind !== "value") return parentBlock;
+export function removeKey(parentBlock: BlockNode, child: Box): BlockNode {
+  return withLocatedChild(parentBlock, child, ({ loc }) => {
+    if (loc.kind !== "value") return parentBlock;
 
-  const [, val] = parentBlock.values[loc.index]!;
-  const nextValues = parentBlock.values.toSpliced(loc.index, 1);
-  return insertItemAtIndex(makeBlock(nextValues, parentBlock.items), 0, val);
+    const nextValues = parentBlock.values.toSpliced(loc.index, 1);
+    return insertItemAtIndex(
+      makeBlock(nextValues, parentBlock.items),
+      0,
+      child
+    );
+  });
 }
 
-export function removeChild(
-  parentBox: Box<BlockNode>,
-  parentBlock: BlockNode,
-  child: Box
-): BlockNode {
-  const loc = findChildLocation(parentBlock, child);
-  if (!loc) return parentBlock;
-
-  if (child.parent === parentBox) child.parent = undefined;
-
-  return removeChildAt(parentBlock, loc);
+export function removeChild(parentBlock: BlockNode, child: Box): BlockNode {
+  return withLocatedChild(parentBlock, child, ({ loc }) => {
+    getParentSignal(child).value = undefined;
+    return removeChildAt(parentBlock, loc);
+  });
 }
 
-export function wrapWithBlock(
-  parentBox: Box<BlockNode>,
-  parentBlock: BlockNode,
-  child: Box
-): BlockNode {
-  const loc = findChildLocation(parentBlock, child);
-  if (!loc) return parentBlock;
-
-  const wrapper = makeBox(makeBlock([], [child]), parentBox);
-  child.parent = wrapper;
-
-  return replaceChildAt(parentBlock, loc, wrapper);
+export function wrapWithBlock(parentBlock: BlockNode, child: Box): BlockNode {
+  return withLocatedChild(parentBlock, child, ({ parentBox, loc }) => {
+    const wrapper = makeBox(makeBlock([], [child]));
+    getParentSignal(wrapper).value = parentBox;
+    getParentSignal(child).value = wrapper;
+    return replaceChildAt(parentBlock, loc, wrapper);
+  });
 }
 
 export function unwrapBlockIfSingleChild(
-  parentBox: Box<BlockNode>,
   parentBlock: BlockNode,
-  maybeWrapper: Box
+  wrapper: Box
 ): BlockNode {
-  const n = maybeWrapper.value.value;
-  if (!isBlock(n)) return parentBlock;
+  return withLocatedChild(parentBlock, wrapper, ({ parentBox, loc }) => {
+    const n = wrapper.value.peek() as BlockNode;
+    if (n.values.length !== 0 || n.items.length !== 1) return parentBlock;
 
-  const { values, items } = n;
-  if (values.length !== 0 || items.length !== 1) return parentBlock;
-
-  const sole = items[0]!;
-  const loc = findChildLocation(parentBlock, maybeWrapper);
-  if (!loc) return parentBlock;
-
-  sole.parent = parentBox;
-  if (maybeWrapper.parent === parentBox) maybeWrapper.parent = undefined;
-
-  return replaceChildAt(parentBlock, loc, sole);
+    const sole = n.items[0]!;
+    getParentSignal(sole).value = parentBox;
+    getParentSignal(wrapper).value = undefined;
+    return replaceChildAt(parentBlock, loc, sole);
+  });
 }

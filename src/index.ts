@@ -5,9 +5,9 @@ import {
   type BlockNode,
   type Box,
   makeLiteral,
-  makeBlock,
   makeCode,
   makeBox,
+  makeBlockBox,
   resolveDeep,
 } from "./data";
 import { onRootDblClick, onRootKeyDown } from "./input";
@@ -34,24 +34,12 @@ export function render(
 
 /* Test */
 
-function makeLiteralBox(value: Primitive) {
-  return makeBox(makeLiteral(value));
-}
-
-function makeBlockBox(
-  values: [string, Box][] = [],
-  items: Box[] = []
-): Box<BlockNode> {
-  const blockBox = makeBox(makeBlock([], []));
-  for (const [, child] of values) child.parent = blockBox;
-  for (const child of items) child.parent = blockBox;
-  blockBox.value.value = makeBlock(values, items);
-  return blockBox;
-}
+const literalBox = (v: Primitive): Box => makeBox(makeLiteral(v));
+const codeBox = (src: string): Box => makeBox(makeCode(src));
 
 const root = makeBlockBox(
-  [["x", makeBlockBox([], [makeLiteralBox("10"), makeLiteralBox("20")])]],
-  [makeBox(makeCode("x"))]
+  [["x", makeBlockBox([], [literalBox("10"), literalBox("20")])]],
+  [codeBox("x")]
 );
 
 const unmount = render(root, document.getElementById("root")!);

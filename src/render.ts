@@ -9,16 +9,17 @@ import {
   isBlock,
   isCode,
   makeLiteral,
-  getChildKey,
-  assignKey,
-  removeKey,
-  resolveShallow,
+  makeCode,
   makeBox,
+  resolveShallow,
+  getChildKey,
   insertBefore,
   insertAfter,
+  assignKey,
+  removeKey,
+  removeChild,
   wrapWithBlock,
   unwrapBlockIfSingleChild,
-  removeChild,
 } from "./data";
 import {
   FocusCommandEvent,
@@ -316,7 +317,7 @@ class BlockView extends View<BlockNode> {
           stop();
           const editor = this.ensureKeyEditor(targetBox);
 
-          if (!getChildKey(targetBox)) {
+          if (!getChildKey(this.ownerBox.value.peek(), targetBox)) {
             this.tempKeyBox = targetBox;
             if (this.lastNode) this.update(this.lastNode);
           }
@@ -399,25 +400,25 @@ class BlockView extends View<BlockNode> {
 
       switch (kind) {
         case "insert-before": {
-          const newItem = makeBox(makeLiteral(""), parentBox);
-          updated = insertBefore(parentBox, parentBlock, target, newItem);
+          const newItem = makeBox(makeLiteral(""));
+          updated = insertBefore(parentBlock, target, newItem);
           nextFocus = newItem;
           break;
         }
         case "insert-after": {
-          const newItem = makeBox(makeLiteral(""), parentBox);
-          updated = insertAfter(parentBox, parentBlock, target, newItem);
+          const newItem = makeBox(makeLiteral(""));
+          updated = insertAfter(parentBlock, target, newItem);
           nextFocus = newItem;
           break;
         }
         case "wrap": {
-          updated = wrapWithBlock(parentBox, parentBlock, target);
+          updated = wrapWithBlock(parentBlock, target);
           nextFocus = target;
           break;
         }
         case "unwrap": {
           const beforeNode = target.value.peek();
-          updated = unwrapBlockIfSingleChild(parentBox, parentBlock, target);
+          updated = unwrapBlockIfSingleChild(parentBlock, target);
           if (updated !== parentBlock && isBlock(beforeNode)) {
             const { items, values } = beforeNode;
             if (values.length === 0 && items.length === 1) {
@@ -429,7 +430,7 @@ class BlockView extends View<BlockNode> {
         case "remove": {
           const neighbor =
             orderedBefore[idx - 1] ?? orderedBefore[idx + 1] ?? parentBox;
-          updated = removeChild(parentBox, parentBlock, target);
+          updated = removeChild(parentBlock, target);
           nextFocus = neighbor;
           break;
         }
@@ -456,19 +457,18 @@ class BlockView extends View<BlockNode> {
     if (!editor) {
       editor = new StringView(
         "key",
-        () => getChildKey(box) ?? "",
+        () => getChildKey(this.ownerBox.value.peek(), box) ?? "",
         (nextKey) => {
-          const parentBox = this.ownerBox;
-          const parentBlock = parentBox.value.peek();
+          const parentBlock = this.ownerBox.value.peek();
 
           const trimmed = nextKey.trim();
           const updated =
             trimmed === ""
-              ? removeKey(parentBox, parentBlock, box)
-              : assignKey(parentBox, parentBlock, box, trimmed);
+              ? removeKey(parentBlock, box)
+              : assignKey(parentBlock, box, trimmed);
 
           if (updated !== parentBlock) {
-            parentBox.value.value = updated;
+            this.ownerBox.value.value = updated;
           }
 
           this.tempKeyBox = null;
@@ -654,7 +654,7 @@ export class BoxMount {
           () =>
             new CodeView(
               () => (this.box.value.peek() as CodeNode).code,
-              (next) => (this.box.value.value = { kind: "code", code: next }),
+              (next) => (this.box.value.value = makeCode(next)),
               registerElementBox,
               () => resolveShallow(this.box)
             )
