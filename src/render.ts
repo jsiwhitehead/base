@@ -89,6 +89,12 @@ class StringView extends View<string> {
       nextEl.textContent =
         this.getText() + (this.fieldRole === "key" ? " :" : "");
 
+      nextEl.addEventListener("mousedown", (e) => {
+        if (e.detail === 2) {
+          e.preventDefault();
+        }
+      });
+
       nextEl.addEventListener("string-command", (ev: Event) => {
         const e = ev as StringCommandEvent;
         if (e.detail.kind === "begin") {
@@ -100,6 +106,11 @@ class StringView extends View<string> {
     } else {
       const inputEl = nextEl as HTMLInputElement;
       inputEl.value = initialText ?? this.getText();
+
+      inputEl.setAttribute("autocorrect", "off");
+      inputEl.setAttribute("autocomplete", "off");
+      inputEl.autocapitalize = "off";
+      inputEl.spellcheck = false;
 
       let refocusAfterBlur = false;
       let cancelled = false;
@@ -159,7 +170,7 @@ class ReadonlyBlockView extends View<BlockNode> {
 
   constructor(registerElement: (el: HTMLElement) => void) {
     super();
-    this.element = createEl("div", "block readonly", true);
+    this.element = createEl("div", "block");
     registerElement(this.element);
 
     this.element.addEventListener("focus-command", (ev: Event) => {
@@ -170,16 +181,9 @@ class ReadonlyBlockView extends View<BlockNode> {
       };
 
       if (e.detail.kind === "to") {
-        const { targetBox, role } = e.detail;
+        const { targetBox } = e.detail;
         const mount = this.childMountByBox.get(targetBox);
         if (!mount) return;
-
-        if (role === "key") {
-          stop();
-          mount.focus();
-          return;
-        }
-
         stop();
         mount.focus();
         return;
@@ -190,10 +194,11 @@ class ReadonlyBlockView extends View<BlockNode> {
 
         if (dir === "into") {
           stop();
-          const first = this.orderedChildren[0];
-          if (!first) return;
-          const mount = this.childMountByBox.get(first);
-          mount?.focus();
+          this.focusFirstChild();
+          return;
+        }
+
+        if (dir === "out") {
           return;
         }
 
@@ -212,10 +217,6 @@ class ReadonlyBlockView extends View<BlockNode> {
           case "prev":
             targetIndex = Math.max(0, idx - 1);
             break;
-          case "out":
-            stop();
-            this.element.focus();
-            return;
         }
 
         const target = this.orderedChildren[targetIndex];
@@ -228,6 +229,11 @@ class ReadonlyBlockView extends View<BlockNode> {
         mount.focus();
       }
     });
+  }
+
+  focusFirstChild(): void {
+    const first = this.orderedChildren[0];
+    if (first) this.childMountByBox.get(first)?.focus();
   }
 
   mountChildIfNeeded(child: Box) {
@@ -552,7 +558,6 @@ class BlockView extends View<BlockNode> {
 class CodeView extends View<string> {
   readonly viewKind = "code";
   readonly element: HTMLElement;
-  resultContainer: HTMLElement;
   codeEditor: StringView;
   resultView?: View<BlockNode | string>;
   disposeResultEffect?: () => void;
@@ -565,19 +570,46 @@ class CodeView extends View<string> {
   ) {
     super();
     this.element = createEl("div", "code");
-    this.resultContainer = createEl("div", "result");
-
     this.codeEditor = new StringView(
       "expr",
       readCode,
       applyCode,
       registerElement
     );
+    this.element.append(this.codeEditor.element);
+
+    this.element.addEventListener("mousedown", (e) => {
+      if (e.target === this.element) {
+        e.preventDefault();
+        this.codeEditor.element.focus();
+      }
+    });
+
+    this.element.addEventListener("focus-command", (ev: Event) => {
+      const e = ev as FocusCommandEvent;
+      if (e.detail.kind !== "nav") return;
+
+      if (e.detail.dir === "into") {
+        if (this.resultView?.viewKind === "block") {
+          e.stopPropagation();
+          e.preventDefault?.();
+          (this.resultView as ReadonlyBlockView).focusFirstChild();
+        }
+      }
+
+      if (e.detail.dir === "out") {
+        if (e.target !== this.codeEditor.element) {
+          e.stopPropagation();
+          e.preventDefault?.();
+          this.codeEditor.element.focus();
+        }
+      }
+    });
 
     this.disposeResultEffect = effect(() => {
       try {
         const resolved = readResolved();
-        this.resultContainer.classList.remove("error");
+        this.element.classList.remove("error");
 
         if (isBlock(resolved)) {
           this.ensureResultKind("block", () => new ReadonlyBlockView(() => {}));
@@ -591,18 +623,11 @@ class CodeView extends View<string> {
           this.resultView!.update(String(resolved.value));
         }
       } catch {
-        this.resultContainer.classList.add("error");
+        this.element.classList.add("error");
         this.resultView?.dispose();
+        this.resultView?.element.remove();
         this.resultView = undefined;
-        this.resultContainer.textContent = "";
       }
-    });
-
-    this.element.append(this.codeEditor.element, this.resultContainer);
-
-    this.element.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      this.codeEditor.element.focus();
     });
   }
 
@@ -611,9 +636,14 @@ class CodeView extends View<string> {
     build: () => View<BlockNode | string>
   ) {
     if (!this.resultView || this.resultView.viewKind !== kind) {
-      this.resultView?.dispose();
-      this.resultView = build();
-      this.resultContainer.replaceChildren(this.resultView.element);
+      const next = build();
+      if (this.resultView) {
+        this.resultView.dispose();
+        this.resultView.element.replaceWith(next.element);
+      } else {
+        this.codeEditor.element.insertAdjacentElement("afterend", next.element);
+      }
+      this.resultView = next;
     }
   }
 

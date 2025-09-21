@@ -39,7 +39,7 @@ const codeBox = (src: string): Box => makeBox(makeCode(src));
 
 const root = makeBlockBox(
   [["x", makeBlockBox([], [literalBox("10"), literalBox("20")])]],
-  [codeBox("x")]
+  [makeBlockBox([], [literalBox("10"), literalBox("20")]), codeBox("x")]
 );
 
 const unmount = render(root, document.getElementById("root")!);

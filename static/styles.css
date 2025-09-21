@@ -38,9 +38,9 @@
   padding: 5px 5px 5px 7px;
   box-sizing: content-box;
   min-height: 15px;
-  background: var(--grey-light);
+  background-color: var(--grey-light);
   &:focus {
-    background: var(--blue-light);
+    background-color: var(--blue-light);
   }
 }
 
@@ -76,7 +76,39 @@
     margin-bottom: -1px;
   }
   &:has(:focus) {
-    background: var(--blue-light);
+    background-color: var(--blue-light);
+  }
+}
+
+.code {
+  padding: 5px 5px 5px 7px;
+  background-color: var(--green-light);
+  > .value {
+    border-left-width: 1px;
+  }
+  > .block {
+    border: none;
+    padding: 0;
+  }
+  &:has(> :focus) {
+    z-index: 10;
+    border-color: var(--blue-normal);
+    border-bottom-width: 1px;
+    margin-bottom: -1px;
+    .expr {
+      border-color: var(--green-normal);
+    }
+  }
+  &:has(:focus) {
+    background-color: var(--green-light);
+  }
+  &.error {
+    background-color: var(--red-light);
+    &:has(> :focus) {
+      .expr {
+        border-color: var(--red-normal);
+      }
+    }
   }
 }
 
@@ -88,8 +120,15 @@
 .value,
 .key {
   padding: 2px 5px;
+  background-color: white;
+}
 
-  background: white;
+.expr {
+  outline: none;
+  margin-bottom: 5px;
+  border: 1px solid #ddd;
+  border-radius: 100px;
+  padding: 2px 10px;
 }
 
 div:is(.expr, .value, .key) {
@@ -98,73 +137,23 @@ div:is(.expr, .value, .key) {
 }
 
 input:is(.expr, .value, .key) {
-  background: var(--blue-light);
+  background-color: var(--blue-light);
 }
 
 .key {
   display: block;
-  background: #ddd;
+  background-color: #ddd;
   border-right-width: 0;
   &:focus {
-    background: var(--blue-medium);
+    background-color: var(--blue-medium);
     border-right-width: 1px;
     margin-right: -1px;
   }
   &:has(+ :focus) {
     z-index: 10;
-    background: var(--blue-medium);
+    background-color: var(--blue-medium);
     border-color: var(--blue-normal);
     border-bottom-width: 1px;
     margin-bottom: -1px;
   }
-}
-
-.code {
-  .expr {
-    border: 5px solid var(--green-light);
-    border-bottom-width: 0;
-  }
-  input.expr {
-    background: var(--green-light);
-  }
-  .result {
-    .value {
-      background: var(--green-light);
-      border-width: 0;
-    }
-  }
-  &:focus,
-  &:has(:focus) {
-    background: var(--green-medium);
-    border-color: var(--green-normal);
-    .expr {
-      border-color: var(--green-medium);
-    }
-    .result {
-      .value {
-        background: var(--green-medium);
-      }
-    }
-  }
-  &.error {
-    .expr {
-      border-color: var(--red-light);
-      border-bottom-width: 5px;
-    }
-    input.expr {
-      background: var(--red-light);
-    }
-    &:focus,
-    &:has(:focus) {
-      background: var(--red-medium);
-      border-color: var(--red-normal);
-      .expr {
-        border-color: var(--red-medium);
-      }
-    }
-  }
-}
-
-.expr {
-  outline: none;
 }
