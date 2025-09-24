@@ -2,12 +2,12 @@ import * as ohm from "ohm-js";
 
 import {
   type Primitive,
-  type EvalNode,
-  type Box,
+  type DataNode,
+  type Signal,
   isLiteral,
   isBlock,
-  isBox,
-  makeLiteral,
+  isSignal,
+  createLiteral,
   resolveShallow,
 } from "./data";
 
@@ -22,7 +22,7 @@ const grammar = ohm.grammar(String.raw`Script {
   AndExp    = AndExp "&&" EqExp   -- and
             | EqExp
 
-  EqExp     = EqExp "=" RelExp   -- eq
+  EqExp     = EqExp "=" RelExp    -- eq
             | EqExp "!=" RelExp   -- ne
             | RelExp
 
@@ -64,18 +64,18 @@ const grammar = ohm.grammar(String.raw`Script {
 
 /* Coercion */
 
-function asPrimitive(x: Box | EvalNode | Primitive): Primitive {
-  const r = isBox(x) ? resolveShallow(x) : x;
+function asPrimitive(x: Signal | DataNode | Primitive): Primitive {
+  const r = isSignal(x) ? resolveShallow(x) : x;
   if (isLiteral(r)) return r.value;
   if (isBlock(r)) throw new TypeError("Expected a primitive, got a block");
   return r;
 }
 
-function toBool(x: Box | EvalNode | Primitive): boolean {
+function toBool(x: Signal | DataNode | Primitive): boolean {
   return Boolean(asPrimitive(x));
 }
 
-function toNum(x: Box | EvalNode | Primitive): number {
+function toNum(x: Signal | DataNode | Primitive): number {
   const v = asPrimitive(x);
   const n = typeof v === "number" ? v : Number(v);
   if (Number.isNaN(n)) {
@@ -84,21 +84,21 @@ function toNum(x: Box | EvalNode | Primitive): number {
   return n;
 }
 
-function toStr(x: Box | EvalNode | Primitive): string {
+function toStr(x: Signal | DataNode | Primitive): string {
   const v = asPrimitive(x);
   return typeof v === "string" ? v : String(v);
 }
 
 function eq(
-  a: Box | EvalNode | Primitive,
-  b: Box | EvalNode | Primitive
+  a: Signal | DataNode | Primitive,
+  b: Signal | DataNode | Primitive
 ): boolean {
   return asPrimitive(a) === asPrimitive(b);
 }
 
 function cmp(
-  a: Box | EvalNode | Primitive,
-  b: Box | EvalNode | Primitive,
+  a: Signal | DataNode | Primitive,
+  b: Signal | DataNode | Primitive,
   op: "<" | "<=" | ">" | ">="
 ): boolean {
   const na = toNum(a);
@@ -119,7 +119,7 @@ function cmp(
 
 const semantics = grammar
   .createSemantics()
-  .addOperation<Primitive | Box>("eval(scope)", {
+  .addOperation<Signal | Primitive>("eval(scope)", {
     Exp(e) {
       return e.eval(this.args.scope);
     },
@@ -199,11 +199,11 @@ const semantics = grammar
 
     /* variable access */
     Path(id, _d, dots) {
-      let cur: Box = this.args.scope(id.sourceString);
+      let cur: Signal = this.args.scope(id.sourceString);
 
       for (const seg of dots.children) {
         const key = seg.child(1).sourceString;
-        const r = isBox(cur) ? resolveShallow(cur) : cur;
+        const r = resolveShallow(cur);
 
         if (isBlock(r)) {
           const pair = r.values.find(([k]) => k === key);
@@ -230,15 +230,18 @@ const semantics = grammar
 
 /* Evaluate */
 
-export function evalCode(src: string, scope: (name: string) => Box): EvalNode {
+export function evalCode(
+  src: string,
+  scope: (name: string) => Signal
+): DataNode {
   const m = grammar.match(src, "Exp");
   if (m.failed()) {
     throw new SyntaxError(m.message);
   }
   const result = semantics(m).eval(scope);
 
-  if (isBox(result)) {
+  if (isSignal(result)) {
     return resolveShallow(result);
   }
-  return makeLiteral(result as Primitive);
+  return createLiteral(result as Primitive);
 }

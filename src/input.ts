@@ -1,13 +1,17 @@
-import { type Box } from "./data";
-import { boxByElement } from "./render";
+import { type Signal } from "./data";
+import { signalByElement } from "./render";
 
 /* Focus Events */
 
 type FocusDir = "next" | "prev" | "into" | "out";
 type FocusTargetRole = "auto" | "key";
 
-type FocusCommandNav = { kind: "nav"; dir: FocusDir; from: Box };
-type FocusCommandTo = { kind: "to"; targetBox: Box; role: FocusTargetRole };
+type FocusCommandNav = { kind: "nav"; dir: FocusDir; from: Signal };
+type FocusCommandTo = {
+  kind: "to";
+  targetSignal: Signal;
+  role: FocusTargetRole;
+};
 type FocusCommand = FocusCommandNav | FocusCommandTo;
 
 export class FocusCommandEvent extends CustomEvent<FocusCommand> {
@@ -40,11 +44,11 @@ function requestStringCommand(fromEl: HTMLElement, cmd: StringCommand) {
 /* Block Events */
 
 type BlockCommand =
-  | { kind: "insert-before"; target: Box }
-  | { kind: "insert-after"; target: Box }
-  | { kind: "wrap"; target: Box }
-  | { kind: "unwrap"; target: Box }
-  | { kind: "remove"; target: Box };
+  | { kind: "insert-before"; target: Signal }
+  | { kind: "insert-after"; target: Signal }
+  | { kind: "wrap"; target: Signal }
+  | { kind: "unwrap"; target: Signal }
+  | { kind: "remove"; target: Signal };
 
 export class BlockCommandEvent extends CustomEvent<BlockCommand> {
   constructor(detail: BlockCommand) {
@@ -87,12 +91,12 @@ export function onRootKeyDown(e: KeyboardEvent) {
         e.preventDefault();
 
         const isKeyInput = active.classList.contains("key");
-        const box = boxByElement.get(active);
+        const sig = signalByElement.get(active);
 
-        if (isKeyInput && box) {
+        if (isKeyInput && sig) {
           requestFocusCommand(active, {
             kind: "to",
-            targetBox: box,
+            targetSignal: sig,
             role: "auto",
           });
         } else {
@@ -113,27 +117,27 @@ export function onRootKeyDown(e: KeyboardEvent) {
     ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
   ) {
     e.preventDefault();
-    const activeBox = boxByElement.get(active);
-    if (!activeBox) return;
+    const activeSig = signalByElement.get(active);
+    if (!activeSig) return;
 
     switch (e.key) {
       case "ArrowUp":
         requestBlockCommand(active, {
           kind: "insert-before",
-          target: activeBox,
+          target: activeSig,
         });
         break;
       case "ArrowDown":
         requestBlockCommand(active, {
           kind: "insert-after",
-          target: activeBox,
+          target: activeSig,
         });
         break;
       case "ArrowLeft":
-        requestBlockCommand(active, { kind: "unwrap", target: activeBox });
+        requestBlockCommand(active, { kind: "unwrap", target: activeSig });
         break;
       case "ArrowRight":
-        requestBlockCommand(active, { kind: "wrap", target: activeBox });
+        requestBlockCommand(active, { kind: "wrap", target: activeSig });
         break;
     }
     return;
@@ -141,24 +145,24 @@ export function onRootKeyDown(e: KeyboardEvent) {
 
   if (["ArrowUp", "ArrowDown"].includes(e.key)) {
     e.preventDefault();
-    const activeBox = boxByElement.get(active);
-    if (!activeBox) return;
+    const activeSig = signalByElement.get(active);
+    if (!activeSig) return;
     requestFocusCommand(active, {
       kind: "nav",
       dir: e.key === "ArrowUp" ? "prev" : "next",
-      from: activeBox,
+      from: activeSig,
     });
     return;
   }
 
   if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
     e.preventDefault();
-    const activeBox = boxByElement.get(active);
-    if (!activeBox) return;
+    const activeSig = signalByElement.get(active);
+    if (!activeSig) return;
     requestFocusCommand(active, {
       kind: "nav",
       dir: e.key === "ArrowLeft" ? "out" : "into",
-      from: activeBox,
+      from: activeSig,
     });
     return;
   }
@@ -171,11 +175,11 @@ export function onRootKeyDown(e: KeyboardEvent) {
       const nextEl = active.nextElementSibling as HTMLElement | null;
       nextEl?.focus();
     } else {
-      const activeBox = boxByElement.get(active);
-      if (activeBox) {
+      const activeSig = signalByElement.get(active);
+      if (activeSig) {
         requestFocusCommand(active, {
           kind: "to",
-          targetBox: activeBox,
+          targetSignal: activeSig,
           role: "key",
         });
       }
@@ -185,9 +189,9 @@ export function onRootKeyDown(e: KeyboardEvent) {
 
   if (e.key === "Backspace") {
     e.preventDefault();
-    const activeBox = boxByElement.get(active);
-    if (activeBox) {
-      requestBlockCommand(active, { kind: "remove", target: activeBox });
+    const activeSig = signalByElement.get(active);
+    if (activeSig) {
+      requestBlockCommand(active, { kind: "remove", target: activeSig });
     }
     return;
   }

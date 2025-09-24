@@ -3,14 +3,16 @@ import { effect } from "@preact/signals-core";
 import {
   type LiteralNode,
   type BlockNode,
-  type EvalNode,
+  type DataNode,
   type CodeNode,
-  type Box,
+  type WritableSignal,
+  type Signal,
   isBlock,
   isCode,
-  makeLiteral,
-  makeCode,
-  makeBox,
+  isWritableSignal,
+  createLiteral,
+  createCode,
+  createSignal,
   resolveShallow,
   getChildKey,
   insertBefore,
@@ -27,7 +29,7 @@ import {
   BlockCommandEvent,
 } from "./input";
 
-export const boxByElement = new WeakMap<HTMLElement, Box>();
+export const signalByElement = new WeakMap<HTMLElement, Signal>();
 
 function createEl(
   tag: string,
@@ -164,8 +166,8 @@ class StringView extends View<string> {
 class ReadonlyBlockView extends View<BlockNode> {
   readonly viewKind = "block";
   readonly element: HTMLElement;
-  childMountByBox = new Map<Box, BoxMount>();
-  orderedChildren: Box[] = [];
+  childMountBySignal = new Map<Signal, SignalMount>();
+  orderedChildren: Signal[] = [];
   lastNode?: BlockNode;
 
   constructor(registerElement: (el: HTMLElement) => void) {
@@ -181,8 +183,8 @@ class ReadonlyBlockView extends View<BlockNode> {
       };
 
       if (e.detail.kind === "to") {
-        const { targetBox } = e.detail;
-        const mount = this.childMountByBox.get(targetBox);
+        const { targetSignal } = e.detail;
+        const mount = this.childMountBySignal.get(targetSignal);
         if (!mount) return;
         stop();
         mount.focus();
@@ -190,7 +192,7 @@ class ReadonlyBlockView extends View<BlockNode> {
       }
 
       if (e.detail.kind === "nav") {
-        const { dir, from: fromBox } = e.detail;
+        const { dir, from: fromSignal } = e.detail;
 
         if (dir === "into") {
           stop();
@@ -202,9 +204,9 @@ class ReadonlyBlockView extends View<BlockNode> {
           return;
         }
 
-        if (!this.orderedChildren.includes(fromBox)) return;
+        if (!this.orderedChildren.includes(fromSignal)) return;
 
-        const idx = this.orderedChildren.indexOf(fromBox);
+        const idx = this.orderedChildren.indexOf(fromSignal);
         if (idx < 0) return;
 
         const len = this.orderedChildren.length;
@@ -222,7 +224,7 @@ class ReadonlyBlockView extends View<BlockNode> {
         const target = this.orderedChildren[targetIndex];
         if (!target) return;
 
-        const mount = this.childMountByBox.get(target);
+        const mount = this.childMountBySignal.get(target);
         if (!mount) return;
 
         stop();
@@ -233,27 +235,27 @@ class ReadonlyBlockView extends View<BlockNode> {
 
   focusFirstChild(): void {
     const first = this.orderedChildren[0];
-    if (first) this.childMountByBox.get(first)?.focus();
+    if (first) this.childMountBySignal.get(first)?.focus();
   }
 
-  mountChildIfNeeded(child: Box) {
-    let mount = this.childMountByBox.get(child);
+  mountChildIfNeeded(child: Signal) {
+    let mount = this.childMountBySignal.get(child);
     if (!mount) {
-      mount = new BoxMount(child);
-      this.childMountByBox.set(child, mount);
+      mount = new SignalMount(child);
+      this.childMountBySignal.set(child, mount);
     }
     return mount.element;
   }
 
-  unmountAllChildrenExcept(keep?: Set<Box>) {
-    for (const [childBox, mount] of Array.from(this.childMountByBox)) {
-      if (keep?.has(childBox)) continue;
+  unmountAllChildrenExcept(keep?: Set<Signal>) {
+    for (const [childSignal, mount] of Array.from(this.childMountBySignal)) {
+      if (keep?.has(childSignal)) continue;
 
       if (this.element.contains(mount.element)) {
         mount.element.remove();
       }
       mount.dispose();
-      this.childMountByBox.delete(childBox);
+      this.childMountBySignal.delete(childSignal);
     }
   }
 
@@ -261,7 +263,7 @@ class ReadonlyBlockView extends View<BlockNode> {
     this.lastNode = node;
     const { values, items } = node;
 
-    const childrenToKeep = new Set<Box>([
+    const childrenToKeep = new Set<Signal>([
       ...values.map(([, v]) => v),
       ...items,
     ]);
@@ -271,13 +273,13 @@ class ReadonlyBlockView extends View<BlockNode> {
 
     const frag = document.createDocumentFragment();
 
-    for (const [key, childBox] of values) {
+    for (const [key, childSignal] of values) {
       const keyLabel = new ReadonlyStringView("key", () => {}, key);
-      frag.append(keyLabel.element, this.mountChildIfNeeded(childBox));
+      frag.append(keyLabel.element, this.mountChildIfNeeded(childSignal));
     }
 
-    for (const childBox of items) {
-      frag.append(this.mountChildIfNeeded(childBox));
+    for (const childSignal of items) {
+      frag.append(this.mountChildIfNeeded(childSignal));
     }
 
     this.element.replaceChildren(frag);
@@ -292,15 +294,15 @@ class ReadonlyBlockView extends View<BlockNode> {
 class BlockView extends View<BlockNode> {
   readonly viewKind = "block";
   readonly element: HTMLElement;
-  childMountByBox = new Map<Box, BoxMount>();
-  keyEditorByBox = new WeakMap<Box, StringView>();
-  tempKeyBox: Box | null = null;
+  childMountBySignal = new Map<Signal, SignalMount>();
+  keyEditorBySignal = new WeakMap<Signal, StringView>();
+  tempKeySignal: Signal | null = null;
 
-  orderedChildren: Box[] = [];
+  orderedChildren: Signal[] = [];
   lastNode?: BlockNode;
 
   constructor(
-    readonly ownerBox: Box<BlockNode>,
+    readonly ownerSignal: WritableSignal<BlockNode>,
     registerElement: (el: HTMLElement) => void
   ) {
     super();
@@ -315,16 +317,16 @@ class BlockView extends View<BlockNode> {
       };
 
       if (e.detail.kind === "to") {
-        const { targetBox, role } = e.detail;
-        const mount = this.childMountByBox.get(targetBox);
+        const { targetSignal, role } = e.detail;
+        const mount = this.childMountBySignal.get(targetSignal);
         if (!mount) return;
 
         if (role === "key") {
           stop();
-          const editor = this.ensureKeyEditor(targetBox);
+          const editor = this.ensureKeyEditor(targetSignal);
 
-          if (!getChildKey(this.ownerBox.value.peek(), targetBox)) {
-            this.tempKeyBox = targetBox;
+          if (!getChildKey(this.ownerSignal.peek(), targetSignal)) {
+            this.tempKeySignal = targetSignal;
             if (this.lastNode) this.update(this.lastNode);
           }
 
@@ -339,26 +341,26 @@ class BlockView extends View<BlockNode> {
       }
 
       if (e.detail.kind === "nav") {
-        const { dir, from: fromBox } = e.detail;
+        const { dir, from: fromSignal } = e.detail;
 
-        if (dir === "into" && fromBox === this.ownerBox) {
+        if (dir === "into" && fromSignal === this.ownerSignal) {
           stop();
           const first = this.orderedChildren[0];
           if (!first) return;
-          const mount = this.childMountByBox.get(first);
+          const mount = this.childMountBySignal.get(first);
           mount?.focus();
           return;
         }
 
-        if (dir === "out" && this.childMountByBox.has(fromBox)) {
+        if (dir === "out" && this.childMountBySignal.has(fromSignal)) {
           stop();
           this.element.focus();
           return;
         }
 
-        if (!this.orderedChildren.includes(fromBox)) return;
+        if (!this.orderedChildren.includes(fromSignal)) return;
 
-        const idx = this.orderedChildren.indexOf(fromBox);
+        const idx = this.orderedChildren.indexOf(fromSignal);
         if (idx < 0) return;
 
         const len = this.orderedChildren.length;
@@ -376,7 +378,7 @@ class BlockView extends View<BlockNode> {
         const target = this.orderedChildren[targetIndex];
         if (!target) return;
 
-        const mount = this.childMountByBox.get(target);
+        const mount = this.childMountBySignal.get(target);
         if (!mount) return;
 
         stop();
@@ -388,12 +390,12 @@ class BlockView extends View<BlockNode> {
       const e = ev as BlockCommandEvent;
       const { kind, target } = e.detail;
 
-      if (!this.childMountByBox.has(target)) return;
+      if (!this.childMountBySignal.has(target)) return;
 
       e.stopPropagation();
 
-      const parentBox = this.ownerBox;
-      const parentBlock = parentBox.value.peek();
+      const parentSignal = this.ownerSignal;
+      const parentBlock = parentSignal.peek();
 
       const orderedBefore = [
         ...parentBlock.values.map(([, v]) => v),
@@ -401,18 +403,18 @@ class BlockView extends View<BlockNode> {
       ];
       const idx = orderedBefore.indexOf(target);
 
-      let nextFocus: Box | undefined;
+      let nextFocus: Signal | undefined;
       let updated: BlockNode = parentBlock;
 
       switch (kind) {
         case "insert-before": {
-          const newItem = makeBox(makeLiteral(""));
+          const newItem = createSignal(createLiteral(""));
           updated = insertBefore(parentBlock, target, newItem);
           nextFocus = newItem;
           break;
         }
         case "insert-after": {
-          const newItem = makeBox(makeLiteral(""));
+          const newItem = createSignal(createLiteral(""));
           updated = insertAfter(parentBlock, target, newItem);
           nextFocus = newItem;
           break;
@@ -423,7 +425,7 @@ class BlockView extends View<BlockNode> {
           break;
         }
         case "unwrap": {
-          const beforeNode = target.value.peek();
+          const beforeNode = target.peek();
           updated = unwrapBlockIfSingleChild(parentBlock, target);
           if (updated !== parentBlock && isBlock(beforeNode)) {
             const { items, values } = beforeNode;
@@ -435,7 +437,7 @@ class BlockView extends View<BlockNode> {
         }
         case "remove": {
           const neighbor =
-            orderedBefore[idx - 1] ?? orderedBefore[idx + 1] ?? parentBox;
+            orderedBefore[idx - 1] ?? orderedBefore[idx + 1] ?? parentSignal;
           updated = removeChild(parentBlock, target);
           nextFocus = neighbor;
           break;
@@ -443,14 +445,14 @@ class BlockView extends View<BlockNode> {
       }
 
       if (updated !== parentBlock) {
-        parentBox.value.value = updated;
+        parentSignal.set(updated);
       }
 
       if (nextFocus) {
         this.element.dispatchEvent(
           new FocusCommandEvent({
             kind: "to",
-            targetBox: nextFocus,
+            targetSignal: nextFocus,
             role: "auto",
           })
         );
@@ -458,61 +460,61 @@ class BlockView extends View<BlockNode> {
     });
   }
 
-  ensureKeyEditor(box: Box): StringView {
-    let editor = this.keyEditorByBox.get(box);
+  ensureKeyEditor(sig: Signal): StringView {
+    let editor = this.keyEditorBySignal.get(sig);
     if (!editor) {
       editor = new StringView(
         "key",
-        () => getChildKey(this.ownerBox.value.peek(), box) ?? "",
+        () => getChildKey(this.ownerSignal.peek(), sig) ?? "",
         (nextKey) => {
-          const parentBlock = this.ownerBox.value.peek();
+          const parentBlock = this.ownerSignal.peek();
 
           const trimmed = nextKey.trim();
           const updated =
             trimmed === ""
-              ? removeKey(parentBlock, box)
-              : assignKey(parentBlock, box, trimmed);
+              ? removeKey(parentBlock, sig)
+              : assignKey(parentBlock, sig, trimmed);
 
           if (updated !== parentBlock) {
-            this.ownerBox.value.value = updated;
+            this.ownerSignal.set(updated);
           }
 
-          this.tempKeyBox = null;
+          this.tempKeySignal = null;
           if (this.lastNode) this.update(this.lastNode);
         },
-        (el) => boxByElement.set(el, box),
+        (el) => signalByElement.set(el, sig),
         () => {
-          this.tempKeyBox = null;
+          this.tempKeySignal = null;
           if (this.lastNode) this.update(this.lastNode);
         }
       );
-      this.keyEditorByBox.set(box, editor);
+      this.keyEditorBySignal.set(sig, editor);
     }
     return editor;
   }
 
-  mountChildIfNeeded(child: Box) {
-    let mount = this.childMountByBox.get(child);
+  mountChildIfNeeded(child: Signal) {
+    let mount = this.childMountBySignal.get(child);
     if (!mount) {
-      mount = new BoxMount(child);
-      this.childMountByBox.set(child, mount);
+      mount = new SignalMount(child);
+      this.childMountBySignal.set(child, mount);
     }
     return mount.element;
   }
 
-  unmountAllChildrenExcept(keep?: Set<Box>) {
-    for (const [childBox, mount] of Array.from(this.childMountByBox)) {
-      if (keep?.has(childBox)) continue;
+  unmountAllChildrenExcept(keep?: Set<Signal>) {
+    for (const [childSignal, mount] of Array.from(this.childMountBySignal)) {
+      if (keep?.has(childSignal)) continue;
 
       if (this.element.contains(mount.element)) {
         mount.element.remove();
       }
       mount.dispose();
-      this.childMountByBox.delete(childBox);
+      this.childMountBySignal.delete(childSignal);
     }
 
-    if (keep && this.tempKeyBox && !keep.has(this.tempKeyBox)) {
-      this.tempKeyBox = null;
+    if (keep && this.tempKeySignal && !keep.has(this.tempKeySignal)) {
+      this.tempKeySignal = null;
     }
   }
 
@@ -520,7 +522,7 @@ class BlockView extends View<BlockNode> {
     this.lastNode = node;
     const { values, items } = node;
 
-    const childrenToKeep = new Set<Box>([
+    const childrenToKeep = new Set<Signal>([
       ...values.map(([, v]) => v),
       ...items,
     ]);
@@ -530,19 +532,19 @@ class BlockView extends View<BlockNode> {
 
     const frag = document.createDocumentFragment();
 
-    for (const [key, childBox] of values) {
-      const editor = this.ensureKeyEditor(childBox);
+    for (const [key, childSignal] of values) {
+      const editor = this.ensureKeyEditor(childSignal);
       editor.update(key);
-      frag.append(editor.element, this.mountChildIfNeeded(childBox));
+      frag.append(editor.element, this.mountChildIfNeeded(childSignal));
     }
 
-    for (const childBox of items) {
-      if (this.tempKeyBox === childBox) {
-        const ed = this.ensureKeyEditor(childBox);
+    for (const childSignal of items) {
+      if (this.tempKeySignal === childSignal) {
+        const ed = this.ensureKeyEditor(childSignal);
         if (ed.element.tagName !== "INPUT") ed.toggleEditor("input");
         frag.append(ed.element);
       }
-      frag.append(this.mountChildIfNeeded(childBox));
+      frag.append(this.mountChildIfNeeded(childSignal));
     }
 
     this.element.replaceChildren(frag);
@@ -550,7 +552,7 @@ class BlockView extends View<BlockNode> {
 
   dispose() {
     this.unmountAllChildrenExcept();
-    this.tempKeyBox = null;
+    this.tempKeySignal = null;
     this.element.textContent = "";
   }
 }
@@ -566,7 +568,7 @@ class CodeView extends View<string> {
     readCode: () => string,
     applyCode: (text: string) => void,
     registerElement: (el: HTMLElement) => void,
-    readResolved: () => EvalNode
+    readResolved: () => DataNode
   ) {
     super();
     this.element = createEl("div", "code");
@@ -658,15 +660,16 @@ class CodeView extends View<string> {
   }
 }
 
-export class BoxMount {
+export class SignalMount {
   nodeView!: View<BlockNode | string>;
   disposeEffect: () => void;
 
-  constructor(readonly box: Box) {
-    const registerElementBox = (el: HTMLElement) => boxByElement.set(el, box);
+  constructor(readonly signal: Signal) {
+    const registerElementSignal = (el: HTMLElement) =>
+      signalByElement.set(el, signal);
 
     const ensureKind = (
-      kind: "code" | "block" | "literal",
+      kind: "code" | "block" | "literal" | "readonly",
       build: () => View<BlockNode | string>
     ) => {
       if (!this.nodeView || this.nodeView.viewKind !== kind) {
@@ -676,38 +679,65 @@ export class BoxMount {
     };
 
     this.disposeEffect = effect(() => {
-      const n = this.box.value.value;
+      const n = this.signal.get();
 
       if (isCode(n)) {
         ensureKind(
           "code",
           () =>
             new CodeView(
-              () => (this.box.value.peek() as CodeNode).code,
-              (next) => (this.box.value.value = makeCode(next)),
-              registerElementBox,
-              () => resolveShallow(this.box)
+              () => (this.signal.peek() as CodeNode).code,
+              (next) => (this.signal as WritableSignal).set(createCode(next)),
+              registerElementSignal,
+              () => resolveShallow(this.signal)
             )
         );
         this.nodeView.update(n.code);
       } else if (isBlock(n)) {
-        ensureKind(
-          "block",
-          () => new BlockView(this.box as Box<BlockNode>, registerElementBox)
-        );
+        if (isWritableSignal(this.signal)) {
+          ensureKind(
+            "block",
+            () =>
+              new BlockView(
+                this.signal as WritableSignal<BlockNode>,
+                registerElementSignal
+              )
+          );
+        } else {
+          ensureKind(
+            "block",
+            () => new ReadonlyBlockView(registerElementSignal)
+          );
+        }
         this.nodeView.update(n);
       } else {
-        ensureKind(
-          "literal",
-          () =>
-            new StringView(
-              "value",
-              () => String((this.box.value.peek() as LiteralNode).value),
-              (next) => (this.box.value.value = makeLiteral(next)),
-              registerElementBox
-            )
-        );
-        this.nodeView.update(String(n.value));
+        if (isWritableSignal(this.signal)) {
+          ensureKind(
+            "literal",
+            () =>
+              new StringView(
+                "value",
+                () => String((this.signal.peek() as LiteralNode).value),
+                (next) =>
+                  (this.signal as WritableSignal<LiteralNode>).set(
+                    createLiteral(next)
+                  ),
+                registerElementSignal
+              )
+          );
+          this.nodeView.update(String(n.value));
+        } else {
+          ensureKind(
+            "readonly",
+            () =>
+              new ReadonlyStringView(
+                "value",
+                registerElementSignal,
+                String((this.signal.peek() as LiteralNode).value)
+              )
+          );
+          this.nodeView.update(String(n.value));
+        }
       }
     });
   }

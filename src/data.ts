@@ -1,5 +1,4 @@
-import { type Signal, signal } from "@preact/signals-core";
-
+import { type Signal as PSignal, signal as s } from "@preact/signals-core";
 import { evalCode } from "./code";
 
 /* Node Types */
@@ -13,25 +12,47 @@ export type LiteralNode = {
 
 export type BlockNode = {
   kind: "block";
-  values: [string, Box][];
-  items: Box[];
+  values: [string, Signal][];
+  items: Signal[];
 };
 
-export type EvalNode = BlockNode | LiteralNode;
+export type DataNode = BlockNode | LiteralNode;
 
 export type CodeNode = {
   kind: "code";
   code: string;
 };
 
-export type Node = CodeNode | EvalNode;
+export type Node = CodeNode | DataNode;
 
-export type Box<T extends Node = Node> = {
-  kind: "box";
-  value: Signal<T>;
+/* Signal Types */
+
+type BaseSignal<T extends Node> = {
+  kind: "signal";
+  get(): T;
+  peek(): T;
 };
 
+export type ReadonlySignal<T extends DataNode = DataNode> = BaseSignal<T>;
+
+export type WritableSignal<T extends Node = Node> = BaseSignal<T> & {
+  set(next: T): void;
+};
+
+export type DataSignal<T extends DataNode = DataNode> =
+  | ReadonlySignal<T>
+  | WritableSignal<T>;
+
+export type CodeSignal = WritableSignal<CodeNode>;
+
+export type Signal = CodeSignal | DataSignal;
+
 /* Static Types */
+
+export type StaticError = {
+  kind: "error";
+  message: string;
+};
 
 export type StaticBlock = {
   kind: "block";
@@ -39,26 +60,21 @@ export type StaticBlock = {
   items: StaticNode[];
 };
 
-export type StaticError = {
-  kind: "error";
-  message: string;
-};
-
 export type StaticNode = StaticBlock | StaticError | Primitive;
 
 /* Parent Store */
 
-type ParentSig = Signal<Box<BlockNode> | undefined>;
+type ParentSig = PSignal<DataSignal<BlockNode> | undefined>;
 
-const parentMap = new WeakMap<Box, ParentSig>();
+const parentMap = new WeakMap<Signal, ParentSig>();
 
-function getParentSignal(b: Box): ParentSig {
-  let s = parentMap.get(b);
-  if (!s) {
-    s = signal<Box<BlockNode> | undefined>(undefined);
-    parentMap.set(b, s);
+function getParentSignal(sig: Signal): ParentSig {
+  let p = parentMap.get(sig);
+  if (!p) {
+    p = s<DataSignal<BlockNode> | undefined>(undefined);
+    parentMap.set(sig, p);
   }
-  return s;
+  return p;
 }
 
 /* Type Guards */
@@ -79,53 +95,65 @@ export function isCode(v: unknown): v is CodeNode {
   return hasKind(v, "code");
 }
 
-export function isBox(v: unknown): v is Box {
-  return hasKind(v, "box");
+export function isWritableSignal(v: unknown): v is WritableSignal {
+  return hasKind(v, "signal") && typeof (v as any).set === "function";
+}
+
+export function isSignal(v: unknown): v is Signal {
+  return hasKind(v, "signal");
 }
 
 /* Constructors */
 
-export function makeLiteral(value: Primitive): LiteralNode {
+export function createLiteral(value: Primitive): LiteralNode {
   return { kind: "literal", value };
 }
 
-export function makeBlock(
-  values: [string, Box][] = [],
-  items: Box[] = []
+export function createBlock(
+  values: [string, Signal][] = [],
+  items: Signal[] = []
 ): BlockNode {
   return { kind: "block", values, items };
 }
 
-export function makeCode(code: string): CodeNode {
+export function createCode(code: string): CodeNode {
   return { kind: "code", code };
 }
 
-export function makeBox<T extends Node>(initial: T): Box<T> {
-  return { kind: "box", value: signal<T>(initial) };
+export function createSignal<T extends Node>(initial: T): WritableSignal<T> {
+  const sig = s<T>(initial);
+  return {
+    kind: "signal",
+    get: () => sig.value,
+    peek: () => sig.peek(),
+    set: (next: T) => {
+      sig.value = next;
+    },
+  };
 }
 
-export function makeBlockBox(
-  values: [string, Box][] = [],
-  items: Box[] = []
-): Box<BlockNode> {
-  const parent = makeBox(makeBlock([], []));
+export function createBlockSignal(
+  values: [string, Signal][] = [],
+  items: Signal[] = []
+): WritableSignal<BlockNode> {
+  const parent = createSignal(createBlock([], []));
   for (const [_, v] of values) getParentSignal(v).value = parent;
   for (const v of items) getParentSignal(v).value = parent;
-  parent.value.value = makeBlock(values, items);
+  parent.set(createBlock(values, items));
   return parent;
 }
 
 /* Resolve */
 
-export function resolveShallow(b: Box): EvalNode {
-  const v = b.value.value;
+export function resolveShallow(sig: Signal): DataNode {
+  const v = sig.get();
   if (!isCode(v)) return v;
 
   return evalCode(v.code, (name: string) => {
-    let scope: Box<BlockNode> | undefined = getParentSignal(b).value;
+    let scope = getParentSignal(sig).value;
 
     while (scope) {
-      const currentBlock = scope.value.value;
+      const currentBlock = scope.get();
       const binding = currentBlock.values.find(([k]) => k === name);
       if (binding) return binding[1];
       scope = getParentSignal(scope).value;
@@ -135,13 +163,13 @@ export function resolveShallow(b: Box): EvalNode {
   });
 }
 
-export function resolveDeep(b: Box): StaticNode {
+export function resolveDeep(sig: Signal): StaticNode {
   try {
-    const n = resolveShallow(b);
+    const n = resolveShallow(sig);
     if (n.kind === "literal") return n.value;
     return {
       kind: "block",
-      values: n.values.map(([k, vb]) => [k, resolveDeep(vb)]),
+      values: n.values.map(([k, vsig]) => [k, resolveDeep(vsig)]),
       items: n.items.map(resolveDeep),
     };
   } catch (err) {
@@ -159,7 +187,10 @@ type ChildLoc =
   | { kind: "item"; index: number }
   | { kind: "value"; index: number };
 
-function findChildLocation(block: BlockNode, child: Box): ChildLoc | undefined {
+function findChildLocation(
+  block: BlockNode,
+  child: Signal
+): ChildLoc | undefined {
   const itemIdx = block.items.indexOf(child);
   if (itemIdx >= 0) return { kind: "item", index: itemIdx };
 
@@ -171,51 +202,55 @@ function findChildLocation(block: BlockNode, child: Box): ChildLoc | undefined {
 
 function withLocatedChild(
   parentBlock: BlockNode,
-  child: Box,
-  fn: (ctx: { parentBox: Box<BlockNode>; loc: ChildLoc }) => BlockNode
+  child: Signal,
+  fn: (ctx: { parentSignal: DataSignal<BlockNode>; loc: ChildLoc }) => BlockNode
 ): BlockNode {
-  const parentBox = getParentSignal(child).peek();
-  if (!parentBox) return parentBlock;
+  const parentSignal = getParentSignal(child).peek();
+  if (!parentSignal) return parentBlock;
 
   const loc = findChildLocation(parentBlock, child);
   if (!loc) return parentBlock;
 
-  return fn({ parentBox, loc });
+  return fn({ parentSignal, loc });
 }
 
 function insertItemAtIndex(
   block: BlockNode,
   index: number,
-  item: Box
+  item: Signal
 ): BlockNode {
-  return makeBlock(block.values, block.items.toSpliced(index, 0, item));
+  return createBlock(block.values, block.items.toSpliced(index, 0, item));
 }
 
-function replaceChildAt(block: BlockNode, loc: ChildLoc, next: Box): BlockNode {
+function replaceChildAt(
+  block: BlockNode,
+  loc: ChildLoc,
+  next: Signal
+): BlockNode {
   if (loc.kind === "item") {
-    return makeBlock(block.values, block.items.toSpliced(loc.index, 1, next));
+    return createBlock(block.values, block.items.toSpliced(loc.index, 1, next));
   }
   const curKey = block.values[loc.index]![0];
   const nextValues = block.values.toSpliced(loc.index, 1, [curKey, next]);
-  return makeBlock(nextValues, block.items);
+  return createBlock(nextValues, block.items);
 }
 
 function removeChildAt(block: BlockNode, loc: ChildLoc): BlockNode {
   if (loc.kind === "item") {
-    return makeBlock(block.values, block.items.toSpliced(loc.index, 1));
+    return createBlock(block.values, block.items.toSpliced(loc.index, 1));
   }
-  return makeBlock(block.values.toSpliced(loc.index, 1), block.items);
+  return createBlock(block.values.toSpliced(loc.index, 1), block.items);
 }
 
 /* Getters */
 
-export function getChildrenInOrder(block: BlockNode): Box[] {
+export function getChildrenInOrder(block: BlockNode): Signal[] {
   return [...block.values.map(([, v]) => v), ...block.items];
 }
 
 export function getChildKey(
   parentBlock: BlockNode,
-  child: Box
+  child: Signal
 ): string | undefined {
   const loc = findChildLocation(parentBlock, child);
   if (loc?.kind === "value") return parentBlock.values[loc.index]![0];
@@ -226,11 +261,11 @@ export function getChildKey(
 
 export function insertBefore(
   parentBlock: BlockNode,
-  reference: Box,
-  newItem: Box
+  reference: Signal,
+  newItem: Signal
 ): BlockNode {
-  return withLocatedChild(parentBlock, reference, ({ parentBox, loc }) => {
-    getParentSignal(newItem).value = parentBox;
+  return withLocatedChild(parentBlock, reference, ({ parentSignal, loc }) => {
+    getParentSignal(newItem).value = parentSignal;
     if (loc.kind === "item") {
       return insertItemAtIndex(parentBlock, loc.index, newItem);
     }
@@ -240,11 +275,11 @@ export function insertBefore(
 
 export function insertAfter(
   parentBlock: BlockNode,
-  reference: Box,
-  newItem: Box
+  reference: Signal,
+  newItem: Signal
 ): BlockNode {
-  return withLocatedChild(parentBlock, reference, ({ parentBox, loc }) => {
-    getParentSignal(newItem).value = parentBox;
+  return withLocatedChild(parentBlock, reference, ({ parentSignal, loc }) => {
+    getParentSignal(newItem).value = parentSignal;
     if (loc.kind === "item") {
       return insertItemAtIndex(parentBlock, loc.index + 1, newItem);
     }
@@ -254,19 +289,19 @@ export function insertAfter(
 
 export function replaceChildWith(
   parentBlock: BlockNode,
-  target: Box,
-  next: Box
+  target: Signal,
+  next: Signal
 ): BlockNode {
-  return withLocatedChild(parentBlock, target, ({ parentBox, loc }) => {
+  return withLocatedChild(parentBlock, target, ({ parentSignal, loc }) => {
     getParentSignal(target).value = undefined;
-    getParentSignal(next).value = parentBox;
+    getParentSignal(next).value = parentSignal;
     return replaceChildAt(parentBlock, loc, next);
   });
 }
 
 export function assignKey(
   parentBlock: BlockNode,
-  child: Box,
+  child: Signal,
   nextKey: string
 ): BlockNode {
   if (parentBlock.values.some(([k]) => k === nextKey)) return parentBlock;
@@ -279,42 +314,45 @@ export function assignKey(
         nextKey,
         val,
       ]);
-      return makeBlock(nextValues, parentBlock.items);
+      return createBlock(nextValues, parentBlock.items);
     }
 
     const nextItems = parentBlock.items.toSpliced(loc.index, 1);
     const nextValues = [
       ...parentBlock.values,
-      [nextKey, child] as [string, Box],
+      [nextKey, child] as [string, Signal],
     ];
-    return makeBlock(nextValues, nextItems);
+    return createBlock(nextValues, nextItems);
   });
 }
 
-export function removeKey(parentBlock: BlockNode, child: Box): BlockNode {
+export function removeKey(parentBlock: BlockNode, child: Signal): BlockNode {
   return withLocatedChild(parentBlock, child, ({ loc }) => {
     if (loc.kind !== "value") return parentBlock;
 
     const nextValues = parentBlock.values.toSpliced(loc.index, 1);
     return insertItemAtIndex(
-      makeBlock(nextValues, parentBlock.items),
+      createBlock(nextValues, parentBlock.items),
       0,
       child
     );
   });
 }
 
-export function removeChild(parentBlock: BlockNode, child: Box): BlockNode {
+export function removeChild(parentBlock: BlockNode, child: Signal): BlockNode {
   return withLocatedChild(parentBlock, child, ({ loc }) => {
     getParentSignal(child).value = undefined;
     return removeChildAt(parentBlock, loc);
   });
 }
 
-export function wrapWithBlock(parentBlock: BlockNode, child: Box): BlockNode {
-  return withLocatedChild(parentBlock, child, ({ parentBox, loc }) => {
-    const wrapper = makeBox(makeBlock([], [child]));
-    getParentSignal(wrapper).value = parentBox;
+export function wrapWithBlock(
+  parentBlock: BlockNode,
+  child: Signal
+): BlockNode {
+  return withLocatedChild(parentBlock, child, ({ parentSignal, loc }) => {
+    const wrapper = createSignal(createBlock([], [child]));
+    getParentSignal(wrapper).value = parentSignal;
     getParentSignal(child).value = wrapper;
     return replaceChildAt(parentBlock, loc, wrapper);
   });
@@ -322,14 +360,15 @@ export function wrapWithBlock(parentBlock: BlockNode, child: Box): BlockNode {
 
 export function unwrapBlockIfSingleChild(
   parentBlock: BlockNode,
-  wrapper: Box
+  wrapper: Signal
 ): BlockNode {
-  return withLocatedChild(parentBlock, wrapper, ({ parentBox, loc }) => {
-    const n = wrapper.value.peek() as BlockNode;
+  return withLocatedChild(parentBlock, wrapper, ({ parentSignal, loc }) => {
+    const n = wrapper.peek() as BlockNode;
+
     if (n.values.length !== 0 || n.items.length !== 1) return parentBlock;
 
     const sole = n.items[0]!;
-    getParentSignal(sole).value = parentBox;
+    getParentSignal(sole).value = parentSignal;
     getParentSignal(wrapper).value = undefined;
     return replaceChildAt(parentBlock, loc, sole);
   });

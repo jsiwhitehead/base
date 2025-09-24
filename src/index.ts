@@ -3,21 +3,22 @@ import { effect } from "@preact/signals-core";
 import {
   type Primitive,
   type BlockNode,
-  type Box,
-  makeLiteral,
-  makeCode,
-  makeBox,
-  makeBlockBox,
+  type DataSignal,
+  type Signal,
+  createLiteral,
+  createCode,
+  createSignal,
+  createBlockSignal,
   resolveDeep,
 } from "./data";
 import { onRootDblClick, onRootKeyDown } from "./input";
-import { BoxMount } from "./render";
+import { SignalMount } from "./render";
 
 export function render(
-  rootBox: Box<BlockNode>,
+  rootSignal: DataSignal<BlockNode>,
   rootElement: HTMLElement
-): () => void {
-  const { element, dispose } = new BoxMount(rootBox);
+) {
+  const { element, dispose } = new SignalMount(rootSignal);
   rootElement.appendChild(element);
   queueMicrotask(() => element.focus());
 
@@ -34,12 +35,12 @@ export function render(
 
 /* Test */
 
-const literalBox = (v: Primitive): Box => makeBox(makeLiteral(v));
-const codeBox = (src: string): Box => makeBox(makeCode(src));
+const literalSig = (v: Primitive) => createSignal(createLiteral(v));
+const codeSig = (src: string) => createSignal(createCode(src));
 
-const root = makeBlockBox(
-  [["x", makeBlockBox([], [literalBox("10"), literalBox("20")])]],
-  [makeBlockBox([], [literalBox("10"), literalBox("20")]), codeBox("x")]
+const root = createBlockSignal(
+  [["x", createBlockSignal([], [literalSig("10"), literalSig("20")])]],
+  [createBlockSignal([], [literalSig("10"), literalSig("20")]), codeSig("x")]
 );
 
 const unmount = render(root, document.getElementById("root")!);
