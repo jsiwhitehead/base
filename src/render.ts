@@ -7,6 +7,7 @@ import {
   type CodeNode,
   type WritableSignal,
   type Signal,
+  isLiteral,
   isBlock,
   isCode,
   isWritableSignal,
@@ -616,13 +617,15 @@ class CodeView extends View<string> {
         if (isBlock(resolved)) {
           this.ensureResultKind("block", () => new ReadonlyBlockView(() => {}));
           (this.resultView as ReadonlyBlockView).update(resolved);
-        } else {
+        } else if (isLiteral(resolved)) {
           this.ensureResultKind(
             "readonly",
             () =>
               new ReadonlyStringView("value", () => {}, String(resolved.value))
           );
           this.resultView!.update(String(resolved.value));
+        } else {
+          throw new Error("Cannot render a FunctionNode");
         }
       } catch {
         this.element.classList.add("error");
@@ -710,7 +713,7 @@ export class SignalMount {
           );
         }
         this.nodeView.update(n);
-      } else {
+      } else if (isLiteral(n)) {
         if (isWritableSignal(this.signal)) {
           ensureKind(
             "literal",
@@ -738,6 +741,8 @@ export class SignalMount {
           );
           this.nodeView.update(String(n.value));
         }
+      } else {
+        throw new Error("Cannot render a FunctionNode");
       }
     });
   }

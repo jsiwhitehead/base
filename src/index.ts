@@ -4,7 +4,6 @@ import {
   type Primitive,
   type BlockNode,
   type DataSignal,
-  type Signal,
   createLiteral,
   createCode,
   createSignal,

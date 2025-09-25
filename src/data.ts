@@ -16,7 +16,12 @@ export type BlockNode = {
   items: Signal[];
 };
 
-export type DataNode = BlockNode | LiteralNode;
+export type FunctionNode = {
+  kind: "function";
+  fn: (...args: Signal[]) => Signal;
+};
+
+export type DataNode = FunctionNode | BlockNode | LiteralNode;
 
 export type CodeNode = {
   kind: "code";
@@ -91,6 +96,10 @@ export function isBlock(v: unknown): v is BlockNode {
   return hasKind(v, "block");
 }
 
+export function isFunction(v: unknown): v is FunctionNode {
+  return hasKind(v, "function");
+}
+
 export function isCode(v: unknown): v is CodeNode {
   return hasKind(v, "code");
 }
@@ -114,6 +123,12 @@ export function createBlock(
   items: Signal[] = []
 ): BlockNode {
   return { kind: "block", values, items };
+}
+
+export function createFunction(
+  fn: (...args: Signal[]) => Signal
+): FunctionNode {
+  return { kind: "function", fn };
 }
 
 export function createCode(code: string): CodeNode {
@@ -166,11 +181,19 @@ export function resolveShallow(sig: Signal): DataNode {
 export function resolveDeep(sig: Signal): StaticNode {
   try {
     const n = resolveShallow(sig);
-    if (n.kind === "literal") return n.value;
+    if (n.kind === "literal") {
+      return n.value;
+    }
+    if (n.kind === "block") {
+      return {
+        kind: "block",
+        values: n.values.map(([k, vsig]) => [k, resolveDeep(vsig)]),
+        items: n.items.map(resolveDeep),
+      };
+    }
     return {
-      kind: "block",
-      values: n.values.map(([k, vsig]) => [k, resolveDeep(vsig)]),
-      items: n.items.map(resolveDeep),
+      kind: "error",
+      message: "Cannot statically resolve a function node",
     };
   } catch (err) {
     return {
