@@ -2,25 +2,28 @@ import * as ohm from "ohm-js";
 import type { Node as OhmNode } from "ohm-js";
 
 import {
-  type Primitive,
   type DataNode,
   type ChildSignal,
-  isLiteral,
   isBlock,
   isFunction,
-  isData,
-  isSignal,
   createLiteral,
   createFunction,
   createSignal,
   childToData,
 } from "./data";
 
+import {
+  type EvalValue,
+  toBoolean,
+  toNumber,
+  toData,
+  toSignal,
+  equals,
+} from "./library";
+
 /* Types */
 
 type ScopeLookup = (name: string) => ChildSignal;
-
-type EvalValue = Primitive | DataNode | ChildSignal;
 
 type NodeLike = OhmNode & {
   eval(scope: ScopeLookup): EvalValue;
@@ -100,68 +103,7 @@ const grammar = ohm.grammar(String.raw`Script {
   space     += " " | "\t" | "\n" | "\r"
 }`);
 
-/* Coercion */
-
-function toPrimitive(x: EvalValue): Primitive {
-  const resolved = isSignal(x) ? childToData(x) ?? createLiteral("") : x;
-
-  if (isLiteral(resolved)) return resolved.value;
-  if (isBlock(resolved))
-    throw new TypeError("Expected a primitive, got a block");
-  if (isFunction(resolved))
-    throw new TypeError("Expected a primitive, got a function");
-
-  return resolved;
-}
-
-function toBoolean(x: EvalValue): boolean {
-  return Boolean(toPrimitive(x));
-}
-
-function toNumber(x: EvalValue): number {
-  const n = Number(toPrimitive(x));
-  if (Number.isNaN(n)) {
-    throw new TypeError(`Expected a number, got ${String(toPrimitive(x))}`);
-  }
-  return n;
-}
-
-function toString(x: EvalValue): string {
-  return String(toPrimitive(x));
-}
-
-function isEqual(left: EvalValue, right: EvalValue): boolean {
-  return toPrimitive(left) === toPrimitive(right);
-}
-
-function compareNumbers(
-  left: EvalValue,
-  right: EvalValue,
-  op: "<" | "<=" | ">" | ">="
-): boolean {
-  const ln = toNumber(left);
-  const rn = toNumber(right);
-  switch (op) {
-    case "<":
-      return ln < rn;
-    case "<=":
-      return ln <= rn;
-    case ">":
-      return ln > rn;
-    case ">=":
-      return ln >= rn;
-  }
-}
-
 /* Helpers */
-
-function toSignal(value: EvalValue) {
-  if (isSignal(value)) {
-    const n = childToData(value) ?? createLiteral("");
-    return createSignal(isData(n) ? n : createLiteral(n));
-  }
-  return createSignal(isData(value) ? value : createLiteral(value));
-}
 
 function makeLambda(names: string[], body: NodeLike, outerScope: ScopeLookup) {
   return createFunction((...args) => {
@@ -187,39 +129,42 @@ function performCall(
   scope: ScopeLookup,
   receiver?: NodeLike
 ) {
-  const calleeVal = callee.eval(scope);
-  const calleeNode = isSignal(calleeVal) ? childToData(calleeVal) : calleeVal;
-  if (!calleeNode || !isFunction(calleeNode)) {
+  const calleeVal = toData(callee.eval(scope));
+  if (!calleeVal || !isFunction(calleeVal)) {
     throw new TypeError("Callee is not a function");
   }
 
   const args = optChildren(argsOpt).map((n) => toSignal(n.eval(scope)));
   const allArgs = receiver ? [toSignal(receiver.eval(scope)), ...args] : args;
 
-  return calleeNode.fn(...allArgs);
+  return calleeVal.fn(...allArgs);
 }
 
 function resolveIdentPath(idents: string[], scope: ScopeLookup): ChildSignal {
   let current: ChildSignal = scope(idents[0]!);
 
-  for (let i = 1; i < idents.length; i++) {
-    const key = idents[i]!;
+  for (const key of idents.slice(1)) {
     const resolved = childToData(current);
-
     if (!resolved || !isBlock(resolved)) {
       throw new TypeError(`Cannot access property '${key}' of non-block value`);
     }
-
     const pair = resolved.values.find(([k]) => k === key);
-    if (!pair) {
-      throw new ReferenceError(`Unknown property '${key}'`);
-    }
-
-    const [, next] = pair;
-    current = next;
+    if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
+    current = pair[1];
   }
 
   return current;
+}
+
+function numericOp<T>(
+  scope: ScopeLookup,
+  left: NodeLike,
+  right: NodeLike,
+  op: (a: number, b: number) => T
+): T {
+  const a = toNumber(left.eval(scope));
+  const b = toNumber(right.eval(scope));
+  return op(a, b);
 }
 
 /* Semantics */
@@ -241,75 +186,47 @@ const evalActions: EvalActionDict = {
   },
 
   Or_or(left, _op, right) {
-    const leftValue = left.eval(this.args.scope);
-    return toBoolean(leftValue) ? leftValue : right.eval(this.args.scope);
+    const l = left.eval(this.args.scope);
+    return toBoolean(l) ? l : right.eval(this.args.scope);
   },
 
   And_and(left, _op, right) {
-    const leftValue = left.eval(this.args.scope);
-    return toBoolean(leftValue) ? right.eval(this.args.scope) : leftValue;
+    const l = left.eval(this.args.scope);
+    return toBoolean(l) ? right.eval(this.args.scope) : l;
   },
 
   Eq_eq(left, _op, right) {
-    return isEqual(left.eval(this.args.scope), right.eval(this.args.scope));
+    return equals(left.eval(this.args.scope), right.eval(this.args.scope));
   },
   Eq_ne(left, _op, right) {
-    return !isEqual(left.eval(this.args.scope), right.eval(this.args.scope));
+    return !equals(left.eval(this.args.scope), right.eval(this.args.scope));
   },
 
   Rel_le(left, _op, right) {
-    return compareNumbers(
-      left.eval(this.args.scope),
-      right.eval(this.args.scope),
-      "<="
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a <= b);
   },
   Rel_lt(left, _op, right) {
-    return compareNumbers(
-      left.eval(this.args.scope),
-      right.eval(this.args.scope),
-      "<"
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a < b);
   },
   Rel_ge(left, _op, right) {
-    return compareNumbers(
-      left.eval(this.args.scope),
-      right.eval(this.args.scope),
-      ">="
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a >= b);
   },
   Rel_gt(left, _op, right) {
-    return compareNumbers(
-      left.eval(this.args.scope),
-      right.eval(this.args.scope),
-      ">"
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a > b);
   },
 
   Add_plus(left, _op, right) {
-    return (
-      toNumber(left.eval(this.args.scope)) +
-      toNumber(right.eval(this.args.scope))
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a + b);
   },
   Add_minus(left, _op, right) {
-    return (
-      toNumber(left.eval(this.args.scope)) -
-      toNumber(right.eval(this.args.scope))
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a - b);
   },
 
   Mul_times(left, _op, right) {
-    return (
-      toNumber(left.eval(this.args.scope)) *
-      toNumber(right.eval(this.args.scope))
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a * b);
   },
   Mul_div(left, _op, right) {
-    return (
-      toNumber(left.eval(this.args.scope)) /
-      toNumber(right.eval(this.args.scope))
-    );
+    return numericOp(this.args.scope, left, right, (a, b) => a / b);
   },
 
   Unary_not(_op, expr) {
@@ -326,14 +243,14 @@ const evalActions: EvalActionDict = {
     return performCall(callee, argsOpt, this.args.scope, receiver);
   },
 
-  Prim_bool(tok) {
-    return tok.sourceString === "true";
+  Prim_bool(boolToken) {
+    return boolToken.sourceString === "true";
   },
-  Prim_num(tok) {
-    return parseFloat(tok.sourceString);
+  Prim_num(numToken) {
+    return parseFloat(numToken.sourceString);
   },
-  Prim_str(tok) {
-    const raw = tok.sourceString;
+  Prim_str(strToken) {
+    const raw = strToken.sourceString;
     return raw.slice(1, -1);
   },
 
@@ -364,13 +281,5 @@ export function evalCode(code: string, scope: ScopeLookup): DataNode {
   if (match.failed()) throw new SyntaxError(match.message);
 
   const result = semantics(match).eval(scope) as EvalValue;
-
-  if (isSignal(result)) {
-    return childToData(result) ?? createLiteral("");
-  }
-  if (isData(result)) {
-    return result;
-  }
-
-  return createLiteral(result);
+  return toData(result) ?? createLiteral("");
 }
