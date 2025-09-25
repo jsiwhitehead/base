@@ -10,6 +10,7 @@ import {
   createBlockSignal,
   resolveDeep,
 } from "./data";
+import "./library";
 import { onRootDblClick, onRootKeyDown } from "./input";
 import { SignalMount } from "./render";
 

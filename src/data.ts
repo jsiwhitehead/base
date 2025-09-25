@@ -1,4 +1,5 @@
 import { type Signal as PSignal, signal as s } from "@preact/signals-core";
+
 import { evalCode } from "./code";
 
 /* Node Types */
@@ -119,10 +120,14 @@ export function createLiteral(value: Primitive): LiteralNode {
 }
 
 export function createBlock(
-  values: [string, Signal][] = [],
+  values: [string, Signal][] | Record<string, Signal> = [],
   items: Signal[] = []
 ): BlockNode {
-  return { kind: "block", values, items };
+  return {
+    kind: "block",
+    values: Array.isArray(values) ? values : Object.entries(values),
+    items,
+  };
 }
 
 export function createFunction(
@@ -160,6 +165,8 @@ export function createBlockSignal(
 
 /* Resolve */
 
+export const library: Record<string, Signal> = Object.create(null);
+
 export function resolveShallow(sig: Signal): DataNode {
   const v = sig.get();
   if (!isCode(v)) return v;
@@ -172,6 +179,10 @@ export function resolveShallow(sig: Signal): DataNode {
       const binding = currentBlock.values.find(([k]) => k === name);
       if (binding) return binding[1];
       scope = getParentSignal(scope).value;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(library, name)) {
+      return library[name]!;
     }
 
     throw new Error(`Unbound identifier: ${name}`);
