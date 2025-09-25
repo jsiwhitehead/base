@@ -2,9 +2,9 @@ import { type Signal as PSignal, signal as s } from "@preact/signals-core";
 
 import { evalCode } from "./code";
 
-/* Node Types */
+/* Data Types */
 
-export type Primitive = string | number | boolean;
+export type Primitive = boolean | number | string;
 
 export type LiteralNode = {
   kind: "literal";
@@ -13,45 +13,50 @@ export type LiteralNode = {
 
 export type BlockNode = {
   kind: "block";
-  values: [string, Signal][];
-  items: Signal[];
+  values: [string, ChildSignal][];
+  items: ChildSignal[];
 };
 
 export type FunctionNode = {
   kind: "function";
-  fn: (...args: Signal[]) => Signal;
+  fn: (...args: DataSignal[]) => DataSignal;
 };
 
-export type DataNode = FunctionNode | BlockNode | LiteralNode;
+export type DataNode = LiteralNode | BlockNode | FunctionNode;
+
+/* Eval Types */
+
+export type IfElseNode = {
+  kind: "ifelse";
+  if: DataSignal;
+  then: DataSignal;
+  else?: DataSignal;
+};
 
 export type CodeNode = {
   kind: "code";
   code: string;
 };
 
-export type Node = CodeNode | DataNode;
+export type EvalNode = IfElseNode | CodeNode;
 
 /* Signal Types */
 
-type BaseSignal<T extends Node> = {
+type ReadSignal<T> = {
   kind: "signal";
   get(): T;
   peek(): T;
 };
 
-export type ReadonlySignal<T extends DataNode = DataNode> = BaseSignal<T>;
-
-export type WritableSignal<T extends Node = Node> = BaseSignal<T> & {
+export type WriteSignal<T> = ReadSignal<T> & {
   set(next: T): void;
 };
 
-export type DataSignal<T extends DataNode = DataNode> =
-  | ReadonlySignal<T>
-  | WritableSignal<T>;
+export type DataSignal<T extends DataNode = DataNode> = WriteSignal<T>;
 
-export type CodeSignal = WritableSignal<CodeNode>;
-
-export type Signal = CodeSignal | DataSignal;
+export type ChildSignal =
+  | ReadSignal<DataNode>
+  | WriteSignal<DataNode | EvalNode>;
 
 /* Static Types */
 
@@ -66,15 +71,14 @@ export type StaticBlock = {
   items: StaticNode[];
 };
 
-export type StaticNode = StaticBlock | StaticError | Primitive;
+export type StaticNode = StaticError | Primitive | StaticBlock;
 
 /* Parent Store */
 
 type ParentSig = PSignal<DataSignal<BlockNode> | undefined>;
+const parentMap = new WeakMap<ChildSignal, ParentSig>();
 
-const parentMap = new WeakMap<Signal, ParentSig>();
-
-function getParentSignal(sig: Signal): ParentSig {
+function getParentSignal(sig: ChildSignal): ParentSig {
   let p = parentMap.get(sig);
   if (!p) {
     p = s<DataSignal<BlockNode> | undefined>(undefined);
@@ -102,19 +106,29 @@ export function isFunction(v: unknown): v is FunctionNode {
 }
 
 export function isData(v: unknown): v is DataNode {
-  return isFunction(v) || isBlock(v) || isLiteral(v);
+  return isLiteral(v) || isBlock(v) || isFunction(v);
+}
+
+export function isIfElse(v: unknown): v is IfElseNode {
+  return hasKind(v, "ifelse");
 }
 
 export function isCode(v: unknown): v is CodeNode {
   return hasKind(v, "code");
 }
 
-export function isWritableSignal(v: unknown): v is WritableSignal {
+export function isSignal(
+  v: unknown
+): v is ReadSignal<unknown> | WriteSignal<unknown> {
+  return hasKind(v, "signal");
+}
+
+export function isWritableSignal(v: unknown): v is WriteSignal<unknown> {
   return hasKind(v, "signal") && typeof (v as any).set === "function";
 }
 
-export function isSignal(v: unknown): v is Signal {
-  return hasKind(v, "signal");
+export function isStaticError(v: unknown): v is StaticError {
+  return hasKind(v, "error");
 }
 
 /* Constructors */
@@ -124,8 +138,8 @@ export function createLiteral(value: Primitive): LiteralNode {
 }
 
 export function createBlock(
-  values: [string, Signal][] | Record<string, Signal> = [],
-  items: Signal[] = []
+  values: [string, ChildSignal][] | Record<string, ChildSignal> = [],
+  items: ChildSignal[] = []
 ): BlockNode {
   return {
     kind: "block",
@@ -135,16 +149,24 @@ export function createBlock(
 }
 
 export function createFunction(
-  fn: (...args: Signal[]) => Signal
+  fn: (...args: DataSignal[]) => DataSignal
 ): FunctionNode {
   return { kind: "function", fn };
+}
+
+export function createIfElse(
+  cond: DataSignal,
+  thenSig: DataSignal,
+  elseSig?: DataSignal
+): IfElseNode {
+  return { kind: "ifelse", if: cond, then: thenSig, else: elseSig };
 }
 
 export function createCode(code: string): CodeNode {
   return { kind: "code", code };
 }
 
-export function createSignal<T extends Node>(initial: T): WritableSignal<T> {
+export function createSignal<T>(initial: T): WriteSignal<T> {
   const sig = s<T>(initial);
   return {
     kind: "signal",
@@ -157,9 +179,9 @@ export function createSignal<T extends Node>(initial: T): WritableSignal<T> {
 }
 
 export function createBlockSignal(
-  values: [string, Signal][] = [],
-  items: Signal[] = []
-): WritableSignal<BlockNode> {
+  values: [string, ChildSignal][] = [],
+  items: ChildSignal[] = []
+): DataSignal<BlockNode> {
   const parent = createSignal(createBlock([], []));
   for (const [_, v] of values) getParentSignal(v).value = parent;
   for (const v of items) getParentSignal(v).value = parent;
@@ -167,56 +189,87 @@ export function createBlockSignal(
   return parent;
 }
 
-/* Resolve */
+/* Evaluate */
 
-export const library: Record<string, Signal> = Object.create(null);
+export const library: Record<string, DataSignal> = Object.create(null);
 
-export function resolveShallow(sig: Signal): DataNode {
-  const v = sig.get();
-  if (!isCode(v)) return v;
-
-  return evalCode(v.code, (name: string) => {
-    let scope = getParentSignal(sig).value;
-
-    while (scope) {
-      const currentBlock = scope.get();
-      const binding = currentBlock.values.find(([k]) => k === name);
-      if (binding) return binding[1];
-      scope = getParentSignal(scope).value;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(library, name)) {
-      return library[name]!;
-    }
-
-    throw new Error(`Unbound identifier: ${name}`);
-  });
+function toStaticError(err: unknown): StaticError {
+  return {
+    kind: "error",
+    message: err instanceof Error ? err.message : String(err),
+  };
 }
 
-export function resolveDeep(sig: Signal): StaticNode {
-  try {
-    const n = resolveShallow(sig);
-    if (n.kind === "literal") {
-      return n.value;
-    }
-    if (n.kind === "block") {
-      return {
-        kind: "block",
-        values: n.values.map(([k, vsig]) => [k, resolveDeep(vsig)]),
-        items: n.items.map(resolveDeep),
-      };
-    }
-    return {
-      kind: "error",
-      message: "Cannot statically resolve a function node",
-    };
-  } catch (err) {
-    return {
-      kind: "error",
-      message:
-        err instanceof Error ? err.message : "Unknown error during evaluation",
-    };
+function isStaticTruthy(n: StaticNode): boolean {
+  if (isStaticError(n)) return false;
+  return Boolean(n);
+}
+
+function lookupInScope(name: string, start: ChildSignal): ChildSignal {
+  let scope = getParentSignal(start).value;
+  while (scope) {
+    const currentBlock = scope.get();
+    const found = currentBlock.values.find(([k]) => k === name);
+    if (found) return found[1];
+    scope = getParentSignal(scope).value;
   }
+  if (Object.prototype.hasOwnProperty.call(library, name)) {
+    return library[name]!;
+  }
+  throw new Error(`Unbound identifier: ${name}`);
+}
+
+export function childToData(sig: ChildSignal): DataNode | undefined {
+  const v = sig.get();
+
+  if (isIfElse(v)) {
+    const condNode = v.if.get();
+    const condStatic = resolveData(condNode);
+    const truthy = isStaticTruthy(condStatic);
+
+    if (truthy) return v.then.get();
+    if (v.else) return v.else.get();
+    return undefined;
+  }
+
+  if (isCode(v)) {
+    return evalCode(v.code, (name: string) => lookupInScope(name, sig));
+  }
+
+  return v;
+}
+
+export function resolveData(n: DataNode): StaticNode {
+  if (n.kind === "literal") return n.value;
+
+  if (n.kind === "block") {
+    const values: [string, StaticNode][] = [];
+    for (const [k, vsig] of n.values) {
+      try {
+        const v = childToData(vsig);
+        if (v !== undefined) values.push([k, resolveData(v)]);
+      } catch (err) {
+        values.push([k, toStaticError(err)]);
+      }
+    }
+
+    const items: StaticNode[] = [];
+    for (const isg of n.items) {
+      try {
+        const v = childToData(isg);
+        if (v !== undefined) items.push(resolveData(v));
+      } catch (err) {
+        items.push(toStaticError(err));
+      }
+    }
+
+    return { kind: "block", values, items };
+  }
+
+  return {
+    kind: "error",
+    message: "Cannot statically resolve a function node",
+  };
 }
 
 /* Helpers */
@@ -227,7 +280,7 @@ type ChildLoc =
 
 function findChildLocation(
   block: BlockNode,
-  child: Signal
+  child: ChildSignal
 ): ChildLoc | undefined {
   const itemIdx = block.items.indexOf(child);
   if (itemIdx >= 0) return { kind: "item", index: itemIdx };
@@ -240,7 +293,7 @@ function findChildLocation(
 
 function withLocatedChild(
   parentBlock: BlockNode,
-  child: Signal,
+  child: ChildSignal,
   fn: (ctx: { parentSignal: DataSignal<BlockNode>; loc: ChildLoc }) => BlockNode
 ): BlockNode {
   const parentSignal = getParentSignal(child).peek();
@@ -255,7 +308,7 @@ function withLocatedChild(
 function insertItemAtIndex(
   block: BlockNode,
   index: number,
-  item: Signal
+  item: ChildSignal
 ): BlockNode {
   return createBlock(block.values, block.items.toSpliced(index, 0, item));
 }
@@ -263,7 +316,7 @@ function insertItemAtIndex(
 function replaceChildAt(
   block: BlockNode,
   loc: ChildLoc,
-  next: Signal
+  next: ChildSignal
 ): BlockNode {
   if (loc.kind === "item") {
     return createBlock(block.values, block.items.toSpliced(loc.index, 1, next));
@@ -282,13 +335,13 @@ function removeChildAt(block: BlockNode, loc: ChildLoc): BlockNode {
 
 /* Getters */
 
-export function getChildrenInOrder(block: BlockNode): Signal[] {
+export function getChildrenInOrder(block: BlockNode): ChildSignal[] {
   return [...block.values.map(([, v]) => v), ...block.items];
 }
 
 export function getChildKey(
   parentBlock: BlockNode,
-  child: Signal
+  child: ChildSignal
 ): string | undefined {
   const loc = findChildLocation(parentBlock, child);
   if (loc?.kind === "value") return parentBlock.values[loc.index]![0];
@@ -299,8 +352,8 @@ export function getChildKey(
 
 export function insertBefore(
   parentBlock: BlockNode,
-  reference: Signal,
-  newItem: Signal
+  reference: ChildSignal,
+  newItem: ChildSignal
 ): BlockNode {
   return withLocatedChild(parentBlock, reference, ({ parentSignal, loc }) => {
     getParentSignal(newItem).value = parentSignal;
@@ -313,8 +366,8 @@ export function insertBefore(
 
 export function insertAfter(
   parentBlock: BlockNode,
-  reference: Signal,
-  newItem: Signal
+  reference: ChildSignal,
+  newItem: ChildSignal
 ): BlockNode {
   return withLocatedChild(parentBlock, reference, ({ parentSignal, loc }) => {
     getParentSignal(newItem).value = parentSignal;
@@ -327,8 +380,8 @@ export function insertAfter(
 
 export function replaceChildWith(
   parentBlock: BlockNode,
-  target: Signal,
-  next: Signal
+  target: ChildSignal,
+  next: ChildSignal
 ): BlockNode {
   return withLocatedChild(parentBlock, target, ({ parentSignal, loc }) => {
     getParentSignal(target).value = undefined;
@@ -339,7 +392,7 @@ export function replaceChildWith(
 
 export function assignKey(
   parentBlock: BlockNode,
-  child: Signal,
+  child: ChildSignal,
   nextKey: string
 ): BlockNode {
   if (parentBlock.values.some(([k]) => k === nextKey)) return parentBlock;
@@ -358,13 +411,16 @@ export function assignKey(
     const nextItems = parentBlock.items.toSpliced(loc.index, 1);
     const nextValues = [
       ...parentBlock.values,
-      [nextKey, child] as [string, Signal],
+      [nextKey, child] as [string, ChildSignal],
     ];
     return createBlock(nextValues, nextItems);
   });
 }
 
-export function removeKey(parentBlock: BlockNode, child: Signal): BlockNode {
+export function removeKey(
+  parentBlock: BlockNode,
+  child: ChildSignal
+): BlockNode {
   return withLocatedChild(parentBlock, child, ({ loc }) => {
     if (loc.kind !== "value") return parentBlock;
 
@@ -377,7 +433,10 @@ export function removeKey(parentBlock: BlockNode, child: Signal): BlockNode {
   });
 }
 
-export function removeChild(parentBlock: BlockNode, child: Signal): BlockNode {
+export function removeChild(
+  parentBlock: BlockNode,
+  child: ChildSignal
+): BlockNode {
   return withLocatedChild(parentBlock, child, ({ loc }) => {
     getParentSignal(child).value = undefined;
     return removeChildAt(parentBlock, loc);
@@ -386,7 +445,7 @@ export function removeChild(parentBlock: BlockNode, child: Signal): BlockNode {
 
 export function wrapWithBlock(
   parentBlock: BlockNode,
-  child: Signal
+  child: ChildSignal
 ): BlockNode {
   return withLocatedChild(parentBlock, child, ({ parentSignal, loc }) => {
     const wrapper = createSignal(createBlock([], [child]));
@@ -398,7 +457,7 @@ export function wrapWithBlock(
 
 export function unwrapBlockIfSingleChild(
   parentBlock: BlockNode,
-  wrapper: Signal
+  wrapper: ChildSignal
 ): BlockNode {
   return withLocatedChild(parentBlock, wrapper, ({ parentSignal, loc }) => {
     const n = wrapper.peek() as BlockNode;

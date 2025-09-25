@@ -4,7 +4,7 @@ import type { Node as OhmNode } from "ohm-js";
 import {
   type Primitive,
   type DataNode,
-  type Signal,
+  type ChildSignal,
   isLiteral,
   isBlock,
   isFunction,
@@ -13,13 +13,14 @@ import {
   createLiteral,
   createFunction,
   createSignal,
-  resolveShallow,
+  childToData,
 } from "./data";
 
 /* Types */
 
-type ScopeLookup = (name: string) => Signal;
-type EvalValue = Signal | DataNode | Primitive;
+type ScopeLookup = (name: string) => ChildSignal;
+
+type EvalValue = Primitive | DataNode | ChildSignal;
 
 type NodeLike = OhmNode & {
   eval(scope: ScopeLookup): EvalValue;
@@ -102,12 +103,14 @@ const grammar = ohm.grammar(String.raw`Script {
 /* Coercion */
 
 function toPrimitive(x: EvalValue): Primitive {
-  const resolved = isSignal(x) ? resolveShallow(x) : x;
+  const resolved = isSignal(x) ? childToData(x) ?? createLiteral("") : x;
+
   if (isLiteral(resolved)) return resolved.value;
   if (isBlock(resolved))
     throw new TypeError("Expected a primitive, got a block");
   if (isFunction(resolved))
     throw new TypeError("Expected a primitive, got a function");
+
   return resolved;
 }
 
@@ -152,13 +155,16 @@ function compareNumbers(
 
 /* Helpers */
 
-function toSignal(value: EvalValue): Signal {
-  if (isSignal(value)) return value;
+function toSignal(value: EvalValue) {
+  if (isSignal(value)) {
+    const n = childToData(value) ?? createLiteral("");
+    return createSignal(isData(n) ? n : createLiteral(n));
+  }
   return createSignal(isData(value) ? value : createLiteral(value));
 }
 
 function makeLambda(names: string[], body: NodeLike, outerScope: ScopeLookup) {
-  return createFunction((...args: Signal[]) => {
+  return createFunction((...args) => {
     const extendedScope: ScopeLookup = (name: string) => {
       const i = names.indexOf(name);
       if (i !== -1) {
@@ -180,25 +186,27 @@ function performCall(
   argsOpt: NodeLike,
   scope: ScopeLookup,
   receiver?: NodeLike
-): Signal {
+) {
   const calleeVal = callee.eval(scope);
-  const fnNode = isSignal(calleeVal) ? resolveShallow(calleeVal) : calleeVal;
-  if (!isFunction(fnNode)) throw new TypeError("Callee is not a function");
+  const calleeNode = isSignal(calleeVal) ? childToData(calleeVal) : calleeVal;
+  if (!calleeNode || !isFunction(calleeNode)) {
+    throw new TypeError("Callee is not a function");
+  }
 
   const args = optChildren(argsOpt).map((n) => toSignal(n.eval(scope)));
   const allArgs = receiver ? [toSignal(receiver.eval(scope)), ...args] : args;
 
-  return fnNode.fn(...allArgs);
+  return calleeNode.fn(...allArgs);
 }
 
-function resolveIdentPath(idents: string[], scope: ScopeLookup): Signal {
-  let current: Signal = scope(idents[0]!);
+function resolveIdentPath(idents: string[], scope: ScopeLookup): ChildSignal {
+  let current: ChildSignal = scope(idents[0]!);
 
   for (let i = 1; i < idents.length; i++) {
     const key = idents[i]!;
-    const resolved = resolveShallow(current);
+    const resolved = childToData(current);
 
-    if (!isBlock(resolved)) {
+    if (!resolved || !isBlock(resolved)) {
       throw new TypeError(`Cannot access property '${key}' of non-block value`);
     }
 
@@ -355,10 +363,14 @@ export function evalCode(code: string, scope: ScopeLookup): DataNode {
   const match = grammar.match(code, "Expr");
   if (match.failed()) throw new SyntaxError(match.message);
 
-  const result = semantics(match).eval(scope);
+  const result = semantics(match).eval(scope) as EvalValue;
 
-  if (isSignal(result)) return resolveShallow(result);
-  if (isData(result)) return result;
+  if (isSignal(result)) {
+    return childToData(result) ?? createLiteral("");
+  }
+  if (isData(result)) {
+    return result;
+  }
 
-  return createLiteral(result as Primitive);
+  return createLiteral(result);
 }

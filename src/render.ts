@@ -5,8 +5,8 @@ import {
   type BlockNode,
   type DataNode,
   type CodeNode,
-  type WritableSignal,
-  type Signal,
+  type WriteSignal,
+  type ChildSignal,
   isLiteral,
   isBlock,
   isCode,
@@ -14,7 +14,7 @@ import {
   createLiteral,
   createCode,
   createSignal,
-  resolveShallow,
+  childToData,
   getChildKey,
   insertBefore,
   insertAfter,
@@ -30,7 +30,7 @@ import {
   BlockCommandEvent,
 } from "./input";
 
-export const signalByElement = new WeakMap<HTMLElement, Signal>();
+export const signalByElement = new WeakMap<HTMLElement, ChildSignal>();
 
 function createEl(
   tag: string,
@@ -167,8 +167,8 @@ class StringView extends View<string> {
 class ReadonlyBlockView extends View<BlockNode> {
   readonly viewKind = "block";
   readonly element: HTMLElement;
-  childMountBySignal = new Map<Signal, SignalMount>();
-  orderedChildren: Signal[] = [];
+  childMountBySignal = new Map<ChildSignal, SignalMount>();
+  orderedChildren: ChildSignal[] = [];
   lastNode?: BlockNode;
 
   constructor(registerElement: (el: HTMLElement) => void) {
@@ -239,7 +239,7 @@ class ReadonlyBlockView extends View<BlockNode> {
     if (first) this.childMountBySignal.get(first)?.focus();
   }
 
-  mountChildIfNeeded(child: Signal) {
+  mountChildIfNeeded(child: ChildSignal) {
     let mount = this.childMountBySignal.get(child);
     if (!mount) {
       mount = new SignalMount(child);
@@ -248,7 +248,7 @@ class ReadonlyBlockView extends View<BlockNode> {
     return mount.element;
   }
 
-  unmountAllChildrenExcept(keep?: Set<Signal>) {
+  unmountAllChildrenExcept(keep?: Set<ChildSignal>) {
     for (const [childSignal, mount] of Array.from(this.childMountBySignal)) {
       if (keep?.has(childSignal)) continue;
 
@@ -264,7 +264,7 @@ class ReadonlyBlockView extends View<BlockNode> {
     this.lastNode = node;
     const { values, items } = node;
 
-    const childrenToKeep = new Set<Signal>([
+    const childrenToKeep = new Set<ChildSignal>([
       ...values.map(([, v]) => v),
       ...items,
     ]);
@@ -295,15 +295,15 @@ class ReadonlyBlockView extends View<BlockNode> {
 class BlockView extends View<BlockNode> {
   readonly viewKind = "block";
   readonly element: HTMLElement;
-  childMountBySignal = new Map<Signal, SignalMount>();
-  keyEditorBySignal = new WeakMap<Signal, StringView>();
-  tempKeySignal: Signal | null = null;
+  childMountBySignal = new Map<ChildSignal, SignalMount>();
+  keyEditorBySignal = new WeakMap<ChildSignal, StringView>();
+  tempKeySignal: ChildSignal | null = null;
 
-  orderedChildren: Signal[] = [];
+  orderedChildren: ChildSignal[] = [];
   lastNode?: BlockNode;
 
   constructor(
-    readonly ownerSignal: WritableSignal<BlockNode>,
+    readonly ownerSignal: WriteSignal<BlockNode>,
     registerElement: (el: HTMLElement) => void
   ) {
     super();
@@ -404,7 +404,7 @@ class BlockView extends View<BlockNode> {
       ];
       const idx = orderedBefore.indexOf(target);
 
-      let nextFocus: Signal | undefined;
+      let nextFocus: ChildSignal | undefined;
       let updated: BlockNode = parentBlock;
 
       switch (kind) {
@@ -461,7 +461,7 @@ class BlockView extends View<BlockNode> {
     });
   }
 
-  ensureKeyEditor(sig: Signal): StringView {
+  ensureKeyEditor(sig: ChildSignal): StringView {
     let editor = this.keyEditorBySignal.get(sig);
     if (!editor) {
       editor = new StringView(
@@ -494,7 +494,7 @@ class BlockView extends View<BlockNode> {
     return editor;
   }
 
-  mountChildIfNeeded(child: Signal) {
+  mountChildIfNeeded(child: ChildSignal) {
     let mount = this.childMountBySignal.get(child);
     if (!mount) {
       mount = new SignalMount(child);
@@ -503,7 +503,7 @@ class BlockView extends View<BlockNode> {
     return mount.element;
   }
 
-  unmountAllChildrenExcept(keep?: Set<Signal>) {
+  unmountAllChildrenExcept(keep?: Set<ChildSignal>) {
     for (const [childSignal, mount] of Array.from(this.childMountBySignal)) {
       if (keep?.has(childSignal)) continue;
 
@@ -523,7 +523,7 @@ class BlockView extends View<BlockNode> {
     this.lastNode = node;
     const { values, items } = node;
 
-    const childrenToKeep = new Set<Signal>([
+    const childrenToKeep = new Set<ChildSignal>([
       ...values.map(([, v]) => v),
       ...items,
     ]);
@@ -667,7 +667,7 @@ export class SignalMount {
   nodeView!: View<BlockNode | string>;
   disposeEffect: () => void;
 
-  constructor(readonly signal: Signal) {
+  constructor(readonly signal: ChildSignal) {
     const registerElementSignal = (el: HTMLElement) =>
       signalByElement.set(el, signal);
 
@@ -690,9 +690,14 @@ export class SignalMount {
           () =>
             new CodeView(
               () => (this.signal.peek() as CodeNode).code,
-              (next) => (this.signal as WritableSignal).set(createCode(next)),
+              (next) =>
+                (this.signal as WriteSignal<CodeNode>).set(createCode(next)),
               registerElementSignal,
-              () => resolveShallow(this.signal)
+              () => {
+                const d = childToData(this.signal);
+                if (!d) throw new Error("Code produced no value");
+                return d;
+              }
             )
         );
         this.nodeView.update(n.code);
@@ -702,7 +707,7 @@ export class SignalMount {
             "block",
             () =>
               new BlockView(
-                this.signal as WritableSignal<BlockNode>,
+                this.signal as WriteSignal<BlockNode>,
                 registerElementSignal
               )
           );
@@ -722,7 +727,7 @@ export class SignalMount {
                 "value",
                 () => String((this.signal.peek() as LiteralNode).value),
                 (next) =>
-                  (this.signal as WritableSignal<LiteralNode>).set(
+                  (this.signal as WriteSignal<LiteralNode>).set(
                     createLiteral(next)
                   ),
                 registerElementSignal

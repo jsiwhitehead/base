@@ -8,7 +8,7 @@ import {
   createCode,
   createSignal,
   createBlockSignal,
-  resolveDeep,
+  resolveData,
 } from "./data";
 import "./library";
 import { onRootDblClick, onRootKeyDown } from "./input";
@@ -46,5 +46,5 @@ const root = createBlockSignal(
 const unmount = render(root, document.getElementById("root")!);
 
 effect(() => {
-  console.log(JSON.stringify(resolveDeep(root), null, 2));
+  console.log(JSON.stringify(resolveData(root.get()), null, 2));
 });

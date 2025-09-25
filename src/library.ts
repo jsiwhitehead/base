@@ -1,18 +1,18 @@
 import {
-  type Signal,
-  library,
+  type DataSignal,
+  isLiteral,
+  isBlock,
   createLiteral,
   createBlock,
   createFunction,
   createSignal,
-  isLiteral,
-  isBlock,
-  resolveShallow,
+  library,
+  childToData,
 } from "./data";
 
 library.len = createSignal(
-  createFunction((x: Signal) => {
-    const n = resolveShallow(x);
+  createFunction((x: DataSignal) => {
+    const n = childToData(x);
 
     if (isBlock(n)) {
       const count = n.values.length + n.items.length;
@@ -34,8 +34,8 @@ library.len = createSignal(
 library.math = createSignal(
   createBlock({
     sin: createSignal(
-      createFunction((x: Signal) => {
-        const n = resolveShallow(x);
+      createFunction((x: DataSignal) => {
+        const n = childToData(x);
         if (!isLiteral(n)) throw new TypeError("sin expects a number");
         const num = Number(n.value);
         if (Number.isNaN(num)) throw new TypeError("sin expects a number");

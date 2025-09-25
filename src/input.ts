@@ -1,4 +1,4 @@
-import { type Signal } from "./data";
+import { type ChildSignal } from "./data";
 import { signalByElement } from "./render";
 
 /* Focus Events */
@@ -6,10 +6,10 @@ import { signalByElement } from "./render";
 type FocusDir = "next" | "prev" | "into" | "out";
 type FocusTargetRole = "auto" | "key";
 
-type FocusCommandNav = { kind: "nav"; dir: FocusDir; from: Signal };
+type FocusCommandNav = { kind: "nav"; dir: FocusDir; from: ChildSignal };
 type FocusCommandTo = {
   kind: "to";
-  targetSignal: Signal;
+  targetSignal: ChildSignal;
   role: FocusTargetRole;
 };
 type FocusCommand = FocusCommandNav | FocusCommandTo;
@@ -44,11 +44,11 @@ function requestStringCommand(fromEl: HTMLElement, cmd: StringCommand) {
 /* Block Events */
 
 type BlockCommand =
-  | { kind: "insert-before"; target: Signal }
-  | { kind: "insert-after"; target: Signal }
-  | { kind: "wrap"; target: Signal }
-  | { kind: "unwrap"; target: Signal }
-  | { kind: "remove"; target: Signal };
+  | { kind: "insert-before"; target: ChildSignal }
+  | { kind: "insert-after"; target: ChildSignal }
+  | { kind: "wrap"; target: ChildSignal }
+  | { kind: "unwrap"; target: ChildSignal }
+  | { kind: "remove"; target: ChildSignal };
 
 export class BlockCommandEvent extends CustomEvent<BlockCommand> {
   constructor(detail: BlockCommand) {
