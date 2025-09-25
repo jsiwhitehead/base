@@ -1,5 +1,5 @@
 import * as ohm from "ohm-js";
-import type { Node } from "ohm-js";
+import type { Node as OhmNode } from "ohm-js";
 
 import {
   type Primitive,
@@ -8,301 +8,357 @@ import {
   isLiteral,
   isBlock,
   isFunction,
+  isData,
   isSignal,
   createLiteral,
+  createFunction,
   createSignal,
   resolveShallow,
 } from "./data";
 
 /* Types */
 
-type ScopeFn = (name: string) => Signal;
-type EvalResult = Signal | Primitive;
+type ScopeLookup = (name: string) => Signal;
+type EvalValue = Signal | DataNode | Primitive;
 
-type NodeLike = Node & {
-  eval(scope: ScopeFn): EvalResult;
+type NodeLike = OhmNode & {
+  eval(scope: ScopeLookup): EvalValue;
 };
 
 type EvalActionDict = {
   [key: string]: (
-    this: { args: { scope: ScopeFn } },
+    this: { args: { scope: ScopeLookup } },
     ...children: NodeLike[]
-  ) => EvalResult;
+  ) => EvalValue;
 };
 
 /* Grammar */
 
 const grammar = ohm.grammar(String.raw`Script {
-  Exp       = OrExp
+  Expr       = Lambda
 
-  OrExp     = OrExp "||" AndExp   -- or
-            | AndExp
+  Lambda     = ident "=>" Lambda                  -- ident
+             | "(" IdentList? ")" "=>" Lambda     -- list
+             | Or
 
-  AndExp    = AndExp "&&" EqExp   -- and
-            | EqExp
+  Or         = Or "|" And                         -- or
+             | And
 
-  EqExp     = EqExp "=" RelExp    -- eq
-            | EqExp "!=" RelExp   -- ne
-            | RelExp
+  And        = And "&" Eq                         -- and
+             | Eq
 
-  RelExp    = RelExp "<=" AddExp  -- le
-            | RelExp "<"  AddExp  -- lt
-            | RelExp ">=" AddExp  -- ge
-            | RelExp ">"  AddExp  -- gt
-            | AddExp
+  Eq         = Eq "=" Rel                         -- eq
+             | Eq "!=" Rel                        -- ne
+             | Rel
 
-  AddExp    = AddExp "+" MulExp   -- plus
-            | AddExp "-" MulExp   -- minus
-            | MulExp
+  Rel        = Rel "<=" Add                       -- le
+             | Rel "<"  Add                       -- lt
+             | Rel ">=" Add                       -- ge
+             | Rel ">"  Add                       -- gt
+             | Add
 
-  MulExp    = MulExp "*" PriExp   -- times
-            | MulExp "/" PriExp   -- divide
-            | PriExp
+  Add        = Add "+" Mul                        -- plus
+             | Add "-" Mul                        -- minus
+             | Mul
 
-  PriExp    = "!" PriExp          -- not
-            | "-" PriExp          -- neg
-            | "+" PriExp          -- pos
-            | Call                -- call
-            | Atom                -- atom
+  Mul        = Mul "*" Unary                      -- times
+             | Mul "/" Unary                      -- div
+             | Unary
 
-  Atom      = Path                -- path
-            | boolean             -- bool
-            | number              -- num
-            | string              -- str
-            | "(" Exp ")"         -- paren
+  Unary      = "!" Unary                          -- not
+             | "-" Unary                          -- neg
+             | Call
+             | Prim
 
-  Call      = Path "(" Args? ")"              -- normal
-            | Atom ":" ident "(" Args? ")"    -- method
+  Call       = Func "(" ExprList? ")"             -- normal
+             | Expr ":" Func "(" ExprList? ")"    -- method
 
-  Args      = Exp ("," Exp)*
+  Prim       = boolean                            -- bool
+             | number                             -- num
+             | string                             -- str
+             | IdentPath                          -- path
+             | "(" Expr ")"                       -- paren
 
-  Path      = ident ("." ident)*
+  Func       = IdentPath                          -- path
+             | "(" Expr ")"                       -- paren
 
-  boolean   = "true" | "false"
-  ident     = letter alnum*
-  number    = digit+ ("." digit+)?
+  ExprList   = ListOf<Expr, ",">
+  IdentList  = NonemptyListOf<ident, ",">
 
-  string    = dqString | sqString
-  dqString  = "\"" (~"\"" any)* "\""
-  sqString  = "'"  (~"'"  any)* "'"
+  IdentPath  = NonemptyListOf<ident, ".">
+
+  ident      = letter (alnum | "_")*
+
+  boolean    = "true" | "false"
+  number     = digit+ ("." digit+)? 
+
+  string     = d_string | s_string
+  d_string   = "\"" (~"\"" any)* "\""
+  s_string   = "'"  (~"'"  any)* "'"
 
   space     += " " | "\t" | "\n" | "\r"
 }`);
 
 /* Coercion */
 
-function asPrimitive(x: EvalResult): Primitive {
-  const r = isSignal(x) ? resolveShallow(x) : x;
-  if (isLiteral(r)) return r.value;
-  if (isBlock(r)) throw new TypeError("Expected a primitive, got a block");
-  if (isFunction(r))
+function toPrimitive(x: EvalValue): Primitive {
+  const resolved = isSignal(x) ? resolveShallow(x) : x;
+  if (isLiteral(resolved)) return resolved.value;
+  if (isBlock(resolved))
+    throw new TypeError("Expected a primitive, got a block");
+  if (isFunction(resolved))
     throw new TypeError("Expected a primitive, got a function");
-  return r;
+  return resolved;
 }
 
-function toBool(x: EvalResult): boolean {
-  return Boolean(asPrimitive(x));
+function toBoolean(x: EvalValue): boolean {
+  return Boolean(toPrimitive(x));
 }
 
-function toNum(x: EvalResult): number {
-  const n = Number(asPrimitive(x));
-  if (Number.isNaN(n))
-    throw new TypeError(`Expected a number, got ${String(asPrimitive(x))}`);
+function toNumber(x: EvalValue): number {
+  const n = Number(toPrimitive(x));
+  if (Number.isNaN(n)) {
+    throw new TypeError(`Expected a number, got ${String(toPrimitive(x))}`);
+  }
   return n;
 }
 
-function toStr(x: EvalResult): string {
-  return String(asPrimitive(x));
+function toString(x: EvalValue): string {
+  return String(toPrimitive(x));
 }
 
-function eq(a: EvalResult, b: EvalResult): boolean {
-  return asPrimitive(a) === asPrimitive(b);
+function isEqual(left: EvalValue, right: EvalValue): boolean {
+  return toPrimitive(left) === toPrimitive(right);
 }
 
-function cmp(
-  a: EvalResult,
-  b: EvalResult,
+function compareNumbers(
+  left: EvalValue,
+  right: EvalValue,
   op: "<" | "<=" | ">" | ">="
 ): boolean {
-  const na = toNum(a);
-  const nb = toNum(b);
+  const ln = toNumber(left);
+  const rn = toNumber(right);
   switch (op) {
     case "<":
-      return na < nb;
+      return ln < rn;
     case "<=":
-      return na <= nb;
+      return ln <= rn;
     case ">":
-      return na > nb;
+      return ln > rn;
     case ">=":
-      return na >= nb;
+      return ln >= rn;
   }
 }
 
-/* Call Helpers */
+/* Helpers */
 
-const toSig = (v: Signal | Primitive): Signal =>
-  isSignal(v) ? v : createSignal(createLiteral(v));
-
-function resolveFunctionFrom(anyVal: EvalResult) {
-  const node = isSignal(anyVal) ? resolveShallow(anyVal) : anyVal;
-  if (isFunction(node)) return node;
-  throw new TypeError("Value is not a function");
+function toSignal(value: EvalValue): Signal {
+  if (isSignal(value)) return value;
+  return createSignal(isData(value) ? value : createLiteral(value));
 }
 
-function collectArgSignals(argsOpt: NodeLike, scope: ScopeFn): Signal[] {
-  if (argsOpt.children.length === 0) return [];
+function makeLambda(names: string[], body: NodeLike, outerScope: ScopeLookup) {
+  return createFunction((...args: Signal[]) => {
+    const extendedScope: ScopeLookup = (name: string) => {
+      const i = names.indexOf(name);
+      if (i !== -1) {
+        return args[i] ?? createSignal(createLiteral(""));
+      }
+      return outerScope(name);
+    };
+    return toSignal(body.eval(extendedScope));
+  });
+}
 
-  const argsNode = argsOpt.child(0);
-  const expNodes: NodeLike[] = [
-    argsNode.child(0) as NodeLike,
-    ...argsNode.child(1).children.map((c) => c.child(1) as NodeLike),
-  ];
+function optChildren(optNode: OhmNode): OhmNode[] {
+  const child = optNode.child(0);
+  return child ? child.asIteration().children : [];
+}
 
-  return expNodes.map((n) => toSig(n.eval(scope)));
+function performCall(
+  callee: NodeLike,
+  argsOpt: NodeLike,
+  scope: ScopeLookup,
+  receiver?: NodeLike
+): Signal {
+  const calleeVal = callee.eval(scope);
+  const fnNode = isSignal(calleeVal) ? resolveShallow(calleeVal) : calleeVal;
+  if (!isFunction(fnNode)) throw new TypeError("Callee is not a function");
+
+  const args = optChildren(argsOpt).map((n) => toSignal(n.eval(scope)));
+  const allArgs = receiver ? [toSignal(receiver.eval(scope)), ...args] : args;
+
+  return fnNode.fn(...allArgs);
+}
+
+function resolveIdentPath(idents: string[], scope: ScopeLookup): Signal {
+  let current: Signal = scope(idents[0]!);
+
+  for (let i = 1; i < idents.length; i++) {
+    const key = idents[i]!;
+    const resolved = resolveShallow(current);
+
+    if (!isBlock(resolved)) {
+      throw new TypeError(`Cannot access property '${key}' of non-block value`);
+    }
+
+    const pair = resolved.values.find(([k]) => k === key);
+    if (!pair) {
+      throw new ReferenceError(`Unknown property '${key}'`);
+    }
+
+    const [, next] = pair;
+    current = next;
+  }
+
+  return current;
 }
 
 /* Semantics */
 
 const evalActions: EvalActionDict = {
-  Exp(e) {
-    return e.eval(this.args.scope);
+  Expr(expr) {
+    return expr.eval(this.args.scope);
   },
 
-  /* logical */
-  OrExp_or(a, _op, b) {
-    const va = a.eval(this.args.scope);
-    return toBool(va) ? va : b.eval(this.args.scope);
+  Lambda_ident(ident, _arrow, body) {
+    return makeLambda([ident.sourceString], body, this.args.scope);
   },
-  AndExp_and(a, _op, b) {
-    const va = a.eval(this.args.scope);
-    return toBool(va) ? b.eval(this.args.scope) : va;
-  },
-
-  /* equality */
-  EqExp_eq(a, _op, b) {
-    return eq(a.eval(this.args.scope), b.eval(this.args.scope));
-  },
-  EqExp_ne(a, _op, b) {
-    return !eq(a.eval(this.args.scope), b.eval(this.args.scope));
+  Lambda_list(_open, identListOpt, _close, _arrow, body) {
+    return makeLambda(
+      optChildren(identListOpt).map((n) => n.sourceString),
+      body,
+      this.args.scope
+    );
   },
 
-  /* relational */
-  RelExp_lt(a, _op, b) {
-    return cmp(a.eval(this.args.scope), b.eval(this.args.scope), "<");
-  },
-  RelExp_le(a, _op, b) {
-    return cmp(a.eval(this.args.scope), b.eval(this.args.scope), "<=");
-  },
-  RelExp_gt(a, _op, b) {
-    return cmp(a.eval(this.args.scope), b.eval(this.args.scope), ">");
-  },
-  RelExp_ge(a, _op, b) {
-    return cmp(a.eval(this.args.scope), b.eval(this.args.scope), ">=");
+  Or_or(left, _op, right) {
+    const leftValue = left.eval(this.args.scope);
+    return toBoolean(leftValue) ? leftValue : right.eval(this.args.scope);
   },
 
-  /* arithmetic */
-  AddExp_plus(a, _op, b) {
-    return toNum(a.eval(this.args.scope)) + toNum(b.eval(this.args.scope));
-  },
-  AddExp_minus(a, _op, b) {
-    return toNum(a.eval(this.args.scope)) - toNum(b.eval(this.args.scope));
-  },
-  MulExp_times(a, _op, b) {
-    return toNum(a.eval(this.args.scope)) * toNum(b.eval(this.args.scope));
-  },
-  MulExp_divide(a, _op, b) {
-    return toNum(a.eval(this.args.scope)) / toNum(b.eval(this.args.scope));
+  And_and(left, _op, right) {
+    const leftValue = left.eval(this.args.scope);
+    return toBoolean(leftValue) ? right.eval(this.args.scope) : leftValue;
   },
 
-  /* unary */
-  PriExp_not(_bang, e) {
-    return !toBool(e.eval(this.args.scope));
+  Eq_eq(left, _op, right) {
+    return isEqual(left.eval(this.args.scope), right.eval(this.args.scope));
   },
-  PriExp_neg(_minus, e) {
-    return -toNum(e.eval(this.args.scope));
-  },
-  PriExp_pos(_plus, e) {
-    return +toNum(e.eval(this.args.scope));
+  Eq_ne(left, _op, right) {
+    return !isEqual(left.eval(this.args.scope), right.eval(this.args.scope));
   },
 
-  /* calls */
-  Call_normal(path, _l, argsOpt, _r) {
-    const targetSig = path.eval(this.args.scope);
-    const funcNode = resolveFunctionFrom(targetSig);
-    const args = collectArgSignals(argsOpt, this.args.scope);
-    return funcNode.fn(...args);
+  Rel_le(left, _op, right) {
+    return compareNumbers(
+      left.eval(this.args.scope),
+      right.eval(this.args.scope),
+      "<="
+    );
+  },
+  Rel_lt(left, _op, right) {
+    return compareNumbers(
+      left.eval(this.args.scope),
+      right.eval(this.args.scope),
+      "<"
+    );
+  },
+  Rel_ge(left, _op, right) {
+    return compareNumbers(
+      left.eval(this.args.scope),
+      right.eval(this.args.scope),
+      ">="
+    );
+  },
+  Rel_gt(left, _op, right) {
+    return compareNumbers(
+      left.eval(this.args.scope),
+      right.eval(this.args.scope),
+      ">"
+    );
   },
 
-  Call_method(receiverAtom, _colon, funcId, _l, argsOpt, _r) {
-    const funcSig = this.args.scope(funcId.sourceString);
-    const funcNode = resolveFunctionFrom(funcSig);
-
-    const recvVal = receiverAtom.eval(this.args.scope);
-    const recvSig = toSig(recvVal);
-
-    const args = [recvSig, ...collectArgSignals(argsOpt, this.args.scope)];
-    return funcNode.fn(...args);
+  Add_plus(left, _op, right) {
+    return (
+      toNumber(left.eval(this.args.scope)) +
+      toNumber(right.eval(this.args.scope))
+    );
+  },
+  Add_minus(left, _op, right) {
+    return (
+      toNumber(left.eval(this.args.scope)) -
+      toNumber(right.eval(this.args.scope))
+    );
   },
 
-  /* atoms */
-  Atom_path(p) {
-    return p.eval(this.args.scope);
+  Mul_times(left, _op, right) {
+    return (
+      toNumber(left.eval(this.args.scope)) *
+      toNumber(right.eval(this.args.scope))
+    );
   },
-  Atom_bool(b) {
-    return b.sourceString === "true";
+  Mul_div(left, _op, right) {
+    return (
+      toNumber(left.eval(this.args.scope)) /
+      toNumber(right.eval(this.args.scope))
+    );
   },
-  Atom_num(n) {
-    return parseFloat(n.sourceString);
+
+  Unary_not(_op, expr) {
+    return !toBoolean(expr.eval(this.args.scope));
   },
-  Atom_str(s) {
-    const raw = s.sourceString;
+  Unary_neg(_op, expr) {
+    return -toNumber(expr.eval(this.args.scope));
+  },
+
+  Call_normal(callee, _open, argsOpt, _close) {
+    return performCall(callee, argsOpt, this.args.scope);
+  },
+  Call_method(receiver, _colon, callee, _open, argsOpt, _close) {
+    return performCall(callee, argsOpt, this.args.scope, receiver);
+  },
+
+  Prim_bool(tok) {
+    return tok.sourceString === "true";
+  },
+  Prim_num(tok) {
+    return parseFloat(tok.sourceString);
+  },
+  Prim_str(tok) {
+    const raw = tok.sourceString;
     return raw.slice(1, -1);
   },
-  Atom_paren(_l, e, _r) {
-    return e.eval(this.args.scope);
+
+  Func_path(path) {
+    return path.eval(this.args.scope);
+  },
+  Func_paren(_open, expr, _close) {
+    return expr.eval(this.args.scope);
   },
 
-  /* variable access */
-  Path(id, _d, dots) {
-    let cur: Signal = this.args.scope(id.sourceString);
-
-    for (const seg of dots.children) {
-      const key = seg.child(1).sourceString;
-      const r = resolveShallow(cur);
-
-      if (isBlock(r)) {
-        const pair = r.values.find(([k]) => k === key);
-        if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
-        const [, next] = pair;
-        cur = next;
-      } else {
-        throw new TypeError(
-          `Cannot access property '${key}' of non-block value`
-        );
-      }
-    }
-
-    return cur;
+  IdentPath(parts) {
+    const idents = parts.asIteration().children.map((n) => n.sourceString);
+    return resolveIdentPath(idents, this.args.scope);
   },
 };
 
 const semantics = grammar
   .createSemantics()
-  .addOperation<EvalResult>(
+  .addOperation<EvalValue>(
     "eval(scope)",
-    evalActions as unknown as ohm.ActionDict<EvalResult>
+    evalActions as unknown as ohm.ActionDict<EvalValue>
   );
 
 /* Evaluate */
 
-export function evalCode(src: string, scope: ScopeFn): DataNode {
-  const m = grammar.match(src, "Exp");
-  if (m.failed()) {
-    throw new SyntaxError(m.message);
-  }
-  const result = semantics(m).eval(scope);
-  if (isSignal(result)) {
-    return resolveShallow(result);
-  }
+export function evalCode(code: string, scope: ScopeLookup): DataNode {
+  const match = grammar.match(code, "Expr");
+  if (match.failed()) throw new SyntaxError(match.message);
+
+  const result = semantics(match).eval(scope);
+
+  if (isSignal(result)) return resolveShallow(result);
+  if (isData(result)) return result;
+
   return createLiteral(result as Primitive);
 }

@@ -101,6 +101,10 @@ export function isFunction(v: unknown): v is FunctionNode {
   return hasKind(v, "function");
 }
 
+export function isData(v: unknown): v is DataNode {
+  return isFunction(v) || isBlock(v) || isLiteral(v);
+}
+
 export function isCode(v: unknown): v is CodeNode {
   return hasKind(v, "code");
 }
