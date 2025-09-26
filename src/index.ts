@@ -10,7 +10,7 @@ import {
   createBlockSignal,
   resolveData,
 } from "./data";
-import "./library";
+import { withLibrary } from "./library";
 import { onRootDblClick, onRootKeyDown } from "./input";
 import { SignalMount } from "./render";
 
@@ -38,9 +38,8 @@ export function render(
 const literalSig = (v: Primitive) => createSignal(createLiteral(v));
 const codeSig = (src: string) => createSignal(createCode(src));
 
-const root = createBlockSignal(
-  [["x", createBlockSignal([], [literalSig("10"), literalSig("20")])]],
-  [createBlockSignal([], [literalSig("10"), literalSig("20")]), codeSig("x")]
+const root = withLibrary(
+  createBlockSignal([["x", literalSig(-10)]], [codeSig("number.abs(x)")])
 );
 
 const unmount = render(root, document.getElementById("root")!);

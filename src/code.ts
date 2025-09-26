@@ -39,11 +39,11 @@ type EvalActionDict = {
 /* Grammar */
 
 const grammar = ohm.grammar(String.raw`Script {
-  Expr       = Lambda
+  Expr       = Lambda | Or
 
   Lambda     = ident "=>" Lambda                  -- ident
              | "(" IdentList? ")" "=>" Lambda     -- list
-             | Or
+             | &"." Expr                          -- implicit
 
   Or         = Or "|" And                         -- or
              | And
@@ -80,16 +80,19 @@ const grammar = ohm.grammar(String.raw`Script {
   Prim       = boolean                            -- bool
              | number                             -- num
              | string                             -- str
-             | IdentPath                          -- path
+             | Path                               -- path
              | "(" Expr ")"                       -- paren
 
-  Func       = IdentPath                          -- path
+  Func       = Path                               -- path
              | "(" Expr ")"                       -- paren
+
+  Path       = IdentPath                           -- plain
+             | "." IdentPath                       -- dotted
+
+  IdentPath  = NonemptyListOf<ident, ".">
 
   ExprList   = ListOf<Expr, ",">
   IdentList  = NonemptyListOf<ident, ",">
-
-  IdentPath  = NonemptyListOf<ident, ".">
 
   ident      = letter (alnum | "_")*
 
@@ -169,11 +172,9 @@ function numericOp<T>(
 
 /* Semantics */
 
-const evalActions: EvalActionDict = {
-  Expr(expr) {
-    return expr.eval(this.args.scope);
-  },
+const IMPLICIT = "__";
 
+const evalActions: EvalActionDict = {
   Lambda_ident(ident, _arrow, body) {
     return makeLambda([ident.sourceString], body, this.args.scope);
   },
@@ -183,6 +184,9 @@ const evalActions: EvalActionDict = {
       body,
       this.args.scope
     );
+  },
+  Lambda_implicit(_guard, body) {
+    return makeLambda([IMPLICIT], body, this.args.scope);
   },
 
   Or_or(left, _op, right) {
@@ -253,6 +257,12 @@ const evalActions: EvalActionDict = {
     const raw = strToken.sourceString;
     return raw.slice(1, -1);
   },
+  Prim_path(path) {
+    return path.eval(this.args.scope);
+  },
+  Prim_paren(_open, expr, _close) {
+    return expr.eval(this.args.scope);
+  },
 
   Func_path(path) {
     return path.eval(this.args.scope);
@@ -261,9 +271,13 @@ const evalActions: EvalActionDict = {
     return expr.eval(this.args.scope);
   },
 
-  IdentPath(parts) {
-    const idents = parts.asIteration().children.map((n) => n.sourceString);
-    return resolveIdentPath(idents, this.args.scope);
+  Path_plain(list) {
+    const names = list.asIteration().children.map((c) => c.sourceString);
+    return resolveIdentPath(names, this.args.scope);
+  },
+  Path_dotted(_dot, list) {
+    const names = list.asIteration().children.map((c) => c.sourceString);
+    return resolveIdentPath([IMPLICIT, ...names], this.args.scope);
   },
 };
 

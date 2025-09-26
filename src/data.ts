@@ -179,19 +179,20 @@ export function createSignal<T>(initial: T): WriteSignal<T> {
 }
 
 export function createBlockSignal(
-  values: [string, ChildSignal][] = [],
+  values: [string, ChildSignal][] | Record<string, ChildSignal> = [],
   items: ChildSignal[] = []
 ): DataSignal<BlockNode> {
   const parent = createSignal(createBlock([], []));
-  for (const [_, v] of values) getParentSignal(v).value = parent;
+
+  const valueEntries = Array.isArray(values) ? values : Object.entries(values);
+  for (const [, v] of valueEntries) getParentSignal(v).value = parent;
   for (const v of items) getParentSignal(v).value = parent;
+
   parent.set(createBlock(values, items));
   return parent;
 }
 
 /* Evaluate */
-
-export const library: Record<string, DataSignal> = Object.create(null);
 
 function toStaticError(err: unknown): StaticError {
   return {
@@ -212,9 +213,6 @@ function lookupInScope(name: string, start: ChildSignal): ChildSignal {
     const found = currentBlock.values.find(([k]) => k === name);
     if (found) return found[1];
     scope = getParentSignal(scope).value;
-  }
-  if (Object.prototype.hasOwnProperty.call(library, name)) {
-    return library[name]!;
   }
   throw new Error(`Unbound identifier: ${name}`);
 }
