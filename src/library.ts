@@ -1,80 +1,59 @@
 import {
   type Primitive,
   type BlockNode,
-  type DataNode,
   type DataSignal,
-  type ChildSignal,
   isLiteral,
   isBlock,
-  isData,
-  isSignal,
   createLiteral,
   createBlock,
   createFunction,
   createSignal,
   createBlockSignal,
-  childToData,
+  resolveItems,
 } from "./data";
-
-export type EvalValue = Primitive | DataNode | ChildSignal;
 
 /* Conversions */
 
-function toPrimitive(value: EvalValue): Primitive {
-  const node = toData(value) ?? createLiteral("");
+export function toPrimitive(value: DataSignal): Primitive {
+  const node = value.get();
   if (isLiteral(node)) return node.value;
   if (isBlock(node)) throw new TypeError("Expected a primitive, got a block");
   throw new TypeError("Expected a primitive, got a function");
 }
 
-export function toBoolean(value: EvalValue): boolean {
+export function toBoolean(value: DataSignal): boolean {
   return Boolean(toPrimitive(value));
 }
 
-export function toNumber(value: EvalValue): number {
+export function toNumber(value: DataSignal): number {
   const n = Number(toPrimitive(value));
   if (!Number.isFinite(n)) {
-    throw new TypeError(`Expected a number, got ${String(value)}`);
+    throw new TypeError(`Expected a number, got ${String(n)}`);
   }
   return n;
 }
 
-export function toString(value: EvalValue): string {
+export function toString(value: DataSignal): string {
   return String(toPrimitive(value));
-}
-
-export function toData(value: EvalValue): DataNode | undefined {
-  if (isSignal(value)) return childToData(value);
-  return isData(value) ? value : createLiteral(value);
-}
-
-export function toSignal(value: EvalValue): DataSignal {
-  const node = toData(value) ?? createLiteral("");
-  return createSignal(isData(node) ? node : createLiteral(node));
 }
 
 /* Helpers */
 
-export function equals(a: EvalValue, b: EvalValue): boolean {
-  return toPrimitive(a) === toPrimitive(b);
-}
-
-function lit(v: Primitive) {
+function lit(v: Primitive): DataSignal {
   return createSignal(createLiteral(v));
 }
 
-function fn(impl: (...args: DataSignal[]) => DataSignal): ChildSignal {
+function fn(impl: (...args: DataSignal[]) => DataSignal): DataSignal {
   return createSignal(createFunction(impl));
 }
 
 function toList<T>(
-  value: EvalValue,
+  value: DataSignal,
   map: (p: Primitive) => T | undefined
 ): T[] {
-  const node = toData(value);
+  const node = value.get();
   const values: Primitive[] = isBlock(node)
-    ? node.items
-        .map(childToData)
+    ? resolveItems(node)
         .filter(isLiteral)
         .map((l) => l.value)
     : isLiteral(node)
@@ -83,18 +62,18 @@ function toList<T>(
   return values.map(map).filter((x): x is T => x !== undefined);
 }
 
-function toNumberList(value: EvalValue): number[] {
+function toNumberList(value: DataSignal): number[] {
   return toList(value, (p) => {
     const n = Number(p);
     return Number.isFinite(n) ? n : undefined;
   });
 }
 
-function toStringList(value: EvalValue): string[] {
+function toStringList(value: DataSignal): string[] {
   return toList(value, (p) => String(p));
 }
 
-function stringsToBlock(parts: string[]) {
+function stringsToBlock(parts: string[]): DataSignal<BlockNode> {
   return createSignal(
     createBlock(
       {},
@@ -105,18 +84,14 @@ function stringsToBlock(parts: string[]) {
 
 /* Library */
 
-export function createStdLibEntries(): Record<string, ChildSignal> {
+export function createStdLibEntries(): Record<string, DataSignal> {
   return {
     logic: createSignal(
       createBlock(
         {
           not: fn((x = lit(false)) => lit(!toBoolean(x))),
-          and: fn((a = lit(false), b = lit(false)) =>
-            toBoolean(a) ? toSignal(b) : toSignal(a)
-          ),
-          or: fn((a = lit(false), b = lit(false)) =>
-            toBoolean(a) ? toSignal(a) : toSignal(b)
-          ),
+          and: fn((a = lit(false), b = lit(false)) => (toBoolean(a) ? a : b)),
+          or: fn((a = lit(false), b = lit(false)) => (toBoolean(a) ? a : b)),
           all: fn((...args) => lit(args.every(toBoolean))),
           any: fn((...args) => lit(args.some(toBoolean))),
         },

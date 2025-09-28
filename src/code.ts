@@ -1,299 +1,419 @@
 import * as ohm from "ohm-js";
-import type { Node as OhmNode } from "ohm-js";
 
 import {
   type DataNode,
-  type ChildSignal,
-  isBlock,
+  type DataSignal,
   isFunction,
   createLiteral,
   createFunction,
   createSignal,
-  childToData,
+  getByKey,
+  getByKeyOrIndex,
 } from "./data";
-
-import {
-  type EvalValue,
-  toBoolean,
-  toNumber,
-  toData,
-  toSignal,
-  equals,
-} from "./library";
-
-/* Types */
-
-type ScopeLookup = (name: string) => ChildSignal;
-
-type NodeLike = OhmNode & {
-  eval(scope: ScopeLookup): EvalValue;
-};
-
-type EvalActionDict = {
-  [key: string]: (
-    this: { args: { scope: ScopeLookup } },
-    ...children: NodeLike[]
-  ) => EvalValue;
-};
+import { toPrimitive, toBoolean, toNumber } from "./library";
 
 /* Grammar */
 
-const grammar = ohm.grammar(String.raw`Script {
-  Expr       = Lambda | Or
+const grammar = ohm.grammar(String.raw`
+Script {
+  Start           = Expr<"">
 
-  Lambda     = ident "=>" Lambda                  -- ident
-             | "(" IdentList? ")" "=>" Lambda     -- list
-             | &"." Expr                          -- implicit
+  Expr<Dot>       = Lambda<Dot>
 
-  Or         = Or "|" And                         -- or
-             | And
+  Lambda<Dot>     = Pipe<Dot>                             -- pipe
+                  | Params "=>" Lambda<"">                -- arrow
+                  | &"." Pipe<".">                        -- implicit
 
-  And        = And "&" Eq                         -- and
-             | Eq
+  Params          = ident                                 -- ident
+                  | "(" IdentList? ")"                    -- list
 
-  Eq         = Eq "=" Rel                         -- eq
-             | Eq "!=" Rel                        -- ne
-             | Rel
+  IdentList       = NonemptyListOf<ident, ",">
 
-  Rel        = Rel "<=" Add                       -- le
-             | Rel "<"  Add                       -- lt
-             | Rel ">=" Add                       -- ge
-             | Rel ">"  Add                       -- gt
-             | Add
+  Pipe<Dot>       = Or<Dot> (PipeOp Or<Dot>)*
+  PipeOp          = ":"
 
-  Add        = Add "+" Mul                        -- plus
-             | Add "-" Mul                        -- minus
-             | Mul
+  Or<Dot>         = And<Dot> (OrOp And<Dot>)*
+  OrOp            = "|"
 
-  Mul        = Mul "*" Unary                      -- times
-             | Mul "/" Unary                      -- div
-             | Unary
+  And<Dot>        = Eq<Dot> (AndOp Eq<Dot>)*
+  AndOp           = "&"
 
-  Unary      = "!" Unary                          -- not
-             | "-" Unary                          -- neg
-             | Call
-             | Prim
+  Eq<Dot>         = Rel<Dot> (EqOp Rel<Dot>)*
+  EqOp            = "!=" | "="
 
-  Call       = Func "(" ExprList? ")"             -- normal
-             | Expr ":" Func "(" ExprList? ")"    -- method
+  Rel<Dot>        = Add<Dot> (RelOp Add<Dot>)*
+  RelOp           = "<=" | "<" | ">=" | ">"
 
-  Prim       = boolean                            -- bool
-             | number                             -- num
-             | string                             -- str
-             | Path                               -- path
-             | "(" Expr ")"                       -- paren
+  Add<Dot>        = Mul<Dot> (AddOp Mul<Dot>)*
+  AddOp           = "+" | "-"
 
-  Func       = Path                               -- path
-             | "(" Expr ")"                       -- paren
+  Mul<Dot>        = Unary<Dot> (MulOp Unary<Dot>)*
+  MulOp           = "*" | "/"
 
-  Path       = IdentPath                           -- plain
-             | "." IdentPath                       -- dotted
+  Unary<Dot>      = (("!" | "-" | "+")*) Path<Dot>
 
-  IdentPath  = NonemptyListOf<ident, ".">
+  Path<Dot>       = Prim<Dot> PathPart<Dot>*
+  PathPart<Dot>   = Call<Dot>
+                  | Index<Dot>
+                  | Member
 
-  ExprList   = ListOf<Expr, ",">
-  IdentList  = NonemptyListOf<ident, ",">
+  Call<Dot>       = "(" ListOf<Expr<Dot>, ","> ")"
+  Index<Dot>      = "[" Expr<Dot> "]"
+  Member          = "." ident
 
-  ident      = letter (alnum | "_")*
+  Prim<Dot>       = Literal                              -- lit
+                  | ident                                -- ident
+                  | "(" Expr<Dot> ")"                    -- paren
+                  | &"." Dot ident                       -- dot
 
-  boolean    = "true" | "false"
-  number     = digit+ ("." digit+)? 
+  Literal         = boolean
+                  | number
+                  | string
 
-  string     = d_string | s_string
-  d_string   = "\"" (~"\"" any)* "\""
-  s_string   = "'"  (~"'"  any)* "'"
+  boolean         = "true" | "false"
 
-  space     += " " | "\t" | "\n" | "\r"
-}`);
+  number          = integer
+                  | decimal
+                  | sciNumber
 
-/* Helpers */
+  integer         = "1".."9" digit*                      -- nonzero
+                  | "0"                                  -- zero
 
-function makeLambda(names: string[], body: NodeLike, outerScope: ScopeLookup) {
-  return createFunction((...args) => {
-    const extendedScope: ScopeLookup = (name: string) => {
-      const i = names.indexOf(name);
-      if (i !== -1) {
-        return args[i] ?? createSignal(createLiteral(""));
-      }
-      return outerScope(name);
-    };
-    return toSignal(body.eval(extendedScope));
-  });
+  decimal         = integer "." digit+ exponent?         -- intdot
+                  | "0" "." digit+ exponent?             -- zerodot
+                  | "." digit+ exponent?                 -- dot
+
+  sciNumber       = (integer | decimal) exponent
+  exponent        = ("e" | "E") ("+" | "-")? digit+
+
+  string          = dString
+                  | sString
+
+  dString         = "\"" dqChar* "\""
+  sString         = "'"  sqChar* "'"
+
+  dqChar          = escape | ~("\"" | "\\" | "\n" | "\r") any
+  sqChar          = escape | ~("'"  | "\\" | "\n" | "\r") any
+
+  escape          = "\\" escSimple | "\\u" hex4 | "\\x" hex2
+
+  escSimple       = "\"" | "'" | "\\" | "n" | "r" | "t" | "b" | "f"
+  hex2            = hexDigit hexDigit
+  hex4            = hexDigit hexDigit hexDigit hexDigit
+
+  ident           = identStart identRest*
+  identStart      = "_" | letter
+  identRest       = identStart | digit
+}
+`);
+
+/* AST Types */
+
+export type Expr =
+  | Lambda
+  | Binary
+  | Unary
+  | Call
+  | Index
+  | Member
+  | Lit
+  | Ident;
+
+export interface Lambda {
+  type: "Lambda";
+  params: Ident[];
+  body: Expr;
 }
 
-function optChildren(optNode: OhmNode): OhmNode[] {
-  const child = optNode.child(0);
-  return child ? child.asIteration().children : [];
+export interface Binary {
+  type: "Binary";
+  op: "|" | "&" | "!=" | "=" | "<=" | "<" | ">=" | ">" | "+" | "-" | "*" | "/";
+  left: Expr;
+  right: Expr;
 }
 
-function performCall(
-  callee: NodeLike,
-  argsOpt: NodeLike,
-  scope: ScopeLookup,
-  receiver?: NodeLike
-) {
-  const calleeVal = toData(callee.eval(scope));
-  if (!calleeVal || !isFunction(calleeVal)) {
-    throw new TypeError("Callee is not a function");
-  }
-
-  const args = optChildren(argsOpt).map((n) => toSignal(n.eval(scope)));
-  const allArgs = receiver ? [toSignal(receiver.eval(scope)), ...args] : args;
-
-  return calleeVal.fn(...allArgs);
+export interface Unary {
+  type: "Unary";
+  op: "!" | "-" | "+";
+  argument: Expr;
 }
 
-function resolveIdentPath(idents: string[], scope: ScopeLookup): ChildSignal {
-  let current: ChildSignal = scope(idents[0]!);
-
-  for (const key of idents.slice(1)) {
-    const resolved = childToData(current);
-    if (!resolved || !isBlock(resolved)) {
-      throw new TypeError(`Cannot access property '${key}' of non-block value`);
-    }
-    const pair = resolved.values.find(([k]) => k === key);
-    if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
-    current = pair[1];
-  }
-
-  return current;
+export interface Call {
+  type: "Call";
+  callee: Expr;
+  args: Expr[];
 }
 
-function numericOp<T>(
-  scope: ScopeLookup,
-  left: NodeLike,
-  right: NodeLike,
-  op: (a: number, b: number) => T
-): T {
-  const a = toNumber(left.eval(scope));
-  const b = toNumber(right.eval(scope));
-  return op(a, b);
+export interface Index {
+  type: "Index";
+  block: Expr;
+  index: Expr;
+}
+
+export interface Member {
+  type: "Member";
+  block: Expr;
+  key: Ident;
+}
+
+export interface Lit {
+  type: "Lit";
+  value: boolean | number | string;
+}
+
+export interface Ident {
+  type: "Ident";
+  name: string;
 }
 
 /* Semantics */
 
-const IMPLICIT = "__";
+const IMPLICIT_PARAM = "__";
 
-const evalActions: EvalActionDict = {
-  Lambda_ident(ident, _arrow, body) {
-    return makeLambda([ident.sourceString], body, this.args.scope);
-  },
-  Lambda_list(_open, identListOpt, _close, _arrow, body) {
-    return makeLambda(
-      optChildren(identListOpt).map((n) => n.sourceString),
-      body,
-      this.args.scope
-    );
+function buildBinaryChain(
+  first: ohm.Node,
+  ops: ohm.Node,
+  rights: ohm.Node
+): Expr {
+  return ops.children.reduce<Expr>(
+    (node, opNode, i) => ({
+      type: "Binary",
+      op: opNode.sourceString as Binary["op"],
+      left: node,
+      right: rights.children[i]!.ast as Expr,
+    }),
+    first.ast as Expr
+  );
+}
+
+const semantics = grammar.createSemantics().addAttribute("ast", {
+  Lambda_arrow(params, _arrow, body) {
+    return {
+      type: "Lambda",
+      params: params.ast as Ident[],
+      body: body.ast,
+    } as Lambda;
   },
   Lambda_implicit(_guard, body) {
-    return makeLambda([IMPLICIT], body, this.args.scope);
+    return {
+      type: "Lambda",
+      params: [{ type: "Ident", name: IMPLICIT_PARAM }],
+      body: body.ast,
+    } as Lambda;
   },
 
-  Or_or(left, _op, right) {
-    const l = left.eval(this.args.scope);
-    return toBoolean(l) ? l : right.eval(this.args.scope);
+  Params_ident(nameTok) {
+    return [{ type: "Ident", name: nameTok.sourceString }];
+  },
+  Params_list(_open, maybeList, _close) {
+    return (maybeList.children[0]?.ast ?? []) as Ident[];
+  },
+  IdentList(list) {
+    return list
+      .asIteration()
+      .children.map((n) => ({ type: "Ident", name: n.sourceString }));
   },
 
-  And_and(left, _op, right) {
-    const l = left.eval(this.args.scope);
-    return toBoolean(l) ? right.eval(this.args.scope) : l;
+  Pipe(first, _ops, rights) {
+    return rights.children.reduce<Expr>((acc, node) => {
+      const step = node.ast as Expr;
+      if (step.type === "Call") {
+        return { type: "Call", callee: step.callee, args: [acc, ...step.args] };
+      }
+      return { type: "Call", callee: step, args: [acc] };
+    }, first.ast as Expr);
   },
 
-  Eq_eq(left, _op, right) {
-    return equals(left.eval(this.args.scope), right.eval(this.args.scope));
+  Or(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
   },
-  Eq_ne(left, _op, right) {
-    return !equals(left.eval(this.args.scope), right.eval(this.args.scope));
+  And(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
   },
-
-  Rel_le(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a <= b);
+  Eq(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
   },
-  Rel_lt(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a < b);
+  Rel(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
   },
-  Rel_ge(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a >= b);
+  Add(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
   },
-  Rel_gt(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a > b);
-  },
-
-  Add_plus(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a + b);
-  },
-  Add_minus(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a - b);
+  Mul(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
   },
 
-  Mul_times(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a * b);
-  },
-  Mul_div(left, _op, right) {
-    return numericOp(this.args.scope, left, right, (a, b) => a / b);
-  },
-
-  Unary_not(_op, expr) {
-    return !toBoolean(expr.eval(this.args.scope));
-  },
-  Unary_neg(_op, expr) {
-    return -toNumber(expr.eval(this.args.scope));
+  Unary(ops, operand) {
+    return ops.children.reduceRight<Expr>(
+      (node, tok) => ({
+        type: "Unary",
+        op: tok.sourceString as Unary["op"],
+        argument: node,
+      }),
+      operand.ast as Expr
+    );
   },
 
-  Call_normal(callee, _open, argsOpt, _close) {
-    return performCall(callee, argsOpt, this.args.scope);
+  Path(prim, parts) {
+    return parts.children.reduce<Expr>((node, p) => {
+      const apply = p.ast as (obj: Expr) => Expr;
+      return apply(node);
+    }, prim.ast as Expr);
   },
-  Call_method(receiver, _colon, callee, _open, argsOpt, _close) {
-    return performCall(callee, argsOpt, this.args.scope, receiver);
+  Call(_open, list, _close) {
+    return (callee: Expr): Call => ({
+      type: "Call",
+      callee,
+      args: list.asIteration().children.map((n) => n.ast as Expr),
+    });
+  },
+  Index(_open, expr, _close) {
+    return (block: Expr): Index => ({
+      type: "Index",
+      block,
+      index: expr.ast as Expr,
+    });
+  },
+  Member(_dot, nameTok) {
+    return (block: Expr): Member => ({
+      type: "Member",
+      block,
+      key: { type: "Ident", name: nameTok.sourceString },
+    });
   },
 
-  Prim_bool(boolToken) {
-    return boolToken.sourceString === "true";
-  },
-  Prim_num(numToken) {
-    return parseFloat(numToken.sourceString);
-  },
-  Prim_str(strToken) {
-    const raw = strToken.sourceString;
-    return raw.slice(1, -1);
-  },
-  Prim_path(path) {
-    return path.eval(this.args.scope);
+  Prim_ident(nameTok) {
+    return { type: "Ident", name: nameTok.sourceString };
   },
   Prim_paren(_open, expr, _close) {
-    return expr.eval(this.args.scope);
+    return expr.ast;
+  },
+  Prim_dot(_guard, _dot, nameTok) {
+    return {
+      type: "Member",
+      block: { type: "Ident", name: IMPLICIT_PARAM },
+      key: { type: "Ident", name: nameTok.sourceString },
+    } as Member;
   },
 
-  Func_path(path) {
-    return path.eval(this.args.scope);
+  boolean(_) {
+    return { type: "Lit", value: this.sourceString === "true" };
   },
-  Func_paren(_open, expr, _close) {
-    return expr.eval(this.args.scope);
+  number(_) {
+    return { type: "Lit", value: Number(this.sourceString) };
   },
-
-  Path_plain(list) {
-    const names = list.asIteration().children.map((c) => c.sourceString);
-    return resolveIdentPath(names, this.args.scope);
+  string(_) {
+    const raw = this.sourceString;
+    const value = JSON.parse(
+      raw[0] === "'"
+        ? `"${raw.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"')}"`
+        : raw
+    );
+    return { type: "Lit", value };
   },
-  Path_dotted(_dot, list) {
-    const names = list.asIteration().children.map((c) => c.sourceString);
-    return resolveIdentPath([IMPLICIT, ...names], this.args.scope);
-  },
-};
-
-const semantics = grammar
-  .createSemantics()
-  .addOperation<EvalValue>(
-    "eval(scope)",
-    evalActions as unknown as ohm.ActionDict<EvalValue>
-  );
+});
 
 /* Evaluate */
 
-export function evalCode(code: string, scope: ScopeLookup): DataNode {
-  const match = grammar.match(code, "Expr");
-  if (match.failed()) throw new SyntaxError(match.message);
+const litSig = (v: boolean | number | string): DataSignal =>
+  createSignal(createLiteral(v));
 
-  const result = semantics(match).eval(scope) as EvalValue;
-  return toData(result) ?? createLiteral("");
+const BINARY_OPS: Partial<
+  Record<Binary["op"], (a: DataSignal, b: DataSignal) => DataSignal>
+> = {
+  "!=": (a, b) => litSig(toPrimitive(a) !== toPrimitive(b)),
+  "=": (a, b) => litSig(toPrimitive(a) === toPrimitive(b)),
+  "<=": (a, b) => litSig(toNumber(a) <= toNumber(b)),
+  "<": (a, b) => litSig(toNumber(a) < toNumber(b)),
+  ">=": (a, b) => litSig(toNumber(a) >= toNumber(b)),
+  ">": (a, b) => litSig(toNumber(a) > toNumber(b)),
+  "+": (a, b) => litSig(toNumber(a) + toNumber(b)),
+  "-": (a, b) => litSig(toNumber(a) - toNumber(b)),
+  "*": (a, b) => litSig(toNumber(a) * toNumber(b)),
+  "/": (a, b) => litSig(toNumber(a) / toNumber(b)),
+};
+
+const UNARY_OPS: Record<Unary["op"], (v: DataSignal) => DataSignal> = {
+  "!": (v) => litSig(!toBoolean(v)),
+  "-": (v) => litSig(-toNumber(v)),
+  "+": (v) => litSig(+toNumber(v)),
+};
+
+function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
+  switch (e.type) {
+    case "Lambda": {
+      const params = e.params.map((p) => p.name);
+      return createSignal(
+        createFunction((...args: DataSignal[]) =>
+          evalExpr(e.body, (name: string) => {
+            const i = params.indexOf(name);
+            if (i !== -1) return args[i] ?? litSig("");
+            return scope(name);
+          })
+        )
+      );
+    }
+
+    case "Binary": {
+      const { op, left, right } = e;
+
+      if (op === "|") {
+        const lv = toBoolean(evalExpr(left, scope));
+        return lv ? litSig(true) : litSig(toBoolean(evalExpr(right, scope)));
+      }
+      if (op === "&") {
+        const lv = toBoolean(evalExpr(left, scope));
+        return lv ? litSig(toBoolean(evalExpr(right, scope))) : litSig(false);
+      }
+
+      const f = BINARY_OPS[op];
+      if (f) {
+        return f(evalExpr(left, scope), evalExpr(right, scope));
+      }
+
+      throw new Error(`Unknown operator: ${op}`);
+    }
+
+    case "Unary": {
+      const v = evalExpr(e.argument, scope);
+      const f = UNARY_OPS[e.op];
+      if (f) return f(v);
+      throw new Error(`Unknown unary operator: ${e.op}`);
+    }
+
+    case "Call": {
+      const callee = evalExpr(e.callee, scope).get();
+      if (!callee || !isFunction(callee)) {
+        throw new TypeError("Callee is not a function");
+      }
+      const args = e.args.map((a) => evalExpr(a, scope));
+      return callee.fn(...args);
+    }
+
+    case "Member": {
+      return getByKey(evalExpr(e.block, scope), e.key.name);
+    }
+
+    case "Index": {
+      return getByKeyOrIndex(
+        evalExpr(e.block, scope),
+        evalExpr(e.index, scope)
+      );
+    }
+
+    case "Lit":
+      return litSig(e.value);
+
+    case "Ident":
+      return scope(e.name);
+  }
+}
+
+export function evalCode(
+  code: string,
+  scope: (name: string) => DataSignal
+): DataNode {
+  const match = grammar.match(code, "Start");
+  if (match.failed()) throw new SyntaxError(match.message);
+  return evalExpr(semantics(match).ast, scope).get();
 }

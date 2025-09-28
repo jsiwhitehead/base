@@ -15,7 +15,7 @@ import {
   createCode,
   createSignal,
   childToData,
-  getChildKey,
+  getKeyOfChild,
   insertBefore,
   insertAfter,
   assignKey,
@@ -326,7 +326,7 @@ class BlockView extends View<BlockNode> {
           stop();
           const editor = this.ensureKeyEditor(targetSignal);
 
-          if (!getChildKey(this.ownerSignal.peek(), targetSignal)) {
+          if (!getKeyOfChild(this.ownerSignal.peek(), targetSignal)) {
             this.tempKeySignal = targetSignal;
             if (this.lastNode) this.update(this.lastNode);
           }
@@ -466,7 +466,7 @@ class BlockView extends View<BlockNode> {
     if (!editor) {
       editor = new StringView(
         "key",
-        () => getChildKey(this.ownerSignal.peek(), sig) ?? "",
+        () => getKeyOfChild(this.ownerSignal.peek(), sig) ?? "",
         (nextKey) => {
           const parentBlock = this.ownerSignal.peek();
 

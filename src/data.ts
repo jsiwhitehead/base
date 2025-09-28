@@ -206,12 +206,17 @@ function isStaticTruthy(n: StaticNode): boolean {
   return Boolean(n);
 }
 
-function lookupInScope(name: string, start: ChildSignal): ChildSignal {
+function lookupInScope(name: string, start: ChildSignal): DataSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
     const currentBlock = scope.get();
     const found = currentBlock.values.find(([k]) => k === name);
-    if (found) return found[1];
+    if (found) {
+      const evaluated = childToData(found[1]);
+      if (evaluated !== undefined) {
+        return createSignal(evaluated);
+      }
+    }
     scope = getParentSignal(scope).value;
   }
   throw new Error(`Unbound identifier: ${name}`);
@@ -235,6 +240,15 @@ export function childToData(sig: ChildSignal): DataNode | undefined {
   }
 
   return v;
+}
+
+export function resolveItems(block: BlockNode): DataNode[] {
+  const out: DataNode[] = [];
+  for (const isg of block.items) {
+    const v = childToData(isg);
+    if (v !== undefined) out.push(v);
+  }
+  return out;
 }
 
 export function resolveData(n: DataNode): StaticNode {
@@ -333,17 +347,78 @@ function removeChildAt(block: BlockNode, loc: ChildLoc): BlockNode {
 
 /* Getters */
 
-export function getChildrenInOrder(block: BlockNode): ChildSignal[] {
-  return [...block.values.map(([, v]) => v), ...block.items];
-}
-
-export function getChildKey(
+export function getKeyOfChild(
   parentBlock: BlockNode,
   child: ChildSignal
 ): string | undefined {
   const loc = findChildLocation(parentBlock, child);
   if (loc?.kind === "value") return parentBlock.values[loc.index]![0];
   return undefined;
+}
+
+export function getByKey(child: ChildSignal, key: string): DataSignal {
+  const node = childToData(child);
+  if (!node || !isBlock(node)) {
+    throw new TypeError(`Cannot access property '${key}' of non-block value`);
+  }
+  const pair = node.values.find(([k]) => k === key);
+  if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
+
+  const evaluated = childToData(pair[1]);
+  if (evaluated === undefined) {
+    throw new ReferenceError(`Unknown property '${key}'`);
+  }
+  return createSignal(evaluated);
+}
+
+export function getByIndex1(child: ChildSignal, idx1: number): DataSignal {
+  if (!Number.isFinite(idx1)) {
+    throw new TypeError("Index must be a finite number");
+  }
+  const idx0 = Math.trunc(idx1) - 1;
+  if (idx0 < 0) {
+    throw new RangeError("Index must be 1 or greater");
+  }
+  const node = childToData(child);
+  if (!node || !isBlock(node)) {
+    throw new TypeError("Cannot index into a non-block value");
+  }
+
+  const present: DataNode[] = [];
+  for (const isg of node.items) {
+    const v = childToData(isg);
+    if (v !== undefined) present.push(v);
+  }
+
+  const selected = present[idx0];
+  if (!selected) {
+    throw new RangeError(
+      `Index ${idx1} is out of range (present items length ${present.length})`
+    );
+  }
+  return createSignal(selected);
+}
+
+export function getByKeyOrIndex(
+  child: ChildSignal,
+  value: ChildSignal
+): DataSignal {
+  const dn = childToData(value);
+  if (dn && isLiteral(dn)) {
+    const litv = dn.value;
+    if (typeof litv === "number") {
+      return getByIndex1(child, litv);
+    }
+    if (typeof litv === "string") {
+      const maybe = Number(litv);
+      if (Number.isFinite(maybe) && Number.isInteger(maybe)) {
+        return getByIndex1(child, maybe);
+      }
+      return getByKey(child, litv);
+    }
+  }
+
+  throw new TypeError("Index/key must evaluate to a string or number");
 }
 
 /* Transformations */
