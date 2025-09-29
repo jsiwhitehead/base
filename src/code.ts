@@ -15,6 +15,7 @@ import {
   toBool,
   reqPrim,
   reqNum,
+  maybeText,
   mapNums,
 } from "./library";
 
@@ -35,20 +36,17 @@ Script {
 
   IdentList       = NonemptyListOf<ident, ",">
 
-  Pipe<Dot>       = Or<Dot> (PipeOp Or<Dot>)*
+  Pipe<Dot>       = Eq<Dot> (PipeOp Eq<Dot>)*
   PipeOp          = ":"
-
-  Or<Dot>         = And<Dot> (OrOp And<Dot>)*
-  OrOp            = "|"
-
-  And<Dot>        = Eq<Dot> (AndOp Eq<Dot>)*
-  AndOp           = "&"
 
   Eq<Dot>         = Rel<Dot> (EqOp Rel<Dot>)*
   EqOp            = "!=" | "="
 
-  Rel<Dot>        = Add<Dot> (RelOp Add<Dot>)*
+  Rel<Dot>        = Concat<Dot> (RelOp Concat<Dot>)*
   RelOp           = "<=" | "<" | ">=" | ">"
+
+  Concat<Dot>     = Add<Dot> (ConcatOp Add<Dot>)*
+  ConcatOp        = "&"
 
   Add<Dot>        = Mul<Dot> (AddOp Mul<Dot>)*
   AddOp           = "+" | "-"
@@ -133,7 +131,7 @@ export interface Lambda {
 
 export interface Binary {
   type: "Binary";
-  op: "|" | "&" | "!=" | "=" | "<=" | "<" | ">=" | ">" | "+" | "-" | "*" | "/";
+  op: "!=" | "=" | "<=" | "<" | ">=" | ">" | "&" | "+" | "-" | "*" | "/";
   left: Expr;
   right: Expr;
 }
@@ -234,16 +232,13 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     }, first.ast as Expr);
   },
 
-  Or(first, ops, rights) {
-    return buildBinaryChain(first, ops, rights);
-  },
-  And(first, ops, rights) {
-    return buildBinaryChain(first, ops, rights);
-  },
   Eq(first, ops, rights) {
     return buildBinaryChain(first, ops, rights);
   },
   Rel(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
+  },
+  Concat(first, ops, rights) {
     return buildBinaryChain(first, ops, rights);
   },
   Add(first, ops, rights) {
@@ -339,6 +334,8 @@ const BINARY_OPS: Partial<
   ">=": (a, b) => bool(reqNum(a) >= reqNum(b)),
   ">": (a, b) => bool(reqNum(a) > reqNum(b)),
 
+  "&": (a, b) => lit((maybeText(a) ?? "") + (maybeText(b) ?? "")),
+
   "+": mapNums((a, b) => a + b),
   "-": mapNums((a, b) => a - b),
   "*": mapNums((a, b) => a * b),
@@ -369,21 +366,8 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
     case "Binary": {
       const { op, left, right } = e;
-
-      if (op === "|") {
-        const lv = toBool(evalExpr(left, scope));
-        return lv ? bool(true) : bool(toBool(evalExpr(right, scope)));
-      }
-      if (op === "&") {
-        const lv = toBool(evalExpr(left, scope));
-        return lv ? bool(toBool(evalExpr(right, scope))) : bool(false);
-      }
-
       const f = BINARY_OPS[op];
-      if (f) {
-        return f(evalExpr(left, scope), evalExpr(right, scope));
-      }
-
+      if (f) return f(evalExpr(left, scope), evalExpr(right, scope));
       throw new Error(`Unknown operator: ${op}`);
     }
 
