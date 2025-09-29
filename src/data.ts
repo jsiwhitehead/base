@@ -4,7 +4,11 @@ import { evalCode } from "./code";
 
 /* Data Types */
 
-export type Primitive = boolean | number | string;
+export type Primitive = true | number | string;
+
+export type BlankNode = {
+  kind: "blank";
+};
 
 export type LiteralNode = {
   kind: "literal";
@@ -22,7 +26,7 @@ export type FunctionNode = {
   fn: (...args: DataSignal[]) => DataSignal;
 };
 
-export type DataNode = LiteralNode | BlockNode | FunctionNode;
+export type DataNode = BlankNode | LiteralNode | BlockNode | FunctionNode;
 
 /* Eval Types */
 
@@ -71,7 +75,7 @@ export type StaticBlock = {
   items: StaticNode[];
 };
 
-export type StaticNode = StaticError | Primitive | StaticBlock;
+export type StaticNode = StaticError | BlankNode | Primitive | StaticBlock;
 
 /* Parent Store */
 
@@ -93,6 +97,10 @@ export function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
 }
 
+export function isBlank(v: unknown): v is BlankNode {
+  return hasKind(v, "blank");
+}
+
 export function isLiteral(v: unknown): v is LiteralNode {
   return hasKind(v, "literal");
 }
@@ -106,7 +114,7 @@ export function isFunction(v: unknown): v is FunctionNode {
 }
 
 export function isData(v: unknown): v is DataNode {
-  return isLiteral(v) || isBlock(v) || isFunction(v);
+  return isBlank(v) || isLiteral(v) || isBlock(v) || isFunction(v);
 }
 
 export function isIfElse(v: unknown): v is IfElseNode {
@@ -132,6 +140,10 @@ export function isStaticError(v: unknown): v is StaticError {
 }
 
 /* Constructors */
+
+export function createBlank(): BlankNode {
+  return { kind: "blank" };
+}
 
 export function createLiteral(value: Primitive): LiteralNode {
   return { kind: "literal", value };
@@ -203,36 +215,29 @@ function toStaticError(err: unknown): StaticError {
 
 function isStaticTruthy(n: StaticNode): boolean {
   if (isStaticError(n)) return false;
+  if (isBlank(n)) return false;
   return Boolean(n);
 }
 
 function lookupInScope(name: string, start: ChildSignal): DataSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
-    const currentBlock = scope.get();
-    const found = currentBlock.values.find(([k]) => k === name);
-    if (found) {
-      const evaluated = childToData(found[1]);
-      if (evaluated !== undefined) {
-        return createSignal(evaluated);
-      }
-    }
+    const found = scope.get().values.find(([k]) => k === name);
+    if (found) return createSignal(childToData(found[1]));
     scope = getParentSignal(scope).value;
   }
   throw new Error(`Unbound identifier: ${name}`);
 }
 
-export function childToData(sig: ChildSignal): DataNode | undefined {
+export function childToData(sig: ChildSignal): DataNode {
   const v = sig.get();
 
   if (isIfElse(v)) {
-    const condNode = v.if.get();
-    const condStatic = resolveData(condNode);
-    const truthy = isStaticTruthy(condStatic);
+    const truthy = isStaticTruthy(resolveData(v.if.get()));
 
     if (truthy) return v.then.get();
     if (v.else) return v.else.get();
-    return undefined;
+    return createBlank();
   }
 
   if (isCode(v)) {
@@ -243,37 +248,30 @@ export function childToData(sig: ChildSignal): DataNode | undefined {
 }
 
 export function resolveItems(block: BlockNode): DataNode[] {
-  const out: DataNode[] = [];
-  for (const isg of block.items) {
-    const v = childToData(isg);
-    if (v !== undefined) out.push(v);
-  }
-  return out;
+  return block.items.map(childToData);
 }
 
 export function resolveData(n: DataNode): StaticNode {
+  if (n.kind === "blank") return { kind: "blank" };
+
   if (n.kind === "literal") return n.value;
 
   if (n.kind === "block") {
-    const values: [string, StaticNode][] = [];
-    for (const [k, vsig] of n.values) {
+    const values: [string, StaticNode][] = n.values.map(([k, vsig]) => {
       try {
-        const v = childToData(vsig);
-        if (v !== undefined) values.push([k, resolveData(v)]);
+        return [k, resolveData(childToData(vsig))];
       } catch (err) {
-        values.push([k, toStaticError(err)]);
+        return [k, toStaticError(err)];
       }
-    }
+    });
 
-    const items: StaticNode[] = [];
-    for (const isg of n.items) {
+    const items: StaticNode[] = n.items.map((isg) => {
       try {
-        const v = childToData(isg);
-        if (v !== undefined) items.push(resolveData(v));
+        return resolveData(childToData(isg));
       } catch (err) {
-        items.push(toStaticError(err));
+        return toStaticError(err);
       }
-    }
+    });
 
     return { kind: "block", values, items };
   }
@@ -333,7 +331,7 @@ function replaceChildAt(
   if (loc.kind === "item") {
     return createBlock(block.values, block.items.toSpliced(loc.index, 1, next));
   }
-  const curKey = block.values[loc.index]![0];
+  const [curKey] = block.values[loc.index]!;
   const nextValues = block.values.toSpliced(loc.index, 1, [curKey, next]);
   return createBlock(nextValues, block.items);
 }
@@ -352,22 +350,18 @@ export function getKeyOfChild(
   child: ChildSignal
 ): string | undefined {
   const loc = findChildLocation(parentBlock, child);
-  if (loc?.kind === "value") return parentBlock.values[loc.index]![0];
-  return undefined;
+  return loc?.kind === "value" ? parentBlock.values[loc.index]![0] : undefined;
 }
 
 export function getByKey(child: ChildSignal, key: string): DataSignal {
   const node = childToData(child);
-  if (!node || !isBlock(node)) {
+  if (!isBlock(node)) {
     throw new TypeError(`Cannot access property '${key}' of non-block value`);
   }
   const pair = node.values.find(([k]) => k === key);
   if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
 
   const evaluated = childToData(pair[1]);
-  if (evaluated === undefined) {
-    throw new ReferenceError(`Unknown property '${key}'`);
-  }
   return createSignal(evaluated);
 }
 
@@ -380,15 +374,11 @@ export function getByIndex1(child: ChildSignal, idx1: number): DataSignal {
     throw new RangeError("Index must be 1 or greater");
   }
   const node = childToData(child);
-  if (!node || !isBlock(node)) {
+  if (!isBlock(node)) {
     throw new TypeError("Cannot index into a non-block value");
   }
 
-  const present: DataNode[] = [];
-  for (const isg of node.items) {
-    const v = childToData(isg);
-    if (v !== undefined) present.push(v);
-  }
+  const present = node.items.map(childToData);
 
   const selected = present[idx0];
   if (!selected) {
@@ -404,7 +394,7 @@ export function getByKeyOrIndex(
   value: ChildSignal
 ): DataSignal {
   const dn = childToData(value);
-  if (dn && isLiteral(dn)) {
+  if (isLiteral(dn)) {
     const litv = dn.value;
     if (typeof litv === "number") {
       return getByIndex1(child, litv);

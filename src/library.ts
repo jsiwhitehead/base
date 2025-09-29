@@ -1,9 +1,12 @@
 import {
   type Primitive,
   type BlockNode,
+  type DataNode,
   type DataSignal,
+  isBlank,
   isLiteral,
   isBlock,
+  createBlank,
   createLiteral,
   createBlock,
   createFunction,
@@ -12,88 +15,150 @@ import {
   resolveItems,
 } from "./data";
 
-/* Conversions */
+/* Errors */
 
-export function toPrimitive(value: DataSignal): Primitive {
-  const node = value.get();
-  if (isLiteral(node)) return node.value;
-  if (isBlock(node)) throw new TypeError("Expected a primitive, got a block");
-  throw new TypeError("Expected a primitive, got a function");
+const ERR = {
+  bool: "Expected boolean (true or blank)",
+  lit: "Expected literal value",
+  num: "Expected number",
+  numOrBlank: "Expected number or blank",
+  str: "Expected string",
+  strOrBlank: "Expected string or blank",
+  numsOrBlank: "Expected numbers or blanks (including flat blocks)",
+  strs: "Expected strings (including flat blocks)",
+};
+
+/* Constructors */
+
+export function blank(): DataSignal {
+  return createSignal(createBlank());
 }
 
-export function toBoolean(value: DataSignal): boolean {
-  return Boolean(toPrimitive(value));
+export function lit(value: Primitive): DataSignal {
+  return createSignal(createLiteral(value));
 }
 
-export function toNumber(value: DataSignal): number {
-  const n = Number(toPrimitive(value));
-  if (!Number.isFinite(n)) {
-    throw new TypeError(`Expected a number, got ${String(n)}`);
-  }
-  return n;
+export function bool(flag: boolean): DataSignal {
+  return flag ? lit(true) : blank();
 }
 
-export function toString(value: DataSignal): string {
-  return String(toPrimitive(value));
-}
-
-/* Helpers */
-
-function lit(v: Primitive): DataSignal {
-  return createSignal(createLiteral(v));
-}
-
-function fn(impl: (...args: DataSignal[]) => DataSignal): DataSignal {
+export function fn(impl: (...argSigs: DataSignal[]) => DataSignal): DataSignal {
   return createSignal(createFunction(impl));
 }
 
-function toList<T>(
-  value: DataSignal,
-  map: (p: Primitive) => T | undefined
-): T[] {
-  const node = value.get();
-  const values: Primitive[] = isBlock(node)
-    ? resolveItems(node)
-        .filter(isLiteral)
-        .map((l) => l.value)
-    : isLiteral(node)
-    ? [node.value]
-    : [];
-  return values.map(map).filter((x): x is T => x !== undefined);
+/* Conversions */
+
+export function toBool(valueSig: DataSignal): boolean {
+  const node = valueSig.get();
+  if (isBlank(node)) return false;
+  if (isLiteral(node) && node.value === true) return true;
+  throw new TypeError(ERR.bool);
 }
 
-function toNumberList(value: DataSignal): number[] {
-  return toList(value, (p) => {
-    const n = Number(p);
-    return Number.isFinite(n) ? n : undefined;
+export function reqPrim(valueSig: DataSignal): Primitive {
+  const node = valueSig.get();
+  if (isLiteral(node)) return node.value;
+  throw new TypeError(ERR.lit);
+}
+
+export function reqNum(valueSig: DataSignal): number {
+  const node = valueSig.get();
+  if (isLiteral(node) && typeof node.value === "number") return node.value;
+  throw new TypeError(ERR.num);
+}
+
+export function reqStr(valueSig: DataSignal): string {
+  const node = valueSig.get();
+  if (isLiteral(node) && typeof node.value === "string") return node.value;
+  throw new TypeError(ERR.str);
+}
+
+export function maybeNum(valueSig: DataSignal): number | null {
+  const node = valueSig.get();
+  if (isBlank(node)) return null;
+  if (isLiteral(node) && typeof node.value === "number") return node.value;
+  throw new TypeError(ERR.numOrBlank);
+}
+
+export function maybeStr(valueSig: DataSignal): string | null {
+  const node = valueSig.get();
+  if (isBlank(node)) return null;
+  if (isLiteral(node) && typeof node.value === "string") return node.value;
+  throw new TypeError(ERR.strOrBlank);
+}
+
+export function optNum(valueSig: DataSignal, defaultNumber: number): number {
+  return maybeNum(valueSig) ?? defaultNumber;
+}
+
+export function optStr(valueSig: DataSignal, defaultText: string): string {
+  return maybeStr(valueSig) ?? defaultText;
+}
+
+export function mapNums(
+  mapNumbersToPrimitive: (...numbers: number[]) => Primitive
+): (...argSigs: DataSignal[]) => DataSignal {
+  return (...argSigs: DataSignal[]) => {
+    const numbers = argSigs.map(maybeNum);
+    if (numbers.some((n) => n === null)) return blank();
+    return lit(mapNumbersToPrimitive(...(numbers as number[])));
+  };
+}
+
+function collectOneLevel<T>(
+  sourceSig: DataSignal,
+  mapItem: (node: DataNode) => T | undefined
+): T[] {
+  const sourceNode = sourceSig.get();
+  const items = isBlock(sourceNode) ? resolveItems(sourceNode) : [sourceNode];
+  return items.flatMap((itemNode) => {
+    const mapped = mapItem(itemNode);
+    return mapped === undefined ? [] : [mapped];
   });
 }
 
-function toStringList(value: DataSignal): string[] {
-  return toList(value, (p) => String(p));
+function numbersFlatOrBlank(sourceSig: DataSignal): number[] {
+  return collectOneLevel(sourceSig, (node) => {
+    if (isBlank(node)) return undefined;
+    if (isLiteral(node) && typeof node.value === "number") return node.value;
+    throw new TypeError(ERR.numsOrBlank);
+  });
 }
 
-function stringsToBlock(parts: string[]): DataSignal<BlockNode> {
-  return createSignal(
-    createBlock(
-      {},
-      parts.map((p) => createSignal(createLiteral(p)))
-    )
-  );
+function textsFlatRequired(sourceSig: DataSignal): string[] {
+  return collectOneLevel(sourceSig, (node) => {
+    if (isBlank(node)) throw new TypeError(ERR.strs);
+    if (isLiteral(node) && typeof node.value === "string") return node.value;
+    throw new TypeError(ERR.strs);
+  });
 }
 
 /* Library */
 
-export function createStdLibEntries(): Record<string, DataSignal> {
+export function createLibrary(): Record<string, DataSignal> {
   return {
     logic: createSignal(
       createBlock(
         {
-          not: fn((x = lit(false)) => lit(!toBoolean(x))),
-          and: fn((a = lit(false), b = lit(false)) => (toBoolean(a) ? a : b)),
-          or: fn((a = lit(false), b = lit(false)) => (toBoolean(a) ? a : b)),
-          all: fn((...args) => lit(args.every(toBoolean))),
-          any: fn((...args) => lit(args.some(toBoolean))),
+          not: fn((valueSig = blank()) => {
+            return bool(!toBool(valueSig));
+          }),
+
+          and: fn((leftSig = blank(), rightSig = blank()) => {
+            return bool(toBool(leftSig) && toBool(rightSig));
+          }),
+
+          or: fn((leftSig = blank(), rightSig = blank()) => {
+            return bool(toBool(leftSig) || toBool(rightSig));
+          }),
+
+          all: fn((...argSigs: DataSignal[]) =>
+            bool(argSigs.every((sig) => !isBlank(sig.get())))
+          ),
+
+          any: fn((...argSigs: DataSignal[]) =>
+            bool(argSigs.some((sig) => !isBlank(sig.get())))
+          ),
         },
         []
       )
@@ -102,52 +167,85 @@ export function createStdLibEntries(): Record<string, DataSignal> {
     number: createSignal(
       createBlock(
         {
-          abs: fn((x = lit(0)) => lit(Math.abs(toNumber(x)))),
-          round: fn((x = lit(0), places = lit(0)) => {
-            const n = toNumber(x);
-            const p = toNumber(places);
-            const f = 10 ** p;
-            return lit(Math.round(n * f) / f);
+          abs: fn((valueSig = blank()) => {
+            const valueNumber = maybeNum(valueSig);
+            if (valueNumber === null) return blank();
+            return lit(Math.abs(valueNumber));
           }),
-          ceil: fn((x = lit(0)) => lit(Math.ceil(toNumber(x)))),
-          floor: fn((x = lit(0)) => lit(Math.floor(toNumber(x)))),
+
+          round: fn((valueSig = blank(), placesSig = blank()) => {
+            const valueNumber = maybeNum(valueSig);
+            if (valueNumber === null) return blank();
+            const decimalPlaces = optNum(placesSig, 0);
+            const factor = 10 ** decimalPlaces;
+            return lit(Math.round(valueNumber * factor) / factor);
+          }),
+
+          ceil: fn((valueSig = blank()) => {
+            const valueNumber = maybeNum(valueSig);
+            if (valueNumber === null) return blank();
+            return lit(Math.ceil(valueNumber));
+          }),
+
+          floor: fn((valueSig = blank()) => {
+            const valueNumber = maybeNum(valueSig);
+            if (valueNumber === null) return blank();
+            return lit(Math.floor(valueNumber));
+          }),
+
           clamp: fn(
-            (
-              x = lit(0),
-              min = lit(Number.NEGATIVE_INFINITY),
-              max = lit(Number.POSITIVE_INFINITY)
-            ) => {
-              const v = toNumber(x);
-              const mn = toNumber(min);
-              const mx = toNumber(max);
-              return lit(Math.min(Math.max(v, mn), mx));
+            (valueSig = blank(), minSig = blank(), maxSig = blank()) => {
+              const valueNumber = maybeNum(valueSig);
+              if (valueNumber === null) return blank();
+              const minValue = optNum(minSig, Number.NEGATIVE_INFINITY);
+              const maxValue = optNum(maxSig, Number.POSITIVE_INFINITY);
+              return lit(Math.min(Math.max(valueNumber, minValue), maxValue));
             }
           ),
-          sum: fn((...args) =>
-            lit(args.flatMap(toNumberList).reduce((a, b) => a + b, 0))
-          ),
-          avg: fn((...args) => {
-            const nums = args.flatMap(toNumberList);
+
+          sum: fn((...argSigs: DataSignal[]) => {
+            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
+            if (numbersFlat.length === 0) return blank();
+            return lit(numbersFlat.reduce((a, b) => a + b, 0));
+          }),
+
+          avg: fn((...argSigs: DataSignal[]) => {
+            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
+            if (numbersFlat.length === 0) return blank();
             return lit(
-              nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0
+              numbersFlat.reduce((a, b) => a + b, 0) / numbersFlat.length
             );
           }),
-          min: fn((...args) => {
-            const nums = args.flatMap(toNumberList);
-            return lit(nums.length ? Math.min(...nums) : 0);
+
+          min: fn((...argSigs: DataSignal[]) => {
+            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
+            if (numbersFlat.length === 0) return blank();
+            return lit(Math.min(...numbersFlat));
           }),
-          max: fn((...args) => {
-            const nums = args.flatMap(toNumberList);
-            return lit(nums.length ? Math.max(...nums) : 0);
+
+          max: fn((...argSigs: DataSignal[]) => {
+            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
+            if (numbersFlat.length === 0) return blank();
+            return lit(Math.max(...numbersFlat));
           }),
-          pow: fn((x = lit(1), y = lit(1)) =>
-            lit(Math.pow(toNumber(x), toNumber(y)))
-          ),
-          sqrt: fn((x = lit(0)) => lit(Math.sqrt(toNumber(x)))),
-          mod: fn((a = lit(0), b = lit(1)) => {
-            const n = toNumber(a);
-            const m = toNumber(b);
-            return lit(((n % m) + m) % m);
+
+          pow: fn((baseSig = blank(), exponentSig = blank()) => {
+            const baseNumber = maybeNum(baseSig);
+            if (baseNumber === null) return blank();
+            return lit(baseNumber ** optNum(exponentSig, 1));
+          }),
+
+          sqrt: fn((valueSig = blank()) => {
+            const valueNumber = maybeNum(valueSig);
+            if (valueNumber === null) return blank();
+            return lit(Math.sqrt(valueNumber));
+          }),
+
+          mod: fn((dividendSig = blank(), modulusSig = blank()) => {
+            const dividendNumber = maybeNum(dividendSig);
+            if (dividendNumber === null) return blank();
+            const modulus = optNum(modulusSig, 1);
+            return lit(((dividendNumber % modulus) + modulus) % modulus);
           }),
         },
         []
@@ -157,85 +255,172 @@ export function createStdLibEntries(): Record<string, DataSignal> {
     text: createSignal(
       createBlock(
         {
-          len: fn((s = lit("")) => lit(toString(s).length)),
-          trim: fn((s = lit("")) => lit(toString(s).trim())),
-          starts_with: fn((s = lit(""), prefix = lit("")) =>
-            lit(toString(s).startsWith(toString(prefix)))
-          ),
-          ends_with: fn((s = lit(""), suffix = lit("")) =>
-            lit(toString(s).endsWith(toString(suffix)))
-          ),
-          contains: fn((s = lit(""), substr = lit("")) =>
-            lit(toString(s).includes(toString(substr)))
-          ),
-          lower: fn((s = lit("")) => lit(toString(s).toLowerCase())),
-          upper: fn((s = lit("")) => lit(toString(s).toUpperCase())),
-          replace: fn((s = lit(""), search = lit(""), replacement = lit("")) =>
-            lit(
-              ((p) =>
-                p === ""
-                  ? toString(s)
-                  : toString(s).replaceAll(p, toString(replacement)))(
-                toString(search)
-              )
-            )
-          ),
-          slice: fn((s = lit(""), start = lit(0), end?: DataSignal) =>
-            lit(
-              toString(s).slice(
-                toNumber(start),
-                end !== undefined ? toNumber(end) : undefined
-              )
-            )
-          ),
-          index_of: fn((s = lit(""), substr = lit(""), fromIndex = lit(0)) =>
-            lit(toString(s).indexOf(toString(substr), toNumber(fromIndex)))
-          ),
-          pad_start: fn((s = lit(""), length = lit(0), padStr = lit(" ")) =>
-            lit(
-              toString(s).padStart(
-                Math.max(0, Math.floor(toNumber(length))),
-                toString(padStr)
-              )
-            )
-          ),
-          pad_end: fn((s = lit(""), length = lit(0), padStr = lit(" ")) =>
-            lit(
-              toString(s).padEnd(
-                Math.max(0, Math.floor(toNumber(length))),
-                toString(padStr)
-              )
-            )
-          ),
-          split: fn((s = lit(""), sep = lit(""), limit?: DataSignal) =>
-            stringsToBlock(
-              toString(s).split(
-                toString(sep),
-                limit !== undefined
-                  ? Math.max(0, Math.floor(toNumber(limit)))
-                  : undefined
-              )
-            )
-          ),
-          join: fn((list = createSignal(createBlock({}, [])), sep = lit(",")) =>
-            lit(toStringList(list).join(toString(sep)))
-          ),
-          capitalize: fn((s = lit("")) => {
-            const str = toString(s);
-            return lit(str ? str.charAt(0).toUpperCase() + str.slice(1) : "");
+          len: fn((textSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            return lit(text.length);
           }),
-          repeat: fn((s = lit(""), times = lit(0)) =>
-            lit(toString(s).repeat(Math.max(0, Math.floor(toNumber(times)))))
-          ),
-          left: fn((s = lit(""), n = lit(0)) => {
-            const str = toString(s);
-            const count = Math.max(0, Math.floor(toNumber(n)));
-            return lit(str.slice(0, count));
+
+          trim: fn((textSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            return lit(text.trim());
           }),
-          right: fn((s = lit(""), n = lit(0)) => {
-            const str = toString(s);
-            const count = Math.max(0, Math.floor(toNumber(n)));
-            return lit(count ? str.slice(-count) : "");
+
+          starts_with: fn((textSig = blank(), prefixSig = blank()) => {
+            const text = maybeStr(textSig);
+            const prefix = maybeStr(prefixSig);
+            if (text === null || prefix === null) return blank();
+            return bool(text.startsWith(prefix));
+          }),
+
+          ends_with: fn((textSig = blank(), suffixSig = blank()) => {
+            const text = maybeStr(textSig);
+            const suffix = maybeStr(suffixSig);
+            if (text === null || suffix === null) return blank();
+            return bool(text.endsWith(suffix));
+          }),
+
+          contains: fn((textSig = blank(), searchSig = blank()) => {
+            const text = maybeStr(textSig);
+            const search = maybeStr(searchSig);
+            if (text === null || search === null) return blank();
+            return bool(text.includes(search));
+          }),
+
+          lower: fn((textSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            return lit(text.toLowerCase());
+          }),
+
+          upper: fn((textSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            return lit(text.toUpperCase());
+          }),
+
+          replace: fn(
+            (
+              textSig = blank(),
+              searchSig = blank(),
+              replacementSig = blank()
+            ) => {
+              const text = maybeStr(textSig);
+              const search = maybeStr(searchSig);
+              const replacement = maybeStr(replacementSig);
+              if (text === null || search === null || replacement === null)
+                return blank();
+              return lit(text.replaceAll(search, replacement));
+            }
+          ),
+
+          slice: fn(
+            (textSig = blank(), startSig = blank(), endSig = blank()) => {
+              const text = maybeStr(textSig);
+              if (text === null) return blank();
+              const startIndex = optNum(startSig, 0);
+              const endIndex = maybeNum(endSig);
+              return lit(text.slice(startIndex, endIndex ?? undefined));
+            }
+          ),
+
+          index_of: fn(
+            (
+              textSig = blank(),
+              searchSig = blank(),
+              fromIndexSig = blank()
+            ) => {
+              const text = maybeStr(textSig);
+              if (text === null) return blank();
+              const searchText = optStr(searchSig, "");
+              const fromIndex = optNum(fromIndexSig, 0);
+              return lit(text.indexOf(searchText, fromIndex));
+            }
+          ),
+
+          pad_start: fn(
+            (
+              textSig = blank(),
+              targetLengthSig = blank(),
+              padTextSig = blank()
+            ) => {
+              const text = maybeStr(textSig);
+              if (text === null) return blank();
+              const targetLength = optNum(targetLengthSig, 0);
+              const padText = optStr(padTextSig, " ");
+              return lit(text.padStart(targetLength, padText));
+            }
+          ),
+
+          pad_end: fn(
+            (
+              textSig = blank(),
+              targetLengthSig = blank(),
+              padTextSig = blank()
+            ) => {
+              const text = maybeStr(textSig);
+              if (text === null) return blank();
+              const targetLength = optNum(targetLengthSig, 0);
+              const padText = optStr(padTextSig, " ");
+              return lit(text.padEnd(targetLength, padText));
+            }
+          ),
+
+          split: fn(
+            (textSig = blank(), separatorSig = blank(), limitSig = blank()) => {
+              const text = maybeStr(textSig);
+              if (text === null) return blank();
+              const separator = optStr(separatorSig, "");
+              const limit = maybeNum(limitSig);
+              const parts =
+                limit === null
+                  ? text.split(separator)
+                  : text.split(separator, limit);
+              return createSignal(
+                createBlock(
+                  {},
+                  parts.map((part) => lit(part))
+                )
+              );
+            }
+          ),
+
+          join: fn((blockSig = blank(), separatorSig = blank()) => {
+            const node = blockSig.get();
+            if (isBlank(node)) return blank();
+            return lit(
+              textsFlatRequired(blockSig).join(optStr(separatorSig, ","))
+            );
+          }),
+
+          capitalize: fn((textSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            return lit(
+              text ? text.charAt(0).toUpperCase() + text.slice(1) : ""
+            );
+          }),
+
+          repeat: fn((textSig = blank(), timesSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            const times = Math.max(0, Math.floor(optNum(timesSig, 0)));
+            return lit(text.repeat(times));
+          }),
+
+          left: fn((textSig = blank(), countSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            const count = Math.max(0, Math.floor(optNum(countSig, 0)));
+            return lit(text.slice(0, count));
+          }),
+
+          right: fn((textSig = blank(), countSig = blank()) => {
+            const text = maybeStr(textSig);
+            if (text === null) return blank();
+            const count = Math.max(0, Math.floor(optNum(countSig, 0)));
+            return lit(count ? text.slice(-count) : "");
           }),
         },
         []
@@ -247,6 +432,6 @@ export function createStdLibEntries(): Record<string, DataSignal> {
 export function withLibrary(
   root: DataSignal<BlockNode>
 ): DataSignal<BlockNode> {
-  createBlockSignal(createStdLibEntries(), [root]);
+  createBlockSignal(createLibrary(), [root]);
   return root;
 }

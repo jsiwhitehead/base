@@ -4,13 +4,19 @@ import {
   type DataNode,
   type DataSignal,
   isFunction,
-  createLiteral,
-  createFunction,
-  createSignal,
   getByKey,
   getByKeyOrIndex,
 } from "./data";
-import { toPrimitive, toBoolean, toNumber } from "./library";
+import {
+  blank,
+  lit,
+  bool,
+  fn,
+  toBool,
+  reqPrim,
+  reqNum,
+  mapNums,
+} from "./library";
 
 /* Grammar */
 
@@ -66,11 +72,10 @@ Script {
                   | "(" Expr<Dot> ")"                    -- paren
                   | &"." Dot ident                       -- dot
 
-  Literal         = boolean
+  Literal         = "blank"                              -- blank
+                  | "true"                               -- true
                   | number
                   | string
-
-  boolean         = "true" | "false"
 
   number          = integer
                   | decimal
@@ -117,6 +122,7 @@ export type Expr =
   | Index
   | Member
   | Lit
+  | Blank
   | Ident;
 
 export interface Lambda {
@@ -158,7 +164,11 @@ export interface Member {
 
 export interface Lit {
   type: "Lit";
-  value: boolean | number | string;
+  value: true | number | string;
+}
+
+export interface Blank {
+  type: "Blank";
 }
 
 export interface Ident {
@@ -296,11 +306,14 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     } as Member;
   },
 
-  boolean(_) {
-    return { type: "Lit", value: this.sourceString === "true" };
+  Literal_blank(_) {
+    return { type: "Blank" } as Blank;
+  },
+  Literal_true(_) {
+    return { type: "Lit", value: true } as Lit;
   },
   number(_) {
-    return { type: "Lit", value: Number(this.sourceString) };
+    return { type: "Lit", value: Number(this.sourceString) } as Lit;
   },
   string(_) {
     const raw = this.sourceString;
@@ -309,48 +322,48 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
         ? `"${raw.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"')}"`
         : raw
     );
-    return { type: "Lit", value };
+    return { type: "Lit", value } as Lit;
   },
 });
 
-/* Evaluate */
-
-const litSig = (v: boolean | number | string): DataSignal =>
-  createSignal(createLiteral(v));
+/* Operators */
 
 const BINARY_OPS: Partial<
   Record<Binary["op"], (a: DataSignal, b: DataSignal) => DataSignal>
 > = {
-  "!=": (a, b) => litSig(toPrimitive(a) !== toPrimitive(b)),
-  "=": (a, b) => litSig(toPrimitive(a) === toPrimitive(b)),
-  "<=": (a, b) => litSig(toNumber(a) <= toNumber(b)),
-  "<": (a, b) => litSig(toNumber(a) < toNumber(b)),
-  ">=": (a, b) => litSig(toNumber(a) >= toNumber(b)),
-  ">": (a, b) => litSig(toNumber(a) > toNumber(b)),
-  "+": (a, b) => litSig(toNumber(a) + toNumber(b)),
-  "-": (a, b) => litSig(toNumber(a) - toNumber(b)),
-  "*": (a, b) => litSig(toNumber(a) * toNumber(b)),
-  "/": (a, b) => litSig(toNumber(a) / toNumber(b)),
+  "!=": (a, b) => bool(reqPrim(a) !== reqPrim(b)),
+  "=": (a, b) => bool(reqPrim(a) === reqPrim(b)),
+
+  "<=": (a, b) => bool(reqNum(a) <= reqNum(b)),
+  "<": (a, b) => bool(reqNum(a) < reqNum(b)),
+  ">=": (a, b) => bool(reqNum(a) >= reqNum(b)),
+  ">": (a, b) => bool(reqNum(a) > reqNum(b)),
+
+  "+": mapNums((a, b) => a + b),
+  "-": mapNums((a, b) => a - b),
+  "*": mapNums((a, b) => a * b),
+  "/": mapNums((a, b) => a / b),
 };
 
 const UNARY_OPS: Record<Unary["op"], (v: DataSignal) => DataSignal> = {
-  "!": (v) => litSig(!toBoolean(v)),
-  "-": (v) => litSig(-toNumber(v)),
-  "+": (v) => litSig(+toNumber(v)),
+  "!": (v) => bool(!toBool(v)),
+
+  "-": mapNums((x) => -x),
+  "+": mapNums((x) => +x),
 };
+
+/* Evaluate */
 
 function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
   switch (e.type) {
     case "Lambda": {
       const params = e.params.map((p) => p.name);
-      return createSignal(
-        createFunction((...args: DataSignal[]) =>
-          evalExpr(e.body, (name: string) => {
-            const i = params.indexOf(name);
-            if (i !== -1) return args[i] ?? litSig("");
-            return scope(name);
-          })
-        )
+      return fn((...args: DataSignal[]) =>
+        evalExpr(e.body, (name: string) => {
+          const i = params.indexOf(name);
+          if (i !== -1) return args[i] ?? blank();
+          return scope(name);
+        })
       );
     }
 
@@ -358,12 +371,12 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
       const { op, left, right } = e;
 
       if (op === "|") {
-        const lv = toBoolean(evalExpr(left, scope));
-        return lv ? litSig(true) : litSig(toBoolean(evalExpr(right, scope)));
+        const lv = toBool(evalExpr(left, scope));
+        return lv ? bool(true) : bool(toBool(evalExpr(right, scope)));
       }
       if (op === "&") {
-        const lv = toBoolean(evalExpr(left, scope));
-        return lv ? litSig(toBoolean(evalExpr(right, scope))) : litSig(false);
+        const lv = toBool(evalExpr(left, scope));
+        return lv ? bool(toBool(evalExpr(right, scope))) : bool(false);
       }
 
       const f = BINARY_OPS[op];
@@ -383,7 +396,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
     case "Call": {
       const callee = evalExpr(e.callee, scope).get();
-      if (!callee || !isFunction(callee)) {
+      if (!isFunction(callee)) {
         throw new TypeError("Callee is not a function");
       }
       const args = e.args.map((a) => evalExpr(a, scope));
@@ -402,7 +415,10 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
     }
 
     case "Lit":
-      return litSig(e.value);
+      return lit(e.value);
+
+    case "Blank":
+      return blank();
 
     case "Ident":
       return scope(e.name);
