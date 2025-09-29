@@ -22,10 +22,10 @@ const ERR = {
   lit: "Expected literal value",
   num: "Expected number",
   numOrBlank: "Expected number or blank",
-  str: "Expected string",
-  strOrBlank: "Expected string or blank",
+  text: "Expected text",
+  textOrBlank: "Expected text or blank",
   numsOrBlank: "Expected numbers or blanks (including flat blocks)",
-  strs: "Expected strings (including flat blocks)",
+  texts: "Expected texts (including flat blocks)",
 };
 
 /* Constructors */
@@ -67,10 +67,10 @@ export function reqNum(valueSig: DataSignal): number {
   throw new TypeError(ERR.num);
 }
 
-export function reqStr(valueSig: DataSignal): string {
+export function reqText(valueSig: DataSignal): string {
   const node = valueSig.get();
   if (isLiteral(node) && typeof node.value === "string") return node.value;
-  throw new TypeError(ERR.str);
+  throw new TypeError(ERR.text);
 }
 
 export function maybeNum(valueSig: DataSignal): number | null {
@@ -80,19 +80,19 @@ export function maybeNum(valueSig: DataSignal): number | null {
   throw new TypeError(ERR.numOrBlank);
 }
 
-export function maybeStr(valueSig: DataSignal): string | null {
+export function maybeText(valueSig: DataSignal): string | null {
   const node = valueSig.get();
   if (isBlank(node)) return null;
   if (isLiteral(node) && typeof node.value === "string") return node.value;
-  throw new TypeError(ERR.strOrBlank);
+  throw new TypeError(ERR.textOrBlank);
 }
 
 export function optNum(valueSig: DataSignal, defaultNumber: number): number {
   return maybeNum(valueSig) ?? defaultNumber;
 }
 
-export function optStr(valueSig: DataSignal, defaultText: string): string {
-  return maybeStr(valueSig) ?? defaultText;
+export function optText(valueSig: DataSignal, defaultText: string): string {
+  return maybeText(valueSig) ?? defaultText;
 }
 
 export function mapNums(
@@ -127,9 +127,9 @@ function numbersFlatOrBlank(sourceSig: DataSignal): number[] {
 
 function textsFlatRequired(sourceSig: DataSignal): string[] {
   return collectOneLevel(sourceSig, (node) => {
-    if (isBlank(node)) throw new TypeError(ERR.strs);
+    if (isBlank(node)) throw new TypeError(ERR.texts);
     if (isLiteral(node) && typeof node.value === "string") return node.value;
-    throw new TypeError(ERR.strs);
+    throw new TypeError(ERR.texts);
   });
 }
 
@@ -256,46 +256,46 @@ export function createLibrary(): Record<string, DataSignal> {
       createBlock(
         {
           len: fn((textSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             return lit(text.length);
           }),
 
           trim: fn((textSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             return lit(text.trim());
           }),
 
           starts_with: fn((textSig = blank(), prefixSig = blank()) => {
-            const text = maybeStr(textSig);
-            const prefix = maybeStr(prefixSig);
+            const text = maybeText(textSig);
+            const prefix = maybeText(prefixSig);
             if (text === null || prefix === null) return blank();
             return bool(text.startsWith(prefix));
           }),
 
           ends_with: fn((textSig = blank(), suffixSig = blank()) => {
-            const text = maybeStr(textSig);
-            const suffix = maybeStr(suffixSig);
+            const text = maybeText(textSig);
+            const suffix = maybeText(suffixSig);
             if (text === null || suffix === null) return blank();
             return bool(text.endsWith(suffix));
           }),
 
           contains: fn((textSig = blank(), searchSig = blank()) => {
-            const text = maybeStr(textSig);
-            const search = maybeStr(searchSig);
+            const text = maybeText(textSig);
+            const search = maybeText(searchSig);
             if (text === null || search === null) return blank();
             return bool(text.includes(search));
           }),
 
           lower: fn((textSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             return lit(text.toLowerCase());
           }),
 
           upper: fn((textSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             return lit(text.toUpperCase());
           }),
@@ -306,9 +306,9 @@ export function createLibrary(): Record<string, DataSignal> {
               searchSig = blank(),
               replacementSig = blank()
             ) => {
-              const text = maybeStr(textSig);
-              const search = maybeStr(searchSig);
-              const replacement = maybeStr(replacementSig);
+              const text = maybeText(textSig);
+              const search = maybeText(searchSig);
+              const replacement = maybeText(replacementSig);
               if (text === null || search === null || replacement === null)
                 return blank();
               return lit(text.replaceAll(search, replacement));
@@ -317,7 +317,7 @@ export function createLibrary(): Record<string, DataSignal> {
 
           slice: fn(
             (textSig = blank(), startSig = blank(), endSig = blank()) => {
-              const text = maybeStr(textSig);
+              const text = maybeText(textSig);
               if (text === null) return blank();
               const startIndex = optNum(startSig, 0);
               const endIndex = maybeNum(endSig);
@@ -331,9 +331,9 @@ export function createLibrary(): Record<string, DataSignal> {
               searchSig = blank(),
               fromIndexSig = blank()
             ) => {
-              const text = maybeStr(textSig);
+              const text = maybeText(textSig);
               if (text === null) return blank();
-              const searchText = optStr(searchSig, "");
+              const searchText = optText(searchSig, "");
               const fromIndex = optNum(fromIndexSig, 0);
               return lit(text.indexOf(searchText, fromIndex));
             }
@@ -345,10 +345,10 @@ export function createLibrary(): Record<string, DataSignal> {
               targetLengthSig = blank(),
               padTextSig = blank()
             ) => {
-              const text = maybeStr(textSig);
+              const text = maybeText(textSig);
               if (text === null) return blank();
               const targetLength = optNum(targetLengthSig, 0);
-              const padText = optStr(padTextSig, " ");
+              const padText = optText(padTextSig, " ");
               return lit(text.padStart(targetLength, padText));
             }
           ),
@@ -359,19 +359,19 @@ export function createLibrary(): Record<string, DataSignal> {
               targetLengthSig = blank(),
               padTextSig = blank()
             ) => {
-              const text = maybeStr(textSig);
+              const text = maybeText(textSig);
               if (text === null) return blank();
               const targetLength = optNum(targetLengthSig, 0);
-              const padText = optStr(padTextSig, " ");
+              const padText = optText(padTextSig, " ");
               return lit(text.padEnd(targetLength, padText));
             }
           ),
 
           split: fn(
             (textSig = blank(), separatorSig = blank(), limitSig = blank()) => {
-              const text = maybeStr(textSig);
+              const text = maybeText(textSig);
               if (text === null) return blank();
-              const separator = optStr(separatorSig, "");
+              const separator = optText(separatorSig, "");
               const limit = maybeNum(limitSig);
               const parts =
                 limit === null
@@ -390,12 +390,12 @@ export function createLibrary(): Record<string, DataSignal> {
             const node = blockSig.get();
             if (isBlank(node)) return blank();
             return lit(
-              textsFlatRequired(blockSig).join(optStr(separatorSig, ","))
+              textsFlatRequired(blockSig).join(optText(separatorSig, ","))
             );
           }),
 
           capitalize: fn((textSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             return lit(
               text ? text.charAt(0).toUpperCase() + text.slice(1) : ""
@@ -403,21 +403,21 @@ export function createLibrary(): Record<string, DataSignal> {
           }),
 
           repeat: fn((textSig = blank(), timesSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             const times = Math.max(0, Math.floor(optNum(timesSig, 0)));
             return lit(text.repeat(times));
           }),
 
           left: fn((textSig = blank(), countSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             const count = Math.max(0, Math.floor(optNum(countSig, 0)));
             return lit(text.slice(0, count));
           }),
 
           right: fn((textSig = blank(), countSig = blank()) => {
-            const text = maybeStr(textSig);
+            const text = maybeText(textSig);
             if (text === null) return blank();
             const count = Math.max(0, Math.floor(optNum(countSig, 0)));
             return lit(count ? text.slice(-count) : "");

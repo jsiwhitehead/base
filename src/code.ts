@@ -74,8 +74,8 @@ Script {
 
   Literal         = "blank"                              -- blank
                   | "true"                               -- true
-                  | number
-                  | string
+                  | number                               -- number
+                  | text                                 -- text
 
   number          = integer
                   | decimal
@@ -91,11 +91,11 @@ Script {
   sciNumber       = (integer | decimal) exponent
   exponent        = ("e" | "E") ("+" | "-")? digit+
 
-  string          = dString
-                  | sString
+  text            = dText
+                  | sText
 
-  dString         = "\"" dqChar* "\""
-  sString         = "'"  sqChar* "'"
+  dText           = "\"" dqChar* "\""
+  sText           = "'"  sqChar* "'"
 
   dqChar          = escape | ~("\"" | "\\" | "\n" | "\r") any
   sqChar          = escape | ~("'"  | "\\" | "\n" | "\r") any
@@ -312,11 +312,11 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   Literal_true(_) {
     return { type: "Lit", value: true } as Lit;
   },
-  number(_) {
-    return { type: "Lit", value: Number(this.sourceString) } as Lit;
+  Literal_number(n) {
+    return { type: "Lit", value: Number(n.sourceString) } as Lit;
   },
-  string(_) {
-    const raw = this.sourceString;
+  Literal_text(t) {
+    const raw = t.sourceString;
     const value = JSON.parse(
       raw[0] === "'"
         ? `"${raw.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"')}"`

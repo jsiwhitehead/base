@@ -408,7 +408,7 @@ export function getByKeyOrIndex(
     }
   }
 
-  throw new TypeError("Index/key must evaluate to a string or number");
+  throw new TypeError("Index/key must evaluate to text or number");
 }
 
 /* Transformations */
