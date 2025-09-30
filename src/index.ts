@@ -39,7 +39,7 @@ const literalSig = (v: Primitive) => createSignal(createLiteral(v));
 const codeSig = (src: string) => createSignal(createCode(src));
 
 const root = withLibrary(
-  createBlockSignal([["x", literalSig(-10)]], [codeSig("number.abs(x) * 5")])
+  createBlockSignal([["x", literalSig(-10)]], [codeSig("abs(x) * 5")])
 );
 
 const unmount = render(root, document.getElementById("root")!);

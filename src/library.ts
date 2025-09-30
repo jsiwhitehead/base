@@ -13,6 +13,7 @@ import {
   createSignal,
   createBlockSignal,
   resolveItems,
+  markCaseInsensitiveScope,
 } from "./data";
 
 /* Errors */
@@ -178,318 +179,297 @@ function toNumber(node: DataNode): DataNode {
 
 export function createLibrary(): Record<string, DataSignal> {
   return {
-    convert: createSignal(
-      createBlock(
-        {
-          to_bool: fn((valueSig = blank()) =>
-            createSignal(toBool(valueSig.get()))
-          ),
-          to_text: fn((valueSig = blank()) =>
-            createSignal(toText(valueSig.get()))
-          ),
-          to_number: fn((valueSig = blank()) =>
-            createSignal(toNumber(valueSig.get()))
-          ),
-        },
-        []
-      )
+    /* Convertors */
+
+    number_or: fn((valueSig = blank(), fallbackSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return lit(numOr(fallbackSig, 0));
+      return lit(n);
+    }),
+
+    text_or: fn((valueSig = blank(), fallbackSig = blank()) => {
+      const t = textOpt(valueSig);
+      if (t === null) return lit(textOr(fallbackSig, ""));
+      return lit(t);
+    }),
+
+    if_blank: fn((valueSig = blank(), fallbackSig = blank()) => {
+      return isBlank(valueSig.get()) ? fallbackSig : valueSig;
+    }),
+
+    first_present: fn((...argSigs: DataSignal[]) => {
+      for (const s of argSigs) if (!isBlank(s.get())) return s;
+      return blank();
+    }),
+
+    /* Counting */
+
+    count: fn((sourceSig = blank()) => {
+      const node = sourceSig.get();
+      const nodes = isBlock(node) ? resolveItems(node) : [node];
+      return lit(nodes.reduce((n, v) => n + (isBlank(v) ? 0 : 1), 0));
+    }),
+
+    count_blank: fn((sourceSig = blank()) => {
+      const node = sourceSig.get();
+      const nodes = isBlock(node) ? resolveItems(node) : [node];
+      return lit(nodes.reduce((n, v) => n + (isBlank(v) ? 1 : 0), 0));
+    }),
+
+    /* Coercion */
+
+    to_bool: fn((valueSig = blank()) => createSignal(toBool(valueSig.get()))),
+
+    to_text: fn((valueSig = blank()) => createSignal(toText(valueSig.get()))),
+
+    to_number: fn((valueSig = blank()) =>
+      createSignal(toNumber(valueSig.get()))
     ),
 
-    logic: createSignal(
-      createBlock(
-        {
-          not: fn((valueSig = blank()) => {
-            return bool(!asJsBool(valueSig));
-          }),
+    /* Logic */
 
-          and: fn((leftSig = blank(), rightSig = blank()) => {
-            return bool(asJsBool(leftSig) && asJsBool(rightSig));
-          }),
+    not: fn((valueSig = blank()) => bool(!asJsBool(valueSig))),
 
-          or: fn((leftSig = blank(), rightSig = blank()) => {
-            return bool(asJsBool(leftSig) || asJsBool(rightSig));
-          }),
-
-          all: fn((...argSigs: DataSignal[]) =>
-            bool(argSigs.every((sig) => !isBlank(sig.get())))
-          ),
-
-          any: fn((...argSigs: DataSignal[]) =>
-            bool(argSigs.some((sig) => !isBlank(sig.get())))
-          ),
-        },
-        []
-      )
+    and: fn((leftSig = blank(), rightSig = blank()) =>
+      bool(asJsBool(leftSig) && asJsBool(rightSig))
     ),
 
-    number: createSignal(
-      createBlock(
-        {
-          abs: fn((valueSig = blank()) => {
-            const valueNumber = numOpt(valueSig);
-            if (valueNumber === null) return blank();
-            return lit(Math.abs(valueNumber));
-          }),
-
-          round: fn((valueSig = blank(), placesSig = blank()) => {
-            const valueNumber = numOpt(valueSig);
-            if (valueNumber === null) return blank();
-            const decimalPlaces = numOr(placesSig, 0);
-            const factor = 10 ** decimalPlaces;
-            return lit(Math.round(valueNumber * factor) / factor);
-          }),
-
-          ceil: fn((valueSig = blank()) => {
-            const valueNumber = numOpt(valueSig);
-            if (valueNumber === null) return blank();
-            return lit(Math.ceil(valueNumber));
-          }),
-
-          floor: fn((valueSig = blank()) => {
-            const valueNumber = numOpt(valueSig);
-            if (valueNumber === null) return blank();
-            return lit(Math.floor(valueNumber));
-          }),
-
-          clamp: fn(
-            (valueSig = blank(), minSig = blank(), maxSig = blank()) => {
-              const valueNumber = numOpt(valueSig);
-              if (valueNumber === null) return blank();
-              const minValue = numOr(minSig, Number.NEGATIVE_INFINITY);
-              const maxValue = numOr(maxSig, Number.POSITIVE_INFINITY);
-              return lit(Math.min(Math.max(valueNumber, minValue), maxValue));
-            }
-          ),
-
-          sum: fn((...argSigs: DataSignal[]) => {
-            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
-            if (numbersFlat.length === 0) return blank();
-            return lit(numbersFlat.reduce((a, b) => a + b, 0));
-          }),
-
-          avg: fn((...argSigs: DataSignal[]) => {
-            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
-            if (numbersFlat.length === 0) return blank();
-            return lit(
-              numbersFlat.reduce((a, b) => a + b, 0) / numbersFlat.length
-            );
-          }),
-
-          min: fn((...argSigs: DataSignal[]) => {
-            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
-            if (numbersFlat.length === 0) return blank();
-            return lit(Math.min(...numbersFlat));
-          }),
-
-          max: fn((...argSigs: DataSignal[]) => {
-            const numbersFlat = argSigs.flatMap(numbersFlatOrBlank);
-            if (numbersFlat.length === 0) return blank();
-            return lit(Math.max(...numbersFlat));
-          }),
-
-          pow: fn((baseSig = blank(), exponentSig = blank()) => {
-            const baseNumber = numOpt(baseSig);
-            if (baseNumber === null) return blank();
-            return lit(baseNumber ** numOr(exponentSig, 1));
-          }),
-
-          sqrt: fn((valueSig = blank()) => {
-            const valueNumber = numOpt(valueSig);
-            if (valueNumber === null) return blank();
-            return lit(Math.sqrt(valueNumber));
-          }),
-
-          mod: fn((dividendSig = blank(), modulusSig = blank()) => {
-            const dividendNumber = numOpt(dividendSig);
-            if (dividendNumber === null) return blank();
-            const modulus = numOr(modulusSig, 1);
-            return lit(((dividendNumber % modulus) + modulus) % modulus);
-          }),
-        },
-        []
-      )
+    or: fn((leftSig = blank(), rightSig = blank()) =>
+      bool(asJsBool(leftSig) || asJsBool(rightSig))
     ),
 
-    text: createSignal(
-      createBlock(
-        {
-          len: fn((textSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            return lit(text.length);
-          }),
-
-          trim: fn((textSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            return lit(text.trim());
-          }),
-
-          starts_with: fn((textSig = blank(), prefixSig = blank()) => {
-            const text = textOpt(textSig);
-            const prefix = textOpt(prefixSig);
-            if (text === null || prefix === null) return blank();
-            return bool(text.startsWith(prefix));
-          }),
-
-          ends_with: fn((textSig = blank(), suffixSig = blank()) => {
-            const text = textOpt(textSig);
-            const suffix = textOpt(suffixSig);
-            if (text === null || suffix === null) return blank();
-            return bool(text.endsWith(suffix));
-          }),
-
-          contains: fn((textSig = blank(), searchSig = blank()) => {
-            const text = textOpt(textSig);
-            const search = textOpt(searchSig);
-            if (text === null || search === null) return blank();
-            return bool(text.includes(search));
-          }),
-
-          lower: fn((textSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            return lit(text.toLowerCase());
-          }),
-
-          upper: fn((textSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            return lit(text.toUpperCase());
-          }),
-
-          replace: fn(
-            (
-              textSig = blank(),
-              searchSig = blank(),
-              replacementSig = blank()
-            ) => {
-              const text = textOpt(textSig);
-              const search = textOpt(searchSig);
-              const replacement = textOpt(replacementSig);
-              if (text === null || search === null || replacement === null)
-                return blank();
-              return lit(text.replaceAll(search, replacement));
-            }
-          ),
-
-          slice: fn(
-            (textSig = blank(), startSig = blank(), endSig = blank()) => {
-              const text = textOpt(textSig);
-              if (text === null) return blank();
-              const startIndex = numOr(startSig, 0);
-              const endIndex = numOpt(endSig);
-              return lit(text.slice(startIndex, endIndex ?? undefined));
-            }
-          ),
-
-          index_of: fn(
-            (
-              textSig = blank(),
-              searchSig = blank(),
-              fromIndexSig = blank()
-            ) => {
-              const text = textOpt(textSig);
-              if (text === null) return blank();
-              const searchText = textOr(searchSig, "");
-              const fromIndex = numOr(fromIndexSig, 0);
-              return lit(text.indexOf(searchText, fromIndex));
-            }
-          ),
-
-          pad_start: fn(
-            (
-              textSig = blank(),
-              targetLengthSig = blank(),
-              padTextSig = blank()
-            ) => {
-              const text = textOpt(textSig);
-              if (text === null) return blank();
-              const targetLength = numOr(targetLengthSig, 0);
-              const padText = textOr(padTextSig, " ");
-              return lit(text.padStart(targetLength, padText));
-            }
-          ),
-
-          pad_end: fn(
-            (
-              textSig = blank(),
-              targetLengthSig = blank(),
-              padTextSig = blank()
-            ) => {
-              const text = textOpt(textSig);
-              if (text === null) return blank();
-              const targetLength = numOr(targetLengthSig, 0);
-              const padText = textOr(padTextSig, " ");
-              return lit(text.padEnd(targetLength, padText));
-            }
-          ),
-
-          split: fn(
-            (textSig = blank(), separatorSig = blank(), limitSig = blank()) => {
-              const text = textOpt(textSig);
-              if (text === null) return blank();
-              const separator = textOr(separatorSig, "");
-              const limit = numOpt(limitSig);
-              const parts =
-                limit === null
-                  ? text.split(separator)
-                  : text.split(separator, limit);
-              return createSignal(
-                createBlock(
-                  {},
-                  parts.map((part) => lit(part))
-                )
-              );
-            }
-          ),
-
-          join: fn((blockSig = blank(), separatorSig = blank()) => {
-            const node = blockSig.get();
-            if (isBlank(node)) return blank();
-            return lit(
-              textsFlatRequired(blockSig).join(textOr(separatorSig, ","))
-            );
-          }),
-
-          capitalize: fn((textSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            return lit(
-              text ? text.charAt(0).toUpperCase() + text.slice(1) : ""
-            );
-          }),
-
-          repeat: fn((textSig = blank(), timesSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            const times = Math.max(0, Math.floor(numOr(timesSig, 0)));
-            return lit(text.repeat(times));
-          }),
-
-          left: fn((textSig = blank(), countSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            const count = Math.max(0, Math.floor(numOr(countSig, 0)));
-            return lit(text.slice(0, count));
-          }),
-
-          right: fn((textSig = blank(), countSig = blank()) => {
-            const text = textOpt(textSig);
-            if (text === null) return blank();
-            const count = Math.max(0, Math.floor(numOr(countSig, 0)));
-            return lit(count ? text.slice(-count) : "");
-          }),
-        },
-        []
-      )
+    all: fn((...argSigs: DataSignal[]) =>
+      bool(argSigs.every((sig) => !isBlank(sig.get())))
     ),
+
+    any: fn((...argSigs: DataSignal[]) =>
+      bool(argSigs.some((sig) => !isBlank(sig.get())))
+    ),
+
+    /* Number */
+
+    abs: fn((valueSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return blank();
+      return lit(Math.abs(n));
+    }),
+
+    round: fn((valueSig = blank(), placesSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return blank();
+      const p = numOr(placesSig, 0);
+      const f = 10 ** p;
+      return lit(Math.round(n * f) / f);
+    }),
+
+    ceil: fn((valueSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return blank();
+      return lit(Math.ceil(n));
+    }),
+
+    floor: fn((valueSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return blank();
+      return lit(Math.floor(n));
+    }),
+
+    clamp: fn((valueSig = blank(), minSig = blank(), maxSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return blank();
+      const minV = numOr(minSig, Number.NEGATIVE_INFINITY);
+      const maxV = numOr(maxSig, Number.POSITIVE_INFINITY);
+      return lit(Math.min(Math.max(n, minV), maxV));
+    }),
+
+    sum: fn((...argSigs: DataSignal[]) => {
+      const nums = argSigs.flatMap(numbersFlatOrBlank);
+      if (!nums.length) return blank();
+      return lit(nums.reduce((a, b) => a + b, 0));
+    }),
+
+    avg: fn((...argSigs: DataSignal[]) => {
+      const nums = argSigs.flatMap(numbersFlatOrBlank);
+      if (!nums.length) return blank();
+      return lit(nums.reduce((a, b) => a + b, 0) / nums.length);
+    }),
+
+    min: fn((...argSigs: DataSignal[]) => {
+      const nums = argSigs.flatMap(numbersFlatOrBlank);
+      if (!nums.length) return blank();
+      return lit(Math.min(...nums));
+    }),
+
+    max: fn((...argSigs: DataSignal[]) => {
+      const nums = argSigs.flatMap(numbersFlatOrBlank);
+      if (!nums.length) return blank();
+      return lit(Math.max(...nums));
+    }),
+
+    pow: fn((baseSig = blank(), exponentSig = blank()) => {
+      const base = numOpt(baseSig);
+      if (base === null) return blank();
+      return lit(base ** numOr(exponentSig, 1));
+    }),
+
+    sqrt: fn((valueSig = blank()) => {
+      const n = numOpt(valueSig);
+      if (n === null) return blank();
+      return lit(Math.sqrt(n));
+    }),
+
+    mod: fn((dividendSig = blank(), modulusSig = blank()) => {
+      const d = numOpt(dividendSig);
+      if (d === null) return blank();
+      const m = numOr(modulusSig, 1);
+      return lit(((d % m) + m) % m);
+    }),
+
+    /* Text */
+
+    len: fn((textSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      return lit(t.length);
+    }),
+
+    trim: fn((textSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      return lit(t.trim());
+    }),
+
+    starts_with: fn((textSig = blank(), prefixSig = blank()) => {
+      const t = textOpt(textSig),
+        p = textOpt(prefixSig);
+      if (t === null || p === null) return blank();
+      return bool(t.startsWith(p));
+    }),
+
+    ends_with: fn((textSig = blank(), suffixSig = blank()) => {
+      const t = textOpt(textSig),
+        s = textOpt(suffixSig);
+      if (t === null || s === null) return blank();
+      return bool(t.endsWith(s));
+    }),
+
+    contains: fn((textSig = blank(), searchSig = blank()) => {
+      const t = textOpt(textSig),
+        s = textOpt(searchSig);
+      if (t === null || s === null) return blank();
+      return bool(t.includes(s));
+    }),
+
+    lower: fn((textSig = blank()) => {
+      const t = textOpt(textSig);
+      return t === null ? blank() : lit(t.toLowerCase());
+    }),
+
+    upper: fn((textSig = blank()) => {
+      const t = textOpt(textSig);
+      return t === null ? blank() : lit(t.toUpperCase());
+    }),
+
+    replace: fn(
+      (textSig = blank(), searchSig = blank(), replacementSig = blank()) => {
+        const t = textOpt(textSig),
+          s = textOpt(searchSig),
+          r = textOpt(replacementSig);
+        if (t === null || s === null || r === null) return blank();
+        return lit(t.replaceAll(s, r));
+      }
+    ),
+
+    slice: fn((textSig = blank(), startSig = blank(), endSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      const start = numOr(startSig, 0);
+      const end = numOpt(endSig);
+      return lit(t.slice(start, end ?? undefined));
+    }),
+
+    index_of: fn(
+      (textSig = blank(), searchSig = blank(), fromIndexSig = blank()) => {
+        const t = textOpt(textSig);
+        if (t === null) return blank();
+        return lit(t.indexOf(textOr(searchSig, ""), numOr(fromIndexSig, 0)));
+      }
+    ),
+
+    pad_start: fn(
+      (textSig = blank(), targetLengthSig = blank(), padTextSig = blank()) => {
+        const t = textOpt(textSig);
+        if (t === null) return blank();
+        return lit(
+          t.padStart(numOr(targetLengthSig, 0), textOr(padTextSig, " "))
+        );
+      }
+    ),
+
+    pad_end: fn(
+      (textSig = blank(), targetLengthSig = blank(), padTextSig = blank()) => {
+        const t = textOpt(textSig);
+        if (t === null) return blank();
+        return lit(
+          t.padEnd(numOr(targetLengthSig, 0), textOr(padTextSig, " "))
+        );
+      }
+    ),
+
+    split: fn(
+      (textSig = blank(), separatorSig = blank(), limitSig = blank()) => {
+        const t = textOpt(textSig);
+        if (t === null) return blank();
+        const sep = textOr(separatorSig, "");
+        const limit = numOpt(limitSig);
+        const parts = limit === null ? t.split(sep) : t.split(sep, limit);
+        return createSignal(
+          createBlock(
+            {},
+            parts.map((part) => lit(part))
+          )
+        );
+      }
+    ),
+
+    join: fn((blockSig = blank(), separatorSig = blank()) => {
+      const node = blockSig.get();
+      if (isBlank(node)) return blank();
+      return lit(textsFlatRequired(blockSig).join(textOr(separatorSig, ",")));
+    }),
+
+    capitalize: fn((textSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      return lit(t ? t.charAt(0).toUpperCase() + t.slice(1) : "");
+    }),
+
+    repeat: fn((textSig = blank(), timesSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      const times = Math.max(0, Math.floor(numOr(timesSig, 0)));
+      return lit(t.repeat(times));
+    }),
+
+    left: fn((textSig = blank(), countSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      const count = Math.max(0, Math.floor(numOr(countSig, 0)));
+      return lit(t.slice(0, count));
+    }),
+
+    right: fn((textSig = blank(), countSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      const count = Math.max(0, Math.floor(numOr(countSig, 0)));
+      return lit(count ? t.slice(-count) : "");
+    }),
   };
 }
 
 export function withLibrary(
   root: DataSignal<BlockNode>
 ): DataSignal<BlockNode> {
-  createBlockSignal(createLibrary(), [root]);
+  markCaseInsensitiveScope(createBlockSignal(createLibrary(), [root]));
   return root;
 }

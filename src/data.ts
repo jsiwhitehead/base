@@ -219,10 +219,21 @@ function isStaticTruthy(n: StaticNode): boolean {
   return Boolean(n);
 }
 
+const caseInsensitiveScopes = new WeakSet<DataSignal<BlockNode>>();
+
+export function markCaseInsensitiveScope(scope: DataSignal<BlockNode>) {
+  caseInsensitiveScopes.add(scope);
+}
+
 function lookupInScope(name: string, start: ChildSignal): DataSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
-    const found = scope.get().values.find(([k]) => k === name);
+    const { values } = scope.get();
+    const insensitive = caseInsensitiveScopes.has(scope);
+    const found = values.find(
+      ([k]) =>
+        k === name || (insensitive && k.toLowerCase() === name.toLowerCase())
+    );
     if (found) return createSignal(childToData(found[1]));
     scope = getParentSignal(scope).value;
   }
