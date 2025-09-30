@@ -12,10 +12,10 @@ import {
   lit,
   bool,
   fn,
-  toBool,
-  reqPrim,
-  reqNum,
-  maybeText,
+  asJsBool,
+  primExpect,
+  numExpect,
+  textOpt,
   mapNums,
 } from "./library";
 
@@ -326,15 +326,15 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
 const BINARY_OPS: Partial<
   Record<Binary["op"], (a: DataSignal, b: DataSignal) => DataSignal>
 > = {
-  "!=": (a, b) => bool(reqPrim(a) !== reqPrim(b)),
-  "=": (a, b) => bool(reqPrim(a) === reqPrim(b)),
+  "!=": (a, b) => bool(primExpect(a) !== primExpect(b)),
+  "=": (a, b) => bool(primExpect(a) === primExpect(b)),
 
-  "<=": (a, b) => bool(reqNum(a) <= reqNum(b)),
-  "<": (a, b) => bool(reqNum(a) < reqNum(b)),
-  ">=": (a, b) => bool(reqNum(a) >= reqNum(b)),
-  ">": (a, b) => bool(reqNum(a) > reqNum(b)),
+  "<=": (a, b) => bool(numExpect(a) <= numExpect(b)),
+  "<": (a, b) => bool(numExpect(a) < numExpect(b)),
+  ">=": (a, b) => bool(numExpect(a) >= numExpect(b)),
+  ">": (a, b) => bool(numExpect(a) > numExpect(b)),
 
-  "&": (a, b) => lit((maybeText(a) ?? "") + (maybeText(b) ?? "")),
+  "&": (a, b) => lit((textOpt(a) ?? "") + (textOpt(b) ?? "")),
 
   "+": mapNums((a, b) => a + b),
   "-": mapNums((a, b) => a - b),
@@ -343,7 +343,7 @@ const BINARY_OPS: Partial<
 };
 
 const UNARY_OPS: Record<Unary["op"], (v: DataSignal) => DataSignal> = {
-  "!": (v) => bool(!toBool(v)),
+  "!": (v) => bool(!asJsBool(v)),
 
   "-": mapNums((x) => -x),
   "+": mapNums((x) => +x),
