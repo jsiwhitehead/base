@@ -205,6 +205,49 @@ function blockEntries(src: BlockNode): BlockEntry[] {
   return vals.concat(items);
 }
 
+function sortKeyFor(
+  keySelector: DataNode,
+  child: ChildSignal,
+  id: string | number
+): DataNode {
+  if (isBlank(keySelector)) {
+    return childToData(child);
+  }
+  if (isFunction(keySelector)) {
+    return keySelector.fn(createSignal(childToData(child)), lit(id)).get();
+  }
+  throw new TypeError("Expected function (key selector) or blank");
+}
+
+function sortRank(n: DataNode): [number, any] {
+  // numbers < text (locale-aware, case-insensitive) < true < other < blank
+  if (isBlank(n)) return [4, null];
+  if (isLiteral(n)) {
+    const v = n.value;
+    if (typeof v === "number") return [0, v];
+    if (typeof v === "string") return [1, v];
+    if (v === true) return [2, 1];
+  }
+  return [3, null];
+}
+
+const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+function sortCmp<T extends { key: DataNode; idx: number }>(a: T, b: T): number {
+  const [ra, va] = sortRank(a.key);
+  const [rb, vb] = sortRank(b.key);
+  if (ra !== rb) return ra - rb;
+
+  if (ra === 0) {
+    const d = (va as number) - (vb as number);
+    if (d) return d;
+  } else if (ra === 1) {
+    const d = collator.compare(va as string, vb as string);
+    if (d) return d;
+  }
+  return a.idx - b.idx;
+}
+
 /* Library */
 
 export function createLibrary(): Record<string, DataSignal> {
@@ -529,6 +572,34 @@ export function createLibrary(): Record<string, DataSignal> {
         : seq
             .slice(1)
             .reduce(reducer, createSignal(childToData(seq[0]!.child)));
+    }),
+
+    sort: fn((sourceSig = blank(), keySig = blank()) => {
+      const src = sourceSig.get();
+      if (!isBlock(src)) throw new TypeError(ERR.block);
+
+      const keySelector = keySig.get();
+
+      const sortedValues = src.values
+        .map(([id, child], idx) => ({
+          id,
+          child,
+          idx,
+          key: sortKeyFor(keySelector, child, id),
+        }))
+        .sort(sortCmp)
+        .map(({ id, child }) => [id, child] as [string, ChildSignal]);
+
+      const sortedItems = src.items
+        .map((child, idx) => ({
+          child,
+          idx,
+          key: sortKeyFor(keySelector, child, idx + 1),
+        }))
+        .sort(sortCmp)
+        .map(({ child }) => child);
+
+      return createSignal(createBlock(sortedValues, sortedItems));
     }),
 
     /* Number reducers */

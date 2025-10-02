@@ -27,12 +27,12 @@ Script {
 
   Expr<Dot>       = Lambda<Dot>
 
-  Lambda<Dot>     = Pipe<Dot>                             -- pipe
-                  | Params "=>" Lambda<"">                -- arrow
+  Lambda<Dot>     = Params "=>" Lambda<"">                -- arrow
                   | &"." Pipe<".">                        -- implicit
+                  | Pipe<Dot>                             -- pipe
 
-  Params          = ident                                 -- ident
-                  | "(" IdentList? ")"                    -- list
+  Params          = "(" IdentList? ")"                    -- list
+                  | ident                                 -- ident
 
   IdentList       = NonemptyListOf<ident, ",">
 
@@ -75,19 +75,19 @@ Script {
                   | number                               -- number
                   | text                                 -- text
 
-  number          = integer
+  number          = sciNumber
                   | decimal
-                  | sciNumber
+                  | integer
 
-  integer         = "1".."9" digit*                      -- nonzero
-                  | "0"                                  -- zero
+  sciNumber       = (integer | decimal) exponent
+  exponent        = ("e" | "E") ("+" | "-")? digit+
 
   decimal         = integer "." digit+ exponent?         -- intdot
                   | "0" "." digit+ exponent?             -- zerodot
                   | "." digit+ exponent?                 -- dot
 
-  sciNumber       = (integer | decimal) exponent
-  exponent        = ("e" | "E") ("+" | "-")? digit+
+  integer         = "1".."9" digit*                      -- nonzero
+                  | "0"                                  -- zero
 
   text            = dText
                   | sText
@@ -210,11 +210,11 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     } as Lambda;
   },
 
-  Params_ident(nameTok) {
-    return [{ type: "Ident", name: nameTok.sourceString }];
-  },
   Params_list(_open, maybeList, _close) {
     return (maybeList.children[0]?.ast ?? []) as Ident[];
+  },
+  Params_ident(nameTok) {
+    return [{ type: "Ident", name: nameTok.sourceString }];
   },
   IdentList(list) {
     return list

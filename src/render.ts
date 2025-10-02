@@ -7,11 +7,13 @@ import {
   type CodeNode,
   type WriteSignal,
   type ChildSignal,
+  isBlank,
   isLiteral,
   isBlock,
   isCode,
   isWritableSignal,
   createLiteral,
+  createBlank,
   createCode,
   createSignal,
   childToData,
@@ -31,6 +33,15 @@ import {
 } from "./input";
 
 export const signalByElement = new WeakMap<HTMLElement, ChildSignal>();
+
+function parseAutoNumber(raw: string): number | undefined {
+  const t = raw.trim();
+  if (t === "") return undefined;
+  const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+  if (!NUM_RE.test(t)) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 function createEl(
   tag: string,
@@ -409,13 +420,13 @@ class BlockView extends View<BlockNode> {
 
       switch (kind) {
         case "insert-before": {
-          const newItem = createSignal(createLiteral(""));
+          const newItem = createSignal(createBlank());
           updated = insertBefore(parentBlock, target, newItem);
           nextFocus = newItem;
           break;
         }
         case "insert-after": {
-          const newItem = createSignal(createLiteral(""));
+          const newItem = createSignal(createBlank());
           updated = insertAfter(parentBlock, target, newItem);
           nextFocus = newItem;
           break;
@@ -624,6 +635,12 @@ class CodeView extends View<string> {
               new ReadonlyStringView("value", () => {}, String(resolved.value))
           );
           this.resultView!.update(String(resolved.value));
+        } else if (isBlank(resolved)) {
+          this.ensureResultKind(
+            "readonly",
+            () => new ReadonlyStringView("value", () => {}, "")
+          );
+          this.resultView!.update("");
         } else {
           throw new Error("Cannot render a FunctionNode");
         }
@@ -681,6 +698,11 @@ export class SignalMount {
       }
     };
 
+    const readLiteralText = () => {
+      const cur = this.signal.peek();
+      return isLiteral(cur) ? String((cur as LiteralNode).value) : "";
+    };
+
     this.disposeEffect = effect(() => {
       const n = this.signal.get();
 
@@ -725,10 +747,12 @@ export class SignalMount {
             () =>
               new StringView(
                 "value",
-                () => String((this.signal.peek() as LiteralNode).value),
+                readLiteralText,
                 (next) =>
-                  (this.signal as WriteSignal<LiteralNode>).set(
-                    createLiteral(next)
+                  (this.signal as WriteSignal<DataNode>).set(
+                    next.trim() === ""
+                      ? createBlank()
+                      : createLiteral(parseAutoNumber(next) ?? next)
                   ),
                 registerElementSignal
               )
@@ -745,6 +769,31 @@ export class SignalMount {
               )
           );
           this.nodeView.update(String(n.value));
+        }
+      } else if (isBlank(n)) {
+        if (isWritableSignal(this.signal)) {
+          ensureKind(
+            "literal",
+            () =>
+              new StringView(
+                "value",
+                readLiteralText,
+                (next) =>
+                  (this.signal as WriteSignal<DataNode>).set(
+                    next.trim() === ""
+                      ? createBlank()
+                      : createLiteral(parseAutoNumber(next) ?? next)
+                  ),
+                registerElementSignal
+              )
+          );
+          this.nodeView.update("");
+        } else {
+          ensureKind(
+            "readonly",
+            () => new ReadonlyStringView("value", registerElementSignal, "")
+          );
+          this.nodeView.update("");
         }
       } else {
         throw new Error("Cannot render a FunctionNode");
