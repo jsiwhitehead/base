@@ -1,4 +1,9 @@
-import { type Signal as PSignal, signal as s } from "@preact/signals-core";
+import {
+  type Signal as PSignal,
+  type ReadonlySignal as PReadonlySignal,
+  signal as s,
+  computed as c,
+} from "@preact/signals-core";
 
 import { evalCode } from "./code";
 
@@ -56,7 +61,9 @@ export type WriteSignal<T> = ReadSignal<T> & {
   set(next: T): void;
 };
 
-export type DataSignal<T extends DataNode = DataNode> = WriteSignal<T>;
+export type DataSignal<T extends DataNode = DataNode> =
+  | ReadSignal<T>
+  | WriteSignal<T>;
 
 export type ChildSignal =
   | ReadSignal<DataNode>
@@ -178,6 +185,15 @@ export function createCode(code: string): CodeNode {
   return { kind: "code", code };
 }
 
+export function createComputed<T extends DataNode>(fn: () => T): ReadSignal<T> {
+  const com: PReadonlySignal<T> = c(fn);
+  return {
+    kind: "signal",
+    get: () => com.value,
+    peek: () => com.peek(),
+  };
+}
+
 export function createSignal<T>(initial: T): WriteSignal<T> {
   const sig = s<T>(initial);
   return {
@@ -256,10 +272,6 @@ export function childToData(sig: ChildSignal): DataNode {
   }
 
   return v;
-}
-
-export function resolveItems(block: BlockNode): DataNode[] {
-  return block.items.map(childToData);
 }
 
 export function resolveData(n: DataNode): StaticNode {
@@ -364,19 +376,17 @@ export function getKeyOfChild(
   return loc?.kind === "value" ? parentBlock.values[loc.index]![0] : undefined;
 }
 
-export function getByKey(child: ChildSignal, key: string): DataSignal {
-  const node = childToData(child);
+export function getByKey(block: DataSignal, key: string): DataSignal {
+  const node = block.get();
   if (!isBlock(node)) {
     throw new TypeError(`Cannot access property '${key}' of non-block value`);
   }
   const pair = node.values.find(([k]) => k === key);
   if (!pair) throw new ReferenceError(`Unknown property '${key}'`);
-
-  const evaluated = childToData(pair[1]);
-  return createSignal(evaluated);
+  return createSignal(childToData(pair[1]));
 }
 
-export function getByIndex1(child: ChildSignal, idx1: number): DataSignal {
+export function getByIndex1(block: DataSignal, idx1: number): DataSignal {
   if (!Number.isFinite(idx1)) {
     throw new TypeError("Index must be a finite number");
   }
@@ -384,41 +394,38 @@ export function getByIndex1(child: ChildSignal, idx1: number): DataSignal {
   if (idx0 < 0) {
     throw new RangeError("Index must be 1 or greater");
   }
-  const node = childToData(child);
+  const node = block.get();
   if (!isBlock(node)) {
     throw new TypeError("Cannot index into a non-block value");
   }
 
-  const present = node.items.map(childToData);
-
-  const selected = present[idx0];
-  if (!selected) {
+  const child = node.items[idx0];
+  if (!child) {
     throw new RangeError(
-      `Index ${idx1} is out of range (present items length ${present.length})`
+      `Index ${idx1} is out of range (items length ${node.items.length})`
     );
   }
-  return createSignal(selected);
+  return createSignal(childToData(child));
 }
 
 export function getByKeyOrIndex(
-  child: ChildSignal,
-  value: ChildSignal
+  block: DataSignal,
+  value: DataSignal
 ): DataSignal {
-  const dn = childToData(value);
-  if (isLiteral(dn)) {
-    const litv = dn.value;
-    if (typeof litv === "number") {
-      return getByIndex1(child, litv);
+  const v = value.get();
+  if (isLiteral(v)) {
+    const lit = v.value;
+    if (typeof lit === "number") {
+      return getByIndex1(block, lit);
     }
-    if (typeof litv === "string") {
-      const maybe = Number(litv);
+    if (typeof lit === "string") {
+      const maybe = Number(lit);
       if (Number.isFinite(maybe) && Number.isInteger(maybe)) {
-        return getByIndex1(child, maybe);
+        return getByIndex1(block, maybe);
       }
-      return getByKey(child, litv);
+      return getByKey(block, lit);
     }
   }
-
   throw new TypeError("Index/key must evaluate to text or number");
 }
 

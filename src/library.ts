@@ -3,16 +3,19 @@ import {
   type BlockNode,
   type DataNode,
   type DataSignal,
+  type ChildSignal,
   isBlank,
   isLiteral,
   isBlock,
+  isFunction,
   createBlank,
   createLiteral,
   createBlock,
   createFunction,
+  createComputed,
   createSignal,
   createBlockSignal,
-  resolveItems,
+  childToData,
   markCaseInsensitiveScope,
 } from "./data";
 
@@ -25,8 +28,10 @@ const ERR = {
   numOrBlank: "Expected number or blank",
   text: "Expected text",
   textOrBlank: "Expected text or blank",
-  numsOrBlank: "Expected numbers or blanks (including flat blocks)",
-  texts: "Expected texts (including flat blocks)",
+  numsOrBlank: "Expected numbers or blanks",
+  textsOrBlank: "Expected texts or blanks",
+  block: "Expected block",
+  func: "Expected function",
 };
 
 /* Constructors */
@@ -106,34 +111,6 @@ export function mapNums(
   };
 }
 
-function collectOneLevel<T>(
-  sourceSig: DataSignal,
-  mapItem: (node: DataNode) => T | undefined
-): T[] {
-  const sourceNode = sourceSig.get();
-  const items = isBlock(sourceNode) ? resolveItems(sourceNode) : [sourceNode];
-  return items.flatMap((itemNode) => {
-    const mapped = mapItem(itemNode);
-    return mapped === undefined ? [] : [mapped];
-  });
-}
-
-function numbersFlatOrBlank(sourceSig: DataSignal): number[] {
-  return collectOneLevel(sourceSig, (node) => {
-    if (isBlank(node)) return undefined;
-    if (isLiteral(node) && typeof node.value === "number") return node.value;
-    throw new TypeError(ERR.numsOrBlank);
-  });
-}
-
-function textsFlatRequired(sourceSig: DataSignal): string[] {
-  return collectOneLevel(sourceSig, (node) => {
-    if (isBlank(node)) throw new TypeError(ERR.texts);
-    if (isLiteral(node) && typeof node.value === "string") return node.value;
-    throw new TypeError(ERR.texts);
-  });
-}
-
 /* Coercions */
 
 function toBool(node: DataNode): DataNode {
@@ -175,6 +152,59 @@ function toNumber(node: DataNode): DataNode {
   return createBlank();
 }
 
+/* Helpers */
+
+function blockNodes(n: BlockNode): DataNode[] {
+  return [
+    ...n.values.map(([, vs]) => childToData(vs)),
+    ...n.items.map(childToData),
+  ];
+}
+
+function optBlockNums(n: BlockNode): number[] {
+  const out: number[] = [];
+  for (const node of blockNodes(n)) {
+    if (isBlank(node)) continue;
+    if (isLiteral(node) && typeof node.value === "number") {
+      out.push(node.value);
+      continue;
+    }
+    throw new TypeError(ERR.numsOrBlank);
+  }
+  return out;
+}
+
+function optBlockTexts(n: BlockNode): string[] {
+  const out: string[] = [];
+  for (const node of blockNodes(n)) {
+    if (isBlank(node)) continue;
+    if (isLiteral(node) && typeof node.value === "string") {
+      out.push(node.value);
+      continue;
+    }
+    throw new TypeError(ERR.textsOrBlank);
+  }
+  return out;
+}
+
+type BlockEntry =
+  | { kind: "value"; child: ChildSignal; id: string }
+  | { kind: "item"; child: ChildSignal; id: number };
+
+function blockEntries(src: BlockNode): BlockEntry[] {
+  const vals = src.values.map<BlockEntry>(([key, child]) => ({
+    kind: "value",
+    child,
+    id: key,
+  }));
+  const items = src.items.map<BlockEntry>((child, j) => ({
+    kind: "item",
+    child,
+    id: j + 1,
+  }));
+  return vals.concat(items);
+}
+
 /* Library */
 
 export function createLibrary(): Record<string, DataSignal> {
@@ -200,20 +230,6 @@ export function createLibrary(): Record<string, DataSignal> {
     first_present: fn((...argSigs: DataSignal[]) => {
       for (const s of argSigs) if (!isBlank(s.get())) return s;
       return blank();
-    }),
-
-    /* Counting */
-
-    count: fn((sourceSig = blank()) => {
-      const node = sourceSig.get();
-      const nodes = isBlock(node) ? resolveItems(node) : [node];
-      return lit(nodes.reduce((n, v) => n + (isBlank(v) ? 0 : 1), 0));
-    }),
-
-    count_blank: fn((sourceSig = blank()) => {
-      const node = sourceSig.get();
-      const nodes = isBlock(node) ? resolveItems(node) : [node];
-      return lit(nodes.reduce((n, v) => n + (isBlank(v) ? 1 : 0), 0));
     }),
 
     /* Coercion */
@@ -282,30 +298,6 @@ export function createLibrary(): Record<string, DataSignal> {
       return lit(Math.min(Math.max(n, minV), maxV));
     }),
 
-    sum: fn((...argSigs: DataSignal[]) => {
-      const nums = argSigs.flatMap(numbersFlatOrBlank);
-      if (!nums.length) return blank();
-      return lit(nums.reduce((a, b) => a + b, 0));
-    }),
-
-    avg: fn((...argSigs: DataSignal[]) => {
-      const nums = argSigs.flatMap(numbersFlatOrBlank);
-      if (!nums.length) return blank();
-      return lit(nums.reduce((a, b) => a + b, 0) / nums.length);
-    }),
-
-    min: fn((...argSigs: DataSignal[]) => {
-      const nums = argSigs.flatMap(numbersFlatOrBlank);
-      if (!nums.length) return blank();
-      return lit(Math.min(...nums));
-    }),
-
-    max: fn((...argSigs: DataSignal[]) => {
-      const nums = argSigs.flatMap(numbersFlatOrBlank);
-      if (!nums.length) return blank();
-      return lit(Math.max(...nums));
-    }),
-
     pow: fn((baseSig = blank(), exponentSig = blank()) => {
       const base = numOpt(baseSig);
       if (base === null) return blank();
@@ -327,7 +319,7 @@ export function createLibrary(): Record<string, DataSignal> {
 
     /* Text */
 
-    len: fn((textSig = blank()) => {
+    length: fn((textSig = blank()) => {
       const t = textOpt(textSig);
       if (t === null) return blank();
       return lit(t.length);
@@ -432,12 +424,6 @@ export function createLibrary(): Record<string, DataSignal> {
       }
     ),
 
-    join: fn((blockSig = blank(), separatorSig = blank()) => {
-      const node = blockSig.get();
-      if (isBlank(node)) return blank();
-      return lit(textsFlatRequired(blockSig).join(textOr(separatorSig, ",")));
-    }),
-
     capitalize: fn((textSig = blank()) => {
       const t = textOpt(textSig);
       if (t === null) return blank();
@@ -463,6 +449,128 @@ export function createLibrary(): Record<string, DataSignal> {
       if (t === null) return blank();
       const count = Math.max(0, Math.floor(numOr(countSig, 0)));
       return lit(count ? t.slice(-count) : "");
+    }),
+
+    /* Blocks */
+
+    size: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      return lit(n.values.length + n.items.length);
+    }),
+
+    count: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      return lit(
+        blockNodes(n).reduce((acc, node) => acc + (isBlank(node) ? 0 : 1), 0)
+      );
+    }),
+
+    count_blank: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      return lit(
+        blockNodes(n).reduce((acc, node) => acc + (isBlank(node) ? 1 : 0), 0)
+      );
+    }),
+
+    map: fn((sourceSig = blank(), fnSig = blank()) => {
+      const src = sourceSig.get();
+      if (!isBlock(src)) throw new TypeError(ERR.block);
+      const f = fnSig.get();
+      if (!isFunction(f)) throw new TypeError(ERR.func);
+
+      const vals: [string, ChildSignal][] = [];
+      const items: ChildSignal[] = [];
+
+      for (const e of blockEntries(src)) {
+        const out = createComputed(() =>
+          f.fn(createSignal(childToData(e.child)), lit(e.id)).get()
+        );
+        e.kind === "value" ? vals.push([e.id, out]) : items.push(out);
+      }
+
+      return createSignal(createBlock(vals, items));
+    }),
+
+    filter: fn((sourceSig = blank(), predSig = blank()) => {
+      const src = sourceSig.get();
+      if (!isBlock(src)) throw new TypeError(ERR.block);
+      const p = predSig.get();
+      if (!isFunction(p)) throw new TypeError(ERR.func);
+
+      const vals: [string, ChildSignal][] = [];
+      const items: ChildSignal[] = [];
+
+      for (const e of blockEntries(src)) {
+        if (asJsBool(p.fn(createSignal(childToData(e.child)), lit(e.id)))) {
+          e.kind === "value" ? vals.push([e.id, e.child]) : items.push(e.child);
+        }
+      }
+
+      return createSignal(createBlock(vals, items));
+    }),
+
+    reduce: fn((sourceSig = blank(), fnSig = blank(), initSig = blank()) => {
+      const src = sourceSig.get();
+      if (!isBlock(src)) throw new TypeError(ERR.block);
+      const rf = fnSig.get();
+      if (!isFunction(rf)) throw new TypeError(ERR.func);
+
+      const seq = blockEntries(src);
+      if (seq.length === 0) return initSig;
+
+      const reducer = (acc: DataSignal, e: BlockEntry) =>
+        rf.fn(acc, createSignal(childToData(e.child)), lit(e.id));
+
+      return !isBlank(initSig.get())
+        ? seq.reduce(reducer, initSig)
+        : seq
+            .slice(1)
+            .reduce(reducer, createSignal(childToData(seq[0]!.child)));
+    }),
+
+    /* Number reducers */
+
+    sum: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      const nums = optBlockNums(n);
+      return nums.length ? lit(nums.reduce((a, b) => a + b, 0)) : blank();
+    }),
+
+    avg: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      const nums = optBlockNums(n);
+      return nums.length
+        ? lit(nums.reduce((a, b) => a + b, 0) / nums.length)
+        : blank();
+    }),
+
+    min: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      const nums = optBlockNums(n);
+      return nums.length ? lit(Math.min(...nums)) : blank();
+    }),
+
+    max: fn((sourceSig = blank()) => {
+      const n = sourceSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      const nums = optBlockNums(n);
+      return nums.length ? lit(Math.max(...nums)) : blank();
+    }),
+
+    /* Text reducers */
+
+    join: fn((blockSig = blank(), separatorSig = blank()) => {
+      const n = blockSig.get();
+      if (!isBlock(n)) throw new TypeError(ERR.block);
+      const sep = textOr(separatorSig, ",");
+      const parts = optBlockTexts(n);
+      return parts.length ? lit(parts.join(sep)) : blank();
     }),
   };
 }
