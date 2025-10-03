@@ -419,10 +419,6 @@ export function getByKeyOrIndex(
       return getByIndex1(block, lit);
     }
     if (typeof lit === "string") {
-      const maybe = Number(lit);
-      if (Number.isFinite(maybe) && Number.isInteger(maybe)) {
-        return getByIndex1(block, maybe);
-      }
       return getByKey(block, lit);
     }
   }
