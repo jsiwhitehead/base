@@ -72,12 +72,12 @@ class ReadonlyStringView extends View<string> {
   ) {
     super();
     this.element = createEl("div", this.fieldRole);
-    this.element.textContent = initial + (this.fieldRole === "key" ? " :" : "");
+    this.element.textContent = initial + (this.fieldRole === "key" ? ":" : "");
     this.registerElement(this.element);
   }
 
   update(text: string) {
-    this.element.textContent = text + (this.fieldRole === "key" ? " :" : "");
+    this.element.textContent = text + (this.fieldRole === "key" ? ":" : "");
   }
 }
 
@@ -101,7 +101,7 @@ class StringView extends View<string> {
 
     if (tag === "div") {
       nextEl.textContent =
-        this.getText() + (this.fieldRole === "key" ? " :" : "");
+        this.getText() + (this.fieldRole === "key" ? ":" : "");
 
       nextEl.addEventListener("mousedown", (e) => {
         if (e.detail === 2) {
@@ -170,7 +170,7 @@ class StringView extends View<string> {
 
   update(text: string) {
     if (this.element.tagName === "DIV") {
-      this.element.textContent = text + (this.fieldRole === "key" ? " :" : "");
+      this.element.textContent = text + (this.fieldRole === "key" ? ":" : "");
     }
   }
 }
