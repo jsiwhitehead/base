@@ -399,6 +399,12 @@ export function createLibrary(): Record<string, DataSignal> {
       return t === null ? blank() : lit(t.toUpperCase());
     }),
 
+    capitalize: fn((textSig = blank()) => {
+      const t = textOpt(textSig);
+      if (t === null) return blank();
+      return lit(t ? t.charAt(0).toUpperCase() + t.slice(1) : "");
+    }),
+
     replace: fn(
       (textSig = blank(), searchSig = blank(), replacementSig = blank()) => {
         const t = textOpt(textSig),
@@ -408,14 +414,6 @@ export function createLibrary(): Record<string, DataSignal> {
         return lit(t.replaceAll(s, r));
       }
     ),
-
-    slice: fn((textSig = blank(), startSig = blank(), endSig = blank()) => {
-      const t = textOpt(textSig);
-      if (t === null) return blank();
-      const start = numOr(startSig, 0);
-      const end = numOpt(endSig);
-      return lit(t.slice(start, end ?? undefined));
-    }),
 
     index_of: fn(
       (textSig = blank(), searchSig = blank(), fromIndexSig = blank()) => {
@@ -461,31 +459,11 @@ export function createLibrary(): Record<string, DataSignal> {
       }
     ),
 
-    capitalize: fn((textSig = blank()) => {
-      const t = textOpt(textSig);
-      if (t === null) return blank();
-      return lit(t ? t.charAt(0).toUpperCase() + t.slice(1) : "");
-    }),
-
     repeat: fn((textSig = blank(), timesSig = blank()) => {
       const t = textOpt(textSig);
       if (t === null) return blank();
       const times = Math.max(0, Math.floor(numOr(timesSig, 0)));
       return lit(t.repeat(times));
-    }),
-
-    left: fn((textSig = blank(), countSig = blank()) => {
-      const t = textOpt(textSig);
-      if (t === null) return blank();
-      const count = Math.max(0, Math.floor(numOr(countSig, 0)));
-      return lit(t.slice(0, count));
-    }),
-
-    right: fn((textSig = blank(), countSig = blank()) => {
-      const t = textOpt(textSig);
-      if (t === null) return blank();
-      const count = Math.max(0, Math.floor(numOr(countSig, 0)));
-      return lit(count ? t.slice(-count) : "");
     }),
 
     /* Blocks */

@@ -7,6 +7,10 @@ import {
   isLiteral,
   isFunction,
   isBlock,
+  createSignal,
+  sliceText,
+  sliceBlockItems,
+  createRangeBlock,
   getByKey,
   getByKeyOrIndex,
 } from "./data";
@@ -18,6 +22,7 @@ import {
   asJsBool,
   primExpect,
   numExpect,
+  numOpt,
   textOpt,
   mapNums,
 } from "./library";
@@ -40,8 +45,11 @@ Script {
   Eq<Dot>         = Rel<Dot> (EqOp Rel<Dot>)*
   EqOp            = "!=" | "="
 
-  Rel<Dot>        = Add<Dot> (RelOp Add<Dot>)*
+  Rel<Dot>        = Range<Dot> (RelOp Range<Dot>)*
   RelOp           = "<=" | "<" | ">=" | ">"
+
+  Range<Dot>      = Slice<Dot>
+                  | Add<Dot>
 
   Add<Dot>        = Mul<Dot> (AddOp Mul<Dot>)*
   AddOp           = "+" | "-"
@@ -57,8 +65,13 @@ Script {
                   | Member
 
   Call<Dot>       = "(" ListOf<Expr<Dot>, ","> ")"
-  Index<Dot>      = "[" Expr<Dot> "]"
+
+  Index<Dot>      = "[" Slice<Dot> "]"
+                  | "[" Expr<Dot> "]"
+
   Member          = "." ident
+
+  Slice<Dot>      = Add<Dot>? ".." Add<Dot>? (":" Add<Dot>?)?
 
   Prim<Dot>       = Literal                              -- lit
                   | ident                                -- ident
@@ -123,8 +136,9 @@ export type Expr =
   | Call
   | Index
   | Member
-  | Template
+  | Slice
   | Lit
+  | Template
   | Blank
   | Ident;
 
@@ -163,6 +177,13 @@ export interface Member {
   type: "Member";
   block: Expr;
   key: Ident;
+}
+
+export interface Slice {
+  type: "Slice";
+  start?: Expr;
+  end?: Expr;
+  step?: Expr;
 }
 
 export interface Lit {
@@ -290,6 +311,15 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     });
   },
 
+  Slice(start, _dots, end, _colon, step) {
+    return {
+      type: "Slice",
+      start: start.children[0]?.ast as Expr | undefined,
+      end: end.children[0]?.ast as Expr | undefined,
+      step: step.children[0]?.ast as Expr | undefined,
+    } as Slice;
+  },
+
   Prim_ident(nameTok) {
     return { type: "Ident", name: nameTok.sourceString };
   },
@@ -393,6 +423,15 @@ const UNARY_OPS: Record<Unary["op"], (v: DataSignal) => DataSignal> = {
 
 /* Evaluate */
 
+function evalNumberOpt(
+  e: Expr | undefined,
+  scope: (name: string) => DataSignal
+): number | null {
+  if (!e) return null;
+  const sig = evalExpr(e, scope);
+  return numOpt(sig);
+}
+
 function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
   switch (e.type) {
     case "Lambda": {
@@ -430,6 +469,26 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
     }
 
     case "Index": {
+      if ((e.index as any).type === "Slice") {
+        const targetSig = evalExpr(e.block, scope);
+        const target = targetSig.get();
+
+        const slice = e.index as Slice;
+        const startN = evalNumberOpt(slice.start, scope);
+        const endN = evalNumberOpt(slice.end, scope);
+        const stepN = evalNumberOpt(slice.step, scope);
+
+        if (isLiteral(target) && typeof target.value === "string") {
+          return lit(sliceText(target.value, startN, endN, stepN));
+        }
+
+        if (isBlock(target)) {
+          return createSignal(sliceBlockItems(target, startN, endN, stepN));
+        }
+
+        throw new TypeError("Cannot slice a non-text or non-block value");
+      }
+
       return getByKeyOrIndex(
         evalExpr(e.block, scope),
         evalExpr(e.index, scope)
@@ -438,6 +497,13 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
     case "Member": {
       return getByKey(evalExpr(e.block, scope), e.key.name);
+    }
+
+    case "Slice": {
+      const startN = evalNumberOpt(e.start, scope);
+      const endN = evalNumberOpt(e.end, scope);
+      const stepN = evalNumberOpt(e.step, scope);
+      return createSignal(createRangeBlock(startN, endN, stepN));
     }
 
     case "Lit":

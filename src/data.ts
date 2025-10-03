@@ -220,6 +220,78 @@ export function createBlockSignal(
   return parent;
 }
 
+/* Slice */
+
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+function rangeIndices(s: number, e: number, st: number): number[] {
+  if (st === 0) throw new RangeError("Slice step cannot be 0");
+  const delta = e - s;
+  if (delta === 0) return [s];
+  if (Math.sign(delta) !== Math.sign(st)) return [];
+  const n = Math.floor(Math.abs(delta) / Math.abs(st)) + 1;
+  return Array.from({ length: n }, (_, i) => s + i * st);
+}
+
+function computeSliceIndices(
+  start: number | null,
+  end: number | null,
+  step: number | null,
+  len: number | null
+): number[] {
+  if (len == null) {
+    const s = Math.trunc(start ?? 1);
+    if (end == null) return [];
+    const e = Math.trunc(end);
+    const st = step != null ? Math.trunc(step) : e >= s ? 1 : -1;
+    return rangeIndices(s, e, st);
+  }
+
+  const st =
+    step != null ? Math.trunc(step) : (end ?? len) >= (start ?? 1) ? 1 : -1;
+  const sDefault = st > 0 ? 1 : len;
+  const eDefault = st > 0 ? len : 1;
+  const s = clamp(Math.trunc(start ?? sDefault), 1, len);
+  const e = clamp(Math.trunc(end ?? eDefault), 1, len);
+  return rangeIndices(s, e, st);
+}
+
+export function sliceText(
+  text: string,
+  start: number | null,
+  end: number | null,
+  step: number | null
+): string {
+  const indices = computeSliceIndices(start, end, step, text.length);
+  const out = indices.map((i) => text.charAt(i - 1)).join("");
+  return out;
+}
+
+export function sliceBlockItems(
+  block: BlockNode,
+  start: number | null,
+  end: number | null,
+  step: number | null
+): BlockNode {
+  const indices = computeSliceIndices(start, end, step, block.items.length);
+  const newItems = indices.map((oneBased) => block.items[oneBased - 1]!);
+  return createBlock([], newItems);
+}
+
+export function createRangeBlock(
+  start: number | null,
+  end: number | null,
+  step: number | null = null
+): BlockNode {
+  const indices = computeSliceIndices(start, end, step, null);
+  const items: ChildSignal[] = indices.map((n) =>
+    createSignal(createLiteral(n))
+  );
+  return createBlock([], items);
+}
+
 /* Evaluate */
 
 function toStaticError(err: unknown): StaticError {
