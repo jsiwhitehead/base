@@ -3,7 +3,10 @@ import * as ohm from "ohm-js";
 import {
   type DataNode,
   type DataSignal,
+  isBlank,
+  isLiteral,
   isFunction,
+  isBlock,
   getByKey,
   getByKeyOrIndex,
 } from "./data";
@@ -54,7 +57,7 @@ Script {
   Mul<Dot>        = Unary<Dot> (MulOp Unary<Dot>)*
   MulOp           = "*" | "/"
 
-  Unary<Dot>      = (("!" | "-" | "+")*) Path<Dot>
+  Unary<Dot>      = (("!" | "-" | "+" | "#")*) Path<Dot>
 
   Path<Dot>       = Prim<Dot> PathPart<Dot>*
   PathPart<Dot>   = Call<Dot>
@@ -69,6 +72,7 @@ Script {
                   | ident                                -- ident
                   | "(" Expr<Dot> ")"                    -- paren
                   | &"." Dot ident                       -- dot
+                  | &"." Dot "[" Expr<Dot> "]"           -- dotindex
 
   Literal         = "blank"                              -- blank
                   | "true"                               -- true
@@ -138,7 +142,7 @@ export interface Binary {
 
 export interface Unary {
   type: "Unary";
-  op: "!" | "-" | "+";
+  op: "!" | "-" | "+" | "#";
   argument: Expr;
 }
 
@@ -176,7 +180,7 @@ export interface Ident {
 
 /* Semantics */
 
-const IMPLICIT_PARAM = "__";
+const IMPLICIT_PARAM = "_";
 
 function buildBinaryChain(
   first: ohm.Node,
@@ -300,6 +304,13 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       key: { type: "Ident", name: nameTok.sourceString },
     } as Member;
   },
+  Prim_dotindex(_guard, _dot, _open, expr, _close) {
+    return {
+      type: "Index",
+      block: { type: "Ident", name: IMPLICIT_PARAM },
+      index: expr.ast,
+    } as Index;
+  },
 
   Literal_blank(_) {
     return { type: "Blank" } as Blank;
@@ -347,6 +358,20 @@ const UNARY_OPS: Record<Unary["op"], (v: DataSignal) => DataSignal> = {
 
   "-": mapNums((x) => -x),
   "+": mapNums((x) => +x),
+
+  "#": (v) => {
+    const n = v.get();
+    if (isBlank(n)) {
+      return blank();
+    }
+    if (isBlock(n)) {
+      return lit(n.values.length + n.items.length);
+    }
+    if (isLiteral(n) && typeof n.value === "string") {
+      return lit(n.value.length);
+    }
+    throw new TypeError("Expected text or block");
+  },
 };
 
 /* Evaluate */

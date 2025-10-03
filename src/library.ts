@@ -362,12 +362,6 @@ export function createLibrary(): Record<string, DataSignal> {
 
     /* Text */
 
-    length: fn((textSig = blank()) => {
-      const t = textOpt(textSig);
-      if (t === null) return blank();
-      return lit(t.length);
-    }),
-
     trim: fn((textSig = blank()) => {
       const t = textOpt(textSig);
       if (t === null) return blank();
@@ -495,12 +489,6 @@ export function createLibrary(): Record<string, DataSignal> {
     }),
 
     /* Blocks */
-
-    size: fn((sourceSig = blank()) => {
-      const n = sourceSig.get();
-      if (!isBlock(n)) throw new TypeError(ERR.block);
-      return lit(n.values.length + n.items.length);
-    }),
 
     count: fn((sourceSig = blank()) => {
       const n = sourceSig.get();
