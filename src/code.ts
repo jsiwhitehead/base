@@ -30,26 +30,18 @@ Script {
 
   Expr<Dot>       = Lambda<Dot>
 
-  Lambda<Dot>     = Params "=>" Lambda<"">                -- arrow
+  Lambda<Dot>     = "(" IdentList? ")" "->" Lambda<"">    -- paren
                   | &"." Pipe<".">                        -- implicit
                   | Pipe<Dot>                             -- pipe
 
-  Params          = "(" IdentList? ")"                    -- list
-                  | ident                                 -- ident
-
-  IdentList       = NonemptyListOf<ident, ",">
-
   Pipe<Dot>       = Eq<Dot> (PipeOp Eq<Dot>)*
-  PipeOp          = ":"
+  PipeOp          = "->"
 
   Eq<Dot>         = Rel<Dot> (EqOp Rel<Dot>)*
   EqOp            = "!=" | "="
 
-  Rel<Dot>        = Concat<Dot> (RelOp Concat<Dot>)*
+  Rel<Dot>        = Add<Dot> (RelOp Add<Dot>)*
   RelOp           = "<=" | "<" | ">=" | ">"
-
-  Concat<Dot>     = Add<Dot> (ConcatOp Add<Dot>)*
-  ConcatOp        = "&"
 
   Add<Dot>        = Mul<Dot> (AddOp Mul<Dot>)*
   AddOp           = "+" | "-"
@@ -78,6 +70,7 @@ Script {
                   | "true"                               -- true
                   | number                               -- number
                   | text                                 -- text
+                  | template                             -- tpl
 
   number          = sciNumber
                   | decimal
@@ -93,24 +86,31 @@ Script {
   integer         = "1".."9" digit*                      -- nonzero
                   | "0"                                  -- zero
 
-  text            = dText
-                  | sText
+  text            = textLit<"\""> 
+                  | textLit<"'">
+  template        = tplLit<"\"">  
+                  | tplLit<"'">
 
-  dText           = "\"" dqChar* "\""
-  sText           = "'"  sqChar* "'"
+  textLit<q>      = q textChar<q>* q
+  tplLit<q>       = "&" q tplChunk<q>* q
 
-  dqChar          = escape | ~("\"" | "\\" | "\n" | "\r") any
-  sqChar          = escape | ~("'"  | "\\" | "\n" | "\r") any
+  textChar<q>     = escape | ~(q | "\\" | "\n" | "\r") any
 
-  escape          = "\\" escSimple | "\\u" hex4 | "\\x" hex2
+  tplChunk<q>     = "{{"                                 -- lbrace
+                  | "{" applySyntactic<Expr<"">> "}"     -- expr
+                  | tplRun<q>                            -- text
+  tplRun<q>       = tplChar<q>+
+  tplChar<q>      = escape | ~(q | "\\" | "\n" | "\r" | "{") any
 
+  escape          = "\\" escSimple | "\\u" hex4
   escSimple       = "\"" | "'" | "\\" | "n" | "r" | "t" | "b" | "f"
-  hex2            = hexDigit hexDigit
   hex4            = hexDigit hexDigit hexDigit hexDigit
 
   ident           = identStart identRest*
   identStart      = "_" | letter
   identRest       = identStart | digit
+
+  IdentList       = NonemptyListOf<ident, ",">
 }
 `);
 
@@ -123,6 +123,7 @@ export type Expr =
   | Call
   | Index
   | Member
+  | Template
   | Lit
   | Blank
   | Ident;
@@ -135,7 +136,7 @@ export interface Lambda {
 
 export interface Binary {
   type: "Binary";
-  op: "!=" | "=" | "<=" | "<" | ">=" | ">" | "&" | "+" | "-" | "*" | "/";
+  op: "!=" | "=" | "<=" | "<" | ">=" | ">" | "+" | "-" | "*" | "/";
   left: Expr;
   right: Expr;
 }
@@ -169,6 +170,11 @@ export interface Lit {
   value: true | number | string;
 }
 
+export interface Template {
+  type: "Template";
+  parts: (string | Expr)[];
+}
+
 export interface Blank {
   type: "Blank";
 }
@@ -198,11 +204,19 @@ function buildBinaryChain(
   );
 }
 
+function decodeEscapes(unquoted: string): string {
+  const s = unquoted
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"')
+    .replace(/"/g, '\\"');
+  return JSON.parse(`"${s}"`);
+}
+
 const semantics = grammar.createSemantics().addAttribute("ast", {
-  Lambda_arrow(params, _arrow, body) {
+  Lambda_paren(_open, maybeList, _close, _arrow, body) {
     return {
       type: "Lambda",
-      params: params.ast as Ident[],
+      params: (maybeList.children[0]?.ast ?? []) as Ident[],
       body: body.ast,
     } as Lambda;
   },
@@ -212,18 +226,6 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       params: [{ type: "Ident", name: IMPLICIT_PARAM }],
       body: body.ast,
     } as Lambda;
-  },
-
-  Params_list(_open, maybeList, _close) {
-    return (maybeList.children[0]?.ast ?? []) as Ident[];
-  },
-  Params_ident(nameTok) {
-    return [{ type: "Ident", name: nameTok.sourceString }];
-  },
-  IdentList(list) {
-    return list
-      .asIteration()
-      .children.map((n) => ({ type: "Ident", name: n.sourceString }));
   },
 
   Pipe(first, _ops, rights) {
@@ -240,9 +242,6 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     return buildBinaryChain(first, ops, rights);
   },
   Rel(first, ops, rights) {
-    return buildBinaryChain(first, ops, rights);
-  },
-  Concat(first, ops, rights) {
     return buildBinaryChain(first, ops, rights);
   },
   Add(first, ops, rights) {
@@ -322,13 +321,33 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     return { type: "Lit", value: Number(n.sourceString) } as Lit;
   },
   Literal_text(t) {
-    const raw = t.sourceString;
-    const value = JSON.parse(
-      raw[0] === "'"
-        ? `"${raw.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"')}"`
-        : raw
-    );
-    return { type: "Lit", value } as Lit;
+    return {
+      type: "Lit",
+      value: decodeEscapes(t.sourceString.slice(1, -1)),
+    } as Lit;
+  },
+
+  tplLit(_amp, _open, chunks, _close) {
+    return {
+      type: "Template",
+      parts: chunks.asIteration().children.map((c) => c.ast),
+    } as Template;
+  },
+
+  tplChunk_lbrace(_lb) {
+    return "{";
+  },
+  tplChunk_expr(_open, expr, _close) {
+    return expr.ast as Expr;
+  },
+  tplChunk_text(run) {
+    return decodeEscapes(run.sourceString);
+  },
+
+  IdentList(list) {
+    return list
+      .asIteration()
+      .children.map((n) => ({ type: "Ident", name: n.sourceString }));
   },
 });
 
@@ -344,8 +363,6 @@ const BINARY_OPS: Partial<
   "<": (a, b) => bool(numExpect(a) < numExpect(b)),
   ">=": (a, b) => bool(numExpect(a) >= numExpect(b)),
   ">": (a, b) => bool(numExpect(a) > numExpect(b)),
-
-  "&": (a, b) => lit((textOpt(a) ?? "") + (textOpt(b) ?? "")),
 
   "+": mapNums((a, b) => a + b),
   "-": mapNums((a, b) => a - b),
@@ -412,10 +429,6 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
       return callee.fn(...args);
     }
 
-    case "Member": {
-      return getByKey(evalExpr(e.block, scope), e.key.name);
-    }
-
     case "Index": {
       return getByKeyOrIndex(
         evalExpr(e.block, scope),
@@ -423,8 +436,25 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
       );
     }
 
+    case "Member": {
+      return getByKey(evalExpr(e.block, scope), e.key.name);
+    }
+
     case "Lit":
       return lit(e.value);
+
+    case "Template": {
+      let out = "";
+      for (const p of e.parts) {
+        if (typeof p === "string") {
+          out += p;
+        } else {
+          const v = evalExpr(p, scope);
+          out += textOpt(v) ?? "";
+        }
+      }
+      return lit(out);
+    }
 
     case "Blank":
       return blank();

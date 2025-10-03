@@ -161,7 +161,7 @@ function blockNodes(n: BlockNode): DataNode[] {
   ];
 }
 
-function optBlockNums(n: BlockNode): number[] {
+function blockNumsOpt(n: BlockNode): number[] {
   const out: number[] = [];
   for (const node of blockNodes(n)) {
     if (isBlank(node)) continue;
@@ -174,7 +174,7 @@ function optBlockNums(n: BlockNode): number[] {
   return out;
 }
 
-function optBlockTexts(n: BlockNode): string[] {
+function blockTextsOpt(n: BlockNode): string[] {
   const out: string[] = [];
   for (const node of blockNodes(n)) {
     if (isBlank(node)) continue;
@@ -595,14 +595,14 @@ export function createLibrary(): Record<string, DataSignal> {
     sum: fn((sourceSig = blank()) => {
       const n = sourceSig.get();
       if (!isBlock(n)) throw new TypeError(ERR.block);
-      const nums = optBlockNums(n);
+      const nums = blockNumsOpt(n);
       return nums.length ? lit(nums.reduce((a, b) => a + b, 0)) : blank();
     }),
 
     avg: fn((sourceSig = blank()) => {
       const n = sourceSig.get();
       if (!isBlock(n)) throw new TypeError(ERR.block);
-      const nums = optBlockNums(n);
+      const nums = blockNumsOpt(n);
       return nums.length
         ? lit(nums.reduce((a, b) => a + b, 0) / nums.length)
         : blank();
@@ -611,14 +611,14 @@ export function createLibrary(): Record<string, DataSignal> {
     min: fn((sourceSig = blank()) => {
       const n = sourceSig.get();
       if (!isBlock(n)) throw new TypeError(ERR.block);
-      const nums = optBlockNums(n);
+      const nums = blockNumsOpt(n);
       return nums.length ? lit(Math.min(...nums)) : blank();
     }),
 
     max: fn((sourceSig = blank()) => {
       const n = sourceSig.get();
       if (!isBlock(n)) throw new TypeError(ERR.block);
-      const nums = optBlockNums(n);
+      const nums = blockNumsOpt(n);
       return nums.length ? lit(Math.max(...nums)) : blank();
     }),
 
@@ -628,7 +628,7 @@ export function createLibrary(): Record<string, DataSignal> {
       const n = blockSig.get();
       if (!isBlock(n)) throw new TypeError(ERR.block);
       const sep = textOr(separatorSig, ",");
-      const parts = optBlockTexts(n);
+      const parts = blockTextsOpt(n);
       return parts.length ? lit(parts.join(sep)) : blank();
     }),
   };
