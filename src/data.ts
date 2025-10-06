@@ -86,16 +86,22 @@ export type StaticNode = StaticError | BlankNode | Primitive | StaticBlock;
 
 /* Parent Store */
 
-type ParentSig = PSignal<DataSignal<BlockNode> | undefined>;
+type ParentSig = PSignal<WriteSignal<BlockNode> | undefined>;
 const parentMap = new WeakMap<ChildSignal, ParentSig>();
 
 function getParentSignal(sig: ChildSignal): ParentSig {
   let p = parentMap.get(sig);
   if (!p) {
-    p = s<DataSignal<BlockNode> | undefined>(undefined);
+    p = s<WriteSignal<BlockNode> | undefined>(undefined);
     parentMap.set(sig, p);
   }
   return p;
+}
+
+export function getParent(
+  child: ChildSignal
+): DataSignal<BlockNode> | undefined {
+  return getParentSignal(child).peek();
 }
 
 /* Type Guards */
@@ -397,17 +403,24 @@ function findChildLocation(
 }
 
 function withLocatedChild(
-  parentBlock: BlockNode,
   child: ChildSignal,
-  fn: (ctx: { parentSignal: DataSignal<BlockNode>; loc: ChildLoc }) => BlockNode
-): BlockNode {
+  fn: (ctx: {
+    parentSignal: WriteSignal<BlockNode>;
+    parentBlock: BlockNode;
+    loc: ChildLoc;
+  }) => BlockNode | void
+) {
   const parentSignal = getParentSignal(child).peek();
-  if (!parentSignal) return parentBlock;
+  if (!parentSignal) return;
 
+  const parentBlock = parentSignal.get();
   const loc = findChildLocation(parentBlock, child);
-  if (!loc) return parentBlock;
+  if (!loc) return;
 
-  return fn({ parentSignal, loc });
+  const maybeNext = fn({ parentSignal, parentBlock, loc });
+  if (maybeNext && maybeNext !== parentBlock) {
+    parentSignal.set(maybeNext);
+  }
 }
 
 function insertItemAtIndex(
@@ -436,6 +449,25 @@ function removeChildAt(block: BlockNode, loc: ChildLoc): BlockNode {
     return createBlock(block.values, block.items.toSpliced(loc.index, 1));
   }
   return createBlock(block.values.toSpliced(loc.index, 1), block.items);
+}
+
+function listChildrenInOrder(parent: DataSignal<BlockNode>): ChildSignal[] {
+  const node = parent.peek();
+  if (!isBlock(node)) return [];
+  return [...node.values.map(([, v]) => v), ...node.items];
+}
+
+function nextFocusForRemoval(child: ChildSignal): ChildSignal {
+  const parent = getParent(child);
+  if (!parent) return child;
+
+  const list = listChildrenInOrder(parent);
+  const i = list.indexOf(child);
+
+  const prev = i > 0 ? list[i - 1]! : null;
+  const next = i >= 0 && i + 1 < list.length ? list[i + 1]! : null;
+
+  return prev ?? next ?? parent;
 }
 
 /* Getters */
@@ -497,59 +529,93 @@ export function getByKeyOrIndex(
   throw new TypeError("Index/key must evaluate to text or number");
 }
 
+/* Traversal */
+
+export function getPreviousSibling(
+  child: ChildSignal
+): ChildSignal | undefined {
+  const parent = getParent(child);
+  if (!parent) return undefined;
+  const list = listChildrenInOrder(parent);
+  const i = list.indexOf(child);
+  return i > 0 ? list[i - 1] : undefined;
+}
+
+export function getNextSibling(child: ChildSignal): ChildSignal | undefined {
+  const parent = getParent(child);
+  if (!parent) return undefined;
+  const list = listChildrenInOrder(parent);
+  const i = list.indexOf(child);
+  return i >= 0 && i + 1 < list.length ? list[i + 1] : undefined;
+}
+
+export function getParentChild(child: ChildSignal): ChildSignal | undefined {
+  const parent = getParent(child);
+  // Consumers that need a ChildSignal (e.g., for focusing) can use this casted form.
+  return parent ? (parent as unknown as ChildSignal) : undefined;
+}
+
+export function getFirstChild(child: ChildSignal): ChildSignal | undefined {
+  const n = child.peek();
+  if (!isBlock(n)) return undefined;
+  return n.values.length ? n.values[0]![1] : n.items[0];
+}
+
 /* Transformations */
 
 export function insertBefore(
-  parentBlock: BlockNode,
   reference: ChildSignal,
   newItem: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, reference, ({ parentSignal, loc }) => {
+): ChildSignal {
+  let changed = false;
+  withLocatedChild(reference, ({ parentSignal, parentBlock, loc }) => {
     getParentSignal(newItem).value = parentSignal;
+    changed = true;
     if (loc.kind === "item") {
       return insertItemAtIndex(parentBlock, loc.index, newItem);
     }
     return insertItemAtIndex(parentBlock, 0, newItem);
   });
+  return changed ? newItem : reference;
 }
 
 export function insertAfter(
-  parentBlock: BlockNode,
   reference: ChildSignal,
   newItem: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, reference, ({ parentSignal, loc }) => {
+): ChildSignal {
+  let changed = false;
+  withLocatedChild(reference, ({ parentSignal, parentBlock, loc }) => {
     getParentSignal(newItem).value = parentSignal;
+    changed = true;
     if (loc.kind === "item") {
       return insertItemAtIndex(parentBlock, loc.index + 1, newItem);
     }
     return insertItemAtIndex(parentBlock, 0, newItem);
   });
+  return changed ? newItem : reference;
 }
 
 export function replaceChildWith(
-  parentBlock: BlockNode,
   target: ChildSignal,
   next: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, target, ({ parentSignal, loc }) => {
+): ChildSignal {
+  let replaced = false;
+  withLocatedChild(target, ({ parentSignal, parentBlock, loc }) => {
     getParentSignal(target).value = undefined;
     getParentSignal(next).value = parentSignal;
+    replaced = true;
     return replaceChildAt(parentBlock, loc, next);
   });
+  return replaced ? next : target;
 }
 
-export function assignKey(
-  parentBlock: BlockNode,
-  child: ChildSignal,
-  nextKey: string
-): BlockNode {
-  if (parentBlock.values.some(([k]) => k === nextKey)) return parentBlock;
+export function assignKey(child: ChildSignal, nextKey: string) {
+  withLocatedChild(child, ({ parentBlock, loc }) => {
+    if (parentBlock.values.some(([k]) => k === nextKey)) return;
 
-  return withLocatedChild(parentBlock, child, ({ loc }) => {
     if (loc.kind === "value") {
       const [currentKey, val] = parentBlock.values[loc.index]!;
-      if (currentKey === nextKey) return parentBlock;
+      if (currentKey === nextKey) return;
       const nextValues = parentBlock.values.toSpliced(loc.index, 1, [
         nextKey,
         val,
@@ -566,13 +632,9 @@ export function assignKey(
   });
 }
 
-export function removeKey(
-  parentBlock: BlockNode,
-  child: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, child, ({ loc }) => {
-    if (loc.kind !== "value") return parentBlock;
-
+export function removeKey(child: ChildSignal) {
+  withLocatedChild(child, ({ parentBlock, loc }) => {
+    if (loc.kind !== "value") return;
     const nextValues = parentBlock.values.toSpliced(loc.index, 1);
     return insertItemAtIndex(
       createBlock(nextValues, parentBlock.items),
@@ -582,40 +644,48 @@ export function removeKey(
   });
 }
 
-export function removeChild(
-  parentBlock: BlockNode,
-  child: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, child, ({ loc }) => {
-    getParentSignal(child).value = undefined;
-    return removeChildAt(parentBlock, loc);
-  });
-}
-
-export function wrapWithBlock(
-  parentBlock: BlockNode,
-  child: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, child, ({ parentSignal, loc }) => {
+export function wrapWithBlock(child: ChildSignal): ChildSignal {
+  let ok = false;
+  withLocatedChild(child, ({ parentSignal, parentBlock, loc }) => {
     const wrapper = createSignal(createBlock([], [child]));
     getParentSignal(wrapper).value = parentSignal;
     getParentSignal(child).value = wrapper;
+    ok = true;
     return replaceChildAt(parentBlock, loc, wrapper);
   });
+  return child;
 }
 
-export function unwrapBlockIfSingleChild(
-  parentBlock: BlockNode,
-  wrapper: ChildSignal
-): BlockNode {
-  return withLocatedChild(parentBlock, wrapper, ({ parentSignal, loc }) => {
-    const n = wrapper.peek() as BlockNode;
-
-    if (n.values.length !== 0 || n.items.length !== 1) return parentBlock;
-
-    const sole = n.items[0]!;
-    getParentSignal(sole).value = parentSignal;
-    getParentSignal(wrapper).value = undefined;
-    return replaceChildAt(parentBlock, loc, sole);
+export function unwrapBlockIfSingleChild(child: ChildSignal): ChildSignal {
+  let unwrapped = false;
+  withLocatedChild(child, ({ parentSignal: parentSig, parentBlock }) => {
+    if (parentBlock.values.length !== 0 || parentBlock.items.length !== 1)
+      return;
+    withLocatedChild(
+      parentSig,
+      ({
+        parentSignal: grandparentSig,
+        parentBlock: grandparentBlock,
+        loc,
+      }) => {
+        getParentSignal(child).value = grandparentSig;
+        getParentSignal(parentSig).value = undefined;
+        unwrapped = true;
+        return replaceChildAt(grandparentBlock, loc, child);
+      }
+    );
   });
+  return child;
+}
+
+export function removeChild(child: ChildSignal): ChildSignal {
+  const next = nextFocusForRemoval(child);
+
+  withLocatedChild(child, ({ parentBlock, loc }) => {
+    const nextBlock = removeChildAt(parentBlock, loc);
+    getParentSignal(child).value = undefined;
+    return nextBlock;
+  });
+
+  return next;
 }

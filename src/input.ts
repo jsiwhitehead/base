@@ -1,210 +1,127 @@
-import { type ChildSignal } from "./data";
-import { signalByElement } from "./render";
+import {
+  type ChildSignal,
+  createSignal,
+  createBlank,
+  insertBefore,
+  insertAfter,
+  wrapWithBlock,
+  unwrapBlockIfSingleChild,
+  removeChild,
+  getPreviousSibling,
+  getNextSibling,
+  getParentChild,
+  getFirstChild,
+} from "./data";
 
-/* Focus Events */
+/* Focus  */
 
-type FocusDir = "next" | "prev" | "into" | "out";
-type FocusTargetRole = "auto" | "key";
+let activeFocus: ChildSignal | null = null;
 
-type FocusCommandNav = { kind: "nav"; dir: FocusDir; from: ChildSignal };
-type FocusCommandTo = {
-  kind: "to";
-  targetSignal: ChildSignal;
-  role: FocusTargetRole;
-};
-type FocusCommand = FocusCommandNav | FocusCommandTo;
+const elBySig = new WeakMap<ChildSignal, HTMLElement>();
 
-export class FocusCommandEvent extends CustomEvent<FocusCommand> {
-  constructor(detail: FocusCommand) {
-    super("focus-command", { bubbles: true, composed: false, detail });
+function focusElFor(sig: ChildSignal | null) {
+  if (!sig) return;
+  const el = elBySig.get(sig);
+  if (el) el.focus({ preventScroll: true });
+}
+
+export function registerFocusable(sig: ChildSignal, el: HTMLElement) {
+  el.tabIndex = 0;
+  elBySig.set(sig, el);
+
+  if (activeFocus === sig) {
+    focusElFor(sig);
+  }
+
+  el.addEventListener("focus", () => {
+    if (activeFocus !== sig) {
+      activeFocus = sig;
+    }
+  });
+}
+
+export function unregisterFocusable(sig: ChildSignal, el: HTMLElement) {
+  if (elBySig.get(sig) === el) elBySig.delete(sig);
+}
+
+export function focusNode(sig: ChildSignal | null) {
+  const changed = activeFocus !== sig;
+  activeFocus = sig;
+  if (!changed || sig) {
+    focusElFor(sig);
   }
 }
 
-function requestFocusCommand(fromEl: HTMLElement, cmd: FocusCommand) {
-  fromEl.dispatchEvent(new FocusCommandEvent(cmd));
-}
-
-/* String Events */
-
-type StringCommand =
-  | { kind: "begin"; seed?: string }
-  | { kind: "commit" }
-  | { kind: "cancel" };
-
-export class StringCommandEvent extends CustomEvent<StringCommand> {
-  constructor(detail: StringCommand) {
-    super("string-command", { bubbles: true, composed: false, detail });
-  }
-}
-
-function requestStringCommand(fromEl: HTMLElement, cmd: StringCommand) {
-  fromEl.dispatchEvent(new StringCommandEvent(cmd));
-}
-
-/* Block Events */
-
-type BlockCommand =
-  | { kind: "insert-before"; target: ChildSignal }
-  | { kind: "insert-after"; target: ChildSignal }
-  | { kind: "wrap"; target: ChildSignal }
-  | { kind: "unwrap"; target: ChildSignal }
-  | { kind: "remove"; target: ChildSignal };
-
-export class BlockCommandEvent extends CustomEvent<BlockCommand> {
-  constructor(detail: BlockCommand) {
-    super("block-command", { bubbles: true, composed: false, detail });
-  }
-}
-
-function requestBlockCommand(fromEl: HTMLElement, cmd: BlockCommand) {
-  fromEl.dispatchEvent(new BlockCommandEvent(cmd));
-}
-
-/* Helpers */
-
-const isCharKey = (e: KeyboardEvent) =>
-  e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-
-const isStringInput = (el: Element | null): el is HTMLInputElement =>
-  !!el && el.tagName === "INPUT";
-
-/* Root Handlers */
-
-export function onRootDblClick(e: MouseEvent) {
-  const t = e.target as HTMLElement | null;
-  if (!t) return;
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  requestStringCommand(t, { kind: "begin" });
-}
+/* Keyboard */
 
 export function onRootKeyDown(e: KeyboardEvent) {
-  const active = document.activeElement as HTMLElement | null;
-  if (!active) return;
+  const activeEl = document.activeElement as HTMLElement | null;
+  if (!activeEl || activeEl.tagName === "INPUT") return;
 
-  if (isStringInput(active)) {
+  if (!activeFocus) return;
+
+  if (e.shiftKey) {
     switch (e.key) {
-      case "Enter":
-      case "Tab": {
+      case "ArrowUp": {
         e.preventDefault();
-
-        const isKeyInput = active.classList.contains("key");
-        const sig = signalByElement.get(active);
-
-        if (isKeyInput && sig) {
-          requestFocusCommand(active, {
-            kind: "to",
-            targetSignal: sig,
-            role: "auto",
-          });
-        } else {
-          requestStringCommand(active, { kind: "commit" });
-        }
-        break;
+        const newItem = createSignal(createBlank());
+        const next = insertBefore(activeFocus, newItem);
+        focusNode(next);
+        return;
       }
-      case "Escape":
+      case "ArrowDown": {
         e.preventDefault();
-        requestStringCommand(active, { kind: "cancel" });
-        break;
-    }
-    return;
-  }
-
-  if (
-    e.shiftKey &&
-    ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
-  ) {
-    e.preventDefault();
-    const activeSig = signalByElement.get(active);
-    if (!activeSig) return;
-
-    switch (e.key) {
-      case "ArrowUp":
-        requestBlockCommand(active, {
-          kind: "insert-before",
-          target: activeSig,
-        });
-        break;
-      case "ArrowDown":
-        requestBlockCommand(active, {
-          kind: "insert-after",
-          target: activeSig,
-        });
-        break;
-      case "ArrowLeft":
-        requestBlockCommand(active, { kind: "unwrap", target: activeSig });
-        break;
-      case "ArrowRight":
-        requestBlockCommand(active, { kind: "wrap", target: activeSig });
-        break;
-    }
-    return;
-  }
-
-  if (["ArrowUp", "ArrowDown"].includes(e.key)) {
-    e.preventDefault();
-    const activeSig = signalByElement.get(active);
-    if (!activeSig) return;
-    requestFocusCommand(active, {
-      kind: "nav",
-      dir: e.key === "ArrowUp" ? "prev" : "next",
-      from: activeSig,
-    });
-    return;
-  }
-
-  if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
-    e.preventDefault();
-    const activeSig = signalByElement.get(active);
-    if (!activeSig) return;
-    requestFocusCommand(active, {
-      kind: "nav",
-      dir: e.key === "ArrowLeft" ? "out" : "into",
-      from: activeSig,
-    });
-    return;
-  }
-
-  if (e.key === "Tab") {
-    e.preventDefault();
-
-    const isKey = active.classList.contains("key");
-    if (isKey) {
-      const nextEl = active.nextElementSibling as HTMLElement | null;
-      nextEl?.focus();
-    } else {
-      const activeSig = signalByElement.get(active);
-      if (activeSig) {
-        requestFocusCommand(active, {
-          kind: "to",
-          targetSignal: activeSig,
-          role: "key",
-        });
+        const newItem = createSignal(createBlank());
+        const next = insertAfter(activeFocus, newItem);
+        focusNode(next);
+        return;
+      }
+      case "ArrowLeft": {
+        e.preventDefault();
+        const next = unwrapBlockIfSingleChild(activeFocus);
+        focusNode(next);
+        return;
+      }
+      case "ArrowRight": {
+        e.preventDefault();
+        const next = wrapWithBlock(activeFocus);
+        focusNode(next);
+        return;
       }
     }
     return;
   }
 
-  if (e.key === "Backspace") {
-    e.preventDefault();
-    const activeSig = signalByElement.get(active);
-    if (activeSig) {
-      requestBlockCommand(active, { kind: "remove", target: activeSig });
+  switch (e.key) {
+    case "ArrowUp": {
+      e.preventDefault();
+      const n = getPreviousSibling(activeFocus);
+      if (n) focusNode(n);
+      return;
     }
-    return;
-  }
-
-  if (e.key === "Enter") {
-    e.preventDefault();
-    requestStringCommand(active, { kind: "begin" });
-    return;
-  }
-
-  if (isCharKey(e)) {
-    e.preventDefault();
-    requestStringCommand(active, { kind: "begin", seed: e.key });
-    return;
+    case "ArrowDown": {
+      e.preventDefault();
+      const n = getNextSibling(activeFocus);
+      if (n) focusNode(n);
+      return;
+    }
+    case "ArrowLeft": {
+      e.preventDefault();
+      const n = getParentChild(activeFocus);
+      if (n) focusNode(n);
+      return;
+    }
+    case "ArrowRight": {
+      e.preventDefault();
+      const n = getFirstChild(activeFocus);
+      if (n) focusNode(n);
+      return;
+    }
+    case "Backspace": {
+      e.preventDefault();
+      const next = removeChild(activeFocus);
+      focusNode(next);
+      return;
+    }
   }
 }

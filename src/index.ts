@@ -11,7 +11,7 @@ import {
   resolveData,
 } from "./data";
 import { withLibrary } from "./library";
-import { onRootDblClick, onRootKeyDown } from "./input";
+import { onRootKeyDown } from "./input";
 import { SignalMount } from "./render";
 
 export function render(
@@ -22,12 +22,10 @@ export function render(
   rootElement.appendChild(element);
   queueMicrotask(() => element.focus());
 
-  rootElement.addEventListener("dblclick", onRootDblClick);
   rootElement.addEventListener("keydown", onRootKeyDown);
 
   return () => {
     dispose();
-    rootElement.removeEventListener("dblclick", onRootDblClick);
     rootElement.removeEventListener("keydown", onRootKeyDown);
     rootElement.textContent = "";
   };
