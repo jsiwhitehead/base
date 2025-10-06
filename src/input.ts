@@ -1,16 +1,16 @@
 import {
   type ChildSignal,
-  createSignal,
+  getParent,
   createBlank,
+  createSignal,
+  getPrevSibling,
+  getNextSibling,
+  getFirstChild,
   insertBefore,
   insertAfter,
   wrapWithBlock,
   unwrapBlockIfSingleChild,
   removeChild,
-  getPreviousSibling,
-  getNextSibling,
-  getParentChild,
-  getFirstChild,
 } from "./data";
 
 /* Focus  */
@@ -95,7 +95,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
   switch (e.key) {
     case "ArrowUp": {
       e.preventDefault();
-      const n = getPreviousSibling(activeFocus);
+      const n = getPrevSibling(activeFocus);
       if (n) focusNode(n);
       return;
     }
@@ -107,7 +107,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
     }
     case "ArrowLeft": {
       e.preventDefault();
-      const n = getParentChild(activeFocus);
+      const n = getParent(activeFocus);
       if (n) focusNode(n);
       return;
     }

@@ -1,31 +1,29 @@
 import * as ohm from "ohm-js";
 
 import {
+  ERR,
   type DataNode,
   type DataSignal,
-  isBlank,
   isLiteral,
-  isFunction,
   isBlock,
+  isFunction,
+  createBlank,
+  createLiteral,
+  createFunction,
   createSignal,
+  numOpt,
+  textOpt,
+  boolExpect,
+  primExpect,
+  numExpect,
+  scalarToData,
+  size,
   sliceText,
   sliceBlockItems,
   createRangeBlock,
   getByKey,
   getByKeyOrIndex,
 } from "./data";
-import {
-  blank,
-  lit,
-  bool,
-  fn,
-  asJsBool,
-  primExpect,
-  numExpect,
-  numOpt,
-  textOpt,
-  mapNums,
-} from "./library";
 
 /* Grammar */
 
@@ -383,45 +381,43 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
 
 /* Operators */
 
+function numericOp(
+  map: (...numbers: number[]) => number,
+  ...args: DataNode[]
+): number | null {
+  const nums = args.map((a) => numOpt(a));
+  if (nums.some((n) => n === null)) return null;
+  return map(...(nums as number[]));
+}
+
 const BINARY_OPS: Partial<
-  Record<Binary["op"], (a: DataSignal, b: DataSignal) => DataSignal>
+  Record<Binary["op"], (a: DataNode, b: DataNode) => boolean | number | null>
 > = {
-  "!=": (a, b) => bool(primExpect(a) !== primExpect(b)),
-  "=": (a, b) => bool(primExpect(a) === primExpect(b)),
+  "!=": (a, b) => primExpect(a) !== primExpect(b),
+  "=": (a, b) => primExpect(a) === primExpect(b),
 
-  "<=": (a, b) => bool(numExpect(a) <= numExpect(b)),
-  "<": (a, b) => bool(numExpect(a) < numExpect(b)),
-  ">=": (a, b) => bool(numExpect(a) >= numExpect(b)),
-  ">": (a, b) => bool(numExpect(a) > numExpect(b)),
+  "<=": (a, b) => numExpect(a) <= numExpect(b),
+  "<": (a, b) => numExpect(a) < numExpect(b),
+  ">=": (a, b) => numExpect(a) >= numExpect(b),
+  ">": (a, b) => numExpect(a) > numExpect(b),
 
-  "+": mapNums((a, b) => a + b),
-  "-": mapNums((a, b) => a - b),
-  "*": mapNums((a, b) => a * b),
-  "/": mapNums((a, b) => a / b),
+  "+": (a, b) => numericOp((x, y) => x + y, a, b),
+  "-": (a, b) => numericOp((x, y) => x - y, a, b),
+  "*": (a, b) => numericOp((x, y) => x * y, a, b),
+  "/": (a, b) => numericOp((x, y) => x / y, a, b),
 };
 
-const UNARY_OPS: Record<Unary["op"], (v: DataSignal) => DataSignal> = {
-  "!": (v) => bool(!asJsBool(v)),
+const UNARY_OPS: Record<Unary["op"], (v: DataNode) => boolean | number | null> =
+  {
+    "!": (v) => !boolExpect(v),
 
-  "-": mapNums((x) => -x),
-  "+": mapNums((x) => +x),
+    "-": (v) => numericOp((x) => -x, v),
+    "+": (v) => numericOp((x) => +x, v),
 
-  "#": (v) => {
-    const n = v.get();
-    if (isBlank(n)) {
-      return blank();
-    }
-    if (isBlock(n)) {
-      return lit(n.values.length + n.items.length);
-    }
-    if (isLiteral(n) && typeof n.value === "string") {
-      return lit(n.value.length);
-    }
-    throw new TypeError("Expected text or block");
-  },
-};
+    "#": (v) => size(v),
+  };
 
-/* Evaluate */
+/* Evaluation */
 
 function evalNumberOpt(
   e: Expr | undefined,
@@ -429,34 +425,39 @@ function evalNumberOpt(
 ): number | null {
   if (!e) return null;
   const sig = evalExpr(e, scope);
-  return numOpt(sig);
+  return numOpt(sig.get());
 }
 
 function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
   switch (e.type) {
     case "Lambda": {
       const params = e.params.map((p) => p.name);
-      return fn((...args: DataSignal[]) =>
-        evalExpr(e.body, (name: string) => {
-          const i = params.indexOf(name);
-          if (i !== -1) return args[i] ?? blank();
-          return scope(name);
-        })
+      return createSignal(
+        createFunction((...args: DataSignal[]) =>
+          evalExpr(e.body, (name: string) => {
+            const i = params.indexOf(name);
+            if (i !== -1) return args[i] ?? createSignal(createBlank());
+            return scope(name);
+          })
+        )
       );
     }
 
     case "Binary": {
       const { op, left, right } = e;
       const f = BINARY_OPS[op];
-      if (f) return f(evalExpr(left, scope), evalExpr(right, scope));
-      throw new Error(`Unknown operator: ${op}`);
+      if (!f) throw new Error(`Unknown operator: ${op}`);
+      return createSignal(
+        scalarToData(
+          f(evalExpr(left, scope).get(), evalExpr(right, scope).get())
+        )
+      );
     }
 
     case "Unary": {
-      const v = evalExpr(e.argument, scope);
       const f = UNARY_OPS[e.op];
-      if (f) return f(v);
-      throw new Error(`Unknown unary operator: ${e.op}`);
+      if (!f) throw new Error(`Unknown unary operator: ${e.op}`);
+      return createSignal(scalarToData(f(evalExpr(e.argument, scope).get())));
     }
 
     case "Call": {
@@ -464,8 +465,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
       if (!isFunction(callee)) {
         throw new TypeError("Callee is not a function");
       }
-      const args = e.args.map((a) => evalExpr(a, scope));
-      return callee.fn(...args);
+      return callee.fn(...e.args.map((a) => evalExpr(a, scope)));
     }
 
     case "Index": {
@@ -479,7 +479,9 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
         const stepN = evalNumberOpt(slice.step, scope);
 
         if (isLiteral(target) && typeof target.value === "string") {
-          return lit(sliceText(target.value, startN, endN, stepN));
+          return createSignal(
+            createLiteral(sliceText(target.value, startN, endN, stepN))
+          );
         }
 
         if (isBlock(target)) {
@@ -489,14 +491,17 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
         throw new TypeError("Cannot slice a non-text or non-block value");
       }
 
-      return getByKeyOrIndex(
-        evalExpr(e.block, scope),
-        evalExpr(e.index, scope)
+      const block = evalExpr(e.block, scope).get();
+      if (!isBlock(block)) throw new TypeError(ERR.block);
+      return createSignal(
+        getByKeyOrIndex(block, evalExpr(e.index, scope).get())
       );
     }
 
     case "Member": {
-      return getByKey(evalExpr(e.block, scope), e.key.name);
+      const block = evalExpr(e.block, scope).get();
+      if (!isBlock(block)) throw new TypeError(ERR.block);
+      return createSignal(getByKey(block, e.key.name));
     }
 
     case "Slice": {
@@ -507,7 +512,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
     }
 
     case "Lit":
-      return lit(e.value);
+      return createSignal(createLiteral(e.value));
 
     case "Template": {
       let out = "";
@@ -516,14 +521,14 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
           out += p;
         } else {
           const v = evalExpr(p, scope);
-          out += textOpt(v) ?? "";
+          out += textOpt(v.get()) ?? "";
         }
       }
-      return lit(out);
+      return createSignal(createLiteral(out));
     }
 
     case "Blank":
-      return blank();
+      return createSignal(createBlank());
 
     case "Ident":
       return scope(e.name);
