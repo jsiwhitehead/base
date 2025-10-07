@@ -7,9 +7,11 @@ import {
   isBlank,
   isBlock,
   isFunction,
+  markScopeCaseInsensitive,
   createBlank,
   createLiteral,
   createBlock,
+  iterEntries,
   createFunction,
   createSignal,
   createBlockSignal,
@@ -22,13 +24,12 @@ import {
   fnOpt,
   boolExpect,
   scalarToData,
-  markScopeCaseInsensitive,
-  blockChildNodes,
+  childToData,
   blockMap,
   blockFilter,
   blockReduce,
   blockSort,
-  reduceNumbers,
+  blockNumbersOpt,
   blockTextsOpt,
 } from "./data";
 
@@ -88,6 +89,14 @@ function typedFn<A extends any[]>(
       return createSignal(impl(...(resolved as A)));
     })
   );
+}
+
+function reduceNumbers(
+  source: BlockNode,
+  op: (nums: number[]) => number | null
+): number | null {
+  const nums = blockNumbersOpt(source);
+  return nums.length ? op(nums) : null;
 }
 
 function createLibrary(): Record<string, DataSignal> {
@@ -231,23 +240,21 @@ function createLibrary(): Record<string, DataSignal> {
       return parts.length ? createLiteral(parts.join(sep)) : createBlank();
     }),
 
-    count: typedFn([reqBlock], (source) =>
-      createLiteral(
-        blockChildNodes(source).reduce(
-          (acc, node) => acc + (isBlank(node) ? 0 : 1),
-          0
-        )
-      )
-    ),
+    count: typedFn([reqBlock], (source) => {
+      let cnt = 0;
+      for (const e of iterEntries(source)) {
+        if (!isBlank(childToData(e.child))) cnt++;
+      }
+      return createLiteral(cnt);
+    }),
 
-    count_blank: typedFn([reqBlock], (source) =>
-      createLiteral(
-        blockChildNodes(source).reduce(
-          (acc, node) => acc + (isBlank(node) ? 1 : 0),
-          0
-        )
-      )
-    ),
+    count_blank: typedFn([reqBlock], (source) => {
+      let cnt = 0;
+      for (const e of iterEntries(source)) {
+        if (isBlank(childToData(e.child))) cnt++;
+      }
+      return createLiteral(cnt);
+    }),
 
     map: typedFn([reqBlock, reqFn], (source, fnNode) =>
       blockMap(source, (value, id) => fnNode.fn(value, id))

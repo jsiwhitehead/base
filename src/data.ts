@@ -169,6 +169,7 @@ export function createBlock(
     items,
   };
 }
+
 export const createFunction = (
   fn: (...args: DataSignal[]) => DataSignal
 ): FunctionNode => ({ kind: "function", fn });
@@ -182,7 +183,7 @@ export const createIfElse = (
 export const createCode = (code: string): CodeNode => ({ kind: "code", code });
 
 export function createComputed<T extends DataNode>(fn: () => T): ReadSignal<T> {
-  const rsig = computed(fn);
+  const rsig: PReadonlySignal<T> = computed(fn);
   return { kind: "signal", get: () => rsig.value, peek: () => rsig.peek() };
 }
 
@@ -372,6 +373,159 @@ export function createRangeBlock(
   return createBlock([], items);
 }
 
+/* Iteration */
+
+type BlockEntry =
+  | { kind: "value"; key: string; child: ChildSignal }
+  | { kind: "item"; child: ChildSignal };
+
+export function* iterEntries(src: BlockNode): Generator<BlockEntry> {
+  for (const [key, child] of src.values) yield { kind: "value", key, child };
+  for (const child of src.items) yield { kind: "item", child };
+}
+
+type EntryView = (
+  | { kind: "value"; key: string; child: ChildSignal }
+  | { kind: "item"; child: ChildSignal }
+) & {
+  id: string | number;
+  index: number;
+};
+
+function* enumerateEntries(src: BlockNode): Generator<EntryView> {
+  let itemIndex1 = 1;
+  let vIdx = 0;
+  let iIdx = 0;
+  for (const e of iterEntries(src)) {
+    const id = e.kind === "value" ? e.key : itemIndex1++;
+    const index = e.kind === "value" ? vIdx++ : iIdx++;
+    yield { ...e, id, index };
+  }
+}
+
+function entrySignals(e: EntryView) {
+  const idSig = createSignal(createLiteral(e.id));
+  const valSig = createSignal(childToData(e.child));
+  return { idSig, valSig };
+}
+
+function createBlockFromEntries(entries: Iterable<BlockEntry>): BlockNode {
+  const values: [string, ChildSignal][] = [];
+  const items: ChildSignal[] = [];
+  for (const e of entries) {
+    if (e.kind === "value") values.push([e.key, e.child]);
+    else items.push(e.child);
+  }
+  return createBlock(values, items);
+}
+
+export function blockNumbersOpt(n: BlockNode): number[] {
+  const out: number[] = [];
+  for (const e of iterEntries(n)) {
+    const node = childToData(e.child);
+    if (isBlank(node)) continue;
+    if (isLiteral(node) && typeof node.value === "number") out.push(node.value);
+    else throw new TypeError(ERR.numOrBlank);
+  }
+  return out;
+}
+
+export function blockTextsOpt(n: BlockNode): string[] {
+  const out: string[] = [];
+  for (const e of iterEntries(n)) {
+    const node = childToData(e.child);
+    if (isBlank(node)) continue;
+    if (isLiteral(node) && typeof node.value === "string") out.push(node.value);
+    else throw new TypeError(ERR.textOrBlank);
+  }
+  return out;
+}
+
+export function blockMap(
+  src: BlockNode,
+  f: (value: DataSignal, id: DataSignal) => DataSignal
+): BlockNode {
+  return createBlockFromEntries(
+    Array.from(enumerateEntries(src), (e) => {
+      const { idSig, valSig } = entrySignals(e);
+      return { ...e, child: createComputed(() => f(valSig, idSig).get()) };
+    })
+  );
+}
+
+export function blockFilter(
+  src: BlockNode,
+  pred: (value: DataSignal, id: DataSignal) => boolean
+): BlockNode {
+  return createBlockFromEntries(
+    Array.from(enumerateEntries(src)).filter((e) => {
+      const { idSig, valSig } = entrySignals(e);
+      return pred(valSig, idSig);
+    })
+  );
+}
+
+export function blockReduce(
+  src: BlockNode,
+  rf: (acc: DataSignal, value: DataSignal, id: DataSignal) => DataSignal,
+  init: DataSignal
+): DataSignal {
+  const seq = Array.from(enumerateEntries(src));
+  if (seq.length === 0) return init;
+
+  const step = (acc: DataSignal, e: EntryView) => {
+    const { idSig, valSig } = entrySignals(e);
+    return rf(acc, valSig, idSig);
+  };
+
+  if (!isBlank(init.get())) return seq.reduce(step, init);
+
+  const first = createSignal(childToData(seq[0]!.child));
+  return seq.slice(1).reduce(step, first);
+}
+
+function sortRank(n: DataNode): [number, any] {
+  // numbers < text < true < other < blank
+  if (isBlank(n)) return [4, null];
+  if (isLiteral(n)) {
+    const v = n.value;
+    if (typeof v === "number") return [0, v];
+    if (typeof v === "string") return [1, v];
+    if (v === true) return [2, 1];
+  }
+  return [3, null];
+}
+const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+function sortCmp<T extends { sortKey: DataNode; index: number }>(
+  a: T,
+  b: T
+): number {
+  const [ra, va] = sortRank(a.sortKey);
+  const [rb, vb] = sortRank(b.sortKey);
+  if (ra !== rb) return ra - rb;
+  if (ra === 0) {
+    const d = (va as number) - (vb as number);
+    if (d) return d;
+  } else if (ra === 1) {
+    const d = collator.compare(va as string, vb as string);
+    if (d) return d;
+  }
+  return a.index - b.index;
+}
+
+export function blockSort(
+  src: BlockNode,
+  keySelector: null | ((value: DataSignal, id: DataSignal) => DataSignal)
+): BlockNode {
+  const rows = Array.from(enumerateEntries(src), (e) => {
+    if (!keySelector) return { ...e, sortKey: childToData(e.child) };
+    const { idSig, valSig } = entrySignals(e);
+    return { ...e, sortKey: keySelector(valSig, idSig).get() };
+  });
+  rows.sort(sortCmp);
+  return createBlockFromEntries(rows);
+}
+
 /* Evaluation */
 
 const evalCode: (
@@ -454,25 +608,6 @@ export function resolveData(n: DataNode): StaticNode {
 
 /* Getters */
 
-type ChildLoc =
-  | { kind: "item"; index: number }
-  | { kind: "value"; index: number };
-
-function findChildLocation(
-  block: BlockNode,
-  child: ChildSignal
-): ChildLoc | undefined {
-  const itemIdx = block.items.indexOf(child);
-  if (itemIdx >= 0) return { kind: "item", index: itemIdx };
-  const valIdx = block.values.findIndex(([, v]) => v === child);
-  if (valIdx >= 0) return { kind: "value", index: valIdx };
-  return undefined;
-}
-
-function listChildrenInOrder(parent: BlockNode): ChildSignal[] {
-  return [...parent.values.map(([, v]) => v), ...parent.items];
-}
-
 export function getByKey(block: BlockNode, key: string): DataNode {
   if (!isBlock(block)) {
     throw new TypeError(ERR.propOnNonBlock(key));
@@ -513,32 +648,41 @@ export function getKeyOfChild(
   parentBlock: BlockNode,
   child: ChildSignal
 ): string | undefined {
-  const loc = findChildLocation(parentBlock, child);
-  return loc?.kind === "value" ? parentBlock.values[loc.index]![0] : undefined;
+  for (const e of enumerateEntries(parentBlock)) {
+    if (e.child === child && e.kind === "value") {
+      return e.key;
+    }
+  }
+  return undefined;
 }
 
-function siblingAtOffset(
-  child: ChildSignal,
-  offset: -1 | 1
-): ChildSignal | undefined {
+export function getPrevSibling(child: ChildSignal): ChildSignal | undefined {
   const parent = getParent(child);
   if (!parent) return undefined;
-  const list = listChildrenInOrder(parent.peek());
-  const i = list.indexOf(child);
-  const j = i + offset;
-  return i >= 0 && j >= 0 && j < list.length ? list[j] : undefined;
+  let prev: ChildSignal | undefined;
+  for (const e of enumerateEntries(parent.peek())) {
+    if (e.child === child) return prev;
+    prev = e.child;
+  }
+  return undefined;
 }
 
-export const getPrevSibling = (child: ChildSignal): ChildSignal | undefined =>
-  siblingAtOffset(child, -1);
-
-export const getNextSibling = (child: ChildSignal): ChildSignal | undefined =>
-  siblingAtOffset(child, 1);
+export function getNextSibling(child: ChildSignal): ChildSignal | undefined {
+  const parent = getParent(child);
+  if (!parent) return undefined;
+  let seen = false;
+  for (const e of enumerateEntries(parent.peek())) {
+    if (seen) return e.child;
+    if (e.child === child) seen = true;
+  }
+  return undefined;
+}
 
 export function getFirstChild(child: ChildSignal): ChildSignal | undefined {
   const n = child.peek();
   if (!isBlock(n)) return undefined;
-  return n.values.length ? n.values[0]![1] : n.items[0];
+  const list = Array.from(iterEntries(n), (e) => e.child);
+  return list[0];
 }
 
 /* Mutations */
@@ -548,17 +692,19 @@ function withLocatedChild(
   fn: (ctx: {
     parentSignal: WriteSignal<BlockNode>;
     parentBlock: BlockNode;
-    loc: ChildLoc;
+    loc: EntryView;
   }) => BlockNode | void
 ): void {
   const parentSignal = getParent(child);
   if (!parentSignal) return;
   const parentBlock = parentSignal.get();
-  const loc = findChildLocation(parentBlock, child);
-  if (!loc) return;
-  const maybeNext = fn({ parentSignal, parentBlock, loc });
-  if (maybeNext && maybeNext !== parentBlock) {
-    parentSignal.set(maybeNext);
+  for (const loc of enumerateEntries(parentBlock)) {
+    if (loc.child !== child) continue;
+    const maybeNext = fn({ parentSignal, parentBlock, loc });
+    if (maybeNext && maybeNext !== parentBlock) {
+      parentSignal.set(maybeNext);
+    }
+    return;
   }
 }
 
@@ -572,7 +718,7 @@ function insertItemAtIndex(
 
 function replaceChildAt(
   block: BlockNode,
-  loc: ChildLoc,
+  loc: EntryView,
   next: ChildSignal
 ): BlockNode {
   if (loc.kind === "item") {
@@ -583,7 +729,7 @@ function replaceChildAt(
   return createBlock(nextValues, block.items);
 }
 
-function removeChildAt(block: BlockNode, loc: ChildLoc): BlockNode {
+function removeChildAt(block: BlockNode, loc: EntryView): BlockNode {
   if (loc.kind === "item") {
     return createBlock(block.values, block.items.toSpliced(loc.index, 1));
   }
@@ -593,7 +739,7 @@ function removeChildAt(block: BlockNode, loc: ChildLoc): BlockNode {
 function nextFocusForRemoval(child: ChildSignal): ChildSignal {
   const parent = getParent(child);
   if (!parent) return child;
-  const list = listChildrenInOrder(parent.peek());
+  const list = Array.from(iterEntries(parent.peek()), (e) => e.child);
   const i = list.indexOf(child);
   const prev = i > 0 ? list[i - 1]! : null;
   const next = i >= 0 && i + 1 < list.length ? list[i + 1]! : null;
@@ -721,185 +867,4 @@ export function removeChild(child: ChildSignal): ChildSignal {
   });
 
   return next;
-}
-
-/* Blocks */
-
-export function blockChildNodes(n: BlockNode): DataNode[] {
-  return [
-    ...n.values.map(([, vs]) => childToData(vs)),
-    ...n.items.map(childToData),
-  ];
-}
-
-type BlockEntry =
-  | { kind: "value"; child: ChildSignal; id: string; index: number }
-  | { kind: "item"; child: ChildSignal; id: number; index: number };
-
-function blockEntries(src: BlockNode): BlockEntry[] {
-  const vals = src.values.map<BlockEntry>(([key, child], i) => ({
-    kind: "value",
-    child,
-    id: key,
-    index: i,
-  }));
-  const items = src.items.map<BlockEntry>((child, j) => ({
-    kind: "item",
-    child,
-    id: j + 1,
-    index: src.values.length + j,
-  }));
-  return [...vals, ...items];
-}
-
-function sortRank(n: DataNode): [number, any] {
-  // numbers < text < true < other < blank
-  if (isBlank(n)) return [4, null];
-  if (isLiteral(n)) {
-    const v = n.value;
-    if (typeof v === "number") return [0, v];
-    if (typeof v === "string") return [1, v];
-    if (v === true) return [2, 1];
-  }
-  return [3, null];
-}
-const collator = new Intl.Collator(undefined, { sensitivity: "base" });
-function sortCmp<T extends { key: DataNode; index: number }>(
-  a: T,
-  b: T
-): number {
-  const [ra, va] = sortRank(a.key);
-  const [rb, vb] = sortRank(b.key);
-  if (ra !== rb) return ra - rb;
-  if (ra === 0) {
-    const d = (va as number) - (vb as number);
-    if (d) return d;
-  } else if (ra === 1) {
-    const d = collator.compare(va as string, vb as string);
-    if (d) return d;
-  }
-  return a.index - b.index;
-}
-
-export function blockMap(
-  src: BlockNode,
-  f: (value: DataSignal, id: DataSignal) => DataSignal
-): BlockNode {
-  const vals: [string, ChildSignal][] = [];
-  const items: ChildSignal[] = [];
-
-  for (const e of blockEntries(src)) {
-    const out = createComputed(() =>
-      f(
-        createSignal(childToData(e.child)),
-        createSignal(createLiteral(e.id))
-      ).get()
-    );
-    e.kind === "value" ? vals.push([e.id as string, out]) : items.push(out);
-  }
-  return createBlock(vals, items);
-}
-
-export function blockFilter(
-  src: BlockNode,
-  pred: (value: DataSignal, id: DataSignal) => boolean
-): BlockNode {
-  const vals: [string, ChildSignal][] = [];
-  const items: ChildSignal[] = [];
-
-  for (const e of blockEntries(src)) {
-    if (
-      pred(
-        createSignal(childToData(e.child)),
-        createSignal(createLiteral(e.id))
-      )
-    ) {
-      e.kind === "value"
-        ? vals.push([e.id as string, e.child])
-        : items.push(e.child);
-    }
-  }
-  return createBlock(vals, items);
-}
-
-export function blockReduce(
-  src: BlockNode,
-  rf: (acc: DataSignal, value: DataSignal, id: DataSignal) => DataSignal,
-  init?: DataSignal
-): DataSignal {
-  const seq = blockEntries(src);
-  if (seq.length === 0) return init ?? createSignal(createBlank());
-
-  const reducer = (acc: DataSignal, e: BlockEntry) =>
-    rf(
-      acc,
-      createSignal(childToData(e.child)),
-      createSignal(createLiteral(e.id))
-    );
-
-  if (init && !isBlank(init.get())) return seq.reduce(reducer, init);
-  const first = createSignal(childToData(seq[0]!.child));
-  return seq.slice(1).reduce(reducer, first);
-}
-
-export function blockSort(
-  src: BlockNode,
-  keySelector: null | ((value: DataSignal, id: DataSignal) => DataSignal)
-): BlockNode {
-  const selectKey = (child: ChildSignal, id: string | number): DataNode => {
-    if (!keySelector) return childToData(child);
-    return keySelector(
-      createSignal(childToData(child)),
-      createSignal(createLiteral(id))
-    ).get();
-  };
-
-  const sortedValues = src.values
-    .map(([id, child], index) => ({
-      id,
-      child,
-      index,
-      key: selectKey(child, id),
-    }))
-    .sort(sortCmp)
-    .map(({ id, child }) => [id, child] as [string, ChildSignal]);
-
-  const sortedItems = src.items
-    .map((child, index) => ({
-      child,
-      index,
-      key: selectKey(child, index + 1),
-    }))
-    .sort(sortCmp)
-    .map(({ child }) => child);
-
-  return createBlock(sortedValues, sortedItems);
-}
-
-function blockNumbersOpt(n: BlockNode): number[] {
-  const out: number[] = [];
-  for (const node of blockChildNodes(n)) {
-    if (isBlank(node)) continue;
-    if (isLiteral(node) && typeof node.value === "number") out.push(node.value);
-    else throw new TypeError(ERR.numOrBlank);
-  }
-  return out;
-}
-
-export function reduceNumbers(
-  source: BlockNode,
-  op: (nums: number[]) => number | null
-): number | null {
-  const nums = blockNumbersOpt(source);
-  return nums.length ? op(nums) : null;
-}
-
-export function blockTextsOpt(n: BlockNode): string[] {
-  const out: string[] = [];
-  for (const node of blockChildNodes(n)) {
-    if (isBlank(node)) continue;
-    if (isLiteral(node) && typeof node.value === "string") out.push(node.value);
-    else throw new TypeError(ERR.textOrBlank);
-  }
-  return out;
 }
