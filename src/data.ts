@@ -46,10 +46,13 @@ export type LiteralNode = {
   value: Primitive;
 };
 
+export type ValueEntry = { uid: number; key: string; child: ChildSignal };
+export type ItemEntry = { uid: number; child: ChildSignal };
+
 export type BlockNode = {
   kind: "block";
-  values: [string, ChildSignal][];
-  items: ChildSignal[];
+  values: ValueEntry[];
+  items: ItemEntry[];
 };
 
 export type FunctionNode = {
@@ -69,6 +72,7 @@ export type IfElseNode = {
 export type CodeNode = {
   kind: "code";
   code: string;
+  result: ReadSignal<DataNode>;
 };
 
 export type EvalNode = IfElseNode | CodeNode;
@@ -95,13 +99,13 @@ export type StaticError = { kind: "error"; message: string };
 
 export type StaticBlock = {
   kind: "block";
-  values: [string, StaticNode][];
+  values: Record<string, StaticNode>;
   items: StaticNode[];
 };
 
 export type StaticNode = StaticError | BlankNode | Primitive | StaticBlock;
 
-/* Type guards */
+/* Guards */
 
 function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
@@ -132,7 +136,7 @@ export const isStaticBlock = (v: unknown): v is StaticBlock =>
 type ParentSig = PSignal<WriteSignal<BlockNode> | undefined>;
 const parentMap = new WeakMap<ChildSignal, ParentSig>();
 
-function getParentSignal(sig: ChildSignal): ParentSig {
+export function getParentSignal(sig: ChildSignal): ParentSig {
   let p = parentMap.get(sig);
   if (!p) {
     p = signal(undefined);
@@ -147,26 +151,29 @@ export function getParent(
   return getParentSignal(child).peek();
 }
 
-const caseInsensitiveScopes = new WeakSet<DataSignal<BlockNode>>();
-export function markScopeCaseInsensitive(scope: DataSignal<BlockNode>) {
-  caseInsensitiveScopes.add(scope);
-}
-
 /* Constructors */
 
+let __nextEntryUid = 1;
+export function newUid() {
+  return __nextEntryUid++;
+}
+
 export const createBlank = (): BlankNode => ({ kind: "blank" });
+
 export const createLiteral = (value: Primitive): LiteralNode => ({
   kind: "literal",
   value,
 });
+
 export function createBlock(
   values: [string, ChildSignal][] | Record<string, ChildSignal> = [],
   items: ChildSignal[] = []
 ): BlockNode {
+  const valueEntries = Array.isArray(values) ? values : Object.entries(values);
   return {
     kind: "block",
-    values: Array.isArray(values) ? values : Object.entries(values),
-    items,
+    values: valueEntries.map(([key, child]) => ({ uid: newUid(), key, child })),
+    items: items.map((child) => ({ uid: newUid(), child })),
   };
 }
 
@@ -180,7 +187,25 @@ export const createIfElse = (
   elseSig?: DataSignal
 ): IfElseNode => ({ kind: "ifelse", if: cond, then: thenSig, else: elseSig });
 
-export const createCode = (code: string): CodeNode => ({ kind: "code", code });
+export function createCodeSignal(initialCode: string): WriteSignal<CodeNode> {
+  const codeText = signal(initialCode);
+  let codeSig!: WriteSignal<CodeNode>;
+
+  const result = createComputed(() =>
+    evalCode(codeText.value, (name: string) => lookupInScope(name, codeSig))
+  );
+
+  codeSig = {
+    kind: "signal",
+    get: () => ({ kind: "code", code: codeText.value, result }),
+    peek: () => ({ kind: "code", code: codeText.peek(), result }),
+    set: (next) => {
+      codeText.value = next.code;
+    },
+  };
+
+  return codeSig;
+}
 
 export function createComputed<T extends DataNode>(fn: () => T): ReadSignal<T> {
   const rsig: PReadonlySignal<T> = computed(fn);
@@ -220,7 +245,10 @@ function primTruthy(p: Primitive): boolean {
 }
 
 function blockNonEmpty(b: BlockNode | StaticBlock): boolean {
-  return b.values.length > 0 || b.items.length > 0;
+  const valuesCount = Array.isArray(b.values)
+    ? b.values.length
+    : Object.keys(b.values).length;
+  return valuesCount > 0 || b.items.length > 0;
 }
 
 export function toBool(node: DataNode): boolean | null {
@@ -357,7 +385,7 @@ export function sliceBlockItems(
   step: number | null
 ): BlockNode {
   const indices = computeSliceIndices(start, end, step, block.items.length);
-  const newItems = indices.map((oneBased) => block.items[oneBased - 1]!);
+  const newItems = indices.map((oneBased) => block.items[oneBased - 1]!.child);
   return createBlock([], newItems);
 }
 
@@ -371,159 +399,6 @@ export function createRangeBlock(
     createSignal(createLiteral(n))
   );
   return createBlock([], items);
-}
-
-/* Iteration */
-
-type BlockEntry =
-  | { kind: "value"; key: string; child: ChildSignal }
-  | { kind: "item"; child: ChildSignal };
-
-export function* iterEntries(src: BlockNode): Generator<BlockEntry> {
-  for (const [key, child] of src.values) yield { kind: "value", key, child };
-  for (const child of src.items) yield { kind: "item", child };
-}
-
-type EntryView = (
-  | { kind: "value"; key: string; child: ChildSignal }
-  | { kind: "item"; child: ChildSignal }
-) & {
-  id: string | number;
-  index: number;
-};
-
-function* enumerateEntries(src: BlockNode): Generator<EntryView> {
-  let itemIndex1 = 1;
-  let vIdx = 0;
-  let iIdx = 0;
-  for (const e of iterEntries(src)) {
-    const id = e.kind === "value" ? e.key : itemIndex1++;
-    const index = e.kind === "value" ? vIdx++ : iIdx++;
-    yield { ...e, id, index };
-  }
-}
-
-function entrySignals(e: EntryView) {
-  const idSig = createSignal(createLiteral(e.id));
-  const valSig = createSignal(childToData(e.child));
-  return { idSig, valSig };
-}
-
-function createBlockFromEntries(entries: Iterable<BlockEntry>): BlockNode {
-  const values: [string, ChildSignal][] = [];
-  const items: ChildSignal[] = [];
-  for (const e of entries) {
-    if (e.kind === "value") values.push([e.key, e.child]);
-    else items.push(e.child);
-  }
-  return createBlock(values, items);
-}
-
-export function blockNumbersOpt(n: BlockNode): number[] {
-  const out: number[] = [];
-  for (const e of iterEntries(n)) {
-    const node = childToData(e.child);
-    if (isBlank(node)) continue;
-    if (isLiteral(node) && typeof node.value === "number") out.push(node.value);
-    else throw new TypeError(ERR.numOrBlank);
-  }
-  return out;
-}
-
-export function blockTextsOpt(n: BlockNode): string[] {
-  const out: string[] = [];
-  for (const e of iterEntries(n)) {
-    const node = childToData(e.child);
-    if (isBlank(node)) continue;
-    if (isLiteral(node) && typeof node.value === "string") out.push(node.value);
-    else throw new TypeError(ERR.textOrBlank);
-  }
-  return out;
-}
-
-export function blockMap(
-  src: BlockNode,
-  f: (value: DataSignal, id: DataSignal) => DataSignal
-): BlockNode {
-  return createBlockFromEntries(
-    Array.from(enumerateEntries(src), (e) => {
-      const { idSig, valSig } = entrySignals(e);
-      return { ...e, child: createComputed(() => f(valSig, idSig).get()) };
-    })
-  );
-}
-
-export function blockFilter(
-  src: BlockNode,
-  pred: (value: DataSignal, id: DataSignal) => boolean
-): BlockNode {
-  return createBlockFromEntries(
-    Array.from(enumerateEntries(src)).filter((e) => {
-      const { idSig, valSig } = entrySignals(e);
-      return pred(valSig, idSig);
-    })
-  );
-}
-
-export function blockReduce(
-  src: BlockNode,
-  rf: (acc: DataSignal, value: DataSignal, id: DataSignal) => DataSignal,
-  init: DataSignal
-): DataSignal {
-  const seq = Array.from(enumerateEntries(src));
-  if (seq.length === 0) return init;
-
-  const step = (acc: DataSignal, e: EntryView) => {
-    const { idSig, valSig } = entrySignals(e);
-    return rf(acc, valSig, idSig);
-  };
-
-  if (!isBlank(init.get())) return seq.reduce(step, init);
-
-  const first = createSignal(childToData(seq[0]!.child));
-  return seq.slice(1).reduce(step, first);
-}
-
-function sortRank(n: DataNode): [number, any] {
-  // numbers < text < true < other < blank
-  if (isBlank(n)) return [4, null];
-  if (isLiteral(n)) {
-    const v = n.value;
-    if (typeof v === "number") return [0, v];
-    if (typeof v === "string") return [1, v];
-    if (v === true) return [2, 1];
-  }
-  return [3, null];
-}
-const collator = new Intl.Collator(undefined, { sensitivity: "base" });
-function sortCmp<T extends { sortKey: DataNode; index: number }>(
-  a: T,
-  b: T
-): number {
-  const [ra, va] = sortRank(a.sortKey);
-  const [rb, vb] = sortRank(b.sortKey);
-  if (ra !== rb) return ra - rb;
-  if (ra === 0) {
-    const d = (va as number) - (vb as number);
-    if (d) return d;
-  } else if (ra === 1) {
-    const d = collator.compare(va as string, vb as string);
-    if (d) return d;
-  }
-  return a.index - b.index;
-}
-
-export function blockSort(
-  src: BlockNode,
-  keySelector: null | ((value: DataSignal, id: DataSignal) => DataSignal)
-): BlockNode {
-  const rows = Array.from(enumerateEntries(src), (e) => {
-    if (!keySelector) return { ...e, sortKey: childToData(e.child) };
-    const { idSig, valSig } = entrySignals(e);
-    return { ...e, sortKey: keySelector(valSig, idSig).get() };
-  });
-  rows.sort(sortCmp);
-  return createBlockFromEntries(rows);
 }
 
 /* Evaluation */
@@ -546,18 +421,27 @@ function isStaticTruthy(n: StaticNode): boolean {
   return primTruthy(n);
 }
 
+let __globalLib: Map<string, DataSignal> | null = null;
+export function setGlobalLibrary(entries: Record<string, DataSignal>) {
+  __globalLib = new Map(
+    Object.entries(entries).map(([k, v]) => [k.toLowerCase(), v])
+  );
+}
+
 function lookupInScope(name: string, start: ChildSignal): DataSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
     const { values } = scope.get();
-    const insensitive = caseInsensitiveScopes.has(scope);
-    const found = values.find(
-      ([k]) =>
-        k === name || (insensitive && k.toLowerCase() === name.toLowerCase())
-    );
-    if (found) return createSignal(childToData(found[1]));
+    const found = values.find((v) => v.key === name);
+    if (found) return createSignal(childToData(found.child));
     scope = getParentSignal(scope).value;
   }
+
+  if (__globalLib) {
+    const libSig = __globalLib.get(name.toLowerCase());
+    if (libSig) return createSignal(libSig.get());
+  }
+
   throw new Error(ERR.unboundIdentifier(name));
 }
 
@@ -572,7 +456,7 @@ export function childToData(sig: ChildSignal): DataNode {
   }
 
   if (isCode(v)) {
-    return evalCode(v.code, (name: string) => lookupInScope(name, sig));
+    return v.result.get();
   }
 
   return v;
@@ -583,16 +467,17 @@ export function resolveData(n: DataNode): StaticNode {
   if (n.kind === "literal") return n.value;
 
   if (n.kind === "block") {
-    const values: [string, StaticNode][] = n.values.map(([k, vsig]) => {
+    const values: Record<string, StaticNode> = {};
+    for (const ve of n.values) {
       try {
-        return [k, resolveData(childToData(vsig))];
+        values[ve.key] = resolveData(childToData(ve.child));
       } catch (err) {
-        return [k, toStaticError(err)];
+        values[ve.key] = toStaticError(err);
       }
-    });
-    const items: StaticNode[] = n.items.map((isg) => {
+    }
+    const items: StaticNode[] = n.items.map((ie) => {
       try {
-        return resolveData(childToData(isg));
+        return resolveData(childToData(ie.child));
       } catch (err) {
         return toStaticError(err);
       }
@@ -612,9 +497,9 @@ export function getByKey(block: BlockNode, key: string): DataNode {
   if (!isBlock(block)) {
     throw new TypeError(ERR.propOnNonBlock(key));
   }
-  const pair = block.values.find(([k]) => k === key);
+  const pair = block.values.find((v) => v.key === key);
   if (!pair) throw new ReferenceError(ERR.unknownProperty(key));
-  return childToData(pair[1]);
+  return childToData(pair.child);
 }
 
 export function getByIndex(block: BlockNode, index1: number): DataNode {
@@ -628,11 +513,11 @@ export function getByIndex(block: BlockNode, index1: number): DataNode {
   if (!isBlock(block)) {
     throw new TypeError(ERR.indexNonBlock);
   }
-  const child = block.items[idx0];
-  if (!child) {
+  const entry = block.items[idx0];
+  if (!entry) {
     throw new RangeError(ERR.indexOutOfRange(index1, block.items.length));
   }
-  return childToData(child);
+  return childToData(entry.child);
 }
 
 export function getByKeyOrIndex(block: BlockNode, value: DataNode): DataNode {
@@ -642,229 +527,4 @@ export function getByKeyOrIndex(block: BlockNode, value: DataNode): DataNode {
     if (typeof lit === "string") return getByKey(block, lit);
   }
   throw new TypeError(ERR.indexKeyMustBeTextOrNumber);
-}
-
-export function getKeyOfChild(
-  parentBlock: BlockNode,
-  child: ChildSignal
-): string | undefined {
-  for (const e of enumerateEntries(parentBlock)) {
-    if (e.child === child && e.kind === "value") {
-      return e.key;
-    }
-  }
-  return undefined;
-}
-
-export function getPrevSibling(child: ChildSignal): ChildSignal | undefined {
-  const parent = getParent(child);
-  if (!parent) return undefined;
-  let prev: ChildSignal | undefined;
-  for (const e of enumerateEntries(parent.peek())) {
-    if (e.child === child) return prev;
-    prev = e.child;
-  }
-  return undefined;
-}
-
-export function getNextSibling(child: ChildSignal): ChildSignal | undefined {
-  const parent = getParent(child);
-  if (!parent) return undefined;
-  let seen = false;
-  for (const e of enumerateEntries(parent.peek())) {
-    if (seen) return e.child;
-    if (e.child === child) seen = true;
-  }
-  return undefined;
-}
-
-export function getFirstChild(child: ChildSignal): ChildSignal | undefined {
-  const n = child.peek();
-  if (!isBlock(n)) return undefined;
-  const list = Array.from(iterEntries(n), (e) => e.child);
-  return list[0];
-}
-
-/* Mutations */
-
-function withLocatedChild(
-  child: ChildSignal,
-  fn: (ctx: {
-    parentSignal: WriteSignal<BlockNode>;
-    parentBlock: BlockNode;
-    loc: EntryView;
-  }) => BlockNode | void
-): void {
-  const parentSignal = getParent(child);
-  if (!parentSignal) return;
-  const parentBlock = parentSignal.get();
-  for (const loc of enumerateEntries(parentBlock)) {
-    if (loc.child !== child) continue;
-    const maybeNext = fn({ parentSignal, parentBlock, loc });
-    if (maybeNext && maybeNext !== parentBlock) {
-      parentSignal.set(maybeNext);
-    }
-    return;
-  }
-}
-
-function insertItemAtIndex(
-  block: BlockNode,
-  index: number,
-  item: ChildSignal
-): BlockNode {
-  return createBlock(block.values, block.items.toSpliced(index, 0, item));
-}
-
-function replaceChildAt(
-  block: BlockNode,
-  loc: EntryView,
-  next: ChildSignal
-): BlockNode {
-  if (loc.kind === "item") {
-    return createBlock(block.values, block.items.toSpliced(loc.index, 1, next));
-  }
-  const [curKey] = block.values[loc.index]!;
-  const nextValues = block.values.toSpliced(loc.index, 1, [curKey, next]);
-  return createBlock(nextValues, block.items);
-}
-
-function removeChildAt(block: BlockNode, loc: EntryView): BlockNode {
-  if (loc.kind === "item") {
-    return createBlock(block.values, block.items.toSpliced(loc.index, 1));
-  }
-  return createBlock(block.values.toSpliced(loc.index, 1), block.items);
-}
-
-function nextFocusForRemoval(child: ChildSignal): ChildSignal {
-  const parent = getParent(child);
-  if (!parent) return child;
-  const list = Array.from(iterEntries(parent.peek()), (e) => e.child);
-  const i = list.indexOf(child);
-  const prev = i > 0 ? list[i - 1]! : null;
-  const next = i >= 0 && i + 1 < list.length ? list[i + 1]! : null;
-  return prev ?? next ?? (parent as unknown as ChildSignal);
-}
-
-export function insertBefore(
-  reference: ChildSignal,
-  newItem: ChildSignal
-): ChildSignal {
-  let changed = false;
-  withLocatedChild(reference, ({ parentSignal, parentBlock, loc }) => {
-    getParentSignal(newItem).value = parentSignal;
-    changed = true;
-    if (loc.kind === "item") {
-      return insertItemAtIndex(parentBlock, loc.index, newItem);
-    }
-    return insertItemAtIndex(parentBlock, 0, newItem);
-  });
-  return changed ? newItem : reference;
-}
-
-export function insertAfter(
-  reference: ChildSignal,
-  newItem: ChildSignal
-): ChildSignal {
-  let changed = false;
-  withLocatedChild(reference, ({ parentSignal, parentBlock, loc }) => {
-    getParentSignal(newItem).value = parentSignal;
-    changed = true;
-    if (loc.kind === "item") {
-      return insertItemAtIndex(parentBlock, loc.index + 1, newItem);
-    }
-    return insertItemAtIndex(parentBlock, 0, newItem);
-  });
-  return changed ? newItem : reference;
-}
-
-export function replaceChildWith(
-  target: ChildSignal,
-  next: ChildSignal
-): ChildSignal {
-  let replaced = false;
-  withLocatedChild(target, ({ parentSignal, parentBlock, loc }) => {
-    getParentSignal(target).value = undefined;
-    getParentSignal(next).value = parentSignal;
-    replaced = true;
-    return replaceChildAt(parentBlock, loc, next);
-  });
-  return replaced ? next : target;
-}
-
-export function assignKey(child: ChildSignal, nextKey: string) {
-  withLocatedChild(child, ({ parentBlock, loc }) => {
-    if (parentBlock.values.some(([k]) => k === nextKey)) return;
-
-    if (loc.kind === "value") {
-      const [currentKey, val] = parentBlock.values[loc.index]!;
-      if (currentKey === nextKey) return;
-      const nextValues = parentBlock.values.toSpliced(loc.index, 1, [
-        nextKey,
-        val,
-      ]);
-      return createBlock(nextValues, parentBlock.items);
-    }
-
-    const nextItems = parentBlock.items.toSpliced(loc.index, 1);
-    const nextValues = [
-      ...parentBlock.values,
-      [nextKey, child] as [string, ChildSignal],
-    ];
-    return createBlock(nextValues, nextItems);
-  });
-}
-
-export function removeKey(child: ChildSignal) {
-  withLocatedChild(child, ({ parentBlock, loc }) => {
-    if (loc.kind !== "value") return;
-    const nextValues = parentBlock.values.toSpliced(loc.index, 1);
-    return insertItemAtIndex(
-      createBlock(nextValues, parentBlock.items),
-      0,
-      child
-    );
-  });
-}
-
-export function wrapWithBlock(child: ChildSignal): ChildSignal {
-  withLocatedChild(child, ({ parentSignal, parentBlock, loc }) => {
-    const wrapper = createSignal(createBlock([], [child]));
-    getParentSignal(wrapper).value = parentSignal;
-    getParentSignal(child).value = wrapper;
-    return replaceChildAt(parentBlock, loc, wrapper);
-  });
-  return child;
-}
-
-export function unwrapBlockIfSingleChild(child: ChildSignal): ChildSignal {
-  withLocatedChild(child, ({ parentSignal: parentSig, parentBlock }) => {
-    if (parentBlock.values.length !== 0 || parentBlock.items.length !== 1)
-      return;
-    withLocatedChild(
-      parentSig,
-      ({
-        parentSignal: grandparentSig,
-        parentBlock: grandparentBlock,
-        loc,
-      }) => {
-        getParentSignal(child).value = grandparentSig;
-        getParentSignal(parentSig).value = undefined;
-        return replaceChildAt(grandparentBlock, loc, child);
-      }
-    );
-  });
-  return child;
-}
-
-export function removeChild(child: ChildSignal): ChildSignal {
-  const next = nextFocusForRemoval(child);
-
-  withLocatedChild(child, ({ parentBlock, loc }) => {
-    const nextBlock = removeChildAt(parentBlock, loc);
-    getParentSignal(child).value = undefined;
-    return nextBlock;
-  });
-
-  return next;
 }

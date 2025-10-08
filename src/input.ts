@@ -1,55 +1,56 @@
 import {
-  type ChildSignal,
-  getParent,
-  createBlank,
-  createSignal,
-  getPrevSibling,
-  getNextSibling,
-  getFirstChild,
+  type NodePath,
+  parentPath,
+  siblingPath,
+  firstChildPath,
   insertBefore,
   insertAfter,
   wrapWithBlock,
   unwrapBlockIfSingleChild,
   removeChild,
-} from "./data";
+} from "./tree";
 
-/* Focus  */
+/* Focus */
 
-let activeFocus: ChildSignal | null = null;
+let activePath: NodePath | null = null;
 
-const elBySig = new WeakMap<ChildSignal, HTMLElement>();
+const elByPath = new Map<string, HTMLElement>();
+const pathToKey = (p: NodePath) => p.join(">");
 
-function focusElFor(sig: ChildSignal | null) {
-  if (!sig) return;
-  const el = elBySig.get(sig);
+function focusElForPath(path: NodePath | null) {
+  if (!path) return;
+  const el = elByPath.get(pathToKey(path));
   if (el) el.focus({ preventScroll: true });
 }
 
-export function registerFocusable(sig: ChildSignal, el: HTMLElement) {
+export function registerFocusable(path: NodePath, el: HTMLElement) {
   el.tabIndex = 0;
-  elBySig.set(sig, el);
+  const k = pathToKey(path);
+  elByPath.set(k, el);
 
-  if (activeFocus === sig) {
-    focusElFor(sig);
+  if (activePath && pathToKey(activePath) === k) {
+    focusElForPath(path);
   }
 
   el.addEventListener("focus", () => {
-    if (activeFocus !== sig) {
-      activeFocus = sig;
+    if (!activePath || pathToKey(activePath) !== k) {
+      activePath = path.slice();
     }
   });
 }
 
-export function unregisterFocusable(sig: ChildSignal, el: HTMLElement) {
-  if (elBySig.get(sig) === el) elBySig.delete(sig);
+export function unregisterFocusable(path: NodePath) {
+  elByPath.delete(pathToKey(path));
 }
 
-export function focusNode(sig: ChildSignal | null) {
-  const changed = activeFocus !== sig;
-  activeFocus = sig;
-  if (!changed || sig) {
-    focusElFor(sig);
-  }
+export function focusPath(path: NodePath | null) {
+  if (!path) return;
+  const nextKey = pathToKey(path);
+  const prevKey = activePath ? pathToKey(activePath) : "";
+  if (prevKey === nextKey) return;
+
+  activePath = path.slice();
+  focusElForPath(path);
 }
 
 /* Keyboard */
@@ -58,69 +59,59 @@ export function onRootKeyDown(e: KeyboardEvent) {
   const activeEl = document.activeElement as HTMLElement | null;
   if (!activeEl || activeEl.tagName === "INPUT") return;
 
-  if (!activeFocus) return;
+  if (!activePath) return;
 
   if (e.shiftKey) {
     switch (e.key) {
       case "ArrowUp": {
         e.preventDefault();
-        const newItem = createSignal(createBlank());
-        const next = insertBefore(activeFocus, newItem);
-        focusNode(next);
+        focusPath(insertBefore(activePath));
         return;
       }
       case "ArrowDown": {
         e.preventDefault();
-        const newItem = createSignal(createBlank());
-        const next = insertAfter(activeFocus, newItem);
-        focusNode(next);
+        focusPath(insertAfter(activePath));
         return;
       }
       case "ArrowLeft": {
         e.preventDefault();
-        const next = unwrapBlockIfSingleChild(activeFocus);
-        focusNode(next);
+        focusPath(unwrapBlockIfSingleChild(activePath));
         return;
       }
       case "ArrowRight": {
         e.preventDefault();
-        const next = wrapWithBlock(activeFocus);
-        focusNode(next);
+        focusPath(wrapWithBlock(activePath));
         return;
       }
     }
     return;
   }
 
+  if (e.key === "Backspace") {
+    e.preventDefault();
+    focusPath(removeChild(activePath));
+    return;
+  }
+
   switch (e.key) {
     case "ArrowUp": {
       e.preventDefault();
-      const n = getPrevSibling(activeFocus);
-      if (n) focusNode(n);
+      focusPath(siblingPath(activePath, -1));
       return;
     }
     case "ArrowDown": {
       e.preventDefault();
-      const n = getNextSibling(activeFocus);
-      if (n) focusNode(n);
+      focusPath(siblingPath(activePath, 1));
       return;
     }
     case "ArrowLeft": {
       e.preventDefault();
-      const n = getParent(activeFocus);
-      if (n) focusNode(n);
+      focusPath(parentPath(activePath));
       return;
     }
     case "ArrowRight": {
       e.preventDefault();
-      const n = getFirstChild(activeFocus);
-      if (n) focusNode(n);
-      return;
-    }
-    case "Backspace": {
-      e.preventDefault();
-      const next = removeChild(activeFocus);
-      focusNode(next);
+      focusPath(firstChildPath(activePath));
       return;
     }
   }
