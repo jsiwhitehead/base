@@ -38,7 +38,7 @@ Script {
                   | Pipe<Dot>                             -- pipe
 
   Pipe<Dot>       = Eq<Dot> (PipeOp Eq<Dot>)*
-  PipeOp          = "->"
+  PipeOp          = ":"
 
   Eq<Dot>         = Rel<Dot> (EqOp Rel<Dot>)*
   EqOp            = "!=" | "="

@@ -14,40 +14,41 @@ import {
 import { setDataRoot } from "./tree";
 import { library } from "./library";
 import { onRootKeyDown } from "./input";
-import { SignalMount } from "./render";
+import renderRoot from "./render";
 
 export function render(
   rootSignal: DataSignal<BlockNode>,
   rootElement: HTMLElement
 ) {
-  const mount = new SignalMount(rootSignal, []);
-  const { element } = mount;
+  setGlobalLibrary(library);
+  setDataRoot(rootSignal);
 
-  rootElement.appendChild(element);
-  queueMicrotask(() => element.focus());
+  const { mount, dispose } = renderRoot(rootSignal, []);
 
-  rootElement.addEventListener("keydown", onRootKeyDown);
+  rootElement.replaceChildren(mount.element);
+
+  queueMicrotask(() => {
+    mount.view.focusEl.focus();
+  });
+
+  const keydownHandler = (e: KeyboardEvent) => onRootKeyDown(e);
+  rootElement.addEventListener("keydown", keydownHandler);
 
   return () => {
-    mount.dispose();
-    rootElement.removeEventListener("keydown", onRootKeyDown);
+    dispose();
+    rootElement.removeEventListener("keydown", keydownHandler);
     rootElement.textContent = "";
   };
 }
 
 /* Test */
 
-setGlobalLibrary(library);
-
 const literalSig = (v: Primitive) => createSignal(createLiteral(v));
-const codeSig = (src: string) => createCodeSignal(src);
 
 const root = createBlockSignal(
   [["x", createBlockSignal([], [literalSig(10), literalSig(20)])]],
-  [codeSig("sum(x)")]
+  [createCodeSignal("x")]
 );
-
-setDataRoot(root);
 
 const unmount = render(root, document.getElementById("root")!);
 

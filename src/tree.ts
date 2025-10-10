@@ -12,6 +12,8 @@ import {
   isBlank,
   isLiteral,
   isBlock,
+  isCode,
+  isWritableSignal,
   newUid,
   createBlank,
   createLiteral,
@@ -200,7 +202,7 @@ export function blockSort(
 
 export type NodePath = number[];
 
-export function resolvePath(path: NodePath): ChildSignal | null {
+function resolvePath(path: NodePath): ChildSignal | null {
   let cur: ChildSignal = getDataRoot();
   for (const uid of path) {
     const node = childToData(cur);
@@ -243,6 +245,40 @@ export function siblingPath(path: NodePath, dir: -1 | 1): NodePath | null {
 }
 
 /* Mutations */
+
+const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+export function setText(path: NodePath, raw: string): NodePath {
+  const sig = resolvePath(path);
+  if (!sig || !isWritableSignal(sig)) return path;
+
+  const cur = sig.peek();
+
+  if (isCode(cur)) {
+    sig.set({
+      kind: "code",
+      code: raw,
+      result: cur.result,
+    });
+    return path;
+  }
+
+  if (isLiteral(cur) || isBlank(cur)) {
+    const t = raw.trim();
+
+    sig.set(
+      t === ""
+        ? createBlank()
+        : NUM_RE.test(t) && Number.isFinite(Number(t))
+        ? createLiteral(Number(t))
+        : createLiteral(t)
+    );
+
+    return path;
+  }
+
+  return path;
+}
 
 export function withLocatedPath(
   path: NodePath,
