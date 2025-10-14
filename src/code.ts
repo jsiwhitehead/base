@@ -29,99 +29,81 @@ import {
 
 const grammar = ohm.grammar(String.raw`
 Script {
-  Start           = Expr<"">
+  Start         = Expr
 
-  Expr<Dot>       = Lambda<Dot>
+  Expr          = Lambda
 
-  Lambda<Dot>     = "(" IdentList? ")" "->" Lambda<"">    -- paren
-                  | &"." Pipe<".">                        -- implicit
-                  | Pipe<Dot>                             -- pipe
+  Lambda        = "(" ListOf<ident, ","> ")" "->" Lambda   -- paren
+                | ident "->" Lambda                        -- single
+                | (&"." | &":") Pipe                       -- implicit
+                | Pipe                                     -- pipe
 
-  Pipe<Dot>       = Eq<Dot> (PipeOp Eq<Dot>)*
-  PipeOp          = ":"
+  Pipe          = Eq (":" Eq)*
 
-  Eq<Dot>         = Rel<Dot> (EqOp Rel<Dot>)*
-  EqOp            = "!=" | "="
+  Eq            = Rel (("!=" | "=") Rel)*
 
-  Rel<Dot>        = Range<Dot> (RelOp Range<Dot>)*
-  RelOp           = "<=" | "<" | ">=" | ">"
+  Rel           = Range (("<=" | "<" | ">=" | ">") Range)*
 
-  Range<Dot>      = Slice<Dot>
-                  | Add<Dot>
+  Range         = Slice
+                | Add
 
-  Add<Dot>        = Mul<Dot> (AddOp Mul<Dot>)*
-  AddOp           = "+" | "-"
+  Add           = Mul (("+" | "-") Mul)*
 
-  Mul<Dot>        = Unary<Dot> (MulOp Unary<Dot>)*
-  MulOp           = "*" | "/"
+  Mul           = Unary (("*" | "/") Unary)*
 
-  Unary<Dot>      = (("!" | "-" | "+" | "#")*) Path<Dot>
+  Unary         = ("!" | "-" | "+" | "#" | ":")* Path
 
-  Path<Dot>       = Prim<Dot> PathPart<Dot>*
-  PathPart<Dot>   = Call<Dot>
-                  | Index<Dot>
-                  | Member
+  Path          = Prim PathPart*
+  PathPart      = Call
+                | Index
+                | Member
 
-  Call<Dot>       = "(" ListOf<Expr<Dot>, ","> ")"
+  Call          = "(" ListOf<Expr, ","> ")"
 
-  Index<Dot>      = "[" Slice<Dot> "]"
-                  | "[" Expr<Dot> "]"
+  Index         = "[" Slice "]"                            -- slice
+                | "[" Expr "]" "!"?                        -- expr
 
-  Member          = "." ident
+  Member        = "." ident "!"?
 
-  Slice<Dot>      = Add<Dot>? ".." Add<Dot>? (":" Add<Dot>?)?
+  Slice         = Add? ".." Add? (":" Add?)?
 
-  Prim<Dot>       = Literal                              -- lit
-                  | ident                                -- ident
-                  | "(" Expr<Dot> ")"                    -- paren
-                  | &"." Dot ident                       -- dot
-                  | &"." Dot "[" Expr<Dot> "]"           -- dotindex
+  Prim          = Literal                                  -- lit
+                | ident                                    -- ident
+                | "(" Expr ")"                             -- paren
+                | "." "[" Expr "]" "!"?                    -- dotindex
+                | "." ident "!"?                           -- dot
 
-  Literal         = "blank"                              -- blank
-                  | "true"                               -- true
-                  | number                               -- number
-                  | text                                 -- text
-                  | template                             -- tpl
+  Literal       = "blank"                                  -- blank
+                | "true"                                   -- true
+                | number                                   -- number
+                | text                                     -- text
+                | template                                 -- tpl
 
-  number          = sciNumber
-                  | decimal
-                  | integer
+  number        = digit+ ("." digit+)? exponent?           -- intdec
+                | "." digit+ exponent?                     -- dot
+  exponent      = ("e" | "E") ("+" | "-")? digit+
 
-  sciNumber       = (integer | decimal) exponent
-  exponent        = ("e" | "E") ("+" | "-")? digit+
+  text          = textLit<"\""> 
+                | textLit<"'">
+  template      = tplLit<"\"">  
+                | tplLit<"'">
 
-  decimal         = integer "." digit+ exponent?         -- intdot
-                  | "0" "." digit+ exponent?             -- zerodot
-                  | "." digit+ exponent?                 -- dot
+  textLit<q>    = q textChar<q>* q
+  tplLit<q>     = "&" q tplChunk<q>* q
 
-  integer         = "1".."9" digit*                      -- nonzero
-                  | "0"                                  -- zero
+  textChar<q>   = escape | ~(q | "\\" | "\n" | "\r") any
 
-  text            = textLit<"\""> 
-                  | textLit<"'">
-  template        = tplLit<"\"">  
-                  | tplLit<"'">
+  tplChunk<q>   = "{{"                                     -- lbrace
+                | "{" applySyntactic<Expr> "}"             -- expr
+                | tplRun<q>                                -- text
+  tplRun<q>     = tplChar<q>+
+  tplChar<q>    = escape | ~(q | "\\" | "\n" | "\r" | "{") any
 
-  textLit<q>      = q textChar<q>* q
-  tplLit<q>       = "&" q tplChunk<q>* q
+  escape        = "\\" escSimple | "\\u" hex4
+  escSimple     = "\"" | "'" | "\\" | "n" | "r" | "t" | "b" | "f"
+  hex4          = hexDigit hexDigit hexDigit hexDigit
 
-  textChar<q>     = escape | ~(q | "\\" | "\n" | "\r") any
-
-  tplChunk<q>     = "{{"                                 -- lbrace
-                  | "{" applySyntactic<Expr<"">> "}"     -- expr
-                  | tplRun<q>                            -- text
-  tplRun<q>       = tplChar<q>+
-  tplChar<q>      = escape | ~(q | "\\" | "\n" | "\r" | "{") any
-
-  escape          = "\\" escSimple | "\\u" hex4
-  escSimple       = "\"" | "'" | "\\" | "n" | "r" | "t" | "b" | "f"
-  hex4            = hexDigit hexDigit hexDigit hexDigit
-
-  ident           = identStart identRest*
-  identStart      = "_" | letter
-  identRest       = identStart | digit
-
-  IdentList       = NonemptyListOf<ident, ",">
+  ident         = ("_" | letter) ("_" | letter | digit)*
 }
 `);
 
@@ -169,12 +151,14 @@ export interface Index {
   type: "Index";
   block: Expr;
   index: Expr;
+  strict: boolean;
 }
 
 export interface Member {
   type: "Member";
   block: Expr;
   key: Ident;
+  strict: boolean;
 }
 
 export interface Slice {
@@ -205,21 +189,21 @@ export interface Ident {
 
 /* Semantics */
 
-const IMPLICIT_PARAM = "_";
+const IMPLICIT_PARAM = { type: "Ident", name: "_" } as Ident;
 
 function buildBinaryChain(
   first: ohm.Node,
   ops: ohm.Node,
   rights: ohm.Node
 ): Expr {
-  return ops.children.reduce<Expr>(
+  return ops.children.reduce(
     (node, opNode, i) => ({
       type: "Binary",
-      op: opNode.sourceString as Binary["op"],
+      op: opNode.sourceString,
       left: node,
-      right: rights.children[i]!.ast as Expr,
+      right: rights.children[i]!.ast,
     }),
-    first.ast as Expr
+    first.ast
   );
 }
 
@@ -232,29 +216,37 @@ function decodeEscapes(unquoted: string): string {
 }
 
 const semantics = grammar.createSemantics().addAttribute("ast", {
-  Lambda_paren(_open, maybeList, _close, _arrow, body) {
+  Lambda_paren(_open, list, _close, _arrow, body) {
     return {
       type: "Lambda",
-      params: (maybeList.children[0]?.ast ?? []) as Ident[],
+      params: list
+        .asIteration()
+        .children.map((n) => ({ type: "Ident", name: n.sourceString })),
+      body: body.ast,
+    } as Lambda;
+  },
+  Lambda_single(nameTok, _arrow, body) {
+    return {
+      type: "Lambda",
+      params: [{ type: "Ident", name: nameTok.sourceString }],
       body: body.ast,
     } as Lambda;
   },
   Lambda_implicit(_guard, body) {
     return {
       type: "Lambda",
-      params: [{ type: "Ident", name: IMPLICIT_PARAM }],
+      params: [IMPLICIT_PARAM],
       body: body.ast,
     } as Lambda;
   },
 
-  Pipe(first, _ops, rights) {
-    return rights.children.reduce<Expr>((acc, node) => {
-      const step = node.ast as Expr;
-      if (step.type === "Call") {
-        return { type: "Call", callee: step.callee, args: [acc, ...step.args] };
-      }
-      return { type: "Call", callee: step, args: [acc] };
-    }, first.ast as Expr);
+  Pipe(first, _colon, rest) {
+    const steps = rest.asIteration().children.map((n) => n.ast);
+    return steps.reduce((acc, step) => {
+      return step.type === "Call"
+        ? { type: "Call", callee: step.callee, args: [acc, ...step.args] }
+        : { type: "Call", callee: step, args: [acc] };
+    }, first.ast) as Expr;
   },
 
   Eq(first, ops, rights) {
@@ -271,50 +263,57 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
 
   Unary(ops, operand) {
-    return ops.children.reduceRight<Expr>(
-      (node, tok) => ({
-        type: "Unary",
-        op: tok.sourceString as Unary["op"],
-        argument: node,
-      }),
-      operand.ast as Expr
-    );
+    return ops.children.reduceRight((node, tok) => {
+      if (tok.sourceString === ":") {
+        return node.type === "Call"
+          ? { ...node, args: [IMPLICIT_PARAM, ...node.args] }
+          : { type: "Call", callee: node, args: [IMPLICIT_PARAM] };
+      }
+      return { type: "Unary", op: tok.sourceString, argument: node };
+    }, operand.ast) as Expr;
   },
 
   Path(prim, parts) {
-    return parts.children.reduce<Expr>((node, p) => {
-      const apply = p.ast as (obj: Expr) => Expr;
-      return apply(node);
-    }, prim.ast as Expr);
+    return parts.children.reduce((node, p) => p.ast(node), prim.ast) as Expr;
   },
   Call(_open, list, _close) {
     return (callee: Expr): Call => ({
       type: "Call",
       callee,
-      args: list.asIteration().children.map((n) => n.ast as Expr),
+      args: list.asIteration().children.map((n) => n.ast),
     });
   },
-  Index(_open, expr, _close) {
+  Index_slice(_open, expr, _close) {
     return (block: Expr): Index => ({
       type: "Index",
       block,
-      index: expr.ast as Expr,
+      index: expr.ast,
+      strict: false,
     });
   },
-  Member(_dot, nameTok) {
+  Index_expr(_open, expr, _close, maybeBang) {
+    return (block: Expr): Index => ({
+      type: "Index",
+      block,
+      index: expr.ast,
+      strict: !!maybeBang.sourceString,
+    });
+  },
+  Member(_dot, nameTok, maybeBang) {
     return (block: Expr): Member => ({
       type: "Member",
       block,
       key: { type: "Ident", name: nameTok.sourceString },
+      strict: !!maybeBang.sourceString,
     });
   },
 
   Slice(start, _dots, end, _colon, step) {
     return {
       type: "Slice",
-      start: start.children[0]?.ast as Expr | undefined,
-      end: end.children[0]?.ast as Expr | undefined,
-      step: step.children[0]?.ast as Expr | undefined,
+      start: start.children[0]?.ast,
+      end: end.children[0]?.ast,
+      step: step.children[0]?.ast,
     } as Slice;
   },
 
@@ -324,19 +323,21 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   Prim_paren(_open, expr, _close) {
     return expr.ast;
   },
-  Prim_dot(_guard, _dot, nameTok) {
-    return {
-      type: "Member",
-      block: { type: "Ident", name: IMPLICIT_PARAM },
-      key: { type: "Ident", name: nameTok.sourceString },
-    } as Member;
-  },
-  Prim_dotindex(_guard, _dot, _open, expr, _close) {
+  Prim_dotindex(_dot, _open, expr, _close, maybeBang) {
     return {
       type: "Index",
-      block: { type: "Ident", name: IMPLICIT_PARAM },
+      block: IMPLICIT_PARAM,
       index: expr.ast,
+      strict: !!maybeBang.sourceString,
     } as Index;
+  },
+  Prim_dot(_dot, nameTok, maybeBang) {
+    return {
+      type: "Member",
+      block: IMPLICIT_PARAM,
+      key: { type: "Ident", name: nameTok.sourceString },
+      strict: !!maybeBang.sourceString,
+    } as Member;
   },
 
   Literal_blank(_) {
@@ -370,12 +371,6 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
   tplChunk_text(run) {
     return decodeEscapes(run.sourceString);
-  },
-
-  IdentList(list) {
-    return list
-      .asIteration()
-      .children.map((n) => ({ type: "Ident", name: n.sourceString }));
   },
 });
 
@@ -445,8 +440,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
     case "Binary": {
       const { op, left, right } = e;
-      const f = BINARY_OPS[op];
-      if (!f) throw new Error(`Unknown operator: ${op}`);
+      const f = BINARY_OPS[op]!;
       return createSignal(
         scalarToData(
           f(evalExpr(left, scope).get(), evalExpr(right, scope).get())
@@ -455,28 +449,26 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
     }
 
     case "Unary": {
-      const f = UNARY_OPS[e.op];
-      if (!f) throw new Error(`Unknown unary operator: ${e.op}`);
+      const f = UNARY_OPS[e.op]!;
       return createSignal(scalarToData(f(evalExpr(e.argument, scope).get())));
     }
 
     case "Call": {
       const callee = evalExpr(e.callee, scope).get();
       if (!isFunction(callee)) {
-        throw new TypeError("Callee is not a function");
+        throw new TypeError(ERR.function);
       }
       return callee.fn(...e.args.map((a) => evalExpr(a, scope)));
     }
 
     case "Index": {
-      if ((e.index as any).type === "Slice") {
+      if (e.index.type === "Slice") {
         const targetSig = evalExpr(e.block, scope);
         const target = targetSig.get();
 
-        const slice = e.index as Slice;
-        const startN = evalNumberOpt(slice.start, scope);
-        const endN = evalNumberOpt(slice.end, scope);
-        const stepN = evalNumberOpt(slice.step, scope);
+        const startN = evalNumberOpt(e.index.start, scope);
+        const endN = evalNumberOpt(e.index.end, scope);
+        const stepN = evalNumberOpt(e.index.step, scope);
 
         if (isLiteral(target) && typeof target.value === "string") {
           return createSignal(
@@ -488,20 +480,17 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
           return createSignal(sliceBlockItems(target, startN, endN, stepN));
         }
 
-        throw new TypeError("Cannot slice a non-text or non-block value");
+        return createSignal(createBlank());
       }
 
-      const block = evalExpr(e.block, scope).get();
-      if (!isBlock(block)) throw new TypeError(ERR.block);
-      return createSignal(
-        getByKeyOrIndex(block, evalExpr(e.index, scope).get())
-      );
+      const target = evalExpr(e.block, scope).get();
+      const idxOrKey = evalExpr(e.index, scope).get();
+      return createSignal(getByKeyOrIndex(target, idxOrKey, e.strict));
     }
 
     case "Member": {
-      const block = evalExpr(e.block, scope).get();
-      if (!isBlock(block)) throw new TypeError(ERR.block);
-      return createSignal(getByKey(block, e.key.name));
+      const target = evalExpr(e.block, scope).get();
+      return createSignal(getByKey(target, e.key.name, e.strict));
     }
 
     case "Slice": {
@@ -539,6 +528,7 @@ export function evalCode(
   code: string,
   scope: (name: string) => DataSignal
 ): DataNode {
+  if (!code.trim()) return createBlank();
   const match = grammar.match(code, "Start");
   if (match.failed()) throw new SyntaxError(match.message);
   return evalExpr(semantics(match).ast, scope).get();

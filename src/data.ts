@@ -17,7 +17,7 @@ export const ERR = {
   textOrBlock: "Expected text or block",
   block: "Expected block",
   function: "Expected function",
-  funcOrBlank: "Expected function (key selector) or blank",
+  funcOrBlank: "Expected function or blank",
 
   sliceStepZero: "Slice step cannot be 0",
 
@@ -493,38 +493,64 @@ export function resolveData(n: DataNode): StaticNode {
 
 /* Getters */
 
-export function getByKey(block: BlockNode, key: string): DataNode {
-  if (!isBlock(block)) {
-    throw new TypeError(ERR.propOnNonBlock(key));
+function softWrap<T>(strict: boolean, fn: () => T): T | BlankNode {
+  if (strict) return fn();
+  try {
+    return fn();
+  } catch (err) {
+    if (
+      err instanceof TypeError ||
+      err instanceof RangeError ||
+      err instanceof ReferenceError
+    ) {
+      return createBlank();
+    }
+    throw err;
   }
-  const pair = block.values.find((v) => v.key === key);
-  if (!pair) throw new ReferenceError(ERR.unknownProperty(key));
-  return childToData(pair.child);
 }
 
-export function getByIndex(block: BlockNode, index1: number): DataNode {
-  if (!Number.isFinite(index1)) {
-    throw new TypeError(ERR.indexFinite);
-  }
-  const idx0 = Math.trunc(index1) - 1;
-  if (idx0 < 0) {
-    throw new RangeError(ERR.indexOneBased);
-  }
-  if (!isBlock(block)) {
-    throw new TypeError(ERR.indexNonBlock);
-  }
-  const entry = block.items[idx0];
-  if (!entry) {
-    throw new RangeError(ERR.indexOutOfRange(index1, block.items.length));
-  }
-  return childToData(entry.child);
+export function getByKey(
+  block: DataNode,
+  key: string,
+  strict = false
+): DataNode {
+  return softWrap(strict, () => {
+    if (!isBlock(block)) throw new TypeError(ERR.propOnNonBlock(key));
+    const pair = block.values.find((v) => v.key === key);
+    if (!pair) throw new ReferenceError(ERR.unknownProperty(key));
+    return childToData(pair.child);
+  });
 }
 
-export function getByKeyOrIndex(block: BlockNode, value: DataNode): DataNode {
-  if (isLiteral(value)) {
-    const lit = value.value;
-    if (typeof lit === "number") return getByIndex(block, lit);
-    if (typeof lit === "string") return getByKey(block, lit);
-  }
-  throw new TypeError(ERR.indexKeyMustBeTextOrNumber);
+export function getByIndex(
+  block: DataNode,
+  index1: number,
+  strict = false
+): DataNode {
+  return softWrap(strict, () => {
+    if (!Number.isFinite(index1)) throw new TypeError(ERR.indexFinite);
+    const idx0 = Math.trunc(index1) - 1;
+    if (idx0 < 0) throw new RangeError(ERR.indexOneBased);
+    if (!isBlock(block)) throw new TypeError(ERR.indexNonBlock);
+    const entry = block.items[idx0];
+    if (!entry)
+      throw new RangeError(ERR.indexOutOfRange(index1, block.items.length));
+    return childToData(entry.child);
+  });
+}
+
+export function getByKeyOrIndex(
+  block: DataNode,
+  value: DataNode,
+  strict = false
+): DataNode {
+  return softWrap(strict, () => {
+    if (!isBlock(block)) throw new TypeError(ERR.indexNonBlock);
+    if (isLiteral(value)) {
+      const lit = value.value;
+      if (typeof lit === "number") return getByIndex(block, lit, strict);
+      if (typeof lit === "string") return getByKey(block, lit, strict);
+    }
+    throw new TypeError(ERR.indexKeyMustBeTextOrNumber);
+  });
 }
