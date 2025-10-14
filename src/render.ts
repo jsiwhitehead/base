@@ -65,15 +65,16 @@ class BlockView extends View<BlockNode> {
   childPathByUid = new Map<number, NodePath>();
   keyLabelByUid = new Map<number, StringView>();
 
-  constructor(
-    readonly parentPath: NodePath,
-    readonly mode: "editable" | "readonly"
-  ) {
+  constructor(readonly parentPath: NodePath, readonly parentWritable: boolean) {
     super();
     this.element = createEl("div", "block");
   }
 
-  mountChildIfNeeded(uid: number, child: ChildSignal, childPath: NodePath) {
+  mountChildIfNeeded(
+    uid: number,
+    child: ChildSignal,
+    childPath: NodePath
+  ): { el: HTMLElement; focusEl: HTMLElement } {
     let mount = this.childMountByUid.get(uid);
 
     if (!mount || mount.signal !== child) {
@@ -96,7 +97,24 @@ class BlockView extends View<BlockNode> {
       }
     }
 
-    return mount.element;
+    const el = mount.element;
+    const focusEl = mount.view?.focusEl ?? el;
+    return { el, focusEl };
+  }
+
+  ensureKeyLabel(uid: number, key: string, path: NodePath): StringView {
+    const prevPath = this.childPathByUid.get(uid);
+    let label = this.keyLabelByUid.get(uid)!;
+    const needsRemount = !label || (prevPath && !pathsEqual(prevPath, path));
+
+    if (needsRemount) {
+      label?.element.remove();
+      label = new StringView("key", key);
+      this.keyLabelByUid.set(uid, label);
+    } else {
+      label.update(key);
+    }
+    return label;
   }
 
   unmountAllChildrenExcept(keepUids?: Set<number>) {
@@ -120,100 +138,54 @@ class BlockView extends View<BlockNode> {
     }
   }
 
-  update(node: BlockNode) {
-    const { values, items } = node;
+  textGetterFor(child: ChildSignal) {
+    if (!isWritableSignal(child)) return;
+    return () => {
+      const cur = child.peek();
+      if (isLiteral(cur)) return String((cur as LiteralNode).value);
+      if (isCode(cur)) return (cur as CodeNode).code;
+      return "";
+    };
+  }
 
-    const keepUids = new Set<number>([
-      ...values.map((v) => v.uid),
-      ...items.map((i) => i.uid),
-    ]);
+  update({ values, items }: BlockNode) {
+    const keepUids = new Set<number>([...values, ...items].map((x) => x.uid));
     this.unmountAllChildrenExcept(keepUids);
 
     const frag = document.createDocumentFragment();
 
-    for (const v of values) {
-      const uid = v.uid;
-      const childPath: NodePath = [...this.parentPath, uid];
+    for (const { uid, key, child } of values) {
+      const path: NodePath = [...this.parentPath, uid];
+      const { el, focusEl } = this.mountChildIfNeeded(uid, child, path);
+      const keyLabel = this.ensureKeyLabel(uid, key, path);
 
-      const prevPath = this.childPathByUid.get(uid);
-      const valueContainerEl = this.mountChildIfNeeded(uid, v.child, childPath);
-
-      let keyLabel = this.keyLabelByUid.get(uid);
-      const needsRemount =
-        !keyLabel || (prevPath && !pathsEqual(prevPath, childPath));
-
-      if (needsRemount) {
-        if (keyLabel) keyLabel.element.remove();
-        keyLabel = new StringView("key", v.key);
-        this.keyLabelByUid.set(uid, keyLabel);
-      } else {
-        keyLabel!.update(v.key);
-      }
-
-      const mount = this.childMountByUid.get(uid)!;
-      const focusEl =
-        (mount as any).view?.focusEl instanceof HTMLElement
-          ? (mount as any).view.focusEl
-          : valueContainerEl;
-
-      const keyEditable =
-        this.mode === "editable"
-          ? {
-              getText: () => v.key,
-            }
-          : undefined;
-
-      let valueEditable: { getText: () => string } | undefined;
-      if (this.mode === "editable" && isWritableSignal(v.child)) {
-        valueEditable = {
-          getText: () => {
-            const cur = v.child.peek();
-            if (isLiteral(cur)) return String((cur as LiteralNode).value);
-            if (isCode(cur)) return (cur as CodeNode).code;
-            return "";
-          },
-        };
-      }
-
-      registerBinding(childPath, {
-        key: { el: keyLabel!.element, editable: keyEditable },
-        value: { el: focusEl, editable: valueEditable },
+      registerBinding(path, {
+        key: {
+          el: keyLabel.element,
+          getText: this.parentWritable ? () => key : undefined,
+        },
+        value: {
+          el: focusEl,
+          getText: this.textGetterFor(child),
+        },
       });
 
-      frag.append(keyLabel!.element, valueContainerEl);
+      frag.append(keyLabel.element, el);
     }
 
-    for (const i of items) {
-      const childPath: NodePath = [...this.parentPath, i.uid];
-      const containerEl = this.mountChildIfNeeded(i.uid, i.child, childPath);
+    for (const { uid, child } of items) {
+      const path: NodePath = [...this.parentPath, uid];
+      const { el, focusEl } = this.mountChildIfNeeded(uid, child, path);
 
-      const mount = this.childMountByUid.get(i.uid)!;
-      const focusEl =
-        (mount as any).view?.focusEl instanceof HTMLElement
-          ? (mount as any).view.focusEl
-          : containerEl;
-
-      let valueEditable:
-        | { getText: () => string; anchorEl?: HTMLElement }
-        | undefined;
-
-      if (this.mode === "editable") {
-        valueEditable = {
-          getText: () => {
-            const cur = i.child.peek();
-            if (isLiteral(cur)) return String((cur as LiteralNode).value);
-            if (isCode(cur)) return (cur as CodeNode).code;
-            return "";
-          },
-          anchorEl: containerEl,
-        };
-      }
-
-      registerBinding(childPath, {
-        value: { el: focusEl, editable: valueEditable },
+      registerBinding(path, {
+        value: {
+          el: focusEl,
+          keyAnchorEl: this.parentWritable ? el : undefined,
+          getText: this.textGetterFor(child),
+        },
       });
 
-      frag.append(containerEl);
+      frag.append(el);
     }
 
     this.element.replaceChildren(frag);
@@ -252,7 +224,7 @@ class CodeView extends View<string> {
         if (isBlock(resolved)) {
           this.ensureResultKind(
             "block",
-            () => new BlockView(this.codeNodePath, "readonly")
+            () => new BlockView(this.codeNodePath, false)
           );
           (this.resultView as BlockView).update(resolved);
         } else if (isLiteral(resolved)) {
@@ -339,11 +311,7 @@ class SignalMount {
       } else if (isBlock(n)) {
         ensureKind(
           "block",
-          () =>
-            new BlockView(
-              this.path,
-              isWritableSignal(this.signal) ? "editable" : "readonly"
-            )
+          () => new BlockView(this.path, isWritableSignal(this.signal))
         );
         this.nodeView.update(n);
       } else if (isLiteral(n) || isBlank(n)) {

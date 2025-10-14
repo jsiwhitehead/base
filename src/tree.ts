@@ -221,7 +221,8 @@ export function parentPath(path: NodePath): NodePath | null {
 }
 
 export function firstChildPath(path: NodePath): NodePath | null {
-  const node = resolvePath(path)!;
+  const node = resolvePath(path);
+  if (!node) return null;
   const data = childToData(node);
   if (!isBlock(data)) return null;
   const es = Array.from(iterEntries(data));
@@ -231,15 +232,19 @@ export function firstChildPath(path: NodePath): NodePath | null {
 export function siblingPath(path: NodePath, dir: -1 | 1): NodePath | null {
   if (path.length === 0) return null;
 
-  const pp = parentPath(path)!;
-  const parentNode = resolvePath(pp)!;
+  const pp = parentPath(path);
+  if (!pp) return null;
+
+  const parentNode = resolvePath(pp);
+  if (!parentNode) return null;
+
   const block = childToData(parentNode);
   if (!isBlock(block)) return null;
 
   const es = Array.from(iterEntries(block));
   const i = entryIndexByUid(es, path[path.length - 1]!);
   const j = i + dir;
-  if (j < 0 || j >= es.length) return null;
+  if (i < 0 || j < 0 || j >= es.length) return null;
 
   return [...pp, es[j]!.uid];
 }
@@ -292,13 +297,18 @@ export function withLocatedPath(
 ): NodePath {
   if (path.length === 0) return path;
 
-  const child = resolvePath(path)!;
-  const parent = getParent(child)!;
+  const child = resolvePath(path);
+  if (!child) return path;
+
+  const parent = getParent(child);
+  if (!parent) return path;
+
   const parentPath = path.slice(0, -1);
 
   const before = Array.from(iterEntries(parent.get()));
   const uid = path[path.length - 1]!;
-  const index = entryIndexByUid(before, uid)!;
+  const index = entryIndexByUid(before, uid);
+  if (index < 0) return path;
 
   const result = fn({ parent, parentPath, before, index, child });
 
@@ -429,16 +439,22 @@ export function wrapWithBlock(path: NodePath): NodePath {
 }
 
 export function unwrapBlockIfSingleChild(path: NodePath): NodePath {
-  const innerChild = resolvePath(path)!;
-  const wrapperSig = getParent(innerChild)!;
-  const wrapperNode = wrapperSig.get();
+  const innerChild = resolvePath(path);
+  if (!innerChild) return path;
 
+  const wrapperSig = getParent(innerChild);
+  if (!wrapperSig) return path;
+
+  const wrapperNode = wrapperSig.get();
   if (wrapperNode.values.length !== 0 || wrapperNode.items.length !== 1) {
     return path;
   }
 
+  const pPath = parentPath(path);
+  if (!pPath) return path;
+
   return withLocatedPath(
-    parentPath(path)!,
+    pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
       getParentSignal(innerChild).value = grandparent;
       getParentSignal(wrapperSig).value = undefined;

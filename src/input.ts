@@ -15,14 +15,10 @@ import {
 
 export type Role = "key" | "value";
 
-type EditableConfig = {
-  getText: () => string;
-  anchorEl?: HTMLElement;
-};
-
 type RoleView = {
   el: HTMLElement;
-  editable?: EditableConfig;
+  getText?: () => string;
+  keyAnchorEl?: HTMLElement;
 };
 
 type PathBinding = {
@@ -49,12 +45,15 @@ type EditorEvent =
   | { type: "CLEAR_FOCUS" };
 
 const serializePath = (p: NodePath) => JSON.stringify(p);
+
 const bindingsByPath = new Map<string, PathBinding>();
+
 let currentState: MachineState = { kind: "Idle" };
 
 function getBinding(path: NodePath): PathBinding | undefined {
   return bindingsByPath.get(serializePath(path));
 }
+
 function getRoleView(
   binding: PathBinding | undefined,
   role: Role
@@ -62,59 +61,38 @@ function getRoleView(
   if (!binding) return undefined;
   return role === "key" ? binding.key : binding.value;
 }
+
 const flipRole = (role: Role): Role => (role === "key" ? "value" : "key");
 
 class InlineEditor {
-  public readonly inputEl: HTMLInputElement;
-  public readonly hostEl: HTMLElement;
+  readonly inputEl = document.createElement("input");
 
-  private replacedHostNode = false;
-
-  constructor(roleView: RoleView, role: Role, seed?: string) {
-    const hostEl = roleView.el;
-    const meta = roleView.editable!;
-    const input = document.createElement("input");
-
-    const isExpr = hostEl.classList.contains("expr");
-
-    // Only inherit host classes (e.g., "expr") when editing the value.
-    if (role === "value") {
-      for (const c of Array.from(hostEl.classList)) {
-        if (c === "key" || c === "value") continue;
-        input.classList.add(c);
-      }
-    }
-
-    const anchor = role === "key" ? meta.anchorEl : undefined;
-
-    // For key edits, always style as a "key" (never "expr").
+  constructor(readonly role: Role, readonly roleView: RoleView, seed?: string) {
     if (role === "key") {
-      input.classList.add("key");
-    } else if (!isExpr) {
-      // For non-expr value edits, add the "value" class for styling.
-      input.classList.add("value");
+      this.inputEl.classList.add("key");
+    } else {
+      this.inputEl.classList.add(...roleView.el.classList);
     }
 
-    if (anchor && anchor.parentNode) {
-      anchor.parentNode.insertBefore(input, anchor);
+    if (role === "key" && roleView.keyAnchorEl) {
+      roleView.keyAnchorEl.parentNode!.insertBefore(
+        this.inputEl,
+        roleView.keyAnchorEl
+      );
     } else {
-      const parent = hostEl.parentNode as ParentNode | null;
-      if (parent) parent.replaceChild(input, hostEl);
-      this.replacedHostNode = true;
+      roleView.el.parentNode!.replaceChild(this.inputEl, roleView.el);
     }
 
     queueMicrotask(() => {
-      input.focus({ preventScroll: true });
+      this.inputEl.focus({ preventScroll: true });
     });
 
-    input.setAttribute("autocorrect", "off");
-    input.setAttribute("autocomplete", "off");
-    (input as any).autocapitalize = "off";
-    input.spellcheck = false;
-    input.value = seed ?? meta.getText();
+    this.inputEl.setAttribute("autocorrect", "off");
+    this.inputEl.setAttribute("autocomplete", "off");
+    (this.inputEl as any).autocapitalize = "off";
+    this.inputEl.spellcheck = false;
 
-    this.inputEl = input;
-    this.hostEl = hostEl;
+    this.inputEl.value = seed ?? (roleView.getText ? roleView.getText() : "");
   }
 
   get value() {
@@ -122,13 +100,10 @@ class InlineEditor {
   }
 
   dispose() {
-    const p = this.inputEl.parentNode as ParentNode | null;
-    if (this.replacedHostNode) {
-      if (p) p.replaceChild(this.hostEl, this.inputEl);
-      else if (this.hostEl.parentNode)
-        this.hostEl.parentNode.appendChild(this.hostEl);
-    } else if (p) {
-      p.removeChild(this.inputEl);
+    if (this.role === "key" && this.roleView.keyAnchorEl) {
+      this.inputEl.parentNode!.removeChild(this.inputEl);
+    } else {
+      this.inputEl.parentNode!.replaceChild(this.roleView.el, this.inputEl);
     }
   }
 }
@@ -139,17 +114,14 @@ function computeEntryState(
   seed?: string
 ): MachineState {
   if (role === "key") {
-    if (binding.key?.editable) {
-      const session = new InlineEditor(binding.key, "key", seed);
+    if (binding.key?.getText) {
+      const session = new InlineEditor("key", binding.key, seed);
       return { kind: "Editing", role: "key", path: binding.path, session };
     }
-
-    const hasAnchor = !!binding.value?.editable?.anchorEl;
-    if (hasAnchor) {
-      const session = new InlineEditor(binding.value!, "key", "");
+    if (binding.value?.keyAnchorEl) {
+      const session = new InlineEditor("key", binding.value, "");
       return { kind: "Editing", role: "key", path: binding.path, session };
     }
-
     return { kind: "Idle" };
   }
 
@@ -174,8 +146,8 @@ function transition(prev: MachineState, ev: EditorEvent): MachineState {
       if (prev.kind !== "ViewingValue") return prev;
       const binding = getBinding(prev.path);
       const valueView = getRoleView(binding, "value");
-      if (!valueView?.editable) return prev;
-      const session = new InlineEditor(valueView, "value", ev.seed);
+      if (!valueView?.getText) return prev;
+      const session = new InlineEditor("value", valueView, ev.seed);
       return { kind: "Editing", role: "value", path: prev.path, session };
     }
 
@@ -283,15 +255,13 @@ function applyCommittedEdit(binding: PathBinding, text: string, role: Role) {
     return;
   }
 
+  if (!binding.value?.getText) return;
   setText(path, text);
 }
 
 export function registerBinding(
   path: NodePath,
-  slots: {
-    key?: { el: HTMLElement; editable?: EditableConfig };
-    value?: { el: HTMLElement; editable?: EditableConfig };
-  }
+  slots: { key?: RoleView; value?: RoleView }
 ) {
   const k = serializePath(path);
   const binding: PathBinding = {
@@ -315,7 +285,7 @@ export function registerBinding(
     );
 
     el.addEventListener("dblclick", () => {
-      if (!binding.key!.editable) return;
+      if (!binding.key!.getText) return;
       dispatch({ type: "FOCUS", binding, role: "key" });
       dispatch({ type: "BEGIN_EDIT" });
     });
@@ -335,7 +305,7 @@ export function registerBinding(
     );
 
     el.addEventListener("dblclick", () => {
-      if (!binding.value!.editable) return;
+      if (!binding.value!.getText) return;
       dispatch({ type: "FOCUS", binding, role: "value" });
       dispatch({ type: "BEGIN_EDIT" });
     });
@@ -389,7 +359,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
     const binding = getBinding(currentState.path);
     const valueView = getRoleView(binding, "value");
 
-    if (e.key === "Enter" && valueView?.editable) {
+    if (e.key === "Enter" && valueView?.getText) {
       preventAndStop();
       dispatch({ type: "BEGIN_EDIT" });
       return;
@@ -399,7 +369,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
       !e.ctrlKey &&
       !e.metaKey &&
       !e.altKey &&
-      valueView?.editable
+      valueView?.getText
     ) {
       preventAndStop();
       dispatch({ type: "BEGIN_EDIT", seed: e.key });
