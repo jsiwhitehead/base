@@ -35,10 +35,8 @@ Script {
 
   Lambda        = "(" ListOf<ident, ","> ")" "->" Lambda   -- paren
                 | ident "->" Lambda                        -- single
-                | (&"." | &":") Pipe                       -- implicit
-                | Pipe                                     -- pipe
-
-  Pipe          = Eq (":" Eq)*
+                | (&"." | &":") Eq                         -- implicit
+                | Eq                                       -- plain
 
   Eq            = Rel (("!=" | "=") Rel)*
 
@@ -57,6 +55,7 @@ Script {
   PathPart      = Call
                 | Index
                 | Member
+                | Pipe
 
   Call          = "(" ListOf<Expr, ","> ")"
 
@@ -64,6 +63,8 @@ Script {
                 | "[" Expr "]" "!"?                        -- expr
 
   Member        = "." ident "!"?
+
+  Pipe          = ":" ident "(" ListOf<Expr, ","> ")"
 
   Slice         = Add? ".." Add? (":" Add?)?
 
@@ -240,15 +241,6 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     } as Lambda;
   },
 
-  Pipe(first, _colon, rest) {
-    const steps = rest.asIteration().children.map((n) => n.ast);
-    return steps.reduce((acc, step) => {
-      return step.type === "Call"
-        ? { type: "Call", callee: step.callee, args: [acc, ...step.args] }
-        : { type: "Call", callee: step, args: [acc] };
-    }, first.ast) as Expr;
-  },
-
   Eq(first, ops, rights) {
     return buildBinaryChain(first, ops, rights);
   },
@@ -305,6 +297,13 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       block,
       key: { type: "Ident", name: nameTok.sourceString },
       strict: !!maybeBang.sourceString,
+    });
+  },
+  Pipe(_colon, nameTok, _open, list, _close) {
+    return (receiver: Expr): Call => ({
+      type: "Call",
+      callee: { type: "Ident", name: nameTok.sourceString },
+      args: [receiver, ...list.asIteration().children.map((n) => n.ast)],
     });
   },
 

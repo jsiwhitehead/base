@@ -17,6 +17,7 @@ import {
   newUid,
   createBlank,
   createLiteral,
+  createCodeSignal,
   createComputed,
   createSignal,
   childToData,
@@ -253,6 +254,15 @@ export function siblingPath(path: NodePath, dir: -1 | 1): NodePath | null {
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
+function parseTextToData(raw: string): DataNode {
+  const t = raw.trim();
+  if (t === "") return createBlank();
+  if (NUM_RE.test(t) && Number.isFinite(Number(t))) {
+    return createLiteral(Number(t));
+  }
+  return createLiteral(t);
+}
+
 export function setText(path: NodePath, raw: string): NodePath {
   const sig = resolvePath(path);
   if (!sig || !isWritableSignal(sig)) return path;
@@ -269,20 +279,37 @@ export function setText(path: NodePath, raw: string): NodePath {
   }
 
   if (isLiteral(cur) || isBlank(cur)) {
-    const t = raw.trim();
-
-    sig.set(
-      t === ""
-        ? createBlank()
-        : NUM_RE.test(t) && Number.isFinite(Number(t))
-        ? createLiteral(Number(t))
-        : createLiteral(t)
-    );
-
+    sig.set(parseTextToData(raw));
     return path;
   }
 
   return path;
+}
+
+export function toggleCodeText(path: NodePath): NodePath {
+  return withLocatedPath(
+    path,
+    ({ parent, parentPath, before, index, child }) => {
+      const cur = child.peek();
+      let nextChild: ChildSignal | null = null;
+
+      if (isCode(cur)) {
+        nextChild = createSignal(parseTextToData(cur.code));
+      } else if (isLiteral(cur) || isBlank(cur)) {
+        const text = isLiteral(cur) ? String(cur.value) : "";
+        nextChild = createCodeSignal(text);
+      } else {
+        return { after: before, path: [...parentPath, before[index]!.uid] };
+      }
+
+      getParentSignal(nextChild).value = parent;
+      getParentSignal(child).value = undefined;
+
+      const after = before.slice();
+      after[index] = { ...before[index]!, child: nextChild };
+      return { after, path: [...parentPath, before[index]!.uid] };
+    }
+  );
 }
 
 export function withLocatedPath(

@@ -4,6 +4,7 @@ import {
   siblingPath,
   firstChildPath,
   setText,
+  toggleCodeText,
   assignKey,
   removeKey,
   insertBefore,
@@ -39,10 +40,20 @@ type MachineState =
 
 type EditorEvent =
   | { type: "FOCUS"; binding: PathBinding; role: Role }
+  | { type: "NAVIGATE"; path: NodePath; role: Role }
+  | { type: "CLEAR_FOCUS" }
   | { type: "BEGIN_EDIT"; seed?: string }
   | { type: "END_EDIT"; reason: "commit" | "cancel"; refocus?: boolean }
-  | { type: "NAVIGATE"; path: NodePath; role: Role }
-  | { type: "CLEAR_FOCUS" };
+  | {
+      type: "TRANSFORM";
+      op:
+        | "toggle-text-code"
+        | "insert-before"
+        | "insert-after"
+        | "unwrap-if-single-child"
+        | "wrap"
+        | "remove";
+    };
 
 const serializePath = (p: NodePath) => JSON.stringify(p);
 
@@ -135,11 +146,13 @@ function transition(prev: MachineState, ev: EditorEvent): MachineState {
     case "FOCUS": {
       return computeEntryState(ev.binding, ev.role);
     }
-
     case "NAVIGATE": {
       const next = getBinding(ev.path);
       if (!next) return { kind: "Idle" };
       return computeEntryState(next, ev.role);
+    }
+    case "CLEAR_FOCUS": {
+      return { kind: "Idle" };
     }
 
     case "BEGIN_EDIT": {
@@ -150,7 +163,6 @@ function transition(prev: MachineState, ev: EditorEvent): MachineState {
       const session = new InlineEditor("value", valueView, ev.seed);
       return { kind: "Editing", role: "value", path: prev.path, session };
     }
-
     case "END_EDIT": {
       if (prev.kind !== "Editing") return prev;
       const { path, role } = prev;
@@ -160,12 +172,39 @@ function transition(prev: MachineState, ev: EditorEvent): MachineState {
         const hasValue = !!binding?.value;
         return hasValue ? { kind: "ViewingValue", path } : { kind: "Idle" };
       }
-
       return { kind: "ViewingValue", path };
     }
 
-    case "CLEAR_FOCUS": {
-      return { kind: "Idle" };
+    case "TRANSFORM": {
+      if (prev.kind !== "ViewingValue" && prev.kind !== "Editing") return prev;
+
+      const path = prev.path;
+      let nextPath: NodePath | undefined;
+
+      switch (ev.op) {
+        case "toggle-text-code":
+          nextPath = toggleCodeText(path);
+          break;
+        case "insert-before":
+          nextPath = insertBefore(path);
+          break;
+        case "insert-after":
+          nextPath = insertAfter(path);
+          break;
+        case "unwrap-if-single-child":
+          nextPath = unwrapBlockIfSingleChild(path);
+          break;
+        case "wrap":
+          nextPath = wrapWithBlock(path);
+          break;
+        case "remove":
+          nextPath = removeChild(path);
+          break;
+      }
+
+      return nextPath
+        ? { kind: "ViewingValue", path: nextPath }
+        : { kind: "Idle" };
     }
   }
 }
@@ -234,12 +273,10 @@ function syncEditingDom(
 
 function syncFocusDom(prev: MachineState, next: MachineState, ev: EditorEvent) {
   if (next.kind !== "ViewingValue") return;
-
   if (ev.type === "END_EDIT" && ev.refocus === false) return;
 
   const el = getBinding(next.path)?.value?.el;
   if (!el) return;
-
   if (document.activeElement === el) return;
 
   el.focus({ preventScroll: true });
@@ -279,7 +316,7 @@ export function registerBinding(
       "focus",
       (e: FocusEvent) => {
         if (e.target !== el) return;
-        dispatch({ type: "FOCUS", binding, role: "key" });
+        dispatch({ type: "FOCUS", binding, role: "value" });
       },
       true
     );
@@ -287,7 +324,6 @@ export function registerBinding(
     el.addEventListener("dblclick", () => {
       if (!binding.key!.getText) return;
       dispatch({ type: "FOCUS", binding, role: "key" });
-      dispatch({ type: "BEGIN_EDIT" });
     });
   }
 
@@ -349,9 +385,15 @@ export function onRootKeyDown(e: KeyboardEvent) {
 
       const curRole: Role =
         currentState.kind === "Editing" ? currentState.role : "value";
-      const nextRole = flipRole(curRole);
+      const nextRole = (curRole === "key" ? "value" : "key") as Role;
       dispatch({ type: "NAVIGATE", path, role: nextRole });
     }
+    return;
+  }
+
+  if (currentState.kind === "ViewingValue" && e.key === "=") {
+    preventAndStop();
+    dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
     return;
   }
 
@@ -381,28 +423,19 @@ export function onRootKeyDown(e: KeyboardEvent) {
     e.shiftKey &&
     (currentState.kind === "ViewingValue" || currentState.kind === "Editing")
   ) {
-    const path = currentState.path;
-    const role = currentState.kind === "Editing" ? currentState.role : "value";
-
-    const navigateTo = (next?: NodePath) =>
-      next && dispatch({ type: "NAVIGATE", path: next, role });
-
+    preventAndStop();
     switch (e.key) {
       case "ArrowUp":
-        preventAndStop();
-        navigateTo(insertBefore(path));
+        dispatch({ type: "TRANSFORM", op: "insert-before" });
         return;
       case "ArrowDown":
-        preventAndStop();
-        navigateTo(insertAfter(path));
+        dispatch({ type: "TRANSFORM", op: "insert-after" });
         return;
       case "ArrowLeft":
-        preventAndStop();
-        navigateTo(unwrapBlockIfSingleChild(path));
+        dispatch({ type: "TRANSFORM", op: "unwrap-if-single-child" });
         return;
       case "ArrowRight":
-        preventAndStop();
-        navigateTo(wrapWithBlock(path));
+        dispatch({ type: "TRANSFORM", op: "wrap" });
         return;
     }
   }
@@ -412,15 +445,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
     (currentState.kind === "ViewingValue" || currentState.kind === "Editing")
   ) {
     preventAndStop();
-    const path = currentState.path;
-    const role = currentState.kind === "Editing" ? currentState.role : "value";
-    const next = removeChild(path);
-
-    if (next) {
-      dispatch({ type: "NAVIGATE", path: next, role });
-    } else {
-      dispatch({ type: "CLEAR_FOCUS" });
-    }
+    dispatch({ type: "TRANSFORM", op: "remove" });
     return;
   }
 

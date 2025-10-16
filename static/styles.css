@@ -149,7 +149,9 @@ input:is(.expr, .value, .key) {
     border-right-width: 1px;
     margin-right: -1px;
   }
-  &:has(+ :focus) {
+  &:has(+ .value:focus),
+  &:has(+ .block:focus),
+  &:has(+ .code > .expr:focus) {
     z-index: 10;
     background-color: var(--blue-medium);
     border-color: var(--blue-normal);

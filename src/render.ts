@@ -141,9 +141,9 @@ class BlockView extends View<BlockNode> {
   textGetterFor(child: ChildSignal) {
     if (!isWritableSignal(child)) return;
     return () => {
-      const cur = child.peek();
-      if (isLiteral(cur)) return String((cur as LiteralNode).value);
-      if (isCode(cur)) return (cur as CodeNode).code;
+      const n = child.peek();
+      if (isLiteral(n)) return String(n.value);
+      if (isCode(n)) return n.code;
       return "";
     };
   }
