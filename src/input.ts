@@ -1,5 +1,5 @@
 import {
-  type NodePath,
+  type CellPath,
   parentPath,
   siblingPath,
   firstChildPath,
@@ -9,8 +9,8 @@ import {
   removeKey,
   insertBefore,
   insertAfter,
-  wrapWithBlock,
-  unwrapBlockIfSingleChild,
+  wrapWithList,
+  unwrapListIfSingleChild,
   removeChild,
 } from "./tree";
 
@@ -23,24 +23,24 @@ type RoleView = {
 };
 
 type PathBinding = {
-  path: NodePath;
+  path: CellPath;
   key?: RoleView;
   value?: RoleView;
 };
 
 type MachineState =
   | { kind: "Idle" }
-  | { kind: "ViewingValue"; path: NodePath }
+  | { kind: "ViewingValue"; path: CellPath }
   | {
       kind: "Editing";
       role: Role;
-      path: NodePath;
+      path: CellPath;
       session: InlineEditor;
     };
 
 type EditorEvent =
   | { type: "FOCUS"; binding: PathBinding; role: Role }
-  | { type: "NAVIGATE"; path: NodePath; role: Role }
+  | { type: "NAVIGATE"; path: CellPath; role: Role }
   | { type: "CLEAR_FOCUS" }
   | { type: "BEGIN_EDIT"; seed?: string }
   | { type: "END_EDIT"; reason: "commit" | "cancel"; refocus?: boolean }
@@ -55,13 +55,13 @@ type EditorEvent =
         | "remove";
     };
 
-const serializePath = (p: NodePath) => JSON.stringify(p);
+const serializePath = (p: CellPath) => JSON.stringify(p);
 
 const bindingsByPath = new Map<string, PathBinding>();
 
 let currentState: MachineState = { kind: "Idle" };
 
-function getBinding(path: NodePath): PathBinding | undefined {
+function getBinding(path: CellPath): PathBinding | undefined {
   return bindingsByPath.get(serializePath(path));
 }
 
@@ -179,7 +179,7 @@ function transition(prev: MachineState, ev: EditorEvent): MachineState {
       if (prev.kind !== "ViewingValue" && prev.kind !== "Editing") return prev;
 
       const path = prev.path;
-      let nextPath: NodePath | undefined;
+      let nextPath: CellPath | undefined;
 
       switch (ev.op) {
         case "toggle-text-code":
@@ -192,10 +192,10 @@ function transition(prev: MachineState, ev: EditorEvent): MachineState {
           nextPath = insertAfter(path);
           break;
         case "unwrap-if-single-child":
-          nextPath = unwrapBlockIfSingleChild(path);
+          nextPath = unwrapListIfSingleChild(path);
           break;
         case "wrap":
-          nextPath = wrapWithBlock(path);
+          nextPath = wrapWithList(path);
           break;
         case "remove":
           nextPath = removeChild(path);
@@ -297,7 +297,7 @@ function applyCommittedEdit(binding: PathBinding, text: string, role: Role) {
 }
 
 export function registerBinding(
-  path: NodePath,
+  path: CellPath,
   slots: { key?: RoleView; value?: RoleView }
 ) {
   const k = serializePath(path);
@@ -348,11 +348,11 @@ export function registerBinding(
   }
 }
 
-export function unregisterBinding(path: NodePath) {
+export function unregisterBinding(path: CellPath) {
   const k = serializePath(path);
   bindingsByPath.delete(k);
 
-  const pathsEqual = (p: NodePath) =>
+  const pathsEqual = (p: CellPath) =>
     JSON.stringify(p) === JSON.stringify(path);
   if (
     (currentState.kind === "ViewingValue" && pathsEqual(currentState.path)) ||

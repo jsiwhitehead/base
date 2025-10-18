@@ -1,15 +1,15 @@
 import {
   ERR,
-  type DataNode,
-  type BlockNode,
-  type FunctionNode,
-  type DataSignal,
+  type Value,
+  type ListValue,
+  type FunctionValue,
+  type ValueSignal,
   isBlank,
-  isBlock,
+  isList,
   isFunction,
   createBlank,
   createLiteral,
-  createBlock,
+  createList,
   createFunction,
   createSignal,
   toBool,
@@ -17,36 +17,36 @@ import {
   toText,
   numOpt,
   textOpt,
-  blockOpt,
+  listOpt,
   fnOpt,
   boolExpect,
-  scalarToData,
-  childToData,
+  scalarToValue,
+  childToValue,
 } from "./data";
 import {
-  iterEntries,
-  blockMap,
-  blockFilter,
-  blockReduce,
-  blockSort,
-  blockNumbersOpt,
-  blockTextsOpt,
+  iterCells,
+  listMap,
+  listFilter,
+  listReduce,
+  listSort,
+  listNumbersOpt,
+  listTextsOpt,
 } from "./tree";
 
-function dataFn(op: (...nodes: DataNode[]) => DataNode): DataSignal {
+function valueFn(op: (...values: Value[]) => Value): ValueSignal {
   return createSignal(
-    createFunction((...args: (DataSignal | undefined)[]) => {
-      const nodes = Array.from({ length: op.length }, (_, i) =>
+    createFunction((...args: (ValueSignal | undefined)[]) => {
+      const values = Array.from({ length: op.length }, (_, i) =>
         args[i] ? args[i]!.get() : createBlank()
       );
-      return createSignal(op(...nodes));
+      return createSignal(op(...values));
     })
   );
 }
 
 type ArgSpec<T> =
-  | { kind: "req"; convert: (node: DataNode) => T | null }
-  | { kind: "opt"; convert: (node: DataNode) => T | null; fallback: T };
+  | { kind: "req"; convert: (value: Value) => T | null }
+  | { kind: "opt"; convert: (value: Value) => T | null; fallback: T };
 
 const reqNum = { kind: "req", convert: numOpt } as const;
 const optNum = (d: number) =>
@@ -56,28 +56,28 @@ const reqText = { kind: "req", convert: textOpt } as const;
 const optText = (d: string) =>
   ({ kind: "opt", convert: textOpt, fallback: d } as const);
 
-const reqBlock = { kind: "req", convert: blockOpt } as const;
-const optBlock = (d: BlockNode) =>
-  ({ kind: "opt", convert: blockOpt, fallback: d } as const);
+const reqList = { kind: "req", convert: listOpt } as const;
+const optList = (d: ListValue) =>
+  ({ kind: "opt", convert: listOpt, fallback: d } as const);
 
 const reqFn = { kind: "req", convert: fnOpt } as const;
-const optFn = <F extends FunctionNode | null>(d: F) =>
+const optFn = <F extends FunctionValue | null>(d: F) =>
   ({ kind: "opt", convert: fnOpt, fallback: d } as const);
 
 function typedFn<A extends any[]>(
   specs: { [K in keyof A]: ArgSpec<A[K]> },
-  impl: (...args: A) => DataNode
-): DataSignal {
+  impl: (...args: A) => Value
+): ValueSignal {
   return createSignal(
-    createFunction((...sigArgs: (DataSignal | undefined)[]) => {
-      const nodes: DataNode[] = Array.from({ length: specs.length }, (_, i) =>
+    createFunction((...sigArgs: (ValueSignal | undefined)[]) => {
+      const inputs: Value[] = Array.from({ length: specs.length }, (_, i) =>
         sigArgs[i] ? sigArgs[i]!.get() : createBlank()
       );
 
-      const resolved = [];
+      const resolved: unknown[] = [];
       for (let i = 0; i < specs.length; i++) {
         const spec = specs[i]!;
-        const v = spec.convert(nodes[i]!);
+        const v = spec.convert(inputs[i]!);
         if (spec.kind === "req") {
           if (v === null) return createSignal(createBlank());
           resolved.push(v);
@@ -92,61 +92,61 @@ function typedFn<A extends any[]>(
 }
 
 function reduceNumbers(
-  source: BlockNode,
+  source: ListValue,
   op: (nums: number[]) => number | null
 ): number | null {
-  const nums = blockNumbersOpt(source);
+  const nums = listNumbersOpt(source);
   return nums.length ? op(nums) : null;
 }
 
 export const library = {
-  /* Convertors */
+  /* Converters */
 
-  to_bool: dataFn((n) => scalarToData(toBool(n))),
+  to_bool: valueFn((v) => scalarToValue(toBool(v))),
 
-  to_text: dataFn((n) => scalarToData(toText(n))),
+  to_text: valueFn((v) => scalarToValue(toText(v))),
 
-  to_number: dataFn((n) => scalarToData(toNumber(n))),
+  to_number: valueFn((v) => scalarToValue(toNumber(v))),
 
-  number_or: dataFn((value, fallback) => {
+  number_or: valueFn((value, fallback) => {
     const n = numOpt(value);
     return createLiteral(n === null ? numOpt(fallback) ?? 0 : n);
   }),
 
-  text_or: dataFn((value, fallback) => {
+  text_or: valueFn((value, fallback) => {
     const t = textOpt(value);
     return t === null
       ? createLiteral(textOpt(fallback) ?? "")
       : createLiteral(t);
   }),
 
-  if_blank: dataFn((value, fallback) =>
+  if_blank: valueFn((value, fallback) =>
     isBlank(value) ? fallback ?? createBlank() : value
   ),
 
-  first_present: dataFn((...nodes) => {
-    for (const n of nodes) if (!isBlank(n)) return n;
+  first_present: valueFn((...values) => {
+    for (const v of values) if (!isBlank(v)) return v;
     return createBlank();
   }),
 
   /* Logic */
 
-  not: dataFn((v) => (toBool(v) ? createBlank() : createLiteral(true))),
+  not: valueFn((v) => (toBool(v) ? createBlank() : createLiteral(true))),
 
-  and: dataFn((l, r) =>
+  and: valueFn((l, r) =>
     toBool(l) && toBool(r) ? createLiteral(true) : createBlank()
   ),
 
-  or: dataFn((l, r) =>
+  or: valueFn((l, r) =>
     toBool(l) || toBool(r) ? createLiteral(true) : createBlank()
   ),
 
-  all: dataFn((...nodes) =>
-    nodes.every((n) => !isBlank(n)) ? createLiteral(true) : createBlank()
+  all: valueFn((...values) =>
+    values.every((v) => !isBlank(v)) ? createLiteral(true) : createBlank()
   ),
 
-  any: dataFn((...nodes) =>
-    nodes.some((n) => !isBlank(n)) ? createLiteral(true) : createBlank()
+  any: valueFn((...values) =>
+    values.some((v) => !isBlank(v)) ? createLiteral(true) : createBlank()
   ),
 
   /* Number */
@@ -224,45 +224,45 @@ export const library = {
   ),
 
   split: typedFn([reqText, optText("")], (t, sep) => {
-    return createBlock(
+    return createList(
       [],
       t.split(sep).map((p) => createSignal(createLiteral(p)))
     );
   }),
 
-  /* Blocks */
+  /* Lists */
 
-  join: typedFn([reqBlock, optText(",")], (blockN, sep) => {
-    const parts = blockTextsOpt(blockN);
+  join: typedFn([reqList, optText(",")], (listV, sep) => {
+    const parts = listTextsOpt(listV);
     return parts.length ? createLiteral(parts.join(sep)) : createBlank();
   }),
 
-  count: typedFn([reqBlock], (source) => {
+  count: typedFn([reqList], (source) => {
     let cnt = 0;
-    for (const e of iterEntries(source)) {
-      if (!isBlank(childToData(e.child))) cnt++;
+    for (const e of iterCells(source)) {
+      if (!isBlank(childToValue(e.child))) cnt++;
     }
     return createLiteral(cnt);
   }),
 
-  count_blank: typedFn([reqBlock], (source) => {
+  count_blank: typedFn([reqList], (source) => {
     let cnt = 0;
-    for (const e of iterEntries(source)) {
-      if (isBlank(childToData(e.child))) cnt++;
+    for (const e of iterCells(source)) {
+      if (isBlank(childToValue(e.child))) cnt++;
     }
     return createLiteral(cnt);
   }),
 
-  map: typedFn([reqBlock, reqFn], (source, fnNode) =>
-    blockMap(source, (value, id) => fnNode.fn(value, id))
+  map: typedFn([reqList, reqFn], (source, fnValue) =>
+    listMap(source, (value, id) => fnValue.fn(value, id))
   ),
 
-  filter: typedFn([reqBlock, reqFn], (source, predNode) =>
-    blockFilter(source, (value, id) => boolExpect(predNode.fn(value, id).get()))
+  filter: typedFn([reqList, reqFn], (source, predValue) =>
+    listFilter(source, (value, id) => boolExpect(predValue.fn(value, id).get()))
   ),
 
-  sort: typedFn([reqBlock, optFn(null)], (source, keyNode) =>
-    blockSort(source, keyNode ? (value, id) => keyNode.fn(value, id) : null)
+  sort: typedFn([reqList, optFn(null)], (source, keyValue) =>
+    listSort(source, keyValue ? (value, id) => keyValue.fn(value, id) : null)
   ),
 
   reduce: createSignal(
@@ -273,10 +273,10 @@ export const library = {
         initSig = createSignal(createBlank())
       ) => {
         const src = sourceSig.get();
-        if (!isBlock(src)) throw new TypeError(ERR.block);
+        if (!isList(src)) throw new TypeError(ERR.list);
         const rf = fnSig.get();
         if (!isFunction(rf)) throw new TypeError(ERR.function);
-        return blockReduce(
+        return listReduce(
           src,
           (acc, value, id) => rf.fn(acc, value, id),
           initSig
@@ -287,21 +287,21 @@ export const library = {
 
   /* Number reducers */
 
-  sum: typedFn([reqBlock], (source) =>
-    scalarToData(reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0)))
+  sum: typedFn([reqList], (source) =>
+    scalarToValue(reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0)))
   ),
 
-  avg: typedFn([reqBlock], (source) =>
-    scalarToData(
+  avg: typedFn([reqList], (source) =>
+    scalarToValue(
       reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0) / ns.length)
     )
   ),
 
-  min: typedFn([reqBlock], (source) =>
-    scalarToData(reduceNumbers(source, (ns) => Math.min(...ns)))
+  min: typedFn([reqList], (source) =>
+    scalarToValue(reduceNumbers(source, (ns) => Math.min(...ns)))
   ),
 
-  max: typedFn([reqBlock], (source) =>
-    scalarToData(reduceNumbers(source, (ns) => Math.max(...ns)))
+  max: typedFn([reqList], (source) =>
+    scalarToValue(reduceNumbers(source, (ns) => Math.max(...ns)))
   ),
 };

@@ -8,14 +8,14 @@ import {
 /* Errors */
 
 export const ERR = {
-  boolean: "Expected boolean (true or blank)",
+  boolean: "Expected condition (true or blank)",
   literal: "Expected literal value",
   number: "Expected number",
   numOrBlank: "Expected number or blank",
   text: "Expected text",
   textOrBlank: "Expected text or blank",
-  textOrBlock: "Expected text or block",
-  block: "Expected block",
+  textOrList: "Expected text or list",
+  list: "Expected list",
   function: "Expected function",
   funcOrBlank: "Expected function or blank",
 
@@ -23,59 +23,59 @@ export const ERR = {
 
   indexFinite: "Index must be a finite number",
   indexOneBased: "Index must be 1 or greater",
-  indexNonBlock: "Cannot index into a non-block value",
+  indexNonList: "Cannot index into a non-list value",
   indexOutOfRange: (index: number, len: number) =>
-    `Index ${index} is out of range (items length ${len})`,
+    `Index ${index} is out of range (plain length ${len})`,
   indexKeyMustBeTextOrNumber: "Index/key must evaluate to text or number",
-  propOnNonBlock: (prop: string) =>
-    `Cannot access property '${prop}' of non-block value`,
+  propOnNonList: (prop: string) =>
+    `Cannot access property '${prop}' of non-list value`,
   unknownProperty: (prop: string) => `Unknown property '${prop}'`,
 
   unboundIdentifier: (name: string) => `Unbound identifier: ${name}`,
-  cannotResolveFunctionNode: "Cannot statically resolve a function node",
+  cannotResolveFunctionValue: "Cannot statically resolve a function value",
 } as const;
 
 /* Types */
 
 export type Primitive = true | number | string;
 
-export type BlankNode = { kind: "blank" };
+export type BlankValue = { kind: "blank" };
 
-export type LiteralNode = {
+export type LiteralValue = {
   kind: "literal";
   value: Primitive;
 };
 
-export type ValueEntry = { uid: number; key: string; child: ChildSignal };
-export type ItemEntry = { uid: number; child: ChildSignal };
+export type NamedCell = { uid: number; key: string; child: ChildSignal };
+export type PlainCell = { uid: number; child: ChildSignal };
 
-export type BlockNode = {
-  kind: "block";
-  values: ValueEntry[];
-  items: ItemEntry[];
+export type ListValue = {
+  kind: "list";
+  named: NamedCell[];
+  plain: PlainCell[];
 };
 
-export type FunctionNode = {
+export type FunctionValue = {
   kind: "function";
-  fn: (...args: DataSignal[]) => DataSignal;
+  fn: (...args: ValueSignal[]) => ValueSignal;
 };
 
-export type DataNode = BlankNode | LiteralNode | BlockNode | FunctionNode;
+export type Value = BlankValue | LiteralValue | ListValue | FunctionValue;
 
-export type IfElseNode = {
+export type IfElseValue = {
   kind: "ifelse";
-  if: DataSignal;
-  then: DataSignal;
-  else?: DataSignal;
+  if: ValueSignal;
+  then: ValueSignal;
+  else?: ValueSignal;
 };
 
-export type CodeNode = {
-  kind: "code";
+export type FlowValue = {
+  kind: "flow";
   code: string;
-  result: ReadSignal<DataNode>;
+  result: ReadSignal<Value>;
 };
 
-export type EvalNode = IfElseNode | CodeNode;
+export type EvalValue = IfElseValue | FlowValue;
 
 type ReadSignal<T> = {
   kind: "signal";
@@ -87,23 +87,25 @@ export type WriteSignal<T> = ReadSignal<T> & {
   set(next: T): void;
 };
 
-export type DataSignal<T extends DataNode = DataNode> =
+export type ValueSignal<T extends Value = Value> =
   | ReadSignal<T>
   | WriteSignal<T>;
 
-export type ChildSignal =
-  | ReadSignal<DataNode>
-  | WriteSignal<DataNode | EvalNode>;
+export type ChildSignal = ReadSignal<Value> | WriteSignal<Value | EvalValue>;
 
 export type StaticError = { kind: "error"; message: string };
 
-export type StaticBlock = {
-  kind: "block";
-  values: Record<string, StaticNode>;
-  items: StaticNode[];
+export type StaticListValue = {
+  kind: "list";
+  named: Record<string, StaticValue>;
+  plain: StaticValue[];
 };
 
-export type StaticNode = StaticError | BlankNode | Primitive | StaticBlock;
+export type StaticValue =
+  | StaticError
+  | BlankValue
+  | Primitive
+  | StaticListValue;
 
 /* Guards */
 
@@ -111,16 +113,16 @@ function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
 }
 
-export const isBlank = (v: unknown): v is BlankNode => hasKind(v, "blank");
-export const isLiteral = (v: unknown): v is LiteralNode =>
+export const isBlank = (v: unknown): v is BlankValue => hasKind(v, "blank");
+export const isLiteral = (v: unknown): v is LiteralValue =>
   hasKind(v, "literal");
-export const isBlock = (v: unknown): v is BlockNode => hasKind(v, "block");
-export const isFunction = (v: unknown): v is FunctionNode =>
+export const isList = (v: unknown): v is ListValue => hasKind(v, "list");
+export const isFunction = (v: unknown): v is FunctionValue =>
   hasKind(v, "function");
-export const isData = (v: unknown): v is DataNode =>
-  isBlank(v) || isLiteral(v) || isBlock(v) || isFunction(v);
-export const isIfElse = (v: unknown): v is IfElseNode => hasKind(v, "ifelse");
-export const isCode = (v: unknown): v is CodeNode => hasKind(v, "code");
+export const isValue = (v: unknown): v is Value =>
+  isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
+export const isIfElse = (v: unknown): v is IfElseValue => hasKind(v, "ifelse");
+export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
 export const isSignal = (
   v: unknown
 ): v is ReadSignal<unknown> | WriteSignal<unknown> => hasKind(v, "signal");
@@ -128,12 +130,12 @@ export const isWritableSignal = (v: unknown): v is WriteSignal<unknown> =>
   isSignal(v) && typeof (v as any).set === "function";
 export const isStaticError = (v: unknown): v is StaticError =>
   hasKind(v, "error");
-export const isStaticBlock = (v: unknown): v is StaticBlock =>
-  hasKind(v, "block");
+export const isStaticList = (v: unknown): v is StaticListValue =>
+  hasKind(v, "list");
 
 /* Parents */
 
-type ParentSig = PSignal<WriteSignal<BlockNode> | undefined>;
+type ParentSig = PSignal<WriteSignal<ListValue> | undefined>;
 const parentMap = new WeakMap<ChildSignal, ParentSig>();
 
 export function getParentSignal(sig: ChildSignal): ParentSig {
@@ -147,67 +149,67 @@ export function getParentSignal(sig: ChildSignal): ParentSig {
 
 export function getParent(
   child: ChildSignal
-): WriteSignal<BlockNode> | undefined {
+): WriteSignal<ListValue> | undefined {
   return getParentSignal(child).peek();
 }
 
 /* Constructors */
 
-let __nextEntryUid = 1;
+let __nextCellUid = 1;
 export function newUid() {
-  return __nextEntryUid++;
+  return __nextCellUid++;
 }
 
-export const createBlank = (): BlankNode => ({ kind: "blank" });
+export const createBlank = (): BlankValue => ({ kind: "blank" });
 
-export const createLiteral = (value: Primitive): LiteralNode => ({
+export const createLiteral = (value: Primitive): LiteralValue => ({
   kind: "literal",
   value,
 });
 
-export function createBlock(
-  values: [string, ChildSignal][] | Record<string, ChildSignal> = [],
-  items: ChildSignal[] = []
-): BlockNode {
-  const valueEntries = Array.isArray(values) ? values : Object.entries(values);
+export function createList(
+  named: [string, ChildSignal][] | Record<string, ChildSignal> = [],
+  plain: ChildSignal[] = []
+): ListValue {
+  const namedPairs = Array.isArray(named) ? named : Object.entries(named);
   return {
-    kind: "block",
-    values: valueEntries.map(([key, child]) => ({ uid: newUid(), key, child })),
-    items: items.map((child) => ({ uid: newUid(), child })),
+    kind: "list",
+    named: namedPairs.map(([key, child]) => ({ uid: newUid(), key, child })),
+    plain: plain.map((child) => ({ uid: newUid(), child })),
   };
 }
 
 export const createFunction = (
-  fn: (...args: DataSignal[]) => DataSignal
-): FunctionNode => ({ kind: "function", fn });
+  fn: (...args: ValueSignal[]) => ValueSignal
+): FunctionValue => ({ kind: "function", fn });
 
 export const createIfElse = (
-  cond: DataSignal,
-  thenSig: DataSignal,
-  elseSig?: DataSignal
-): IfElseNode => ({ kind: "ifelse", if: cond, then: thenSig, else: elseSig });
+  cond: ValueSignal,
+  thenSig: ValueSignal,
+  elseSig?: ValueSignal
+): IfElseValue => ({ kind: "ifelse", if: cond, then: thenSig, else: elseSig });
 
-export function createCodeSignal(initialCode: string): WriteSignal<CodeNode> {
+export function createFlowSignal(initialCode: string): WriteSignal<FlowValue> {
   const codeText = signal(initialCode);
-  let codeSig!: WriteSignal<CodeNode>;
+  let flowSig!: WriteSignal<FlowValue>;
 
   const result = createComputed(() =>
-    evalCode(codeText.value, (name: string) => lookupInScope(name, codeSig))
+    evalCode(codeText.value, (name: string) => lookupInScope(name, flowSig))
   );
 
-  codeSig = {
+  flowSig = {
     kind: "signal",
-    get: () => ({ kind: "code", code: codeText.value, result }),
-    peek: () => ({ kind: "code", code: codeText.peek(), result }),
+    get: () => ({ kind: "flow", code: codeText.value, result }),
+    peek: () => ({ kind: "flow", code: codeText.peek(), result }),
     set: (next) => {
       codeText.value = next.code;
     },
   };
 
-  return codeSig;
+  return flowSig;
 }
 
-export function createComputed<T extends DataNode>(fn: () => T): ReadSignal<T> {
+export function createComputed<T extends Value>(fn: () => T): ReadSignal<T> {
   const rsig: PReadonlySignal<T> = computed(fn);
   return { kind: "signal", get: () => rsig.value, peek: () => rsig.peek() };
 }
@@ -224,15 +226,15 @@ export function createSignal<T>(initial: T): WriteSignal<T> {
   };
 }
 
-export function createBlockSignal(
-  values: [string, ChildSignal][] | Record<string, ChildSignal> = [],
-  items: ChildSignal[] = []
-): DataSignal<BlockNode> {
-  const parent = createSignal(createBlock([], []));
-  const valueEntries = Array.isArray(values) ? values : Object.entries(values);
-  for (const [, v] of valueEntries) getParentSignal(v).value = parent;
-  for (const v of items) getParentSignal(v).value = parent;
-  parent.set(createBlock(values, items));
+export function createListSignal(
+  named: [string, ChildSignal][] | Record<string, ChildSignal> = [],
+  plain: ChildSignal[] = []
+): ValueSignal<ListValue> {
+  const parent = createSignal(createList([], []));
+  const namedPairs = Array.isArray(named) ? named : Object.entries(named);
+  for (const [, v] of namedPairs) getParentSignal(v).value = parent;
+  for (const v of plain) getParentSignal(v).value = parent;
+  parent.set(createList(named, plain));
   return parent;
 }
 
@@ -244,21 +246,21 @@ function primTruthy(p: Primitive): boolean {
   return p.length > 0;
 }
 
-function blockNonEmpty(b: BlockNode | StaticBlock): boolean {
-  const valuesCount = Array.isArray(b.values)
-    ? b.values.length
-    : Object.keys(b.values).length;
-  return valuesCount > 0 || b.items.length > 0;
+function listNonEmpty(b: ListValue | StaticListValue): boolean {
+  const namedCount = Array.isArray((b as any).named)
+    ? (b as ListValue).named.length
+    : Object.keys((b as StaticListValue).named).length;
+  return namedCount > 0 || b.plain.length > 0;
 }
 
-export function toBool(node: DataNode): boolean | null {
+export function toBool(node: Value): boolean | null {
   if (isBlank(node)) return null;
   if (isLiteral(node)) return primTruthy(node.value);
-  if (isBlock(node)) return blockNonEmpty(node);
+  if (isList(node)) return listNonEmpty(node);
   return null;
 }
 
-export function toNumber(node: DataNode): number | null {
+export function toNumber(node: Value): number | null {
   if (isBlank(node)) return null;
   if (isLiteral(node)) {
     const v = node.value;
@@ -272,65 +274,65 @@ export function toNumber(node: DataNode): number | null {
   return null;
 }
 
-export function toText(node: DataNode): string | null {
+export function toText(node: Value): string | null {
   if (isBlank(node)) return null;
   if (isLiteral(node)) return String(node.value);
   return null;
 }
 
-export function numOpt(value: DataNode): number | null {
+export function numOpt(value: Value): number | null {
   if (isBlank(value)) return null;
   if (isLiteral(value) && typeof value.value === "number") return value.value;
   throw new TypeError(ERR.numOrBlank);
 }
 
-export function textOpt(value: DataNode): string | null {
+export function textOpt(value: Value): string | null {
   if (isBlank(value)) return null;
   if (isLiteral(value) && typeof value.value === "string") return value.value;
   throw new TypeError(ERR.textOrBlank);
 }
 
-export function blockOpt(value: DataNode): BlockNode | null {
+export function listOpt(value: Value): ListValue | null {
   if (isBlank(value)) return null;
-  if (isBlock(value)) return value;
-  throw new TypeError(ERR.block);
+  if (isList(value)) return value;
+  throw new TypeError(ERR.list);
 }
 
-export function fnOpt(value: DataNode): FunctionNode | null {
+export function fnOpt(value: Value): FunctionValue | null {
   if (isBlank(value)) return null;
-  if (isFunction(value)) return value as FunctionNode;
+  if (isFunction(value)) return value as FunctionValue;
   throw new TypeError(ERR.function);
 }
 
-export function boolExpect(value: DataNode): boolean {
+export function boolExpect(value: Value): boolean {
   if (isBlank(value)) return false;
   if (isLiteral(value) && value.value === true) return true;
   throw new TypeError(ERR.boolean);
 }
 
-export function primExpect(value: DataNode): Primitive {
+export function primExpect(value: Value): Primitive {
   if (isLiteral(value)) return value.value;
   throw new TypeError(ERR.literal);
 }
 
-export function numExpect(value: DataNode): number {
+export function numExpect(value: Value): number {
   if (isLiteral(value) && typeof value.value === "number") return value.value;
   throw new TypeError(ERR.number);
 }
 
-export function scalarToData(
+export function scalarToValue(
   v: boolean | number | string | null
-): BlankNode | LiteralNode {
+): BlankValue | LiteralValue {
   if (v === null || v === false) return createBlank();
   return createLiteral(v);
 }
 
-export function size(node: DataNode): number | null {
+export function size(node: Value): number | null {
   if (isBlank(node)) return null;
   if (isLiteral(node) && typeof node.value === "string")
     return node.value.length;
-  if (isBlock(node)) return node.values.length + node.items.length;
-  throw new TypeError(ERR.textOrBlock);
+  if (isList(node)) return node.named.length + node.plain.length;
+  throw new TypeError(ERR.textOrList);
 }
 
 /* Slice */
@@ -378,35 +380,33 @@ export function sliceText(
   return indices.map((i) => text.charAt(i - 1)).join("");
 }
 
-export function sliceBlockItems(
-  block: BlockNode,
+export function sliceListPlain(
+  list: ListValue,
   start: number | null,
   end: number | null,
   step: number | null
-): BlockNode {
-  const indices = computeSliceIndices(start, end, step, block.items.length);
-  const newItems = indices.map((oneBased) => block.items[oneBased - 1]!.child);
-  return createBlock([], newItems);
+): ListValue {
+  const indices = computeSliceIndices(start, end, step, list.plain.length);
+  const newPlain = indices.map((oneBased) => list.plain[oneBased - 1]!.child);
+  return createList([], newPlain);
 }
 
-export function createRangeBlock(
+export function createRangeList(
   start: number | null,
   end: number | null,
   step: number | null = null
-): BlockNode {
+): ListValue {
   const indices = computeSliceIndices(start, end, step, null);
-  const items: ChildSignal[] = indices.map((n) =>
+  const plain: ChildSignal[] = indices.map((n) =>
     createSignal(createLiteral(n))
   );
-  return createBlock([], items);
+  return createList([], plain);
 }
 
 /* Evaluation */
 
-const evalCode: (
-  code: string,
-  scope: (name: string) => DataSignal
-) => DataNode = require("./code").evalCode;
+const evalCode: (code: string, scope: (name: string) => ValueSignal) => Value =
+  require("./code").evalCode;
 
 function toStaticError(err: unknown): StaticError {
   return {
@@ -415,25 +415,25 @@ function toStaticError(err: unknown): StaticError {
   };
 }
 
-function isStaticTruthy(n: StaticNode): boolean {
+function isStaticTruthy(n: StaticValue): boolean {
   if (isStaticError(n) || isBlank(n)) return false;
-  if (isStaticBlock(n)) return blockNonEmpty(n);
-  return primTruthy(n);
+  if (isStaticList(n)) return listNonEmpty(n);
+  return primTruthy(n as any);
 }
 
-let __globalLib: Map<string, DataSignal> | null = null;
-export function setGlobalLibrary(entries: Record<string, DataSignal>) {
+let __globalLib: Map<string, ValueSignal> | null = null;
+export function setGlobalLibrary(entries: Record<string, ValueSignal>) {
   __globalLib = new Map(
     Object.entries(entries).map(([k, v]) => [k.toLowerCase(), v])
   );
 }
 
-function lookupInScope(name: string, start: ChildSignal): DataSignal {
+function lookupInScope(name: string, start: ChildSignal): ValueSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
-    const { values } = scope.get();
-    const found = values.find((v) => v.key === name);
-    if (found) return createSignal(childToData(found.child));
+    const { named } = scope.get();
+    const found = named.find((v) => v.key === name);
+    if (found) return createSignal(childToValue(found.child));
     scope = getParentSignal(scope).value;
   }
 
@@ -445,55 +445,55 @@ function lookupInScope(name: string, start: ChildSignal): DataSignal {
   throw new Error(ERR.unboundIdentifier(name));
 }
 
-export function childToData(sig: ChildSignal): DataNode {
+export function childToValue(sig: ChildSignal): Value {
   const v = sig.get();
 
   if (isIfElse(v)) {
-    const truthy = isStaticTruthy(resolveData(v.if.get()));
+    const truthy = isStaticTruthy(resolveValue(v.if.get()));
     if (truthy) return v.then.get();
     if (v.else) return v.else.get();
     return createBlank();
   }
 
-  if (isCode(v)) {
+  if (isFlow(v)) {
     return v.result.get();
   }
 
   return v;
 }
 
-export function resolveData(n: DataNode): StaticNode {
+export function resolveValue(n: Value): StaticValue {
   if (n.kind === "blank") return { kind: "blank" };
   if (n.kind === "literal") return n.value;
 
-  if (n.kind === "block") {
-    const values: Record<string, StaticNode> = {};
-    for (const ve of n.values) {
+  if (n.kind === "list") {
+    const named: Record<string, StaticValue> = {};
+    for (const nc of n.named) {
       try {
-        values[ve.key] = resolveData(childToData(ve.child));
+        named[nc.key] = resolveValue(childToValue(nc.child));
       } catch (err) {
-        values[ve.key] = toStaticError(err);
+        named[nc.key] = toStaticError(err);
       }
     }
-    const items: StaticNode[] = n.items.map((ie) => {
+    const plain: StaticValue[] = n.plain.map((pc) => {
       try {
-        return resolveData(childToData(ie.child));
+        return resolveValue(childToValue(pc.child));
       } catch (err) {
         return toStaticError(err);
       }
     });
-    return { kind: "block", values, items };
+    return { kind: "list", named, plain };
   }
 
   return {
     kind: "error",
-    message: ERR.cannotResolveFunctionNode,
+    message: ERR.cannotResolveFunctionValue,
   };
 }
 
 /* Getters */
 
-function softWrap<T>(strict: boolean, fn: () => T): T | BlankNode {
+function softWrap<T>(strict: boolean, fn: () => T): T | BlankValue {
   if (strict) return fn();
   try {
     return fn();
@@ -509,47 +509,39 @@ function softWrap<T>(strict: boolean, fn: () => T): T | BlankNode {
   }
 }
 
-export function getByKey(
-  block: DataNode,
-  key: string,
-  strict = false
-): DataNode {
+export function getByKey(list: Value, key: string, strict = false): Value {
   return softWrap(strict, () => {
-    if (!isBlock(block)) throw new TypeError(ERR.propOnNonBlock(key));
-    const pair = block.values.find((v) => v.key === key);
-    if (!pair) throw new ReferenceError(ERR.unknownProperty(key));
-    return childToData(pair.child);
+    if (!isList(list)) throw new TypeError(ERR.propOnNonList(key));
+    const cell = list.named.find((v) => v.key === key);
+    if (!cell) throw new ReferenceError(ERR.unknownProperty(key));
+    return childToValue(cell.child);
   });
 }
 
-export function getByIndex(
-  block: DataNode,
-  index1: number,
-  strict = false
-): DataNode {
+export function getByIndex(list: Value, index1: number, strict = false): Value {
   return softWrap(strict, () => {
     if (!Number.isFinite(index1)) throw new TypeError(ERR.indexFinite);
     const idx0 = Math.trunc(index1) - 1;
     if (idx0 < 0) throw new RangeError(ERR.indexOneBased);
-    if (!isBlock(block)) throw new TypeError(ERR.indexNonBlock);
-    const entry = block.items[idx0];
-    if (!entry)
-      throw new RangeError(ERR.indexOutOfRange(index1, block.items.length));
-    return childToData(entry.child);
+    if (!isList(list)) throw new TypeError(ERR.indexNonList);
+    const cell = list.plain[idx0];
+    if (!cell)
+      throw new RangeError(ERR.indexOutOfRange(index1, list.plain.length));
+    return childToValue(cell.child);
   });
 }
 
 export function getByKeyOrIndex(
-  block: DataNode,
-  value: DataNode,
+  list: Value,
+  value: Value,
   strict = false
-): DataNode {
+): Value {
   return softWrap(strict, () => {
-    if (!isBlock(block)) throw new TypeError(ERR.indexNonBlock);
+    if (!isList(list)) throw new TypeError(ERR.indexNonList);
     if (isLiteral(value)) {
       const lit = value.value;
-      if (typeof lit === "number") return getByIndex(block, lit, strict);
-      if (typeof lit === "string") return getByKey(block, lit, strict);
+      if (typeof lit === "number") return getByIndex(list, lit, strict);
+      if (typeof lit === "string") return getByKey(list, lit, strict);
     }
     throw new TypeError(ERR.indexKeyMustBeTextOrNumber);
   });

@@ -2,13 +2,13 @@ import { effect } from "@preact/signals-core";
 
 import {
   type Primitive,
-  type BlockNode,
-  type DataSignal,
+  type ListValue,
+  type ValueSignal,
   createLiteral,
-  createCodeSignal,
+  createFlowSignal,
   createSignal,
-  createBlockSignal,
-  resolveData,
+  createListSignal,
+  resolveValue,
   setGlobalLibrary,
 } from "./data";
 import { setDataRoot } from "./tree";
@@ -17,7 +17,7 @@ import { onRootKeyDown } from "./input";
 import renderRoot from "./render";
 
 export function render(
-  rootSignal: DataSignal<BlockNode>,
+  rootSignal: ValueSignal<ListValue>,
   rootElement: HTMLElement
 ) {
   setGlobalLibrary(library);
@@ -45,13 +45,13 @@ export function render(
 
 const literalSig = (v: Primitive) => createSignal(createLiteral(v));
 
-const root = createBlockSignal(
-  [["x", createBlockSignal([], [literalSig(10), literalSig(20)])]],
-  [createCodeSignal("x")]
+const root = createListSignal(
+  [["x", createListSignal([], [literalSig(10), literalSig(20)])]],
+  [createFlowSignal("x")]
 );
 
 const unmount = render(root, document.getElementById("root")!);
 
 effect(() => {
-  console.log(JSON.stringify(resolveData(root.get()), null, 2));
+  console.log(JSON.stringify(resolveValue(root.get()), null, 2));
 });

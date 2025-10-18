@@ -2,10 +2,10 @@ import * as ohm from "ohm-js";
 
 import {
   ERR,
-  type DataNode,
-  type DataSignal,
+  type Value,
+  type ValueSignal,
   isLiteral,
-  isBlock,
+  isList,
   isFunction,
   createBlank,
   createLiteral,
@@ -16,11 +16,11 @@ import {
   boolExpect,
   primExpect,
   numExpect,
-  scalarToData,
+  scalarToValue,
   size,
   sliceText,
-  sliceBlockItems,
-  createRangeBlock,
+  sliceListPlain,
+  createRangeList,
   getByKey,
   getByKeyOrIndex,
 } from "./data";
@@ -150,14 +150,14 @@ export interface Call {
 
 export interface Index {
   type: "Index";
-  block: Expr;
+  list: Expr;
   index: Expr;
   strict: boolean;
 }
 
 export interface Member {
   type: "Member";
-  block: Expr;
+  list: Expr;
   key: Ident;
   strict: boolean;
 }
@@ -276,25 +276,25 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     });
   },
   Index_slice(_open, expr, _close) {
-    return (block: Expr): Index => ({
+    return (receiver: Expr): Index => ({
       type: "Index",
-      block,
+      list: receiver,
       index: expr.ast,
       strict: false,
     });
   },
   Index_expr(_open, expr, _close, maybeBang) {
-    return (block: Expr): Index => ({
+    return (receiver: Expr): Index => ({
       type: "Index",
-      block,
+      list: receiver,
       index: expr.ast,
       strict: !!maybeBang.sourceString,
     });
   },
   Member(_dot, nameTok, maybeBang) {
-    return (block: Expr): Member => ({
+    return (receiver: Expr): Member => ({
       type: "Member",
-      block,
+      list: receiver,
       key: { type: "Ident", name: nameTok.sourceString },
       strict: !!maybeBang.sourceString,
     });
@@ -325,7 +325,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   Prim_dotindex(_dot, _open, expr, _close, maybeBang) {
     return {
       type: "Index",
-      block: IMPLICIT_PARAM,
+      list: IMPLICIT_PARAM,
       index: expr.ast,
       strict: !!maybeBang.sourceString,
     } as Index;
@@ -333,7 +333,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   Prim_dot(_dot, nameTok, maybeBang) {
     return {
       type: "Member",
-      block: IMPLICIT_PARAM,
+      list: IMPLICIT_PARAM,
       key: { type: "Ident", name: nameTok.sourceString },
       strict: !!maybeBang.sourceString,
     } as Member;
@@ -377,7 +377,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
 
 function numericOp(
   map: (...numbers: number[]) => number,
-  ...args: DataNode[]
+  ...args: Value[]
 ): number | null {
   const nums = args.map((a) => numOpt(a));
   if (nums.some((n) => n === null)) return null;
@@ -385,7 +385,7 @@ function numericOp(
 }
 
 const BINARY_OPS: Partial<
-  Record<Binary["op"], (a: DataNode, b: DataNode) => boolean | number | null>
+  Record<Binary["op"], (a: Value, b: Value) => boolean | number | null>
 > = {
   "!=": (a, b) => primExpect(a) !== primExpect(b),
   "=": (a, b) => primExpect(a) === primExpect(b),
@@ -401,33 +401,32 @@ const BINARY_OPS: Partial<
   "/": (a, b) => numericOp((x, y) => x / y, a, b),
 };
 
-const UNARY_OPS: Record<Unary["op"], (v: DataNode) => boolean | number | null> =
-  {
-    "!": (v) => !boolExpect(v),
+const UNARY_OPS: Record<Unary["op"], (v: Value) => boolean | number | null> = {
+  "!": (v) => !boolExpect(v),
 
-    "-": (v) => numericOp((x) => -x, v),
-    "+": (v) => numericOp((x) => +x, v),
+  "-": (v) => numericOp((x) => -x, v),
+  "+": (v) => numericOp((x) => +x, v),
 
-    "#": (v) => size(v),
-  };
+  "#": (v) => size(v),
+};
 
 /* Evaluation */
 
 function evalNumberOpt(
   e: Expr | undefined,
-  scope: (name: string) => DataSignal
+  scope: (name: string) => ValueSignal
 ): number | null {
   if (!e) return null;
   const sig = evalExpr(e, scope);
   return numOpt(sig.get());
 }
 
-function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
+function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
   switch (e.type) {
     case "Lambda": {
       const params = e.params.map((p) => p.name);
       return createSignal(
-        createFunction((...args: DataSignal[]) =>
+        createFunction((...args: ValueSignal[]) =>
           evalExpr(e.body, (name: string) => {
             const i = params.indexOf(name);
             if (i !== -1) return args[i] ?? createSignal(createBlank());
@@ -441,7 +440,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
       const { op, left, right } = e;
       const f = BINARY_OPS[op]!;
       return createSignal(
-        scalarToData(
+        scalarToValue(
           f(evalExpr(left, scope).get(), evalExpr(right, scope).get())
         )
       );
@@ -449,7 +448,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
     case "Unary": {
       const f = UNARY_OPS[e.op]!;
-      return createSignal(scalarToData(f(evalExpr(e.argument, scope).get())));
+      return createSignal(scalarToValue(f(evalExpr(e.argument, scope).get())));
     }
 
     case "Call": {
@@ -462,7 +461,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
     case "Index": {
       if (e.index.type === "Slice") {
-        const targetSig = evalExpr(e.block, scope);
+        const targetSig = evalExpr(e.list, scope);
         const target = targetSig.get();
 
         const startN = evalNumberOpt(e.index.start, scope);
@@ -475,20 +474,20 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
           );
         }
 
-        if (isBlock(target)) {
-          return createSignal(sliceBlockItems(target, startN, endN, stepN));
+        if (isList(target)) {
+          return createSignal(sliceListPlain(target, startN, endN, stepN));
         }
 
         return createSignal(createBlank());
       }
 
-      const target = evalExpr(e.block, scope).get();
+      const target = evalExpr(e.list, scope).get();
       const idxOrKey = evalExpr(e.index, scope).get();
       return createSignal(getByKeyOrIndex(target, idxOrKey, e.strict));
     }
 
     case "Member": {
-      const target = evalExpr(e.block, scope).get();
+      const target = evalExpr(e.list, scope).get();
       return createSignal(getByKey(target, e.key.name, e.strict));
     }
 
@@ -496,7 +495,7 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
       const startN = evalNumberOpt(e.start, scope);
       const endN = evalNumberOpt(e.end, scope);
       const stepN = evalNumberOpt(e.step, scope);
-      return createSignal(createRangeBlock(startN, endN, stepN));
+      return createSignal(createRangeList(startN, endN, stepN));
     }
 
     case "Lit":
@@ -525,8 +524,8 @@ function evalExpr(e: Expr, scope: (name: string) => DataSignal): DataSignal {
 
 export function evalCode(
   code: string,
-  scope: (name: string) => DataSignal
-): DataNode {
+  scope: (name: string) => ValueSignal
+): Value {
   if (!code.trim()) return createBlank();
   const match = grammar.match(code, "Start");
   if (match.failed()) throw new SyntaxError(match.message);

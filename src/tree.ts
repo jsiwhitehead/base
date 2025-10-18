@@ -1,26 +1,26 @@
 import {
   ERR,
-  type ValueEntry,
-  type ItemEntry,
-  type DataNode,
-  type BlockNode,
+  type NamedCell,
+  type PlainCell,
+  type Value,
+  type ListValue,
   type WriteSignal,
-  type DataSignal,
+  type ValueSignal,
   type ChildSignal,
   getParent,
   getParentSignal,
   isBlank,
   isLiteral,
-  isBlock,
-  isCode,
+  isList,
+  isFlow,
   isWritableSignal,
   newUid,
   createBlank,
   createLiteral,
-  createCodeSignal,
+  createFlowSignal,
   createComputed,
   createSignal,
-  childToData,
+  childToValue,
 } from "./data";
 
 /* Root */
@@ -36,140 +36,142 @@ export function getDataRoot(): ChildSignal {
   return __dataRoot;
 }
 
-/* Entries */
+/* Cells */
 
-type BlockEntry =
-  | ({ kind: "value" } & ValueEntry)
-  | ({ kind: "item" } & ItemEntry);
+type CellEntry =
+  | ({ kind: "named" } & NamedCell)
+  | ({ kind: "plain" } & PlainCell);
 
-export function* iterEntries(src: BlockNode): Generator<BlockEntry> {
-  for (const v of src.values) {
-    yield { kind: "value", uid: v.uid, key: v.key, child: v.child };
+export function* iterCells(src: ListValue): Generator<CellEntry> {
+  for (const v of src.named) {
+    yield { kind: "named", uid: v.uid, key: v.key, child: v.child };
   }
-  for (const i of src.items) {
-    yield { kind: "item", uid: i.uid, child: i.child };
+  for (const p of src.plain) {
+    yield { kind: "plain", uid: p.uid, child: p.child };
   }
 }
 
-function entryIndexByUid(es: BlockEntry[], uid: number): number {
-  return es.findIndex((e) => e.uid === uid);
+function cellIndexByUid(cs: CellEntry[], uid: number): number {
+  return cs.findIndex((e) => e.uid === uid);
 }
 
-type EntryView = BlockEntry & {
+type CellView = CellEntry & {
   id: string | number;
   index: number;
 };
 
-function* enumerateEntries(src: BlockNode): Generator<EntryView> {
-  let itemIndex1 = 1;
-  let vIdx = 0;
-  let iIdx = 0;
-  for (const e of iterEntries(src)) {
-    const id = e.kind === "value" ? e.key : itemIndex1++;
-    const index = e.kind === "value" ? vIdx++ : iIdx++;
+function* enumerateCells(src: ListValue): Generator<CellView> {
+  let plainIndex1 = 1;
+  let nIdx = 0;
+  let pIdx = 0;
+  for (const e of iterCells(src)) {
+    const id = e.kind === "named" ? e.key : plainIndex1++;
+    const index = e.kind === "named" ? nIdx++ : pIdx++;
     yield { ...e, id, index };
   }
 }
 
-function entrySignals(e: EntryView) {
+function cellSignals(e: CellView) {
   const idSig = createSignal(createLiteral(e.id));
-  const valSig = createSignal(childToData(e.child));
+  const valSig = createSignal(childToValue(e.child));
   return { idSig, valSig };
 }
 
-function createBlockFromEntries(entries: Iterable<BlockEntry>): BlockNode {
-  const values: ValueEntry[] = [];
-  const items: ItemEntry[] = [];
+function createListFromCells(entries: Iterable<CellEntry>): ListValue {
+  const named: NamedCell[] = [];
+  const plain: PlainCell[] = [];
   for (const e of entries) {
-    if (e.kind === "value")
-      values.push({ uid: e.uid ?? newUid(), key: e.key, child: e.child });
-    else items.push({ uid: e.uid ?? newUid(), child: e.child });
+    if (e.kind === "named")
+      named.push({ uid: e.uid ?? newUid(), key: e.key, child: e.child });
+    else plain.push({ uid: e.uid ?? newUid(), child: e.child });
   }
-  return { kind: "block", values, items };
+  return { kind: "list", named, plain };
 }
 
-/* Blocks */
+/* Lists */
 
-export function blockNumbersOpt(n: BlockNode): number[] {
+export function listNumbersOpt(n: ListValue): number[] {
   const out: number[] = [];
-  for (const e of iterEntries(n)) {
-    const node = childToData(e.child);
-    if (isBlank(node)) continue;
-    if (isLiteral(node) && typeof node.value === "number") out.push(node.value);
+  for (const e of iterCells(n)) {
+    const value = childToValue(e.child);
+    if (isBlank(value)) continue;
+    if (isLiteral(value) && typeof value.value === "number")
+      out.push(value.value);
     else throw new TypeError(ERR.numOrBlank);
   }
   return out;
 }
 
-export function blockTextsOpt(n: BlockNode): string[] {
+export function listTextsOpt(n: ListValue): string[] {
   const out: string[] = [];
-  for (const e of iterEntries(n)) {
-    const node = childToData(e.child);
-    if (isBlank(node)) continue;
-    if (isLiteral(node) && typeof node.value === "string") out.push(node.value);
+  for (const e of iterCells(n)) {
+    const value = childToValue(e.child);
+    if (isBlank(value)) continue;
+    if (isLiteral(value) && typeof value.value === "string")
+      out.push(value.value);
     else throw new TypeError(ERR.textOrBlank);
   }
   return out;
 }
 
-export function blockMap(
-  src: BlockNode,
-  f: (value: DataSignal, id: DataSignal) => DataSignal
-): BlockNode {
-  return createBlockFromEntries(
-    Array.from(enumerateEntries(src), (e) => {
-      const { idSig, valSig } = entrySignals(e);
+export function listMap(
+  src: ListValue,
+  f: (value: ValueSignal, id: ValueSignal) => ValueSignal
+): ListValue {
+  return createListFromCells(
+    Array.from(enumerateCells(src), (e) => {
+      const { idSig, valSig } = cellSignals(e);
       return { ...e, child: createComputed(() => f(valSig, idSig).get()) };
     })
   );
 }
 
-export function blockFilter(
-  src: BlockNode,
-  pred: (value: DataSignal, id: DataSignal) => boolean
-): BlockNode {
-  return createBlockFromEntries(
-    Array.from(enumerateEntries(src)).filter((e) => {
-      const { idSig, valSig } = entrySignals(e);
+export function listFilter(
+  src: ListValue,
+  pred: (value: ValueSignal, id: ValueSignal) => boolean
+): ListValue {
+  return createListFromCells(
+    Array.from(enumerateCells(src)).filter((e) => {
+      const { idSig, valSig } = cellSignals(e);
       return pred(valSig, idSig);
     })
   );
 }
 
-export function blockReduce(
-  src: BlockNode,
-  rf: (acc: DataSignal, value: DataSignal, id: DataSignal) => DataSignal,
-  init: DataSignal
-): DataSignal {
-  const seq = Array.from(enumerateEntries(src));
+export function listReduce(
+  src: ListValue,
+  rf: (acc: ValueSignal, value: ValueSignal, id: ValueSignal) => ValueSignal,
+  init: ValueSignal
+): ValueSignal {
+  const seq = Array.from(enumerateCells(src));
   if (seq.length === 0) return init;
 
-  const step = (acc: DataSignal, e: EntryView) => {
-    const { idSig, valSig } = entrySignals(e);
+  const step = (acc: ValueSignal, e: CellView) => {
+    const { idSig, valSig } = cellSignals(e);
     return rf(acc, valSig, idSig);
   };
 
   if (!isBlank(init.get())) return seq.reduce(step, init);
 
-  const first = createSignal(childToData(seq[0]!.child));
+  const first = createSignal(childToValue(seq[0]!.child));
   return seq.slice(1).reduce(step, first);
 }
 
-function sortRank(n: DataNode): [number, any] {
+function sortRank(v: Value): [number, any] {
   // numbers < text < true < other < blank
-  if (isBlank(n)) return [4, null];
-  if (isLiteral(n)) {
-    const v = n.value;
-    if (typeof v === "number") return [0, v];
-    if (typeof v === "string") return [1, v];
-    if (v === true) return [2, 1];
+  if (isBlank(v)) return [4, null];
+  if (isLiteral(v)) {
+    const lit = v.value;
+    if (typeof lit === "number") return [0, lit];
+    if (typeof lit === "string") return [1, lit];
+    if (lit === true) return [2, 1];
   }
   return [3, null];
 }
 
 const collator = new Intl.Collator(undefined, { sensitivity: "base" });
 
-function sortCmp<T extends { sortKey: DataNode; index: number }>(
+function sortCmp<T extends { sortKey: Value; index: number }>(
   a: T,
   b: T
 ): number {
@@ -186,75 +188,75 @@ function sortCmp<T extends { sortKey: DataNode; index: number }>(
   return a.index - b.index;
 }
 
-export function blockSort(
-  src: BlockNode,
-  keySelector: null | ((value: DataSignal, id: DataSignal) => DataSignal)
-): BlockNode {
-  const rows = Array.from(enumerateEntries(src), (e) => {
-    if (!keySelector) return { ...e, sortKey: childToData(e.child) };
-    const { idSig, valSig } = entrySignals(e);
+export function listSort(
+  src: ListValue,
+  keySelector: null | ((value: ValueSignal, id: ValueSignal) => ValueSignal)
+): ListValue {
+  const rows = Array.from(enumerateCells(src), (e) => {
+    if (!keySelector) return { ...e, sortKey: childToValue(e.child) };
+    const { idSig, valSig } = cellSignals(e);
     return { ...e, sortKey: keySelector(valSig, idSig).get() };
   });
   rows.sort(sortCmp);
-  return createBlockFromEntries(rows);
+  return createListFromCells(rows);
 }
 
 /* Navigation */
 
-export type NodePath = number[];
+export type CellPath = number[];
 
-function resolvePath(path: NodePath): ChildSignal | null {
+function resolvePath(path: CellPath): ChildSignal | null {
   let cur: ChildSignal = getDataRoot();
   for (const uid of path) {
-    const node = childToData(cur);
-    if (!isBlock(node)) return null;
-    const es = Array.from(iterEntries(node));
-    const i = entryIndexByUid(es, uid);
+    const value = childToValue(cur);
+    if (!isList(value)) return null;
+    const cs = Array.from(iterCells(value));
+    const i = cellIndexByUid(cs, uid);
     if (i < 0) return null;
-    cur = es[i]!.child;
+    cur = cs[i]!.child;
   }
   return cur;
 }
 
-export function parentPath(path: NodePath): NodePath | null {
+export function parentPath(path: CellPath): CellPath | null {
   if (path.length === 0) return null;
   return path.slice(0, -1);
 }
 
-export function firstChildPath(path: NodePath): NodePath | null {
-  const node = resolvePath(path);
-  if (!node) return null;
-  const data = childToData(node);
-  if (!isBlock(data)) return null;
-  const es = Array.from(iterEntries(data));
-  return es.length ? [...path, es[0]!.uid] : null;
+export function firstChildPath(path: CellPath): CellPath | null {
+  const child = resolvePath(path);
+  if (!child) return null;
+  const value = childToValue(child);
+  if (!isList(value)) return null;
+  const cs = Array.from(iterCells(value));
+  return cs.length ? [...path, cs[0]!.uid] : null;
 }
 
-export function siblingPath(path: NodePath, dir: -1 | 1): NodePath | null {
+export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
   if (path.length === 0) return null;
 
   const pp = parentPath(path);
   if (!pp) return null;
 
-  const parentNode = resolvePath(pp);
-  if (!parentNode) return null;
+  const parentChild = resolvePath(pp);
+  if (!parentChild) return null;
 
-  const block = childToData(parentNode);
-  if (!isBlock(block)) return null;
+  const listV = childToValue(parentChild);
+  if (!isList(listV)) return null;
 
-  const es = Array.from(iterEntries(block));
-  const i = entryIndexByUid(es, path[path.length - 1]!);
+  const cs = Array.from(iterCells(listV));
+  const i = cellIndexByUid(cs, path[path.length - 1]!);
   const j = i + dir;
-  if (i < 0 || j < 0 || j >= es.length) return null;
+  if (i < 0 || j < 0 || j >= cs.length) return null;
 
-  return [...pp, es[j]!.uid];
+  return [...pp, cs[j]!.uid];
 }
 
 /* Mutations */
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-function parseTextToData(raw: string): DataNode {
+function parseTextToValue(raw: string): Value {
   const t = raw.trim();
   if (t === "") return createBlank();
   if (NUM_RE.test(t) && Number.isFinite(Number(t))) {
@@ -263,15 +265,15 @@ function parseTextToData(raw: string): DataNode {
   return createLiteral(t);
 }
 
-export function setText(path: NodePath, raw: string): NodePath {
+export function setText(path: CellPath, raw: string): CellPath {
   const sig = resolvePath(path);
   if (!sig || !isWritableSignal(sig)) return path;
 
   const cur = sig.peek();
 
-  if (isCode(cur)) {
+  if (isFlow(cur)) {
     sig.set({
-      kind: "code",
+      kind: "flow",
       code: raw,
       result: cur.result,
     });
@@ -279,25 +281,25 @@ export function setText(path: NodePath, raw: string): NodePath {
   }
 
   if (isLiteral(cur) || isBlank(cur)) {
-    sig.set(parseTextToData(raw));
+    sig.set(parseTextToValue(raw));
     return path;
   }
 
   return path;
 }
 
-export function toggleCodeText(path: NodePath): NodePath {
+export function toggleCodeText(path: CellPath): CellPath {
   return withLocatedPath(
     path,
     ({ parent, parentPath, before, index, child }) => {
       const cur = child.peek();
       let nextChild: ChildSignal | null = null;
 
-      if (isCode(cur)) {
-        nextChild = createSignal(parseTextToData(cur.code));
+      if (isFlow(cur)) {
+        nextChild = createSignal(parseTextToValue(cur.code));
       } else if (isLiteral(cur) || isBlank(cur)) {
         const text = isLiteral(cur) ? String(cur.value) : "";
-        nextChild = createCodeSignal(text);
+        nextChild = createFlowSignal(text);
       } else {
         return { after: before, path: [...parentPath, before[index]!.uid] };
       }
@@ -313,15 +315,15 @@ export function toggleCodeText(path: NodePath): NodePath {
 }
 
 export function withLocatedPath(
-  path: NodePath,
+  path: CellPath,
   fn: (ctx: {
-    parent: WriteSignal<BlockNode>;
-    parentPath: NodePath;
-    before: BlockEntry[];
+    parent: WriteSignal<ListValue>;
+    parentPath: CellPath;
+    before: CellEntry[];
     index: number;
     child: ChildSignal;
-  }) => { after: BlockEntry[]; path: NodePath }
-): NodePath {
+  }) => { after: CellEntry[]; path: CellPath }
+): CellPath {
   if (path.length === 0) return path;
 
   const child = resolvePath(path);
@@ -332,71 +334,71 @@ export function withLocatedPath(
 
   const parentPath = path.slice(0, -1);
 
-  const before = Array.from(iterEntries(parent.get()));
+  const before = Array.from(iterCells(parent.get()));
   const uid = path[path.length - 1]!;
-  const index = entryIndexByUid(before, uid);
+  const index = cellIndexByUid(before, uid);
   if (index < 0) return path;
 
   const result = fn({ parent, parentPath, before, index, child });
 
-  if (result.after !== before) parent.set(createBlockFromEntries(result.after));
+  if (result.after !== before) parent.set(createListFromCells(result.after));
   return result.path;
 }
 
 function replaceAt(
-  es: BlockEntry[],
+  cs: CellEntry[],
   i: number,
   nextChild: ChildSignal
-): BlockEntry[] {
-  const out = es.slice();
-  out[i] = { ...es[i]!, child: nextChild };
+): CellEntry[] {
+  const out = cs.slice();
+  out[i] = { ...cs[i]!, child: nextChild };
   return out;
 }
 
-function removeAt(es: BlockEntry[], i: number): BlockEntry[] {
-  const out = es.slice();
+function removeAt(cs: CellEntry[], i: number): CellEntry[] {
+  const out = cs.slice();
   out.splice(i, 1);
   return out;
 }
 
-function insertItemAt(
-  es: BlockEntry[],
+function insertPlainAt(
+  cs: CellEntry[],
   i: number,
   child: ChildSignal
-): { es: BlockEntry[]; uid: number } {
+): { cs: CellEntry[]; uid: number } {
   const uid = newUid();
-  const out = es.slice();
-  out.splice(i, 0, { kind: "item", uid, child });
-  return { es: out, uid };
+  const out = cs.slice();
+  out.splice(i, 0, { kind: "plain", uid, child });
+  return { cs: out, uid };
 }
 
-function indexOfFirstItem(es: BlockEntry[]) {
-  const k = es.findIndex((x) => x.kind === "item");
-  return k < 0 ? es.length : k;
+function indexOfFirstPlain(cs: CellEntry[]) {
+  const k = cs.findIndex((x) => x.kind === "plain");
+  return k < 0 ? cs.length : k;
 }
 
-function isValueEntry(
-  e: BlockEntry
-): e is Extract<BlockEntry, { kind: "value" }> {
-  return e.kind === "value";
+function isNamedEntry(
+  e: CellEntry
+): e is Extract<CellEntry, { kind: "named" }> {
+  return e.kind === "named";
 }
 
-export function assignKey(path: NodePath, nextKey: string): NodePath {
+export function assignKey(path: CellPath, nextKey: string): CellPath {
   return withLocatedPath(path, ({ parentPath, before, index }) => {
-    if (before.some((e) => e.kind === "value" && e.key === nextKey)) {
+    if (before.some((e) => e.kind === "named" && e.key === nextKey)) {
       return { after: before, path: [...parentPath, before[index]!.uid] };
     }
     const e = before[index]!;
-    if (e.kind === "value") {
+    if (e.kind === "named") {
       const after = before.slice();
       if (e.key !== nextKey) after[index] = { ...e, key: nextKey };
       return { after, path: [...parentPath, e.uid] };
     }
 
     const cut = removeAt(before, index);
-    const at = indexOfFirstItem(cut);
+    const at = indexOfFirstPlain(cut);
     cut.splice(at, 0, {
-      kind: "value",
+      kind: "named",
       uid: e.uid,
       key: nextKey,
       child: e.child,
@@ -405,55 +407,55 @@ export function assignKey(path: NodePath, nextKey: string): NodePath {
   });
 }
 
-export function removeKey(path: NodePath): NodePath {
+export function removeKey(path: CellPath): CellPath {
   return withLocatedPath(path, ({ parentPath, before, index }) => {
     const e = before[index]!;
-    if (e.kind !== "value") {
+    if (e.kind !== "named") {
       return { after: before, path: [...parentPath, e.uid] };
     }
 
     const after = removeAt(before, index);
-    const at = indexOfFirstItem(after);
-    after.splice(at, 0, { kind: "item", uid: e.uid, child: e.child });
+    const at = indexOfFirstPlain(after);
+    after.splice(at, 0, { kind: "plain", uid: e.uid, child: e.child });
     return { after, path: [...parentPath, e.uid] };
   });
 }
 
-export function insertBefore(path: NodePath): NodePath {
+export function insertBefore(path: CellPath): CellPath {
   return withLocatedPath(path, ({ parent, parentPath, before, index }) => {
-    const item = createSignal(createBlank() as DataNode);
+    const item = createSignal(createBlank() as Value);
     getParentSignal(item).value = parent;
 
-    const insertAt = isValueEntry(before[index]!)
-      ? indexOfFirstItem(before)
+    const insertAt = isNamedEntry(before[index]!)
+      ? indexOfFirstPlain(before)
       : index;
 
-    const { es: after, uid } = insertItemAt(before, insertAt, item);
+    const { cs: after, uid } = insertPlainAt(before, insertAt, item);
     return { after, path: [...parentPath, uid] };
   });
 }
 
-export function insertAfter(path: NodePath): NodePath {
+export function insertAfter(path: CellPath): CellPath {
   return withLocatedPath(path, ({ parent, parentPath, before, index }) => {
-    const item = createSignal(createBlank() as DataNode);
+    const item = createSignal(createBlank() as Value);
     getParentSignal(item).value = parent;
 
-    const insertAt = isValueEntry(before[index]!)
-      ? indexOfFirstItem(before)
+    const insertAt = isNamedEntry(before[index]!)
+      ? indexOfFirstPlain(before)
       : index + 1;
 
-    const { es: after, uid } = insertItemAt(before, insertAt, item);
+    const { cs: after, uid } = insertPlainAt(before, insertAt, item);
     return { after, path: [...parentPath, uid] };
   });
 }
 
-export function wrapWithBlock(path: NodePath): NodePath {
+export function wrapWithList(path: CellPath): CellPath {
   return withLocatedPath(
     path,
     ({ parentPath, parent, before, index, child }) => {
       const innerUid = newUid();
       const wrapper = createSignal(
-        createBlockFromEntries([{ kind: "item", uid: innerUid, child }])
+        createListFromCells([{ kind: "plain", uid: innerUid, child }])
       );
       getParentSignal(wrapper).value = parent;
       getParentSignal(child).value = wrapper;
@@ -465,15 +467,15 @@ export function wrapWithBlock(path: NodePath): NodePath {
   );
 }
 
-export function unwrapBlockIfSingleChild(path: NodePath): NodePath {
+export function unwrapListIfSingleChild(path: CellPath): CellPath {
   const innerChild = resolvePath(path);
   if (!innerChild) return path;
 
   const wrapperSig = getParent(innerChild);
   if (!wrapperSig) return path;
 
-  const wrapperNode = wrapperSig.get();
-  if (wrapperNode.values.length !== 0 || wrapperNode.items.length !== 1) {
+  const wrapperValue = wrapperSig.get();
+  if (wrapperValue.named.length !== 0 || wrapperValue.plain.length !== 1) {
     return path;
   }
 
@@ -493,7 +495,7 @@ export function unwrapBlockIfSingleChild(path: NodePath): NodePath {
   );
 }
 
-export function removeChild(path: NodePath): NodePath {
+export function removeChild(path: CellPath): CellPath {
   return withLocatedPath(path, ({ parentPath, before, index }) => {
     const removed = before[index]!;
     const after = removeAt(before, index);

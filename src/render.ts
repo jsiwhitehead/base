@@ -1,34 +1,34 @@
 import { effect } from "@preact/signals-core";
 
 import {
-  type LiteralNode,
-  type BlockNode,
-  type DataNode,
-  type CodeNode,
+  type LiteralValue,
+  type ListValue,
+  type Value,
+  type FlowValue,
   type ChildSignal,
   isBlank,
   isLiteral,
-  isBlock,
-  isCode,
+  isList,
+  isFlow,
   isWritableSignal,
 } from "./data";
-import { type NodePath } from "./tree";
+import { type CellPath } from "./tree";
 import { registerBinding, unregisterBinding } from "./input";
 
 function createEl(tag: string, className?: string): HTMLElement {
-  const node = document.createElement(tag);
-  if (className) node.classList.add(className);
-  return node;
+  const el = document.createElement(tag);
+  if (className) el.classList.add(className);
+  return el;
 }
 
-function pathsEqual(a: NodePath, b: NodePath) {
+function pathsEqual(a: CellPath, b: CellPath) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
 }
 
 abstract class View<T> {
-  abstract readonly viewKind: "literal" | "block" | "code";
+  abstract readonly viewKind: "literal" | "list" | "flow";
   abstract readonly element: HTMLElement;
   abstract update(next: T): void;
   dispose() {}
@@ -57,23 +57,23 @@ class StringView extends View<string> {
   }
 }
 
-class BlockView extends View<BlockNode> {
-  readonly viewKind = "block";
+class ListView extends View<ListValue> {
+  readonly viewKind = "list";
   readonly element: HTMLElement;
 
   childMountByUid = new Map<number, SignalMount>();
-  childPathByUid = new Map<number, NodePath>();
+  childPathByUid = new Map<number, CellPath>();
   keyLabelByUid = new Map<number, StringView>();
 
-  constructor(readonly parentPath: NodePath, readonly parentWritable: boolean) {
+  constructor(readonly parentPath: CellPath, readonly parentWritable: boolean) {
     super();
-    this.element = createEl("div", "block");
+    this.element = createEl("div", "list");
   }
 
   mountChildIfNeeded(
     uid: number,
     child: ChildSignal,
-    childPath: NodePath
+    childPath: CellPath
   ): { el: HTMLElement; focusEl: HTMLElement } {
     let mount = this.childMountByUid.get(uid);
 
@@ -102,7 +102,7 @@ class BlockView extends View<BlockNode> {
     return { el, focusEl };
   }
 
-  ensureKeyLabel(uid: number, key: string, path: NodePath): StringView {
+  ensureKeyLabel(uid: number, key: string, path: CellPath): StringView {
     const prevPath = this.childPathByUid.get(uid);
     let label = this.keyLabelByUid.get(uid)!;
     const needsRemount = !label || (prevPath && !pathsEqual(prevPath, path));
@@ -141,21 +141,21 @@ class BlockView extends View<BlockNode> {
   textGetterFor(child: ChildSignal) {
     if (!isWritableSignal(child)) return;
     return () => {
-      const n = child.peek();
-      if (isLiteral(n)) return String(n.value);
-      if (isCode(n)) return n.code;
+      const v = child.peek();
+      if (isLiteral(v)) return String(v.value);
+      if (isFlow(v)) return v.code;
       return "";
     };
   }
 
-  update({ values, items }: BlockNode) {
-    const keepUids = new Set<number>([...values, ...items].map((x) => x.uid));
+  update({ named, plain }: ListValue) {
+    const keepUids = new Set<number>([...named, ...plain].map((x) => x.uid));
     this.unmountAllChildrenExcept(keepUids);
 
     const frag = document.createDocumentFragment();
 
-    for (const { uid, key, child } of values) {
-      const path: NodePath = [...this.parentPath, uid];
+    for (const { uid, key, child } of named) {
+      const path: CellPath = [...this.parentPath, uid];
       const { el, focusEl } = this.mountChildIfNeeded(uid, child, path);
       const keyLabel = this.ensureKeyLabel(uid, key, path);
 
@@ -173,8 +173,8 @@ class BlockView extends View<BlockNode> {
       frag.append(keyLabel.element, el);
     }
 
-    for (const { uid, child } of items) {
-      const path: NodePath = [...this.parentPath, uid];
+    for (const { uid, child } of plain) {
+      const path: CellPath = [...this.parentPath, uid];
       const { el, focusEl } = this.mountChildIfNeeded(uid, child, path);
 
       registerBinding(path, {
@@ -197,20 +197,20 @@ class BlockView extends View<BlockNode> {
   }
 }
 
-class CodeView extends View<string> {
-  readonly viewKind = "code";
+class FlowView extends View<string> {
+  readonly viewKind = "flow";
   readonly element: HTMLElement;
   codeEl: HTMLElement;
-  resultView?: View<BlockNode | string>;
+  resultView?: View<ListValue | string>;
   disposeResultEffect?: () => void;
 
   constructor(
     readCode: () => string,
-    readResult: () => DataNode,
-    readonly codeNodePath: NodePath
+    readResult: () => Value,
+    readonly flowPath: CellPath
   ) {
     super();
-    this.element = createEl("div", "code");
+    this.element = createEl("div", "flow");
 
     this.codeEl = createEl("div", "expr");
     this.codeEl.textContent = readCode();
@@ -221,12 +221,12 @@ class CodeView extends View<string> {
         const resolved = readResult();
         this.element.classList.remove("error");
 
-        if (isBlock(resolved)) {
+        if (isList(resolved)) {
           this.ensureResultKind(
-            "block",
-            () => new BlockView(this.codeNodePath, false)
+            "list",
+            () => new ListView(this.flowPath, false)
           );
-          (this.resultView as BlockView).update(resolved);
+          (this.resultView as ListView).update(resolved);
         } else if (isLiteral(resolved)) {
           this.ensureResultKind(
             "literal",
@@ -237,7 +237,7 @@ class CodeView extends View<string> {
           this.ensureResultKind("literal", () => new StringView("value", ""));
           this.resultView!.update("");
         } else {
-          throw new Error("Cannot render a FunctionNode");
+          throw new Error("Cannot render a FunctionValue");
         }
       } catch {
         this.element.classList.add("error");
@@ -253,8 +253,8 @@ class CodeView extends View<string> {
   }
 
   ensureResultKind(
-    kind: "block" | "literal",
-    build: () => View<BlockNode | string>
+    kind: "list" | "literal",
+    build: () => View<ListValue | string>
   ) {
     if (!this.resultView || this.resultView.viewKind !== kind) {
       const next = build();
@@ -280,67 +280,67 @@ class CodeView extends View<string> {
 }
 
 class SignalMount {
-  nodeView!: View<BlockNode | string>;
+  valueView!: View<ListValue | string>;
   disposeEffect: () => void;
 
-  constructor(readonly signal: ChildSignal, readonly path: NodePath) {
+  constructor(readonly signal: ChildSignal, readonly path: CellPath) {
     const ensureKind = (
-      kind: "code" | "block" | "literal",
-      build: () => View<BlockNode | string>
+      kind: "flow" | "list" | "literal",
+      build: () => View<ListValue | string>
     ) => {
-      if (!this.nodeView || this.nodeView.viewKind !== kind) {
-        this.nodeView?.dispose();
-        this.nodeView = build();
+      if (!this.valueView || this.valueView.viewKind !== kind) {
+        this.valueView?.dispose();
+        this.valueView = build();
       }
     };
 
     this.disposeEffect = effect(() => {
-      const n = this.signal.get();
+      const v = this.signal.get();
 
-      if (isCode(n)) {
+      if (isFlow(v)) {
         ensureKind(
-          "code",
+          "flow",
           () =>
-            new CodeView(
-              () => (this.signal.peek() as CodeNode).code,
-              () => (this.signal.peek() as CodeNode).result.get(),
+            new FlowView(
+              () => (this.signal.peek() as FlowValue).code,
+              () => (this.signal.peek() as FlowValue).result.get(),
               this.path
             )
         );
-        this.nodeView.update(n.code);
-      } else if (isBlock(n)) {
+        this.valueView.update(v.code);
+      } else if (isList(v)) {
         ensureKind(
-          "block",
-          () => new BlockView(this.path, isWritableSignal(this.signal))
+          "list",
+          () => new ListView(this.path, isWritableSignal(this.signal))
         );
-        this.nodeView.update(n);
-      } else if (isLiteral(n) || isBlank(n)) {
-        const text = isLiteral(n) ? String((n as LiteralNode).value) : "";
+        this.valueView.update(v);
+      } else if (isLiteral(v) || isBlank(v)) {
+        const text = isLiteral(v) ? String((v as LiteralValue).value) : "";
         ensureKind("literal", () => new StringView("value", text));
-        this.nodeView.update(text);
+        this.valueView.update(text);
       } else {
-        throw new Error("Cannot render a FunctionNode");
+        throw new Error("Cannot render a FunctionValue");
       }
     });
   }
 
   get element() {
-    return this.nodeView.element;
+    return this.valueView.element;
   }
 
   get view() {
-    return this.nodeView;
+    return this.valueView;
   }
 
   dispose() {
     this.disposeEffect();
-    this.nodeView?.dispose();
+    this.valueView?.dispose();
   }
 }
 
 export default function renderRoot(
   rootSignal: ChildSignal,
-  rootPath: NodePath
+  rootPath: CellPath
 ) {
   const mount = new SignalMount(rootSignal, rootPath);
 
