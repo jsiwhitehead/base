@@ -24,7 +24,6 @@ import {
   childToValue,
 } from "./data";
 import {
-  iterCells,
   listMap,
   listFilter,
   listReduce,
@@ -225,8 +224,7 @@ export const library = {
 
   split: typedFn([reqText, optText("")], (t, sep) => {
     return createList(
-      [],
-      t.split(sep).map((p) => createSignal(createLiteral(p)))
+      t.split(sep).map((p) => ({ child: createSignal(createLiteral(p)) }))
     );
   }),
 
@@ -237,32 +235,33 @@ export const library = {
     return parts.length ? createLiteral(parts.join(sep)) : createBlank();
   }),
 
-  count: typedFn([reqList], (source) => {
-    let cnt = 0;
-    for (const e of iterCells(source)) {
-      if (!isBlank(childToValue(e.child))) cnt++;
-    }
-    return createLiteral(cnt);
-  }),
+  count: typedFn([reqList], (source) =>
+    createLiteral(
+      source.cells.filter((c) => !isBlank(childToValue(c.child))).length
+    )
+  ),
 
-  count_blank: typedFn([reqList], (source) => {
-    let cnt = 0;
-    for (const e of iterCells(source)) {
-      if (isBlank(childToValue(e.child))) cnt++;
-    }
-    return createLiteral(cnt);
-  }),
+  count_blank: typedFn([reqList], (source) =>
+    createLiteral(
+      source.cells.filter((c) => isBlank(childToValue(c.child))).length
+    )
+  ),
 
   map: typedFn([reqList, reqFn], (source, fnValue) =>
-    listMap(source, (value, id) => fnValue.fn(value, id))
+    listMap(source, (value, index, name) => fnValue.fn(value, index, name))
   ),
 
   filter: typedFn([reqList, reqFn], (source, predValue) =>
-    listFilter(source, (value, id) => boolExpect(predValue.fn(value, id).get()))
+    listFilter(source, (value, index, name) =>
+      boolExpect(predValue.fn(value, index, name).get())
+    )
   ),
 
   sort: typedFn([reqList, optFn(null)], (source, keyValue) =>
-    listSort(source, keyValue ? (value, id) => keyValue.fn(value, id) : null)
+    listSort(
+      source,
+      keyValue ? (value, index, name) => keyValue.fn(value, index, name) : null
+    )
   ),
 
   reduce: createSignal(
@@ -278,7 +277,7 @@ export const library = {
         if (!isFunction(rf)) throw new TypeError(ERR.function);
         return listReduce(
           src,
-          (acc, value, id) => rf.fn(acc, value, id),
+          (acc, value, index, name) => rf.fn(acc, value, index, name),
           initSig
         );
       }

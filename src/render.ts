@@ -1,16 +1,19 @@
 import { effect } from "@preact/signals-core";
 
 import {
+  type BlankValue,
   type LiteralValue,
   type ListValue,
   type Value,
   type FlowValue,
-  type ChildSignal,
-  isBlank,
+  type ValueSignal,
+  type Cell,
   isLiteral,
   isList,
+  isFunction,
   isFlow,
   isWritableSignal,
+  createBlank,
 } from "./data";
 import { type CellPath } from "./tree";
 import { registerBinding, unregisterBinding } from "./input";
@@ -21,335 +24,224 @@ function createEl(tag: string, className?: string): HTMLElement {
   return el;
 }
 
-function pathsEqual(a: CellPath, b: CellPath) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+function createTextInput(className?: string, value?: string): HTMLInputElement {
+  const input = document.createElement("input");
+  if (className) input.classList.add(className);
+  if (value != null) input.value = value;
+  input.autocapitalize = "off";
+  input.autocomplete = "off";
+  input.autocorrect = "off" as any;
+  input.spellcheck = false;
+  return input;
 }
 
-abstract class View<T> {
-  abstract readonly viewKind: "literal" | "list" | "flow";
-  abstract readonly element: HTMLElement;
-  abstract update(next: T): void;
-  dispose() {}
+class AutosizeInput {
+  element: HTMLElement;
+  input: HTMLInputElement;
+  mirror: HTMLSpanElement;
 
-  get focusEl(): HTMLElement {
-    return this.element;
-  }
-}
+  constructor(initialText: string) {
+    const wrap = createEl("div", "autosize");
+    const mirror = createEl("span") as HTMLSpanElement;
+    mirror.setAttribute("aria-hidden", "true");
+    mirror.textContent = initialText || " ";
 
-class StringView extends View<string> {
-  readonly viewKind = "literal";
-  readonly element: HTMLElement;
+    const input = createTextInput(undefined, initialText);
+    input.addEventListener("input", () => {
+      mirror.textContent = input.value || " ";
+    });
 
-  constructor(readonly fieldRole: "value" | "key", initialText: string) {
-    super();
-    this.element = createEl("div", this.fieldRole);
-    this.element.textContent = this.format(initialText);
-  }
+    wrap.append(mirror, input);
 
-  format(text: string): string {
-    return this.fieldRole === "key" ? `${text}:` : text;
+    this.element = wrap;
+    this.input = input;
+    this.mirror = mirror;
   }
 
   update(text: string) {
-    this.element.textContent = this.format(text);
+    this.input.value = text;
+    this.mirror.textContent = text || " ";
+  }
+
+  get focusEl() {
+    return this.input;
   }
 }
 
-class ListView extends View<ListValue> {
-  readonly viewKind = "list";
-  readonly element: HTMLElement;
+interface View<T extends Value> {
+  element: HTMLElement;
+  update(next: T): void;
+  dispose(): void;
+  focusEl: HTMLElement;
+}
 
-  childMountByUid = new Map<number, SignalMount>();
-  childPathByUid = new Map<number, CellPath>();
-  keyLabelByUid = new Map<number, StringView>();
+class LiteralView implements View<LiteralValue | BlankValue> {
+  element: HTMLElement;
+  inputEl?: HTMLInputElement;
+  onInput?: (next: string) => void;
 
-  constructor(readonly parentPath: CellPath, readonly parentWritable: boolean) {
-    super();
-    this.element = createEl("div", "list");
+  constructor(writable: boolean) {
+    if (writable) {
+      const input = createTextInput("value");
+      input.addEventListener("input", () => this.onInput?.(input.value));
+      this.element = this.inputEl = input;
+    } else {
+      this.element = createEl("div", "value");
+    }
   }
 
-  mountChildIfNeeded(
-    uid: number,
-    child: ChildSignal,
-    childPath: CellPath
-  ): { el: HTMLElement; focusEl: HTMLElement } {
-    let mount = this.childMountByUid.get(uid);
+  setText(text: string) {
+    if (this.inputEl) this.inputEl.value = text;
+    else this.element.textContent = text;
+  }
 
-    if (!mount || mount.signal !== child) {
-      if (mount) {
-        const oldPath = this.childPathByUid.get(uid)!;
-        if (this.element.contains(mount.element)) {
-          unregisterBinding(oldPath);
-          mount.element.remove();
-        }
+  update(next: LiteralValue | BlankValue) {
+    if (isLiteral(next)) {
+      this.setText(String(next.value));
+    } else {
+      this.setText("");
+    }
+  }
+
+  dispose() {}
+
+  get focusEl(): HTMLElement {
+    return this.inputEl ?? this.element;
+  }
+}
+
+class ListView implements View<ListValue> {
+  element = createEl("div", "list");
+  rows = new Map<number, CellMount>();
+
+  constructor(readonly parentPath: CellPath) {}
+
+  update(next: ListValue) {
+    const cells = next.cells;
+
+    const keep = new Set(cells.map((c) => c.uid));
+    for (const [uid, mount] of Array.from(this.rows)) {
+      if (!keep.has(uid)) {
         mount.dispose();
-      }
-      mount = new SignalMount(child, childPath);
-      this.childMountByUid.set(uid, mount);
-      this.childPathByUid.set(uid, childPath);
-    } else {
-      const prevPath = this.childPathByUid.get(uid);
-      if (!prevPath || !pathsEqual(prevPath, childPath)) {
-        unregisterBinding(prevPath!);
-        this.childPathByUid.set(uid, childPath);
+        this.rows.delete(uid);
       }
     }
-
-    const el = mount.element;
-    const focusEl = mount.view?.focusEl ?? el;
-    return { el, focusEl };
-  }
-
-  ensureKeyLabel(uid: number, key: string, path: CellPath): StringView {
-    const prevPath = this.childPathByUid.get(uid);
-    let label = this.keyLabelByUid.get(uid)!;
-    const needsRemount = !label || (prevPath && !pathsEqual(prevPath, path));
-
-    if (needsRemount) {
-      label?.element.remove();
-      label = new StringView("key", key);
-      this.keyLabelByUid.set(uid, label);
-    } else {
-      label.update(key);
-    }
-    return label;
-  }
-
-  unmountAllChildrenExcept(keepUids?: Set<number>) {
-    for (const [uid, mount] of Array.from(this.childMountByUid)) {
-      if (keepUids?.has(uid)) continue;
-
-      const path = this.childPathByUid.get(uid)!;
-      if (this.element.contains(mount.element)) {
-        unregisterBinding(path);
-        mount.element.remove();
-      }
-      mount.dispose();
-      this.childMountByUid.delete(uid);
-      this.childPathByUid.delete(uid);
-
-      const keyView = this.keyLabelByUid.get(uid);
-      if (keyView) {
-        keyView.element.remove();
-        this.keyLabelByUid.delete(uid);
-      }
-    }
-  }
-
-  textGetterFor(child: ChildSignal) {
-    if (!isWritableSignal(child)) return;
-    return () => {
-      const v = child.peek();
-      if (isLiteral(v)) return String(v.value);
-      if (isFlow(v)) return v.code;
-      return "";
-    };
-  }
-
-  update({ named, plain }: ListValue) {
-    const keepUids = new Set<number>([...named, ...plain].map((x) => x.uid));
-    this.unmountAllChildrenExcept(keepUids);
 
     const frag = document.createDocumentFragment();
-
-    for (const { uid, key, child } of named) {
-      const path: CellPath = [...this.parentPath, uid];
-      const { el, focusEl } = this.mountChildIfNeeded(uid, child, path);
-      const keyLabel = this.ensureKeyLabel(uid, key, path);
-
-      registerBinding(path, {
-        key: {
-          el: keyLabel.element,
-          getText: this.parentWritable ? () => key : undefined,
-        },
-        value: {
-          el: focusEl,
-          getText: this.textGetterFor(child),
-        },
-      });
-
-      frag.append(keyLabel.element, el);
-    }
-
-    for (const { uid, child } of plain) {
-      const path: CellPath = [...this.parentPath, uid];
-      const { el, focusEl } = this.mountChildIfNeeded(uid, child, path);
-
-      registerBinding(path, {
-        value: {
-          el: focusEl,
-          keyAnchorEl: this.parentWritable ? el : undefined,
-          getText: this.textGetterFor(child),
-        },
-      });
-
-      frag.append(el);
+    for (const cell of cells) {
+      const childPath = [...this.parentPath, cell.uid];
+      let mount = this.rows.get(cell.uid);
+      if (!mount) {
+        mount = new CellMount(cell, childPath);
+        this.rows.set(cell.uid, mount);
+      }
+      frag.append(mount.element);
     }
 
     this.element.replaceChildren(frag);
   }
 
   dispose() {
-    this.unmountAllChildrenExcept();
-    this.element.textContent = "";
+    for (const m of this.rows.values()) m.dispose();
+    this.rows.clear();
+  }
+
+  get focusEl() {
+    return this.element;
   }
 }
 
-class FlowView extends View<string> {
-  readonly viewKind = "flow";
-  readonly element: HTMLElement;
-  codeEl: HTMLElement;
-  resultView?: View<ListValue | string>;
-  disposeResultEffect?: () => void;
+class CellMount {
+  element = createEl("div", "cell");
 
-  constructor(
-    readCode: () => string,
-    readResult: () => Value,
-    readonly flowPath: CellPath
-  ) {
-    super();
-    this.element = createEl("div", "flow");
+  headerEl = createEl("div", "header");
+  nameInput = new AutosizeInput("");
+  eqEl = createEl("span", "equals");
+  codeInput = new AutosizeInput("");
 
-    this.codeEl = createEl("div", "expr");
-    this.codeEl.textContent = readCode();
-    this.element.append(this.codeEl);
+  body?: ListView | LiteralView;
+  stop: () => void;
 
-    this.disposeResultEffect = effect(() => {
-      try {
-        const resolved = readResult();
-        this.element.classList.remove("error");
+  constructor(readonly cell: Cell, readonly path: CellPath) {
+    this.nameInput.element.classList.add("name");
+    this.codeInput.element.classList.add("code");
 
-        if (isList(resolved)) {
-          this.ensureResultKind(
-            "list",
-            () => new ListView(this.flowPath, false)
-          );
-          (this.resultView as ListView).update(resolved);
-        } else if (isLiteral(resolved)) {
-          this.ensureResultKind(
-            "literal",
-            () => new StringView("value", String(resolved.value))
-          );
-          this.resultView!.update(String(resolved.value));
-        } else if (isBlank(resolved)) {
-          this.ensureResultKind("literal", () => new StringView("value", ""));
-          this.resultView!.update("");
-        } else {
-          throw new Error("Cannot render a FunctionValue");
-        }
-      } catch {
-        this.element.classList.add("error");
-        this.resultView?.dispose();
-        this.resultView?.element.remove();
-        this.resultView = undefined;
+    this.eqEl.textContent = "=";
+    this.headerEl.append(
+      this.nameInput.element,
+      this.eqEl,
+      this.codeInput.element
+    );
+
+    this.stop = effect(() => {
+      const name = this.cell.name.get();
+      const raw = this.cell.child.get();
+      const flow = isFlow(raw);
+      const flowRaw = flow ? (raw as FlowValue) : null;
+      const show = flow ? flowRaw!.result.get() : raw;
+
+      const needHeader = name !== "" || flow;
+      this.nameInput.update(name);
+      this.nameInput.element.classList.toggle("hidden", name === "");
+      this.codeInput.element.classList.toggle("hidden", !flow);
+      this.eqEl.classList.toggle("hidden", !flow);
+      if (flow) {
+        this.codeInput.update(flowRaw!.code);
+        this.codeInput.input.readOnly = !isWritableSignal(this.cell.child);
       }
+
+      if (!(this.body instanceof (isList(show) ? ListView : LiteralView))) {
+        this.body?.dispose();
+        this.body = isList(show)
+          ? new ListView(this.path)
+          : new LiteralView(isWritableSignal(this.cell.child));
+      }
+
+      if (isList(show)) {
+        (this.body as ListView).update(show);
+      } else {
+        (this.body as LiteralView).update(
+          isFunction(show) ? createBlank() : show
+        );
+      }
+
+      this.element.replaceChildren(
+        ...(needHeader ? [this.headerEl] : []),
+        this.body!.element
+      );
+
+      const focusEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
+      registerBinding(this.path, {
+        ...(name !== "" && { name: this.nameInput.input }),
+        value: focusEl,
+        cell: this.element,
+      });
     });
   }
 
-  get focusEl(): HTMLElement {
-    return this.codeEl;
-  }
-
-  ensureResultKind(
-    kind: "list" | "literal",
-    build: () => View<ListValue | string>
-  ) {
-    if (!this.resultView || this.resultView.viewKind !== kind) {
-      const next = build();
-      if (this.resultView) {
-        this.resultView.dispose();
-        this.resultView.element.replaceWith(next.element);
-      } else {
-        this.codeEl.insertAdjacentElement("afterend", next.element);
-      }
-      this.resultView = next;
-    }
-  }
-
-  update(code: string) {
-    this.codeEl.textContent = code;
-  }
-
   dispose() {
-    this.disposeResultEffect?.();
-    this.resultView?.dispose();
-    this.element.textContent = "";
-  }
-}
-
-class SignalMount {
-  valueView!: View<ListValue | string>;
-  disposeEffect: () => void;
-
-  constructor(readonly signal: ChildSignal, readonly path: CellPath) {
-    const ensureKind = (
-      kind: "flow" | "list" | "literal",
-      build: () => View<ListValue | string>
-    ) => {
-      if (!this.valueView || this.valueView.viewKind !== kind) {
-        this.valueView?.dispose();
-        this.valueView = build();
-      }
-    };
-
-    this.disposeEffect = effect(() => {
-      const v = this.signal.get();
-
-      if (isFlow(v)) {
-        ensureKind(
-          "flow",
-          () =>
-            new FlowView(
-              () => (this.signal.peek() as FlowValue).code,
-              () => (this.signal.peek() as FlowValue).result.get(),
-              this.path
-            )
-        );
-        this.valueView.update(v.code);
-      } else if (isList(v)) {
-        ensureKind(
-          "list",
-          () => new ListView(this.path, isWritableSignal(this.signal))
-        );
-        this.valueView.update(v);
-      } else if (isLiteral(v) || isBlank(v)) {
-        const text = isLiteral(v) ? String((v as LiteralValue).value) : "";
-        ensureKind("literal", () => new StringView("value", text));
-        this.valueView.update(text);
-      } else {
-        throw new Error("Cannot render a FunctionValue");
-      }
-    });
-  }
-
-  get element() {
-    return this.valueView.element;
-  }
-
-  get view() {
-    return this.valueView;
-  }
-
-  dispose() {
-    this.disposeEffect();
-    this.valueView?.dispose();
+    unregisterBinding(this.path);
+    this.stop();
+    this.body?.dispose();
   }
 }
 
 export default function renderRoot(
-  rootSignal: ChildSignal,
+  rootSignal: ValueSignal<ListValue>,
   rootPath: CellPath
 ) {
-  const mount = new SignalMount(rootSignal, rootPath);
+  const listView = new ListView(rootPath);
 
-  registerBinding(rootPath, { value: { el: mount.view.focusEl } });
+  const stop = effect(() => {
+    const list = rootSignal.get();
+    listView.update(list);
+  });
 
-  const dispose = () => {
-    unregisterBinding(rootPath);
-    mount.dispose();
+  return {
+    element: listView.element,
+    dispose() {
+      stop?.();
+      listView.dispose();
+    },
   };
-
-  return { mount, dispose };
 }

@@ -19,10 +19,10 @@ import {
   scalarToValue,
   size,
   sliceText,
-  sliceListPlain,
+  sliceList,
   createRangeList,
-  getByKey,
-  getByKeyOrIndex,
+  getByName,
+  getByIndexOrName,
 } from "./data";
 
 /* Grammar */
@@ -108,7 +108,7 @@ Script {
 }
 `);
 
-/* AST Types */
+/* AST types */
 
 export type Expr =
   | Lambda
@@ -158,7 +158,7 @@ export interface Index {
 export interface Member {
   type: "Member";
   list: Expr;
-  key: Ident;
+  name: Ident;
   strict: boolean;
 }
 
@@ -295,7 +295,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     return (receiver: Expr): Member => ({
       type: "Member",
       list: receiver,
-      key: { type: "Ident", name: nameTok.sourceString },
+      name: { type: "Ident", name: nameTok.sourceString },
       strict: !!maybeBang.sourceString,
     });
   },
@@ -334,7 +334,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     return {
       type: "Member",
       list: IMPLICIT_PARAM,
-      key: { type: "Ident", name: nameTok.sourceString },
+      name: { type: "Ident", name: nameTok.sourceString },
       strict: !!maybeBang.sourceString,
     } as Member;
   },
@@ -475,20 +475,20 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
         }
 
         if (isList(target)) {
-          return createSignal(sliceListPlain(target, startN, endN, stepN));
+          return createSignal(sliceList(target, startN, endN, stepN));
         }
 
         return createSignal(createBlank());
       }
 
       const target = evalExpr(e.list, scope).get();
-      const idxOrKey = evalExpr(e.index, scope).get();
-      return createSignal(getByKeyOrIndex(target, idxOrKey, e.strict));
+      const indexOrName = evalExpr(e.index, scope).get();
+      return createSignal(getByIndexOrName(target, indexOrName, e.strict));
     }
 
     case "Member": {
       const target = evalExpr(e.list, scope).get();
-      return createSignal(getByKey(target, e.key.name, e.strict));
+      return createSignal(getByName(target, e.name.name, e.strict));
     }
 
     case "Slice": {

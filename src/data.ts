@@ -25,8 +25,8 @@ export const ERR = {
   indexOneBased: "Index must be 1 or greater",
   indexNonList: "Cannot index into a non-list value",
   indexOutOfRange: (index: number, len: number) =>
-    `Index ${index} is out of range (plain length ${len})`,
-  indexKeyMustBeTextOrNumber: "Index/key must evaluate to text or number",
+    `Index ${index} is out of range (length ${len})`,
+  indexNameMustBeTextOrNumber: "Index/name must evaluate to text or number",
   propOnNonList: (prop: string) =>
     `Cannot access property '${prop}' of non-list value`,
   unknownProperty: (prop: string) => `Unknown property '${prop}'`,
@@ -46,13 +46,9 @@ export type LiteralValue = {
   value: Primitive;
 };
 
-export type NamedCell = { uid: number; key: string; child: ChildSignal };
-export type PlainCell = { uid: number; child: ChildSignal };
-
 export type ListValue = {
   kind: "list";
-  named: NamedCell[];
-  plain: PlainCell[];
+  cells: Cell[];
 };
 
 export type FunctionValue = {
@@ -62,20 +58,13 @@ export type FunctionValue = {
 
 export type Value = BlankValue | LiteralValue | ListValue | FunctionValue;
 
-export type IfElseValue = {
-  kind: "ifelse";
-  if: ValueSignal;
-  then: ValueSignal;
-  else?: ValueSignal;
-};
-
 export type FlowValue = {
   kind: "flow";
   code: string;
   result: ReadSignal<Value>;
 };
 
-export type EvalValue = IfElseValue | FlowValue;
+export type EvalValue = FlowValue;
 
 type ReadSignal<T> = {
   kind: "signal";
@@ -93,12 +82,19 @@ export type ValueSignal<T extends Value = Value> =
 
 export type ChildSignal = ReadSignal<Value> | WriteSignal<Value | EvalValue>;
 
+export type Cell = {
+  uid: number;
+  name: WriteSignal<string>;
+  child: ChildSignal;
+};
+
 export type StaticError = { kind: "error"; message: string };
+
+export type StaticCell = { name?: string; value: StaticValue };
 
 export type StaticListValue = {
   kind: "list";
-  named: Record<string, StaticValue>;
-  plain: StaticValue[];
+  cells: StaticCell[];
 };
 
 export type StaticValue =
@@ -121,7 +117,6 @@ export const isFunction = (v: unknown): v is FunctionValue =>
   hasKind(v, "function");
 export const isValue = (v: unknown): v is Value =>
   isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
-export const isIfElse = (v: unknown): v is IfElseValue => hasKind(v, "ifelse");
 export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
 export const isSignal = (
   v: unknown
@@ -168,26 +163,33 @@ export const createLiteral = (value: Primitive): LiteralValue => ({
 });
 
 export function createList(
-  named: [string, ChildSignal][] | Record<string, ChildSignal> = [],
-  plain: ChildSignal[] = []
+  cells: {
+    uid?: number;
+    name?: string | WriteSignal<string>;
+    child: ChildSignal;
+  }[] = []
 ): ListValue {
-  const namedPairs = Array.isArray(named) ? named : Object.entries(named);
   return {
     kind: "list",
-    named: namedPairs.map(([key, child]) => ({ uid: newUid(), key, child })),
-    plain: plain.map((child) => ({ uid: newUid(), child })),
+    cells: cells.map((c) => {
+      let nameSig: WriteSignal<string>;
+      if (isSignal(c.name)) {
+        nameSig = c.name;
+      } else {
+        nameSig = createSignal<string>(c.name ?? "");
+      }
+      return {
+        uid: c.uid ?? newUid(),
+        name: nameSig,
+        child: c.child,
+      };
+    }),
   };
 }
 
 export const createFunction = (
   fn: (...args: ValueSignal[]) => ValueSignal
 ): FunctionValue => ({ kind: "function", fn });
-
-export const createIfElse = (
-  cond: ValueSignal,
-  thenSig: ValueSignal,
-  elseSig?: ValueSignal
-): IfElseValue => ({ kind: "ifelse", if: cond, then: thenSig, else: elseSig });
 
 export function createFlowSignal(initialCode: string): WriteSignal<FlowValue> {
   const codeText = signal(initialCode);
@@ -227,14 +229,17 @@ export function createSignal<T>(initial: T): WriteSignal<T> {
 }
 
 export function createListSignal(
-  named: [string, ChildSignal][] | Record<string, ChildSignal> = [],
-  plain: ChildSignal[] = []
+  cells: {
+    uid?: number;
+    name?: string | WriteSignal<string>;
+    child: ChildSignal;
+  }[] = []
 ): ValueSignal<ListValue> {
-  const parent = createSignal(createList([], []));
-  const namedPairs = Array.isArray(named) ? named : Object.entries(named);
-  for (const [, v] of namedPairs) getParentSignal(v).value = parent;
-  for (const v of plain) getParentSignal(v).value = parent;
-  parent.set(createList(named, plain));
+  const parent = createSignal(createList([]));
+  for (const c of cells) {
+    getParentSignal(c.child).value = parent;
+  }
+  parent.set(createList(cells));
   return parent;
 }
 
@@ -246,24 +251,17 @@ function primTruthy(p: Primitive): boolean {
   return p.length > 0;
 }
 
-function listNonEmpty(b: ListValue | StaticListValue): boolean {
-  const namedCount = Array.isArray((b as any).named)
-    ? (b as ListValue).named.length
-    : Object.keys((b as StaticListValue).named).length;
-  return namedCount > 0 || b.plain.length > 0;
-}
-
-export function toBool(node: Value): boolean | null {
-  if (isBlank(node)) return null;
-  if (isLiteral(node)) return primTruthy(node.value);
-  if (isList(node)) return listNonEmpty(node);
+export function toBool(value: Value): boolean | null {
+  if (isBlank(value)) return null;
+  if (isLiteral(value)) return primTruthy(value.value);
+  if (isList(value)) return value.cells.length > 0;
   return null;
 }
 
-export function toNumber(node: Value): number | null {
-  if (isBlank(node)) return null;
-  if (isLiteral(node)) {
-    const v = node.value;
+export function toNumber(value: Value): number | null {
+  if (isBlank(value)) return null;
+  if (isLiteral(value)) {
+    const v = value.value;
     if (typeof v === "number") return v;
     if (v === true) return 1;
     if (typeof v === "string") {
@@ -274,9 +272,9 @@ export function toNumber(node: Value): number | null {
   return null;
 }
 
-export function toText(node: Value): string | null {
-  if (isBlank(node)) return null;
-  if (isLiteral(node)) return String(node.value);
+export function toText(value: Value): string | null {
+  if (isBlank(value)) return null;
+  if (isLiteral(value)) return String(value.value);
   return null;
 }
 
@@ -327,11 +325,11 @@ export function scalarToValue(
   return createLiteral(v);
 }
 
-export function size(node: Value): number | null {
-  if (isBlank(node)) return null;
-  if (isLiteral(node) && typeof node.value === "string")
-    return node.value.length;
-  if (isList(node)) return node.named.length + node.plain.length;
+export function size(value: Value): number | null {
+  if (isBlank(value)) return null;
+  if (isLiteral(value) && typeof value.value === "string")
+    return value.value.length;
+  if (isList(value)) return value.cells.length;
   throw new TypeError(ERR.textOrList);
 }
 
@@ -380,15 +378,15 @@ export function sliceText(
   return indices.map((i) => text.charAt(i - 1)).join("");
 }
 
-export function sliceListPlain(
+export function sliceList(
   list: ListValue,
   start: number | null,
   end: number | null,
   step: number | null
 ): ListValue {
-  const indices = computeSliceIndices(start, end, step, list.plain.length);
-  const newPlain = indices.map((oneBased) => list.plain[oneBased - 1]!.child);
-  return createList([], newPlain);
+  const indices = computeSliceIndices(start, end, step, list.cells.length);
+  const cells = indices.map((oneBased) => list.cells[oneBased - 1]!);
+  return createList(cells);
 }
 
 export function createRangeList(
@@ -397,10 +395,10 @@ export function createRangeList(
   step: number | null = null
 ): ListValue {
   const indices = computeSliceIndices(start, end, step, null);
-  const plain: ChildSignal[] = indices.map((n) =>
-    createSignal(createLiteral(n))
-  );
-  return createList([], plain);
+  const cells = indices.map((n) => ({
+    child: createSignal(createLiteral(n)),
+  }));
+  return createList(cells);
 }
 
 /* Evaluation */
@@ -415,12 +413,6 @@ function toStaticError(err: unknown): StaticError {
   };
 }
 
-function isStaticTruthy(n: StaticValue): boolean {
-  if (isStaticError(n) || isBlank(n)) return false;
-  if (isStaticList(n)) return listNonEmpty(n);
-  return primTruthy(n as any);
-}
-
 let __globalLib: Map<string, ValueSignal> | null = null;
 export function setGlobalLibrary(entries: Record<string, ValueSignal>) {
   __globalLib = new Map(
@@ -431,8 +423,8 @@ export function setGlobalLibrary(entries: Record<string, ValueSignal>) {
 function lookupInScope(name: string, start: ChildSignal): ValueSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
-    const { named } = scope.get();
-    const found = named.find((v) => v.key === name);
+    const { cells } = scope.get();
+    const found = cells.find((v) => v.name.get() === name);
     if (found) return createSignal(childToValue(found.child));
     scope = getParentSignal(scope).value;
   }
@@ -448,13 +440,6 @@ function lookupInScope(name: string, start: ChildSignal): ValueSignal {
 export function childToValue(sig: ChildSignal): Value {
   const v = sig.get();
 
-  if (isIfElse(v)) {
-    const truthy = isStaticTruthy(resolveValue(v.if.get()));
-    if (truthy) return v.then.get();
-    if (v.else) return v.else.get();
-    return createBlank();
-  }
-
   if (isFlow(v)) {
     return v.result.get();
   }
@@ -462,27 +447,21 @@ export function childToValue(sig: ChildSignal): Value {
   return v;
 }
 
-export function resolveValue(n: Value): StaticValue {
-  if (n.kind === "blank") return { kind: "blank" };
-  if (n.kind === "literal") return n.value;
+export function resolveValue(value: Value): StaticValue {
+  if (value.kind === "blank") return { kind: "blank" };
+  if (value.kind === "literal") return value.value;
 
-  if (n.kind === "list") {
-    const named: Record<string, StaticValue> = {};
-    for (const nc of n.named) {
+  if (value.kind === "list") {
+    const cells: StaticCell[] = value.cells.map((c) => {
+      const nm = c.name.get();
+      const outName = nm === "" ? undefined : nm;
       try {
-        named[nc.key] = resolveValue(childToValue(nc.child));
+        return { name: outName, value: resolveValue(childToValue(c.child)) };
       } catch (err) {
-        named[nc.key] = toStaticError(err);
-      }
-    }
-    const plain: StaticValue[] = n.plain.map((pc) => {
-      try {
-        return resolveValue(childToValue(pc.child));
-      } catch (err) {
-        return toStaticError(err);
+        return { name: outName, value: toStaticError(err) };
       }
     });
-    return { kind: "list", named, plain };
+    return { kind: "list", cells };
   }
 
   return {
@@ -509,11 +488,11 @@ function softWrap<T>(strict: boolean, fn: () => T): T | BlankValue {
   }
 }
 
-export function getByKey(list: Value, key: string, strict = false): Value {
+export function getByName(list: Value, name: string, strict = false): Value {
   return softWrap(strict, () => {
-    if (!isList(list)) throw new TypeError(ERR.propOnNonList(key));
-    const cell = list.named.find((v) => v.key === key);
-    if (!cell) throw new ReferenceError(ERR.unknownProperty(key));
+    if (!isList(list)) throw new TypeError(ERR.propOnNonList(name));
+    const cell = list.cells.find((v) => v.name.get() === name);
+    if (!cell) throw new ReferenceError(ERR.unknownProperty(name));
     return childToValue(cell.child);
   });
 }
@@ -524,14 +503,14 @@ export function getByIndex(list: Value, index1: number, strict = false): Value {
     const idx0 = Math.trunc(index1) - 1;
     if (idx0 < 0) throw new RangeError(ERR.indexOneBased);
     if (!isList(list)) throw new TypeError(ERR.indexNonList);
-    const cell = list.plain[idx0];
+    const cell = list.cells[idx0];
     if (!cell)
-      throw new RangeError(ERR.indexOutOfRange(index1, list.plain.length));
+      throw new RangeError(ERR.indexOutOfRange(index1, list.cells.length));
     return childToValue(cell.child);
   });
 }
 
-export function getByKeyOrIndex(
+export function getByIndexOrName(
   list: Value,
   value: Value,
   strict = false
@@ -541,8 +520,8 @@ export function getByKeyOrIndex(
     if (isLiteral(value)) {
       const lit = value.value;
       if (typeof lit === "number") return getByIndex(list, lit, strict);
-      if (typeof lit === "string") return getByKey(list, lit, strict);
+      if (typeof lit === "string") return getByName(list, lit, strict);
     }
-    throw new TypeError(ERR.indexKeyMustBeTextOrNumber);
+    throw new TypeError(ERR.indexNameMustBeTextOrNumber);
   });
 }

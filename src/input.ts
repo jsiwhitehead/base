@@ -5,8 +5,7 @@ import {
   firstChildPath,
   setText,
   toggleCodeText,
-  assignKey,
-  removeKey,
+  setName,
   insertBefore,
   insertAfter,
   wrapWithList,
@@ -14,36 +13,15 @@ import {
   removeChild,
 } from "./tree";
 
-export type Role = "key" | "value";
-
-type RoleView = {
-  el: HTMLElement;
-  getText?: () => string;
-  keyAnchorEl?: HTMLElement;
-};
-
-type PathBinding = {
-  path: CellPath;
-  key?: RoleView;
-  value?: RoleView;
-};
+export type Role = "name" | "value";
 
 type MachineState =
   | { kind: "Idle" }
-  | { kind: "ViewingValue"; path: CellPath }
-  | {
-      kind: "Editing";
-      role: Role;
-      path: CellPath;
-      session: InlineEditor;
-    };
+  | { kind: "Focused"; path: CellPath; role: Role };
 
 type EditorEvent =
-  | { type: "FOCUS"; binding: PathBinding; role: Role }
-  | { type: "NAVIGATE"; path: CellPath; role: Role }
+  | { type: "FOCUS"; path: CellPath; role: Role }
   | { type: "CLEAR_FOCUS" }
-  | { type: "BEGIN_EDIT"; seed?: string }
-  | { type: "END_EDIT"; reason: "commit" | "cancel"; refocus?: boolean }
   | {
       type: "TRANSFORM";
       op:
@@ -55,309 +33,300 @@ type EditorEvent =
         | "remove";
     };
 
+type PathBinding = {
+  path: CellPath;
+  name?: HTMLElement;
+  value?: HTMLElement;
+  cell?: HTMLElement;
+  teardowns: (() => void)[];
+};
+
 const serializePath = (p: CellPath) => JSON.stringify(p);
-
 const bindingsByPath = new Map<string, PathBinding>();
-
 let currentState: MachineState = { kind: "Idle" };
 
 function getBinding(path: CellPath): PathBinding | undefined {
   return bindingsByPath.get(serializePath(path));
 }
 
-function getRoleView(
-  binding: PathBinding | undefined,
-  role: Role
-): RoleView | undefined {
-  if (!binding) return undefined;
-  return role === "key" ? binding.key : binding.value;
+function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
+  el: T,
+  type: K,
+  handler: (e: HTMLElementEventMap[K]) => void,
+  opts?: boolean | AddEventListenerOptions
+) {
+  el.addEventListener(type, handler as any, opts);
+  return () => el.removeEventListener(type, handler as any, opts);
 }
 
-const flipRole = (role: Role): Role => (role === "key" ? "value" : "key");
-
-class InlineEditor {
-  readonly inputEl = document.createElement("input");
-
-  constructor(readonly role: Role, readonly roleView: RoleView, seed?: string) {
-    if (role === "key") {
-      this.inputEl.classList.add("key");
-    } else {
-      this.inputEl.classList.add(...roleView.el.classList);
-    }
-
-    if (role === "key" && roleView.keyAnchorEl) {
-      roleView.keyAnchorEl.parentNode!.insertBefore(
-        this.inputEl,
-        roleView.keyAnchorEl
-      );
-    } else {
-      roleView.el.parentNode!.replaceChild(this.inputEl, roleView.el);
-    }
-
-    queueMicrotask(() => {
-      this.inputEl.focus({ preventScroll: true });
-    });
-
-    this.inputEl.setAttribute("autocorrect", "off");
-    this.inputEl.setAttribute("autocomplete", "off");
-    (this.inputEl as any).autocapitalize = "off";
-    this.inputEl.spellcheck = false;
-
-    this.inputEl.value = seed ?? (roleView.getText ? roleView.getText() : "");
+function setFocusClasses() {
+  for (const { name, value, cell } of bindingsByPath.values()) {
+    name?.classList.remove("focused");
+    value?.classList.remove("focused");
+    cell?.classList.remove("focused");
   }
 
-  get value() {
-    return this.inputEl.value;
-  }
-
-  dispose() {
-    if (this.role === "key" && this.roleView.keyAnchorEl) {
-      this.inputEl.parentNode!.removeChild(this.inputEl);
+  if (currentState.kind === "Focused") {
+    const b = getBinding(currentState.path);
+    if (currentState.role === "name") {
+      b?.name?.classList.add("focused");
     } else {
-      this.inputEl.parentNode!.replaceChild(this.roleView.el, this.inputEl);
+      b?.value?.classList.add("focused");
     }
+    b?.cell?.classList.add("focused");
   }
 }
 
-function computeEntryState(
-  binding: PathBinding,
-  role: Role,
-  seed?: string
-): MachineState {
-  if (role === "key") {
-    if (binding.key?.getText) {
-      const session = new InlineEditor("key", binding.key, seed);
-      return { kind: "Editing", role: "key", path: binding.path, session };
-    }
-    if (binding.value?.keyAnchorEl) {
-      const session = new InlineEditor("key", binding.value, "");
-      return { kind: "Editing", role: "key", path: binding.path, session };
-    }
-    return { kind: "Idle" };
-  }
-
-  return binding.value
-    ? { kind: "ViewingValue", path: binding.path }
-    : { kind: "Idle" };
-}
-
-function transition(prev: MachineState, ev: EditorEvent): MachineState {
-  switch (ev.type) {
-    case "FOCUS": {
-      return computeEntryState(ev.binding, ev.role);
-    }
-    case "NAVIGATE": {
-      const next = getBinding(ev.path);
-      if (!next) return { kind: "Idle" };
-      return computeEntryState(next, ev.role);
-    }
-    case "CLEAR_FOCUS": {
-      return { kind: "Idle" };
-    }
-
-    case "BEGIN_EDIT": {
-      if (prev.kind !== "ViewingValue") return prev;
-      const binding = getBinding(prev.path);
-      const valueView = getRoleView(binding, "value");
-      if (!valueView?.getText) return prev;
-      const session = new InlineEditor("value", valueView, ev.seed);
-      return { kind: "Editing", role: "value", path: prev.path, session };
-    }
-    case "END_EDIT": {
-      if (prev.kind !== "Editing") return prev;
-      const { path, role } = prev;
-
-      if (role === "key") {
-        const binding = getBinding(path);
-        const hasValue = !!binding?.value;
-        return hasValue ? { kind: "ViewingValue", path } : { kind: "Idle" };
-      }
-      return { kind: "ViewingValue", path };
-    }
-
-    case "TRANSFORM": {
-      if (prev.kind !== "ViewingValue" && prev.kind !== "Editing") return prev;
-
-      const path = prev.path;
-      let nextPath: CellPath | undefined;
-
-      switch (ev.op) {
-        case "toggle-text-code":
-          nextPath = toggleCodeText(path);
-          break;
-        case "insert-before":
-          nextPath = insertBefore(path);
-          break;
-        case "insert-after":
-          nextPath = insertAfter(path);
-          break;
-        case "unwrap-if-single-child":
-          nextPath = unwrapListIfSingleChild(path);
-          break;
-        case "wrap":
-          nextPath = wrapWithList(path);
-          break;
-        case "remove":
-          nextPath = removeChild(path);
-          break;
-      }
-
-      return nextPath
-        ? { kind: "ViewingValue", path: nextPath }
-        : { kind: "Idle" };
-    }
+function focusDomToActive() {
+  if (currentState.kind !== "Focused") return;
+  const b = getBinding(currentState.path);
+  const el = currentState.role === "name" ? b?.name : b?.value;
+  if (el && document.activeElement !== el) {
+    el.focus({ preventScroll: true });
   }
 }
 
 function dispatch(ev: EditorEvent) {
-  const prev = currentState;
-  const next = transition(prev, ev);
-  currentState = next;
-  syncEditingDom(prev, next, ev);
-  syncFocusDom(prev, next, ev);
+  currentState = transition(currentState, ev);
+  setFocusClasses();
+  focusDomToActive();
 }
 
-function syncEditingDom(
-  prev: MachineState,
-  next: MachineState,
-  ev: EditorEvent
-) {
-  if (prev.kind !== "Editing" && next.kind === "Editing") {
-    const { inputEl } = next.session;
+function transition(prev: MachineState, ev: EditorEvent): MachineState {
+  switch (ev.type) {
+    case "FOCUS":
+      return { kind: "Focused", path: ev.path, role: ev.role };
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      switch (e.key) {
-        case "Enter":
-        case "Tab":
-          e.preventDefault();
-          e.stopPropagation();
-          dispatch({ type: "END_EDIT", reason: "commit", refocus: true });
+    case "TRANSFORM": {
+      if (prev.kind !== "Focused") return prev;
+      const target = prev.path;
+      let nextPath: CellPath | undefined;
+      switch (ev.op) {
+        case "toggle-text-code":
+          nextPath = toggleCodeText(target);
           break;
-        case "Escape":
-          e.preventDefault();
-          e.stopPropagation();
-          dispatch({ type: "END_EDIT", reason: "cancel", refocus: true });
+        case "insert-before":
+          nextPath = insertBefore(target);
+          break;
+        case "insert-after":
+          nextPath = insertAfter(target);
+          break;
+        case "unwrap-if-single-child":
+          nextPath = unwrapListIfSingleChild(target);
+          break;
+        case "wrap":
+          nextPath = wrapWithList(target);
+          break;
+        case "remove":
+          nextPath = removeChild(target);
           break;
       }
-    };
-
-    const onBlur = () => {
-      dispatch({ type: "END_EDIT", reason: "commit", refocus: false });
-    };
-
-    inputEl.addEventListener("keydown", onKeyDown);
-    inputEl.addEventListener("blur", onBlur);
-  }
-
-  if (prev.kind === "Editing" && next.kind !== "Editing") {
-    const { session, role, path } = prev;
-
-    const reason: "commit" | "cancel" =
-      ev.type === "END_EDIT"
-        ? ev.reason
-        : ev.type === "CLEAR_FOCUS"
-        ? "cancel"
-        : "commit";
-
-    const text = session.value;
-    session.dispose();
-
-    const binding = getBinding(path);
-    if (!binding) return;
-
-    if (reason === "commit") {
-      applyCommittedEdit(binding, text, role);
+      if (!nextPath) return { kind: "Idle" };
+      return { kind: "Focused", path: nextPath, role: "value" };
     }
+
+    case "CLEAR_FOCUS":
+      return { kind: "Idle" };
   }
-}
-
-function syncFocusDom(prev: MachineState, next: MachineState, ev: EditorEvent) {
-  if (next.kind !== "ViewingValue") return;
-  if (ev.type === "END_EDIT" && ev.refocus === false) return;
-
-  const el = getBinding(next.path)?.value?.el;
-  if (!el) return;
-  if (document.activeElement === el) return;
-
-  el.focus({ preventScroll: true });
-}
-
-function applyCommittedEdit(binding: PathBinding, text: string, role: Role) {
-  const { path } = binding;
-
-  if (role === "key") {
-    const trimmed = text.trim();
-    if (trimmed === "") removeKey(path);
-    else assignKey(path, trimmed);
-    return;
-  }
-
-  if (!binding.value?.getText) return;
-  setText(path, text);
 }
 
 export function registerBinding(
   path: CellPath,
-  slots: { key?: RoleView; value?: RoleView }
+  slots: { name?: HTMLElement; value?: HTMLElement; cell?: HTMLElement }
 ) {
   const k = serializePath(path);
+  const prior = bindingsByPath.get(k);
+
+  if (
+    prior &&
+    prior.name === slots.name &&
+    prior.value === slots.value &&
+    prior.cell === slots.cell
+  ) {
+    setFocusClasses();
+    return;
+  }
+
+  if (prior) {
+    for (const td of prior.teardowns) td();
+    bindingsByPath.delete(k);
+  }
+
   const binding: PathBinding = {
     path: path.slice(),
-    key: slots.key,
+    name: slots.name,
     value: slots.value,
+    cell: slots.cell,
+    teardowns: [],
   };
   bindingsByPath.set(k, binding);
 
-  if (binding.key) {
-    const el = binding.key.el;
-    el.tabIndex = 0;
+  if (binding.name) {
+    const el = binding.name;
 
-    el.addEventListener(
-      "focus",
-      (e: FocusEvent) => {
-        if (e.target !== el) return;
-        dispatch({ type: "FOCUS", binding, role: "value" });
-      },
-      true
+    binding.teardowns.push(
+      on(
+        el,
+        "focus",
+        (e: FocusEvent) => {
+          if (e.target !== el) return;
+          dispatch({ type: "FOCUS", path, role: "name" });
+        },
+        true
+      )
     );
 
-    el.addEventListener("dblclick", () => {
-      if (!binding.key!.getText) return;
-      dispatch({ type: "FOCUS", binding, role: "key" });
-    });
+    if (el instanceof HTMLInputElement) {
+      binding.teardowns.push(
+        on(el, "blur", () => {
+          setName(path, el.value.trim());
+          if (binding.value) {
+            dispatch({ type: "FOCUS", path, role: "value" });
+          } else {
+            dispatch({ type: "CLEAR_FOCUS" });
+          }
+        })
+      );
+
+      binding.teardowns.push(
+        on(el, "keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            el.blur();
+            return;
+          }
+          if (e.key === "Tab") {
+            e.preventDefault();
+            e.stopPropagation();
+            dispatch({ type: "FOCUS", path, role: "value" });
+          }
+        })
+      );
+
+      binding.teardowns.push(
+        on(el, "mousedown", (e: MouseEvent) => e.stopPropagation())
+      );
+    } else {
+      binding.teardowns.push(
+        on(el, "mousedown", (e: MouseEvent) => {
+          if (binding.value) {
+            e.preventDefault();
+            e.stopPropagation();
+            dispatch({ type: "FOCUS", path, role: "value" });
+          }
+        })
+      );
+    }
   }
 
   if (binding.value) {
-    const el = binding.value.el;
-    el.tabIndex = 0;
+    const el = binding.value;
+    if (!(el instanceof HTMLInputElement)) el.tabIndex = 0;
 
-    el.addEventListener(
-      "focus",
-      (e: FocusEvent) => {
-        if (e.target !== el) return;
-        dispatch({ type: "FOCUS", binding, role: "value" });
-      },
-      true
+    binding.teardowns.push(
+      on(
+        el,
+        "focus",
+        (e: FocusEvent) => {
+          if (e.target !== el) return;
+          dispatch({ type: "FOCUS", path, role: "value" });
+        },
+        true
+      )
     );
 
-    el.addEventListener("dblclick", () => {
-      if (!binding.value!.getText) return;
-      dispatch({ type: "FOCUS", binding, role: "value" });
-      dispatch({ type: "BEGIN_EDIT" });
-    });
+    binding.teardowns.push(
+      on(el, "mousedown", (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.focus({ preventScroll: true });
+        dispatch({ type: "FOCUS", path, role: "value" });
+      })
+    );
+
+    if (el instanceof HTMLInputElement) {
+      binding.teardowns.push(on(el, "blur", () => setText(path, el.value)));
+
+      binding.teardowns.push(
+        on(el, "keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            el.blur();
+            return;
+          }
+          if (e.key === "Tab") {
+            e.preventDefault();
+            e.stopPropagation();
+            const b = getBinding(path);
+            if (b?.name instanceof HTMLInputElement) {
+              b.name.focus({ preventScroll: true });
+            }
+            return;
+          }
+          if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === "=") {
+            e.preventDefault();
+            e.stopPropagation();
+            dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            e.stopPropagation();
+            const up = siblingPath(path, -1);
+            if (up) dispatch({ type: "FOCUS", path: up, role: "value" });
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            e.stopPropagation();
+            const down = siblingPath(path, 1);
+            if (down) dispatch({ type: "FOCUS", path: down, role: "value" });
+            return;
+          }
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            e.stopPropagation();
+            const left = parentPath(path);
+            if (left) dispatch({ type: "FOCUS", path: left, role: "value" });
+            return;
+          }
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            e.stopPropagation();
+            const right = firstChildPath(path);
+            if (right) dispatch({ type: "FOCUS", path: right, role: "value" });
+            return;
+          }
+          if (
+            e.key === "Backspace" &&
+            el.selectionStart === 0 &&
+            el.selectionEnd === 0
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
+            dispatch({ type: "TRANSFORM", op: "remove" });
+          }
+        })
+      );
+    }
   }
+
+  setFocusClasses();
 }
 
 export function unregisterBinding(path: CellPath) {
   const k = serializePath(path);
-  bindingsByPath.delete(k);
+  const binding = bindingsByPath.get(k);
 
-  const pathsEqual = (p: CellPath) =>
-    JSON.stringify(p) === JSON.stringify(path);
-  if (
-    (currentState.kind === "ViewingValue" && pathsEqual(currentState.path)) ||
-    (currentState.kind === "Editing" && pathsEqual(currentState.path))
-  ) {
+  if (binding) {
+    for (const td of binding.teardowns) td();
+    bindingsByPath.delete(k);
+  }
+
+  const isSame = (p: CellPath) => serializePath(p) === k;
+  if (currentState.kind === "Focused" && isSame(currentState.path)) {
     dispatch({ type: "CLEAR_FOCUS" });
   }
 }
@@ -365,119 +334,66 @@ export function unregisterBinding(path: CellPath) {
 export function onRootKeyDown(e: KeyboardEvent) {
   const activeEl = document.activeElement as HTMLElement | null;
   if (!activeEl || activeEl.tagName === "INPUT") return;
-
   if (currentState.kind === "Idle") return;
 
-  const preventAndStop = () => {
+  const prevent = () => {
     e.preventDefault();
     e.stopPropagation();
   };
 
-  if (e.key === "Tab") {
-    preventAndStop();
+  if (currentState.kind === "Focused") {
+    const cur = currentState.path;
 
-    if (
-      currentState.kind === "ViewingValue" ||
-      currentState.kind === "Editing"
-    ) {
-      const path = currentState.path;
-      if (!parentPath(path)) return;
-
-      const curRole: Role =
-        currentState.kind === "Editing" ? currentState.role : "value";
-      const nextRole = (curRole === "key" ? "value" : "key") as Role;
-      dispatch({ type: "NAVIGATE", path, role: nextRole });
-    }
-    return;
-  }
-
-  if (currentState.kind === "ViewingValue" && e.key === "=") {
-    preventAndStop();
-    dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
-    return;
-  }
-
-  if (currentState.kind === "ViewingValue") {
-    const binding = getBinding(currentState.path);
-    const valueView = getRoleView(binding, "value");
-
-    if (e.key === "Enter" && valueView?.getText) {
-      preventAndStop();
-      dispatch({ type: "BEGIN_EDIT" });
+    if (e.key === "=") {
+      prevent();
+      dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
       return;
     }
-    if (
-      e.key.length === 1 &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey &&
-      valueView?.getText
-    ) {
-      preventAndStop();
-      dispatch({ type: "BEGIN_EDIT", seed: e.key });
+
+    if (e.key === "Backspace") {
+      prevent();
+      dispatch({ type: "TRANSFORM", op: "remove" });
       return;
     }
-  }
 
-  if (
-    e.shiftKey &&
-    (currentState.kind === "ViewingValue" || currentState.kind === "Editing")
-  ) {
-    preventAndStop();
     switch (e.key) {
       case "ArrowUp":
-        dispatch({ type: "TRANSFORM", op: "insert-before" });
+        prevent();
+        {
+          const up = siblingPath(cur, -1);
+          if (up) dispatch({ type: "FOCUS", path: up, role: "value" });
+        }
         return;
       case "ArrowDown":
-        dispatch({ type: "TRANSFORM", op: "insert-after" });
+        prevent();
+        {
+          const down = siblingPath(cur, 1);
+          if (down) dispatch({ type: "FOCUS", path: down, role: "value" });
+        }
         return;
       case "ArrowLeft":
-        dispatch({ type: "TRANSFORM", op: "unwrap-if-single-child" });
+        prevent();
+        {
+          const left = parentPath(cur);
+          if (left) dispatch({ type: "FOCUS", path: left, role: "value" });
+        }
         return;
       case "ArrowRight":
-        dispatch({ type: "TRANSFORM", op: "wrap" });
+        prevent();
+        {
+          const right = firstChildPath(cur);
+          if (right) dispatch({ type: "FOCUS", path: right, role: "value" });
+        }
         return;
     }
   }
+}
 
-  if (
-    e.key === "Backspace" &&
-    (currentState.kind === "ViewingValue" || currentState.kind === "Editing")
-  ) {
-    preventAndStop();
-    dispatch({ type: "TRANSFORM", op: "remove" });
-    return;
-  }
-
-  if (currentState.kind === "ViewingValue" || currentState.kind === "Editing") {
-    const path = currentState.path;
-    const role = currentState.kind === "Editing" ? currentState.role : "value";
-
-    switch (e.key) {
-      case "ArrowUp": {
-        preventAndStop();
-        const up = siblingPath(path, -1);
-        if (up) dispatch({ type: "NAVIGATE", path: up, role });
-        return;
-      }
-      case "ArrowDown": {
-        preventAndStop();
-        const down = siblingPath(path, 1);
-        if (down) dispatch({ type: "NAVIGATE", path: down, role });
-        return;
-      }
-      case "ArrowLeft": {
-        preventAndStop();
-        const left = parentPath(path);
-        if (left) dispatch({ type: "NAVIGATE", path: left, role });
-        return;
-      }
-      case "ArrowRight": {
-        preventAndStop();
-        const right = firstChildPath(path);
-        if (right) dispatch({ type: "NAVIGATE", path: right, role });
-        return;
-      }
-    }
+export function focusFirstRootCell(): void {
+  const p = firstChildPath([]);
+  if (p) {
+    dispatch({ type: "FOCUS", path: p, role: "value" });
+  } else {
+    dispatch({ type: "CLEAR_FOCUS" });
   }
 }

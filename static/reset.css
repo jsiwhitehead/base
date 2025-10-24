@@ -7,6 +7,7 @@
 * {
   margin: 0;
   flex-direction: column;
+  outline: none;
 }
 
 html,
@@ -23,6 +24,8 @@ select {
   outline: none;
   border: none;
   width: 100%;
+  background: transparent;
+  padding: 0;
 }
 
 p {

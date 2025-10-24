@@ -13,7 +13,7 @@ import {
 } from "./data";
 import { setDataRoot } from "./tree";
 import { library } from "./library";
-import { onRootKeyDown } from "./input";
+import { onRootKeyDown, focusFirstRootCell } from "./input";
 import renderRoot from "./render";
 
 export function render(
@@ -23,12 +23,12 @@ export function render(
   setGlobalLibrary(library);
   setDataRoot(rootSignal);
 
-  const { mount, dispose } = renderRoot(rootSignal, []);
+  const { element, dispose } = renderRoot(rootSignal, []);
 
-  rootElement.replaceChildren(mount.element);
+  rootElement.replaceChildren(element);
 
   queueMicrotask(() => {
-    mount.view.focusEl.focus();
+    focusFirstRootCell();
   });
 
   const keydownHandler = (e: KeyboardEvent) => onRootKeyDown(e);
@@ -45,10 +45,25 @@ export function render(
 
 const literalSig = (v: Primitive) => createSignal(createLiteral(v));
 
-const root = createListSignal(
-  [["x", createListSignal([], [literalSig(10), literalSig(20)])]],
-  [createFlowSignal("x")]
-);
+const root = createListSignal([
+  {
+    name: "x",
+    child: createListSignal([
+      { child: literalSig(10) },
+      { child: literalSig(20) },
+    ]),
+  },
+  { name: "y", child: literalSig(50) },
+  { name: "z", child: createFlowSignal("x") },
+  { child: literalSig(10) },
+  {
+    child: createListSignal([
+      { child: literalSig("Hello") },
+      { child: literalSig("World!") },
+    ]),
+  },
+  { child: literalSig(30) },
+]);
 
 const unmount = render(root, document.getElementById("root")!);
 

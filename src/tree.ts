@@ -1,12 +1,11 @@
 import {
   ERR,
-  type NamedCell,
-  type PlainCell,
   type Value,
   type ListValue,
   type WriteSignal,
   type ValueSignal,
   type ChildSignal,
+  type Cell,
   getParent,
   getParentSignal,
   isBlank,
@@ -17,6 +16,7 @@ import {
   newUid,
   createBlank,
   createLiteral,
+  createList,
   createFlowSignal,
   createComputed,
   createSignal,
@@ -36,63 +36,11 @@ export function getDataRoot(): ChildSignal {
   return __dataRoot;
 }
 
-/* Cells */
-
-type CellEntry =
-  | ({ kind: "named" } & NamedCell)
-  | ({ kind: "plain" } & PlainCell);
-
-export function* iterCells(src: ListValue): Generator<CellEntry> {
-  for (const v of src.named) {
-    yield { kind: "named", uid: v.uid, key: v.key, child: v.child };
-  }
-  for (const p of src.plain) {
-    yield { kind: "plain", uid: p.uid, child: p.child };
-  }
-}
-
-function cellIndexByUid(cs: CellEntry[], uid: number): number {
-  return cs.findIndex((e) => e.uid === uid);
-}
-
-type CellView = CellEntry & {
-  id: string | number;
-  index: number;
-};
-
-function* enumerateCells(src: ListValue): Generator<CellView> {
-  let plainIndex1 = 1;
-  let nIdx = 0;
-  let pIdx = 0;
-  for (const e of iterCells(src)) {
-    const id = e.kind === "named" ? e.key : plainIndex1++;
-    const index = e.kind === "named" ? nIdx++ : pIdx++;
-    yield { ...e, id, index };
-  }
-}
-
-function cellSignals(e: CellView) {
-  const idSig = createSignal(createLiteral(e.id));
-  const valSig = createSignal(childToValue(e.child));
-  return { idSig, valSig };
-}
-
-function createListFromCells(entries: Iterable<CellEntry>): ListValue {
-  const named: NamedCell[] = [];
-  const plain: PlainCell[] = [];
-  for (const e of entries) {
-    if (e.kind === "named")
-      named.push({ uid: e.uid ?? newUid(), key: e.key, child: e.child });
-    else plain.push({ uid: e.uid ?? newUid(), child: e.child });
-  }
-  return { kind: "list", named, plain };
-}
-
 /* Lists */
 
-export function listNumbersOpt(n: ListValue): number[] {
+export function listNumbersOpt(list: ListValue): number[] {
   const out: number[] = [];
-  for (const e of iterCells(n)) {
+  for (const e of list.cells) {
     const value = childToValue(e.child);
     if (isBlank(value)) continue;
     if (isLiteral(value) && typeof value.value === "number")
@@ -102,9 +50,9 @@ export function listNumbersOpt(n: ListValue): number[] {
   return out;
 }
 
-export function listTextsOpt(n: ListValue): string[] {
+export function listTextsOpt(list: ListValue): string[] {
   const out: string[] = [];
-  for (const e of iterCells(n)) {
+  for (const e of list.cells) {
     const value = childToValue(e.child);
     if (isBlank(value)) continue;
     if (isLiteral(value) && typeof value.value === "string")
@@ -114,46 +62,70 @@ export function listTextsOpt(n: ListValue): string[] {
   return out;
 }
 
+function listCellSignals(src: ListValue): {
+  cell: Cell;
+  indexSig: ValueSignal;
+  nameSig: ValueSignal;
+  valSig: ValueSignal;
+}[] {
+  return src.cells.map((c, i) => {
+    const indexSig = createSignal(createLiteral(i + 1));
+    const nameSig = createComputed(() => {
+      const n = c.name.get();
+      return n ? createLiteral(n) : createBlank();
+    });
+    const valSig = createSignal(childToValue(c.child));
+    return { cell: c, indexSig, nameSig, valSig };
+  });
+}
+
 export function listMap(
   src: ListValue,
-  f: (value: ValueSignal, id: ValueSignal) => ValueSignal
+  f: (value: ValueSignal, index: ValueSignal, name: ValueSignal) => ValueSignal
 ): ListValue {
-  return createListFromCells(
-    Array.from(enumerateCells(src), (e) => {
-      const { idSig, valSig } = cellSignals(e);
-      return { ...e, child: createComputed(() => f(valSig, idSig).get()) };
-    })
+  return createList(
+    listCellSignals(src).map(({ cell, indexSig, nameSig, valSig }) => ({
+      uid: cell.uid,
+      name: cell.name,
+      child: createComputed(() => f(valSig, indexSig, nameSig).get()),
+    }))
   );
 }
 
 export function listFilter(
   src: ListValue,
-  pred: (value: ValueSignal, id: ValueSignal) => boolean
+  pred: (value: ValueSignal, index: ValueSignal, name: ValueSignal) => boolean
 ): ListValue {
-  return createListFromCells(
-    Array.from(enumerateCells(src)).filter((e) => {
-      const { idSig, valSig } = cellSignals(e);
-      return pred(valSig, idSig);
-    })
+  return createList(
+    listCellSignals(src)
+      .filter(({ indexSig, nameSig, valSig }) =>
+        pred(valSig, indexSig, nameSig)
+      )
+      .map(({ cell }) => cell)
   );
 }
 
 export function listReduce(
   src: ListValue,
-  rf: (acc: ValueSignal, value: ValueSignal, id: ValueSignal) => ValueSignal,
+  rf: (
+    acc: ValueSignal,
+    value: ValueSignal,
+    index: ValueSignal,
+    name: ValueSignal
+  ) => ValueSignal,
   init: ValueSignal
 ): ValueSignal {
-  const seq = Array.from(enumerateCells(src));
+  const seq = listCellSignals(src);
   if (seq.length === 0) return init;
 
-  const step = (acc: ValueSignal, e: CellView) => {
-    const { idSig, valSig } = cellSignals(e);
-    return rf(acc, valSig, idSig);
-  };
+  const step = (acc: ValueSignal, e: (typeof seq)[number]) =>
+    rf(acc, e.valSig, e.indexSig, e.nameSig);
 
-  if (!isBlank(init.get())) return seq.reduce(step, init);
+  if (!isBlank(init.get())) {
+    return seq.reduce(step, init);
+  }
 
-  const first = createSignal(childToValue(seq[0]!.child));
+  const first = createSignal(childToValue(src.cells[0]!.child));
   return seq.slice(1).reduce(step, first);
 }
 
@@ -190,15 +162,28 @@ function sortCmp<T extends { sortKey: Value; index: number }>(
 
 export function listSort(
   src: ListValue,
-  keySelector: null | ((value: ValueSignal, id: ValueSignal) => ValueSignal)
+  keySelector:
+    | null
+    | ((
+        value: ValueSignal,
+        index: ValueSignal,
+        name: ValueSignal
+      ) => ValueSignal)
 ): ListValue {
-  const rows = Array.from(enumerateCells(src), (e) => {
-    if (!keySelector) return { ...e, sortKey: childToValue(e.child) };
-    const { idSig, valSig } = cellSignals(e);
-    return { ...e, sortKey: keySelector(valSig, idSig).get() };
-  });
+  const rows = listCellSignals(src).map(
+    ({ cell, indexSig, nameSig, valSig }, i) => ({
+      uid: cell.uid,
+      name: cell.name,
+      child: cell.child,
+      index: i,
+      sortKey: keySelector
+        ? keySelector(valSig, indexSig, nameSig).get()
+        : childToValue(cell.child),
+    })
+  );
+
   rows.sort(sortCmp);
-  return createListFromCells(rows);
+  return createList(rows);
 }
 
 /* Navigation */
@@ -210,10 +195,9 @@ function resolvePath(path: CellPath): ChildSignal | null {
   for (const uid of path) {
     const value = childToValue(cur);
     if (!isList(value)) return null;
-    const cs = Array.from(iterCells(value));
-    const i = cellIndexByUid(cs, uid);
+    const i = value.cells.findIndex((e) => e.uid === uid);
     if (i < 0) return null;
-    cur = cs[i]!.child;
+    cur = value.cells[i]!.child;
   }
   return cur;
 }
@@ -228,8 +212,7 @@ export function firstChildPath(path: CellPath): CellPath | null {
   if (!child) return null;
   const value = childToValue(child);
   if (!isList(value)) return null;
-  const cs = Array.from(iterCells(value));
-  return cs.length ? [...path, cs[0]!.uid] : null;
+  return value.cells.length ? [...path, value.cells[0]!.uid] : null;
 }
 
 export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
@@ -241,11 +224,11 @@ export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
   const parentChild = resolvePath(pp);
   if (!parentChild) return null;
 
-  const listV = childToValue(parentChild);
-  if (!isList(listV)) return null;
+  const list = childToValue(parentChild);
+  if (!isList(list)) return null;
 
-  const cs = Array.from(iterCells(listV));
-  const i = cellIndexByUid(cs, path[path.length - 1]!);
+  const cs = list.cells;
+  const i = cs.findIndex((e) => e.uid === path[path.length - 1]!);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= cs.length) return null;
 
@@ -319,10 +302,10 @@ export function withLocatedPath(
   fn: (ctx: {
     parent: WriteSignal<ListValue>;
     parentPath: CellPath;
-    before: CellEntry[];
+    before: Cell[];
     index: number;
     child: ChildSignal;
-  }) => { after: CellEntry[]; path: CellPath }
+  }) => { after: Cell[]; path: CellPath }
 ): CellPath {
   if (path.length === 0) return path;
 
@@ -334,90 +317,44 @@ export function withLocatedPath(
 
   const parentPath = path.slice(0, -1);
 
-  const before = Array.from(iterCells(parent.get()));
+  const before = parent.get().cells;
   const uid = path[path.length - 1]!;
-  const index = cellIndexByUid(before, uid);
+  const index = before.findIndex((e) => e.uid === uid);
   if (index < 0) return path;
 
   const result = fn({ parent, parentPath, before, index, child });
 
-  if (result.after !== before) parent.set(createListFromCells(result.after));
+  if (result.after !== before) parent.set(createList(result.after));
   return result.path;
 }
 
-function replaceAt(
-  cs: CellEntry[],
-  i: number,
-  nextChild: ChildSignal
-): CellEntry[] {
+function replaceAt(cs: Cell[], i: number, nextChild: ChildSignal): Cell[] {
   const out = cs.slice();
   out[i] = { ...cs[i]!, child: nextChild };
   return out;
 }
 
-function removeAt(cs: CellEntry[], i: number): CellEntry[] {
+function removeAt(cs: Cell[], i: number): Cell[] {
   const out = cs.slice();
   out.splice(i, 1);
   return out;
 }
 
-function insertPlainAt(
-  cs: CellEntry[],
+function insertAt(
+  cs: Cell[],
   i: number,
   child: ChildSignal
-): { cs: CellEntry[]; uid: number } {
+): { cs: Cell[]; uid: number } {
   const uid = newUid();
   const out = cs.slice();
-  out.splice(i, 0, { kind: "plain", uid, child });
+  out.splice(i, 0, { uid, name: createSignal(""), child });
   return { cs: out, uid };
 }
 
-function indexOfFirstPlain(cs: CellEntry[]) {
-  const k = cs.findIndex((x) => x.kind === "plain");
-  return k < 0 ? cs.length : k;
-}
-
-function isNamedEntry(
-  e: CellEntry
-): e is Extract<CellEntry, { kind: "named" }> {
-  return e.kind === "named";
-}
-
-export function assignKey(path: CellPath, nextKey: string): CellPath {
-  return withLocatedPath(path, ({ parentPath, before, index }) => {
-    if (before.some((e) => e.kind === "named" && e.key === nextKey)) {
-      return { after: before, path: [...parentPath, before[index]!.uid] };
-    }
-    const e = before[index]!;
-    if (e.kind === "named") {
-      const after = before.slice();
-      if (e.key !== nextKey) after[index] = { ...e, key: nextKey };
-      return { after, path: [...parentPath, e.uid] };
-    }
-
-    const cut = removeAt(before, index);
-    const at = indexOfFirstPlain(cut);
-    cut.splice(at, 0, {
-      kind: "named",
-      uid: e.uid,
-      key: nextKey,
-      child: e.child,
-    });
-    return { after: cut, path: [...parentPath, e.uid] };
-  });
-}
-
-export function removeKey(path: CellPath): CellPath {
-  return withLocatedPath(path, ({ parentPath, before, index }) => {
-    const e = before[index]!;
-    if (e.kind !== "named") {
-      return { after: before, path: [...parentPath, e.uid] };
-    }
-
-    const after = removeAt(before, index);
-    const at = indexOfFirstPlain(after);
-    after.splice(at, 0, { kind: "plain", uid: e.uid, child: e.child });
-    return { after, path: [...parentPath, e.uid] };
+export function setName(path: CellPath, name: string): CellPath {
+  return withLocatedPath(path, ({ before, index, parentPath }) => {
+    before[index]!.name.set(name);
+    return { after: before, path: [...parentPath, before[index]!.uid] };
   });
 }
 
@@ -426,11 +363,7 @@ export function insertBefore(path: CellPath): CellPath {
     const item = createSignal(createBlank() as Value);
     getParentSignal(item).value = parent;
 
-    const insertAt = isNamedEntry(before[index]!)
-      ? indexOfFirstPlain(before)
-      : index;
-
-    const { cs: after, uid } = insertPlainAt(before, insertAt, item);
+    const { cs: after, uid } = insertAt(before, index, item);
     return { after, path: [...parentPath, uid] };
   });
 }
@@ -440,11 +373,7 @@ export function insertAfter(path: CellPath): CellPath {
     const item = createSignal(createBlank() as Value);
     getParentSignal(item).value = parent;
 
-    const insertAt = isNamedEntry(before[index]!)
-      ? indexOfFirstPlain(before)
-      : index + 1;
-
-    const { cs: after, uid } = insertPlainAt(before, insertAt, item);
+    const { cs: after, uid } = insertAt(before, index + 1, item);
     return { after, path: [...parentPath, uid] };
   });
 }
@@ -454,9 +383,7 @@ export function wrapWithList(path: CellPath): CellPath {
     path,
     ({ parentPath, parent, before, index, child }) => {
       const innerUid = newUid();
-      const wrapper = createSignal(
-        createListFromCells([{ kind: "plain", uid: innerUid, child }])
-      );
+      const wrapper = createSignal(createList([{ uid: innerUid, child }]));
       getParentSignal(wrapper).value = parent;
       getParentSignal(child).value = wrapper;
 
@@ -475,7 +402,7 @@ export function unwrapListIfSingleChild(path: CellPath): CellPath {
   if (!wrapperSig) return path;
 
   const wrapperValue = wrapperSig.get();
-  if (wrapperValue.named.length !== 0 || wrapperValue.plain.length !== 1) {
+  if (wrapperValue.cells.length !== 1) {
     return path;
   }
 
