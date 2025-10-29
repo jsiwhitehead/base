@@ -3,6 +3,7 @@ import {
   type ReadonlySignal as PReadonlySignal,
   signal,
   computed,
+  batch,
 } from "@preact/signals-core";
 
 /* Errors */
@@ -191,24 +192,11 @@ export const createFunction = (
   fn: (...args: ValueSignal[]) => ValueSignal
 ): FunctionValue => ({ kind: "function", fn });
 
-export function createFlowSignal(initialCode: string): WriteSignal<FlowValue> {
-  const codeText = signal(initialCode);
-  let flowSig!: WriteSignal<FlowValue>;
-
+export function createFlow(owner: ChildSignal, code: string): FlowValue {
   const result = createComputed(() =>
-    evalCode(codeText.value, (name: string) => lookupInScope(name, flowSig))
+    evalCode(code, (name: string) => lookupInScope(name, owner))
   );
-
-  flowSig = {
-    kind: "signal",
-    get: () => ({ kind: "flow", code: codeText.value, result }),
-    peek: () => ({ kind: "flow", code: codeText.peek(), result }),
-    set: (next) => {
-      codeText.value = next.code;
-    },
-  };
-
-  return flowSig;
+  return { kind: "flow", code, result };
 }
 
 export function createComputed<T extends Value>(fn: () => T): ReadSignal<T> {
@@ -236,10 +224,14 @@ export function createListSignal(
   }[] = []
 ): ValueSignal<ListValue> {
   const parent = createSignal(createList([]));
-  for (const c of cells) {
-    getParentSignal(c.child).value = parent;
-  }
-  parent.set(createList(cells));
+
+  batch(() => {
+    for (const c of cells) {
+      getParentSignal(c.child).value = parent;
+    }
+    parent.set(createList(cells));
+  });
+
   return parent;
 }
 

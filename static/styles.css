@@ -4,19 +4,19 @@
   --gap: 2px;
   --round: 3px;
 
-  --grey-faint: oklch(96.7% 0.003 264.542);
-  --grey-light: oklch(92.9% 0.013 255.508);
+  --grey-faint: oklch(96.8% 0.007 247.896);
+  --grey-light: oklch(86.9% 0.022 252.894);
 
-  --blue-light: oklch(88.2% 0.059 254.128);
-  --blue-normal: oklch(70.7% 0.165 254.624);
+  --blue-faint: oklch(93.2% 0.032 255.585);
+  --blue-light: oklch(80.9% 0.105 251.813);
+  --blue-normal: oklch(62.3% 0.214 259.815);
   --blue-dark: oklch(54.6% 0.245 262.881);
 
   --teal-faint: oklch(95.3% 0.051 180.801);
-  --teal-light: oklch(91% 0.096 180.426);
+  --teal-light: oklch(85.5% 0.138 181.071);
 }
 
 #root {
-  height: 100%;
   padding: 10px;
 
   font-family: "Roboto Mono", sans-serif;
@@ -59,7 +59,7 @@
 
 .cell {
   position: relative;
-  padding-left: calc(var(--rule) + var(--focus) + var(--gap));
+  padding-left: var(--rule);
 }
 .cell::before {
   content: "";
@@ -79,10 +79,19 @@
   border-bottom-left-radius: var(--round);
   border-bottom-right-radius: var(--round);
 }
+.cell:has(> .header) {
+  &::before {
+    border-top: var(--round) solid var(--grey-light);
+    border-top-left-radius: var(--round);
+  }
+  &:first-child::before {
+    border-top-right-radius: 0;
+  }
+}
 
-.header + .list > .cell:first-child::before {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+.list,
+.value {
+  padding-left: calc(var(--focus) + var(--gap));
 }
 
 .list {
@@ -97,53 +106,58 @@
   align-items: center;
   gap: 5px;
 
+  position: relative;
+  z-index: 1;
+  background: var(--grey-faint);
   width: fit-content;
   max-width: 100%;
-  padding: 0 5px;
-
-  background: var(--teal-faint);
-  border: 0 solid var(--teal-light);
-  border-top-width: var(--round);
-  border-radius: var(--round) var(--round) 0 0;
-}
-.header:has(+ .list) {
+  padding-left: 10px;
+  padding-right: 10px;
   margin-bottom: var(--gap);
-  border-left-width: var(--rule);
+  border-top-right-radius: 3px;
+  border-top: var(--round) solid var(--grey-light);
 }
-.header .name {
+
+.header > .name {
   font-size: 10px;
   font-weight: bold;
+  color: oklch(55.4% 0.046 257.417);
 }
 .header .equals,
 .header .code {
-  color: oklch(60% 0.118 184.704);
+  color: oklch(62.3% 0.214 259.815);
 }
 
-.cell.focused::after {
-  content: "";
-  position: absolute;
-  left: var(--rule);
-  top: 0;
-  bottom: 0;
-
-  width: var(--focus);
-  background: var(--blue-light);
-  border-radius: 0 var(--round) var(--round) 0;
+.cell.focused::before {
+  width: calc(var(--rule) + var(--focus));
+  background: var(--blue-normal) !important;
+  border-top-right-radius: var(--round);
+  border-bottom-right-radius: var(--round);
 }
+
+.cell.focused:has(> .header)::before {
+  border-top-color: var(--blue-normal) !important;
+}
+
+.cell.focused > .header {
+  border-top-color: var(--blue-normal) !important;
+  background: oklch(88.2% 0.059 254.128) !important;
+}
+
 .cell.focused > .list > .cell::before {
   background: var(--blue-light);
 }
 
-.list:has(.focused) > .cell::before {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  background: var(--blue-normal);
-}
-.list:has(> .cell.focused) > .cell::before {
-  border-radius: 0;
-  background: var(--blue-dark);
-}
-.header + .list > .cell:first-child::before {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+.list:has(.focused) > .cell {
+  &::before {
+    border-top-color: var(--blue-light);
+    background: var(--blue-light);
+  }
+  > .header {
+    border-top-color: var(--blue-light);
+    background: var(--blue-faint);
+    > .name {
+      color: oklch(54.6% 0.245 262.881);
+    }
+  }
 }

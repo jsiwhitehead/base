@@ -4,12 +4,15 @@ import {
   type Primitive,
   type ListValue,
   type ValueSignal,
+  type Value,
+  type EvalValue,
   createLiteral,
-  createFlowSignal,
+  createFlow,
   createSignal,
   createListSignal,
   resolveValue,
   setGlobalLibrary,
+  type ChildSignal,
 } from "./data";
 import { setDataRoot } from "./tree";
 import { library } from "./library";
@@ -31,12 +34,11 @@ export function render(
     focusFirstRootCell();
   });
 
-  const keydownHandler = (e: KeyboardEvent) => onRootKeyDown(e);
-  rootElement.addEventListener("keydown", keydownHandler);
+  rootElement.addEventListener("keydown", onRootKeyDown);
 
   return () => {
     dispose();
-    rootElement.removeEventListener("keydown", keydownHandler);
+    rootElement.removeEventListener("keydown", onRootKeyDown);
     rootElement.textContent = "";
   };
 }
@@ -44,6 +46,12 @@ export function render(
 /* Test */
 
 const literalSig = (v: Primitive) => createSignal(createLiteral(v));
+
+const flowSig = (code: string) => {
+  const s: ChildSignal = createSignal<Value | EvalValue>(createLiteral(""));
+  s.set(createFlow(s, code));
+  return s;
+};
 
 const root = createListSignal([
   {
@@ -54,7 +62,7 @@ const root = createListSignal([
     ]),
   },
   { name: "y", child: literalSig(50) },
-  { name: "z", child: createFlowSignal("x") },
+  { name: "z", child: flowSig("x") },
   { child: literalSig(10) },
   {
     child: createListSignal([

@@ -1,3 +1,5 @@
+import { batch } from "@preact/signals-core";
+
 import {
   ERR,
   type Value,
@@ -17,7 +19,7 @@ import {
   createBlank,
   createLiteral,
   createList,
-  createFlowSignal,
+  createFlow,
   createComputed,
   createSignal,
   childToValue,
@@ -40,11 +42,10 @@ export function getDataRoot(): ChildSignal {
 
 export function listNumbersOpt(list: ListValue): number[] {
   const out: number[] = [];
-  for (const e of list.cells) {
-    const value = childToValue(e.child);
-    if (isBlank(value)) continue;
-    if (isLiteral(value) && typeof value.value === "number")
-      out.push(value.value);
+  for (const { child } of list.cells) {
+    const v = childToValue(child);
+    if (isBlank(v)) continue;
+    if (isLiteral(v) && typeof v.value === "number") out.push(v.value);
     else throw new TypeError(ERR.numOrBlank);
   }
   return out;
@@ -52,11 +53,10 @@ export function listNumbersOpt(list: ListValue): number[] {
 
 export function listTextsOpt(list: ListValue): string[] {
   const out: string[] = [];
-  for (const e of list.cells) {
-    const value = childToValue(e.child);
-    if (isBlank(value)) continue;
-    if (isLiteral(value) && typeof value.value === "string")
-      out.push(value.value);
+  for (const { child } of list.cells) {
+    const v = childToValue(child);
+    if (isBlank(v)) continue;
+    if (isLiteral(v) && typeof v.value === "string") out.push(v.value);
     else throw new TypeError(ERR.textOrBlank);
   }
   return out;
@@ -151,10 +151,10 @@ function sortCmp<T extends { sortKey: Value; index: number }>(
   const [rb, vb] = sortRank(b.sortKey);
   if (ra !== rb) return ra - rb;
   if (ra === 0) {
-    const d = (va as number) - (vb as number);
+    const d = va - vb;
     if (d) return d;
   } else if (ra === 1) {
-    const d = collator.compare(va as string, vb as string);
+    const d = collator.compare(va, vb);
     if (d) return d;
   }
   return a.index - b.index;
@@ -193,26 +193,24 @@ export type CellPath = number[];
 function resolvePath(path: CellPath): ChildSignal | null {
   let cur: ChildSignal = getDataRoot();
   for (const uid of path) {
-    const value = childToValue(cur);
-    if (!isList(value)) return null;
-    const i = value.cells.findIndex((e) => e.uid === uid);
-    if (i < 0) return null;
-    cur = value.cells[i]!.child;
+    const v = childToValue(cur);
+    if (!isList(v)) return null;
+    const cell = v.cells.find((e) => e.uid === uid);
+    if (!cell) return null;
+    cur = cell.child;
   }
   return cur;
 }
 
 export function parentPath(path: CellPath): CellPath | null {
-  if (path.length === 0) return null;
-  return path.slice(0, -1);
+  return path.length ? path.slice(0, -1) : null;
 }
 
 export function firstChildPath(path: CellPath): CellPath | null {
   const child = resolvePath(path);
   if (!child) return null;
-  const value = childToValue(child);
-  if (!isList(value)) return null;
-  return value.cells.length ? [...path, value.cells[0]!.uid] : null;
+  const v = childToValue(child);
+  return isList(v) && v.cells.length ? [...path, v.cells[0]!.uid] : null;
 }
 
 export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
@@ -235,17 +233,71 @@ export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
   return [...pp, cs[j]!.uid];
 }
 
+type CellKind = "text" | "list" | "flow";
+
+export function getCellKind(path: CellPath): CellKind | null {
+  const child = resolvePath(path);
+  if (!child) return null;
+  const v = child.peek();
+  return isFlow(v) ? "flow" : isList(v) ? "list" : "text";
+}
+
+type FlatLeaf = {
+  path: CellPath;
+  editable: boolean;
+};
+
+function flattenLeaves(): FlatLeaf[] {
+  const result: FlatLeaf[] = [];
+
+  function walk(path: CellPath, child: ChildSignal): void {
+    const v = child.peek();
+
+    if (isFlow(v)) {
+      result.push({ path, editable: isWritableSignal(child) });
+
+      const out = v.result.peek();
+      if (isList(out)) {
+        for (const cell of out.cells) {
+          walk([...path, cell.uid], cell.child);
+        }
+      }
+      return;
+    }
+
+    if (isList(v)) {
+      for (const cell of v.cells) {
+        walk([...path, cell.uid], cell.child);
+      }
+      return;
+    }
+
+    result.push({ path, editable: isWritableSignal(child) });
+  }
+
+  walk([], getDataRoot());
+  return result;
+}
+
+export function neighborLeafPath(from: CellPath, dir: -1 | 1): CellPath | null {
+  const leaves = flattenLeaves().filter((l) => l.editable);
+  const key = from.join(".");
+  const i = leaves.findIndex((l) => l.path.join(".") === key);
+  if (i === -1) return null;
+  return leaves[i + dir]?.path ?? null;
+}
+
 /* Mutations */
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-function parseTextToValue(raw: string): Value {
-  const t = raw.trim();
-  if (t === "") return createBlank();
-  if (NUM_RE.test(t) && Number.isFinite(Number(t))) {
-    return createLiteral(Number(t));
+export function parseTextToValue(text: string): Value {
+  const trimmed = text.trim();
+  if (NUM_RE.test(trimmed)) {
+    const n = Number(trimmed);
+    if (Number.isFinite(n)) return createLiteral(n);
   }
-  return createLiteral(t);
+  return createLiteral(trimmed);
 }
 
 export function setText(path: CellPath, raw: string): CellPath {
@@ -255,46 +307,37 @@ export function setText(path: CellPath, raw: string): CellPath {
   const cur = sig.peek();
 
   if (isFlow(cur)) {
-    sig.set({
-      kind: "flow",
-      code: raw,
-      result: cur.result,
-    });
+    if (cur.code !== raw) sig.set(createFlow(sig, raw));
     return path;
   }
 
-  if (isLiteral(cur) || isBlank(cur)) {
-    sig.set(parseTextToValue(raw));
-    return path;
-  }
+  if (!isLiteral(cur) && !isBlank(cur)) return path;
 
+  const next = parseTextToValue(raw);
+  if (isLiteral(cur) && isLiteral(next) && cur.value === next.value)
+    return path;
+
+  sig.set(next);
   return path;
 }
 
-export function toggleCodeText(path: CellPath): CellPath {
-  return withLocatedPath(
-    path,
-    ({ parent, parentPath, before, index, child }) => {
-      const cur = child.peek();
-      let nextChild: ChildSignal | null = null;
+export function toggleCodeText(path: CellPath): TransformResult {
+  const sig = resolvePath(path);
+  if (!sig || !isWritableSignal(sig)) return null;
 
-      if (isFlow(cur)) {
-        nextChild = createSignal(parseTextToValue(cur.code));
-      } else if (isLiteral(cur) || isBlank(cur)) {
-        const text = isLiteral(cur) ? String(cur.value) : "";
-        nextChild = createFlowSignal(text);
-      } else {
-        return { after: before, path: [...parentPath, before[index]!.uid] };
-      }
+  const cur = sig.peek();
 
-      getParentSignal(nextChild).value = parent;
-      getParentSignal(child).value = undefined;
+  if (isFlow(cur)) {
+    sig.set(parseTextToValue(cur.code));
+    return { path };
+  }
 
-      const after = before.slice();
-      after[index] = { ...before[index]!, child: nextChild };
-      return { after, path: [...parentPath, before[index]!.uid] };
-    }
-  );
+  if (isLiteral(cur) || isBlank(cur)) {
+    sig.set(createFlow(sig, isLiteral(cur) ? String(cur.value) : ""));
+    return { path, caret: 0 };
+  }
+
+  return null;
 }
 
 export function withLocatedPath(
@@ -316,39 +359,35 @@ export function withLocatedPath(
   if (!parent) return path;
 
   const parentPath = path.slice(0, -1);
-
-  const before = parent.get().cells;
+  const before = parent.peek().cells;
   const uid = path[path.length - 1]!;
   const index = before.findIndex((e) => e.uid === uid);
   if (index < 0) return path;
 
-  const result = fn({ parent, parentPath, before, index, child });
+  let nextPath = path;
+  batch(() => {
+    const { after, path: p } = fn({ parent, parentPath, before, index, child });
+    nextPath = p;
+    if (after !== before) parent.set(createList(after));
+  });
 
-  if (result.after !== before) parent.set(createList(result.after));
-  return result.path;
+  return nextPath;
 }
 
-function replaceAt(cs: Cell[], i: number, nextChild: ChildSignal): Cell[] {
-  const out = cs.slice();
-  out[i] = { ...cs[i]!, child: nextChild };
-  return out;
+function makeBlankCell(child: ChildSignal): Cell {
+  return { uid: newUid(), name: createSignal(""), child };
+}
+
+function insertAt(cs: Cell[], i: number, cell: Cell): Cell[] {
+  return [...cs.slice(0, i), cell, ...cs.slice(i)];
+}
+
+function replaceAt(cs: Cell[], i: number, cell: Cell): Cell[] {
+  return [...cs.slice(0, i), cell, ...cs.slice(i + 1)];
 }
 
 function removeAt(cs: Cell[], i: number): Cell[] {
-  const out = cs.slice();
-  out.splice(i, 1);
-  return out;
-}
-
-function insertAt(
-  cs: Cell[],
-  i: number,
-  child: ChildSignal
-): { cs: Cell[]; uid: number } {
-  const uid = newUid();
-  const out = cs.slice();
-  out.splice(i, 0, { uid, name: createSignal(""), child });
-  return { cs: out, uid };
+  return [...cs.slice(0, i), ...cs.slice(i + 1)];
 }
 
 export function setName(path: CellPath, name: string): CellPath {
@@ -358,72 +397,87 @@ export function setName(path: CellPath, name: string): CellPath {
   });
 }
 
-export function insertBefore(path: CellPath): CellPath {
-  return withLocatedPath(path, ({ parent, parentPath, before, index }) => {
-    const item = createSignal(createBlank() as Value);
-    getParentSignal(item).value = parent;
+export type TransformResult = { path: CellPath; caret?: number } | null;
 
-    const { cs: after, uid } = insertAt(before, index, item);
-    return { after, path: [...parentPath, uid] };
+export function insertBefore(path: CellPath): TransformResult {
+  const np = withLocatedPath(path, ({ parent, parentPath, before, index }) => {
+    const child = createSignal(createBlank());
+    getParentSignal(child).value = parent;
+
+    const cell = makeBlankCell(child);
+    const after = insertAt(before, index, cell);
+    return { after, path: [...parentPath, cell.uid] };
   });
+  return { path: np };
 }
 
-export function insertAfter(path: CellPath): CellPath {
-  return withLocatedPath(path, ({ parent, parentPath, before, index }) => {
-    const item = createSignal(createBlank() as Value);
-    getParentSignal(item).value = parent;
+export function insertAfter(path: CellPath): TransformResult {
+  const np = withLocatedPath(path, ({ parent, parentPath, before, index }) => {
+    const child = createSignal(createBlank());
+    getParentSignal(child).value = parent;
 
-    const { cs: after, uid } = insertAt(before, index + 1, item);
-    return { after, path: [...parentPath, uid] };
+    const cell = makeBlankCell(child);
+    const after = insertAt(before, index + 1, cell);
+    return { after, path: [...parentPath, cell.uid] };
   });
+  return { path: np };
 }
 
-export function wrapWithList(path: CellPath): CellPath {
-  return withLocatedPath(
+export function wrapWithList(path: CellPath): TransformResult {
+  const np = withLocatedPath(
     path,
-    ({ parentPath, parent, before, index, child }) => {
-      const innerUid = newUid();
-      const wrapper = createSignal(createList([{ uid: innerUid, child }]));
-      getParentSignal(wrapper).value = parent;
-      getParentSignal(child).value = wrapper;
+    ({ parent, parentPath, before, index, child }) => {
+      const oldCell = before[index]!;
+      const wrapperUid = newUid();
 
-      const after = replaceAt(before, index, wrapper);
-      const wrapperUid = before[index]!.uid;
-      return { after, path: [...parentPath, wrapperUid, innerUid] };
+      const wrapperSig = createSignal(createList([oldCell]));
+      getParentSignal(wrapperSig).value = parent;
+      getParentSignal(child).value = wrapperSig;
+
+      const wrapperCell: Cell = {
+        uid: wrapperUid,
+        name: createSignal(""),
+        child: wrapperSig,
+      };
+      return {
+        after: replaceAt(before, index, wrapperCell),
+        path: [...parentPath, wrapperUid, oldCell.uid],
+      };
     }
   );
+  return { path: np };
 }
 
-export function unwrapListIfSingleChild(path: CellPath): CellPath {
+export function unwrapListIfSingleChild(path: CellPath): TransformResult {
   const innerChild = resolvePath(path);
-  if (!innerChild) return path;
+  if (!innerChild) return null;
 
   const wrapperSig = getParent(innerChild);
-  if (!wrapperSig) return path;
+  if (!wrapperSig) return null;
 
-  const wrapperValue = wrapperSig.get();
-  if (wrapperValue.cells.length !== 1) {
-    return path;
-  }
+  const wrapperValue = wrapperSig.peek();
+  if (wrapperValue.cells.length !== 1) return null;
 
   const pPath = parentPath(path);
-  if (!pPath) return path;
+  if (!pPath) return null;
 
-  return withLocatedPath(
+  const np = withLocatedPath(
     pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
+      const innerCell = wrapperValue.cells[0]!;
       getParentSignal(innerChild).value = grandparent;
       getParentSignal(wrapperSig).value = undefined;
-
-      const after = replaceAt(before, index, innerChild);
-      const wrapperUid = before[index]!.uid;
-      return { after, path: [...gpPath, wrapperUid] };
+      return {
+        after: replaceAt(before, index, innerCell),
+        path: [...gpPath, innerCell.uid],
+      };
     }
   );
+  return { path: np };
 }
 
-export function removeChild(path: CellPath): CellPath {
-  return withLocatedPath(path, ({ parentPath, before, index }) => {
+export function removeChild(path: CellPath): TransformResult {
+  const np = withLocatedPath(path, ({ parentPath, before, index }) => {
     const removed = before[index]!;
     const after = removeAt(before, index);
     getParentSignal(removed.child).value = undefined;
@@ -437,4 +491,62 @@ export function removeChild(path: CellPath): CellPath {
 
     return { after, path: [...parentPath, focusUid] };
   });
+  return { path: np };
+}
+
+export function splitCell(
+  path: CellPath,
+  caretStart: number,
+  caretEnd: number = caretStart
+): CellPath {
+  const sig = resolvePath(path);
+  if (!sig || !isWritableSignal(sig)) return path;
+
+  const cur = sig.peek();
+  const text = isFlow(cur)
+    ? cur.code
+    : isLiteral(cur)
+    ? String(cur.value)
+    : isBlank(cur)
+    ? ""
+    : null;
+  if (text === null) return path;
+
+  const len = text.length;
+  const start = Math.min(Math.max(caretStart, 0), len);
+  const end = Math.min(Math.max(caretEnd, 0), len);
+
+  const left = text.slice(0, start);
+  const right = text.slice(end);
+
+  batch(() => {
+    setText(path, left);
+    const next = insertAfter(path)!.path;
+    setText(next, right);
+    path = next;
+  });
+  return path;
+}
+
+export function mergeWithPrevious(path: CellPath): TransformResult {
+  const prev = siblingPath(path, -1);
+  if (!prev) return null;
+
+  const prevSig = resolvePath(prev);
+  const curSig = resolvePath(path);
+  if (!prevSig || !curSig) return null;
+
+  const pv = childToValue(prevSig);
+  const cv = childToValue(curSig);
+  const prevText = isLiteral(pv) ? String(pv.value) : "";
+  const curText = isLiteral(cv) ? String(cv.value) : "";
+  const caret = prevText.length;
+
+  let nextPath = prev;
+  batch(() => {
+    setText(prev, prevText + curText);
+    nextPath = removeChild(path)?.path ?? prev;
+  });
+
+  return { path: nextPath, caret };
 }
