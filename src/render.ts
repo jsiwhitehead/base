@@ -205,10 +205,15 @@ class CellMount {
         );
       }
 
-      this.element.replaceChildren(
-        ...(needHeader ? [this.headerEl] : []),
-        this.body!.element
-      );
+      if (
+        this.element.childElementCount !== (needHeader ? 2 : 1) ||
+        this.element.lastElementChild !== this.body!.element
+      ) {
+        this.element.replaceChildren(
+          ...(needHeader ? [this.headerEl] : []),
+          this.body!.element
+        );
+      }
 
       const focusEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
       registerBinding(this.path, {

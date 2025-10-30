@@ -281,64 +281,73 @@ export function registerBinding(
   binding.value.tabIndex = 0;
 
   if (binding.name) {
-    const nameEl = binding.name;
+    const nameEl = binding.name! as HTMLInputElement;
 
-    if (nameEl instanceof HTMLInputElement) {
-      binding.teardowns.push(
-        on(nameEl, "blur", () => {
+    binding.teardowns.push(
+      on(nameEl, "blur", () => {
+        nameEl.setSelectionRange(0, 0);
+        queueMicrotask(() => {
           setName(path, nameEl.value.trim());
           dispatch({ type: "FOCUS", path, role: "value" });
-        })
-      );
+        });
+      })
+    );
 
-      binding.teardowns.push(
-        on(nameEl, "keydown", (e: KeyboardEvent) => {
-          switch (e.key) {
-            case "Enter":
-            case "Escape":
-              stop(e);
-              nameEl.blur();
-              return;
-            case "Tab":
-              stop(e);
-              dispatch({ type: "FOCUS", path, role: "value" });
-              return;
-          }
-        })
-      );
+    binding.teardowns.push(
+      on(nameEl, "keydown", (e: KeyboardEvent) => {
+        switch (e.key) {
+          case "Enter":
+          case "Escape":
+            stop(e);
+            nameEl.blur();
+            return;
+          case "Tab":
+            stop(e);
+            dispatch({ type: "FOCUS", path, role: "value" });
+            return;
+        }
+      })
+    );
 
-      binding.teardowns.push(
-        on(nameEl, "mousedown", (e: MouseEvent) => {
-          stop(e);
-          dispatch({ type: "FOCUS", path, role: "name" });
-        })
-      );
-    } else {
-      binding.teardowns.push(
-        on(nameEl, "mousedown", (e: MouseEvent) => {
-          stop(e);
-          dispatch({ type: "FOCUS", path, role: "value" });
-        })
-      );
-    }
+    binding.teardowns.push(
+      on(nameEl, "mousedown", (e: MouseEvent) => {
+        e.stopPropagation();
+        dispatch({ type: "FOCUS", path, role: "name" });
+      })
+    );
   }
 
   const valueEl = binding.value;
 
   binding.teardowns.push(
     on(valueEl, "mousedown", (e: MouseEvent) => {
+      if (valueEl instanceof HTMLInputElement) {
+        e.stopPropagation();
+        dispatch({ type: "FOCUS", path, role: "value" });
+        return;
+      }
+
       stop(e);
       dispatch({ type: "FOCUS", path, role: "value" });
     })
   );
 
   if (valueEl instanceof HTMLInputElement) {
-    binding.teardowns.push(
-      on(valueEl, "blur", () =>
-        queueMicrotask(() => {
+    if (getCellKind(path) !== "flow") {
+      binding.teardowns.push(
+        on(valueEl, "input", () => {
           setText(path, valueEl.value);
         })
-      )
+      );
+    }
+
+    binding.teardowns.push(
+      on(valueEl, "blur", () => {
+        valueEl.setSelectionRange(0, 0);
+        queueMicrotask(() => {
+          setText(path, valueEl.value);
+        });
+      })
     );
 
     binding.teardowns.push(
@@ -407,8 +416,30 @@ export function registerBinding(
             return;
           }
 
+          case "=": {
+            if (kind !== "flow") {
+              if (!valueEl.value) {
+                stop(e);
+                dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
+                return;
+              }
+            }
+            return;
+          }
+
           case "Backspace": {
             if (!(selStart === 0 && selEnd === 0)) return;
+
+            if (kind === "flow") {
+              if (!valueEl.value.trim()) {
+                stop(e);
+                dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
+                return;
+              }
+              stop(e);
+              return;
+            }
+
             stop(e);
             dispatch({ type: "TRANSFORM", op: "merge-backward" });
             return;
