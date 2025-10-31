@@ -17,7 +17,7 @@ import {
   createLiteral,
 } from "./data";
 import { type CellPath } from "./tree";
-import { registerBinding, unregisterBinding } from "./input";
+import { registerBinding, unregisterBinding, focusSignal } from "./input";
 
 function createEl(tag: string, className?: string): HTMLElement {
   const el = document.createElement(tag);
@@ -43,7 +43,7 @@ class AutosizeInput {
 
   constructor(initialText: string) {
     const wrap = createEl("div", "autosize");
-    const mirror = createEl("span") as HTMLSpanElement;
+    const mirror = createEl("span");
     mirror.setAttribute("aria-hidden", "true");
     mirror.textContent = initialText || " ";
 
@@ -60,8 +60,13 @@ class AutosizeInput {
   }
 
   update(text: string) {
-    this.input.value = text;
-    this.mirror.textContent = text || " ";
+    if (this.input.value !== text) {
+      this.input.value = text;
+    }
+    const m = text || " ";
+    if (this.mirror.textContent !== m) {
+      this.mirror.textContent = m;
+    }
   }
 
   get focusEl() {
@@ -92,8 +97,15 @@ class LiteralView implements View<LiteralValue | BlankValue> {
   }
 
   setText(text: string) {
-    if (this.inputEl) this.inputEl.value = text;
-    else this.element.textContent = text;
+    if (this.inputEl) {
+      if (this.inputEl.value !== text) {
+        this.inputEl.value = text;
+      }
+    } else {
+      if (this.element.textContent !== text) {
+        this.element.textContent = text;
+      }
+    }
   }
 
   update(next: LiteralValue | BlankValue) {
@@ -161,31 +173,36 @@ class CellMount {
   codeInput = new AutosizeInput("");
 
   body?: ListView | LiteralView;
-  stop: () => void;
+  stopShape: () => void;
+  stopValue: () => void;
+  stopFocus: () => void;
 
   constructor(readonly cell: Cell, readonly path: CellPath) {
     this.nameInput.element.classList.add("name");
     this.codeInput.element.classList.add("code");
-
     this.eqEl.textContent = "=";
+
     this.headerEl.append(
       this.nameInput.element,
       this.eqEl,
       this.codeInput.element
     );
 
-    this.stop = effect(() => {
+    this.stopShape = effect(() => {
       const name = this.cell.name.get();
       const raw = this.cell.child.get();
       const flow = isFlow(raw);
-      const flowRaw = flow ? (raw as FlowValue) : null;
+      const flowRaw = flow ? raw : null;
       const show = flow ? flowRaw!.result.get() : raw;
 
       const needHeader = name !== "" || flow;
+
       this.nameInput.update(name);
       this.nameInput.element.classList.toggle("hidden", name === "");
+
       this.codeInput.element.classList.toggle("hidden", !flow);
       this.eqEl.classList.toggle("hidden", !flow);
+
       if (flow) {
         this.codeInput.update(flowRaw!.code);
         this.codeInput.input.readOnly = !isWritableSignal(this.cell.child);
@@ -196,18 +213,6 @@ class CellMount {
         this.body = isList(show)
           ? new ListView(this.path)
           : new LiteralView(!flow && isWritableSignal(this.cell.child));
-      }
-
-      if (isList(show)) {
-        (this.body as ListView).update(show);
-      } else {
-        (this.body as LiteralView).update(
-          isFunction(show)
-            ? createLiteral("[function]")
-            : isError(show)
-            ? createLiteral(`[error: ${show.message}]`)
-            : show
-        );
       }
 
       const bodyEl = this.body!.element;
@@ -226,20 +231,58 @@ class CellMount {
         this.element.replaceChildren(bodyEl);
       }
 
-      this.element.classList.toggle("error", isError(show));
-
-      const focusEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
+      const valueEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
       registerBinding(this.path, {
         ...(name !== "" && { name: this.nameInput.input }),
-        value: focusEl,
+        value: valueEl,
         cell: this.element,
       });
+    });
+
+    this.stopValue = effect(() => {
+      const raw = this.cell.child.get();
+      const show = isFlow(raw) ? raw.result.get() : raw;
+
+      if (!this.body) return;
+
+      this.element.classList.toggle("error", isError(show));
+
+      if (isList(show)) {
+        (this.body as ListView).update(show);
+      } else {
+        (this.body as LiteralView).update(
+          isFunction(show)
+            ? createLiteral("[function]")
+            : isError(show)
+            ? createLiteral(`[error: ${show.message}]`)
+            : show
+        );
+      }
+    });
+
+    this.stopFocus = effect(() => {
+      const f = focusSignal.value;
+      const isFocused =
+        f.kind === "focused" && f.path.join(".") === this.path.join(".");
+
+      this.element.classList.toggle("focused", isFocused);
+
+      this.nameInput.element.classList.toggle(
+        "focused",
+        isFocused && f.role === "name"
+      );
+      this.body?.element.classList.toggle(
+        "focused",
+        isFocused && f.role === "value"
+      );
     });
   }
 
   dispose() {
     unregisterBinding(this.path);
-    this.stop();
+    this.stopShape();
+    this.stopValue();
+    this.stopFocus();
     this.body?.dispose();
   }
 }

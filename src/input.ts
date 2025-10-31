@@ -1,3 +1,5 @@
+import { signal } from "@preact/signals-core";
+
 import {
   type CellPath,
   parentPath,
@@ -17,6 +19,13 @@ import {
   mergeBackward,
   mergeForward,
 } from "./tree";
+
+export type FocusRole = "name" | "value";
+export type FocusState =
+  | { kind: "idle" }
+  | { kind: "focused"; path: CellPath; role: FocusRole };
+
+export const focusSignal = signal<FocusState>({ kind: "idle" });
 
 export type Role = "name" | "value";
 
@@ -59,11 +68,14 @@ type PathBinding = {
 const bindings = new Map<string, PathBinding>();
 let state: MachineState = { kind: "Idle", goalColumn: undefined };
 
-const keyOf = (p: CellPath) => p.join(".");
-const stop = (e: KeyboardEvent | MouseEvent) => {
+function keyOf(p: CellPath) {
+  return p.join(".");
+}
+
+function stop(e: KeyboardEvent | MouseEvent) {
   e.preventDefault();
   e.stopPropagation();
-};
+}
 
 function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
   el: T,
@@ -102,7 +114,7 @@ export function dispatch(ev: EditorEvent): void {
       const kind = getCellKind(state.path);
 
       if (ev.dir === "left" || ev.dir === "right") {
-        const sign = ev.dir === "left" ? -1 : (1 as const);
+        const sign = ev.dir === "left" ? -1 : 1;
         state = { ...state, goalColumn: undefined };
 
         if (kind === "list") {
@@ -147,7 +159,7 @@ export function dispatch(ev: EditorEvent): void {
       }
 
       if (ev.dir === "up" || ev.dir === "down") {
-        const sign = ev.dir === "up" ? -1 : (1 as const);
+        const sign = ev.dir === "up" ? -1 : 1;
         const isList = kind === "list";
         const goal = state.goalColumn ?? ev.caret ?? 0;
         const useSiblings = ev.mod || isList;
@@ -198,7 +210,6 @@ export function dispatch(ev: EditorEvent): void {
 
     case "TRANSFORM": {
       if (state.kind !== "Focused") break;
-
       const res = TRANSFORMS[ev.op]?.(state.path);
       if (res) {
         state = {
@@ -220,31 +231,28 @@ export function dispatch(ev: EditorEvent): void {
     }
   }
 
-  updateDOMFocus(prev, state, caretPos);
+  publishFocus(state);
+  updateDOMFocus(state, caretPos);
 }
 
-function updateDOMFocus(
-  prev: MachineState,
-  next: MachineState,
-  caretPos?: number
-) {
-  if (prev.kind !== "Focused" && next.kind !== "Focused") return;
+function publishFocus(next: MachineState) {
+  if (next.kind === "Focused") {
+    focusSignal.value = {
+      kind: "focused",
+      path: next.path,
+      role: next.role,
+    };
+  } else {
+    focusSignal.value = { kind: "idle" };
+  }
+}
 
-  bindings.forEach(({ cell }) => {
-    cell
-      .querySelectorAll(".focused")
-      .forEach((el) => el.classList.remove("focused"));
-    cell.classList.remove("focused");
-  });
-
+function updateDOMFocus(next: MachineState, caretPos?: number) {
   if (next.kind !== "Focused") return;
 
   const binding = bindings.get(keyOf(next.path));
   const targetEl = next.role === "name" ? binding?.name : binding?.value;
   if (!binding || !targetEl) return;
-
-  binding.cell.classList.add("focused");
-  targetEl.classList.add("focused");
 
   if (document.activeElement !== targetEl) {
     targetEl.focus({ preventScroll: true });
@@ -269,7 +277,7 @@ export function registerBinding(
     prior.value === slots.value &&
     prior.name === slots.name
   ) {
-    updateDOMFocus(state, state);
+    updateDOMFocus(state);
     return;
   }
 
@@ -284,7 +292,7 @@ export function registerBinding(
   binding.value.tabIndex = 0;
 
   if (binding.name) {
-    const nameEl = binding.name! as HTMLInputElement;
+    const nameEl = binding.name as HTMLInputElement;
 
     binding.teardowns.push(
       on(nameEl, "blur", () => {
@@ -468,7 +476,7 @@ export function registerBinding(
     );
   }
 
-  updateDOMFocus(state, state);
+  updateDOMFocus(state);
 }
 
 export function unregisterBinding(path: CellPath) {
@@ -487,7 +495,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
   if (state.kind !== "Focused") return;
 
   const kind = getCellKind(state.path);
-  if (!kind || kind === "text") return;
+  if (!kind || kind === "text" || kind === "flow") return;
 
   switch (e.key) {
     case "ArrowLeft":
