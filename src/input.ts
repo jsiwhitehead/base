@@ -321,14 +321,16 @@ export function registerBinding(
 
   binding.teardowns.push(
     on(valueEl, "mousedown", (e: MouseEvent) => {
+      dispatch({ type: "FOCUS", path, role: "value" });
+
       if (valueEl instanceof HTMLInputElement) {
         e.stopPropagation();
-        dispatch({ type: "FOCUS", path, role: "value" });
         return;
       }
 
-      stop(e);
-      dispatch({ type: "FOCUS", path, role: "value" });
+      if (getCellKind(path) !== "text-readonly") {
+        stop(e);
+      }
     })
   );
 
