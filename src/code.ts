@@ -33,10 +33,10 @@ Script {
 
   Expr          = Lambda
 
-  Lambda        = "(" ListOf<ident, ","> ")" "->" Lambda   -- paren
-                | ident "->" Lambda                        -- single
-                | (&"." | &":") Eq                         -- implicit
-                | Eq                                       -- plain
+  Lambda        = "(" ListOf<ident, ","> ")" ("->" | "=>") Lambda  -- paren
+                | ident ("->" | "=>") Lambda                       -- single
+                | (&"." | &":") Eq                                 -- implicit
+                | Eq                                               -- plain
 
   Eq            = Rel (("!=" | "=") Rel)*
 
@@ -59,8 +59,8 @@ Script {
 
   Call          = "(" ListOf<Expr, ","> ")"
 
-  Index         = "[" Slice "]"                            -- slice
-                | "[" Expr "]" "!"?                        -- expr
+  Index         = "[" Slice "]"                                    -- slice
+                | "[" Expr "]" "!"?                                -- expr
 
   Member        = "." ident "!"?
 
@@ -68,20 +68,20 @@ Script {
 
   Slice         = Add? ".." Add? (":" Add?)?
 
-  Prim          = Literal                                  -- lit
-                | ident                                    -- ident
-                | "(" Expr ")"                             -- paren
-                | "." "[" Expr "]" "!"?                    -- dotindex
-                | "." ident "!"?                           -- dot
+  Prim          = Literal                                          -- lit
+                | ident                                            -- ident
+                | "(" Expr ")"                                     -- paren
+                | "." "[" Expr "]" "!"?                            -- dotindex
+                | "." ident "!"?                                   -- dot
 
-  Literal       = "blank"                                  -- blank
-                | "true"                                   -- true
-                | number                                   -- number
-                | text                                     -- text
-                | template                                 -- tpl
+  Literal       = "blank"                                          -- blank
+                | "true"                                           -- true
+                | number                                           -- number
+                | text                                             -- text
+                | template                                         -- tpl
 
-  number        = digit+ ("." digit+)? exponent?           -- intdec
-                | "." digit+ exponent?                     -- dot
+  number        = digit+ ("." digit+)? exponent?                   -- intdec
+                | "." digit+ exponent?                             -- dot
   exponent      = ("e" | "E") ("+" | "-")? digit+
 
   text          = textLit<"\""> 
@@ -94,9 +94,9 @@ Script {
 
   textChar<q>   = escape | ~(q | "\\" | "\n" | "\r") any
 
-  tplChunk<q>   = "{{"                                     -- lbrace
-                | "{" applySyntactic<Expr> "}"             -- expr
-                | tplRun<q>                                -- text
+  tplChunk<q>   = "{{"                                             -- lbrace
+                | "{" applySyntactic<Expr> "}"                     -- expr
+                | tplRun<q>                                        -- text
   tplRun<q>     = tplChar<q>+
   tplChar<q>    = escape | ~(q | "\\" | "\n" | "\r" | "{") any
 
