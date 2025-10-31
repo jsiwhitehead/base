@@ -57,7 +57,17 @@ export type FunctionValue = {
   fn: (...args: ValueSignal[]) => ValueSignal;
 };
 
-export type Value = BlankValue | LiteralValue | ListValue | FunctionValue;
+export type ErrorValue = {
+  kind: "error";
+  message: string;
+};
+
+export type Value =
+  | ErrorValue
+  | BlankValue
+  | LiteralValue
+  | ListValue
+  | FunctionValue;
 
 export type FlowValue = {
   kind: "flow";
@@ -110,6 +120,7 @@ function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
 }
 
+export const isError = (v: unknown): v is ErrorValue => hasKind(v, "error");
 export const isBlank = (v: unknown): v is BlankValue => hasKind(v, "blank");
 export const isLiteral = (v: unknown): v is LiteralValue =>
   hasKind(v, "literal");
@@ -117,7 +128,7 @@ export const isList = (v: unknown): v is ListValue => hasKind(v, "list");
 export const isFunction = (v: unknown): v is FunctionValue =>
   hasKind(v, "function");
 export const isValue = (v: unknown): v is Value =>
-  isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
+  isError(v) || isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
 export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
 export const isSignal = (
   v: unknown
@@ -156,6 +167,11 @@ export function newUid() {
   return __nextCellUid++;
 }
 
+export const createError = (message: string): ErrorValue => ({
+  kind: "error",
+  message,
+});
+
 export const createBlank = (): BlankValue => ({ kind: "blank" });
 
 export const createLiteral = (value: Primitive): LiteralValue => ({
@@ -193,9 +209,13 @@ export const createFunction = (
 ): FunctionValue => ({ kind: "function", fn });
 
 export function createFlow(owner: ChildSignal, code: string): FlowValue {
-  const result = createComputed(() =>
-    evalCode(code, (name: string) => lookupInScope(name, owner))
-  );
+  const result = createComputed<Value>(() => {
+    try {
+      return evalCode(code, (name: string) => lookupInScope(name, owner));
+    } catch (err) {
+      return createError(err instanceof Error ? err.message : String(err));
+    }
+  });
   return { kind: "flow", code, result };
 }
 
@@ -244,6 +264,7 @@ function primTruthy(p: Primitive): boolean {
 }
 
 export function toBool(value: Value): boolean | null {
+  if (isError(value)) return null;
   if (isBlank(value)) return null;
   if (isLiteral(value)) return primTruthy(value.value);
   if (isList(value)) return value.cells.length > 0;
@@ -265,6 +286,7 @@ export function toNumber(value: Value): number | null {
 }
 
 export function toText(value: Value): string | null {
+  if (isError(value)) return value.message;
   if (isBlank(value)) return null;
   if (isLiteral(value)) return String(value.value);
   return null;
@@ -318,6 +340,7 @@ export function scalarToValue(
 }
 
 export function size(value: Value): number | null {
+  if (isError(value)) return null;
   if (isBlank(value)) return null;
   if (isLiteral(value) && typeof value.value === "string")
     return value.value.length;
@@ -440,6 +463,8 @@ export function childToValue(sig: ChildSignal): Value {
 }
 
 export function resolveValue(value: Value): StaticValue {
+  if (value.kind === "error") return value;
+
   if (value.kind === "blank") return { kind: "blank" };
   if (value.kind === "literal") return value.value;
 

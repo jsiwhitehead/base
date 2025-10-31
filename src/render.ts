@@ -8,12 +8,13 @@ import {
   type FlowValue,
   type ValueSignal,
   type Cell,
+  isError,
   isLiteral,
   isList,
   isFunction,
   isFlow,
   isWritableSignal,
-  createBlank,
+  createLiteral,
 } from "./data";
 import { type CellPath } from "./tree";
 import { registerBinding, unregisterBinding } from "./input";
@@ -194,26 +195,38 @@ class CellMount {
         this.body?.dispose();
         this.body = isList(show)
           ? new ListView(this.path)
-          : new LiteralView(isWritableSignal(this.cell.child));
+          : new LiteralView(!flow && isWritableSignal(this.cell.child));
       }
 
       if (isList(show)) {
         (this.body as ListView).update(show);
       } else {
         (this.body as LiteralView).update(
-          isFunction(show) ? createBlank() : show
+          isFunction(show)
+            ? createLiteral("[function]")
+            : isError(show)
+            ? createLiteral(`[error: ${show.message}]`)
+            : show
         );
       }
 
-      if (
-        this.element.childElementCount !== (needHeader ? 2 : 1) ||
-        this.element.lastElementChild !== this.body!.element
+      const bodyEl = this.body!.element;
+      if (needHeader) {
+        if (this.element.firstElementChild !== this.headerEl) {
+          const curBody = this.element.firstElementChild;
+          if (curBody === bodyEl) this.element.prepend(this.headerEl);
+          else this.element.replaceChildren(this.headerEl, bodyEl);
+        } else if (this.element.lastElementChild !== bodyEl) {
+          this.element.replaceChild(bodyEl, this.element.lastElementChild!);
+        }
+      } else if (
+        this.element.firstElementChild !== bodyEl ||
+        this.element.childElementCount !== 1
       ) {
-        this.element.replaceChildren(
-          ...(needHeader ? [this.headerEl] : []),
-          this.body!.element
-        );
+        this.element.replaceChildren(bodyEl);
       }
+
+      this.element.classList.toggle("error", isError(show));
 
       const focusEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
       registerBinding(this.path, {

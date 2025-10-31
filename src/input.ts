@@ -286,10 +286,7 @@ export function registerBinding(
     binding.teardowns.push(
       on(nameEl, "blur", () => {
         nameEl.setSelectionRange(0, 0);
-        queueMicrotask(() => {
-          setName(path, nameEl.value.trim());
-          dispatch({ type: "FOCUS", path, role: "value" });
-        });
+        setName(path, nameEl.value.trim());
       })
     );
 
