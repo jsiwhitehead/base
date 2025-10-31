@@ -15,6 +15,7 @@ import {
   removeCell,
   splitCell,
   mergeBackward,
+  mergeForward,
 } from "./tree";
 
 export type Role = "name" | "value";
@@ -44,6 +45,7 @@ const TRANSFORMS = {
   toggleTextCode,
   removeCell,
   mergeBackward,
+  mergeForward,
 };
 
 type PathBinding = {
@@ -228,11 +230,12 @@ function updateDOMFocus(
 ) {
   if (prev.kind !== "Focused" && next.kind !== "Focused") return;
 
-  for (const { cell, value, name } of bindings.values()) {
+  bindings.forEach(({ cell }) => {
+    cell
+      .querySelectorAll(".focused")
+      .forEach((el) => el.classList.remove("focused"));
     cell.classList.remove("focused");
-    value.classList.remove("focused");
-    name?.classList.remove("focused");
-  }
+  });
 
   if (next.kind !== "Focused") return;
 
@@ -413,17 +416,6 @@ export function registerBinding(
             return;
           }
 
-          case "=": {
-            if (kind !== "flow") {
-              if (!valueEl.value) {
-                stop(e);
-                dispatch({ type: "TRANSFORM", op: "toggleTextCode" });
-                return;
-              }
-            }
-            return;
-          }
-
           case "Backspace": {
             if (!(selStart === 0 && selEnd === 0)) return;
 
@@ -439,6 +431,24 @@ export function registerBinding(
 
             stop(e);
             dispatch({ type: "TRANSFORM", op: "mergeBackward" });
+            return;
+          }
+
+          case "Delete": {
+            if (!(selStart === len && selEnd === len)) return;
+            stop(e);
+            dispatch({ type: "TRANSFORM", op: "mergeForward" });
+            return;
+          }
+
+          case "=": {
+            if (kind !== "flow") {
+              if (!valueEl.value) {
+                stop(e);
+                dispatch({ type: "TRANSFORM", op: "toggleTextCode" });
+                return;
+              }
+            }
             return;
           }
 
@@ -493,6 +503,26 @@ export function onRootKeyDown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
       const dir = e.key === "ArrowUp" ? "up" : "down";
       dispatch({ type: "MOVE", dir, mod });
+      return;
+    }
+
+    case "Enter": {
+      e.preventDefault();
+      e.stopPropagation();
+      const res = e.shiftKey
+        ? insertBefore(state.path)
+        : insertAfter(state.path);
+      if (res) {
+        dispatch({ type: "FOCUS", path: res.path, role: "value" });
+      }
+      return;
+    }
+
+    case "Backspace": {
+      if (kind === "list") {
+        stop(e);
+        dispatch({ type: "TRANSFORM", op: "removeCell" });
+      }
       return;
     }
 

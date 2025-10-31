@@ -557,3 +557,25 @@ export function mergeBackward(path: CellPath): TransformResult {
 
   return { path: nextPath, caret };
 }
+
+export function mergeForward(path: CellPath): TransformResult {
+  const next = siblingPath(path, 1);
+  if (!next) return null;
+
+  const curSig = resolvePath(path);
+  const nextSig = resolvePath(next);
+  if (!curSig || !nextSig) return null;
+
+  const cv = childToValue(curSig);
+  const nv = childToValue(nextSig);
+  const curText = isLiteral(cv) ? String(cv.value) : "";
+  const nextText = isLiteral(nv) ? String(nv.value) : "";
+
+  let nextPathOut = path;
+  batch(() => {
+    setText(path, curText + nextText);
+    nextPathOut = removeCell(next)?.path ?? path;
+  });
+
+  return { path: nextPathOut, caret: curText.length };
+}
