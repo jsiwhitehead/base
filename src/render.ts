@@ -168,6 +168,7 @@ class CellMount {
   element = createEl("div", "cell");
 
   headerEl = createEl("div", "header");
+  nameDisplayEl = createEl("div");
   nameInput = new AutosizeInput("");
   eqEl = createEl("span", "equals");
   codeInput = new AutosizeInput("");
@@ -178,11 +179,13 @@ class CellMount {
   stopFocus: () => void;
 
   constructor(readonly cell: Cell, readonly path: CellPath) {
+    this.nameDisplayEl.classList.add("name");
     this.nameInput.element.classList.add("name");
     this.codeInput.element.classList.add("code");
     this.eqEl.textContent = "=";
 
     this.headerEl.append(
+      this.nameDisplayEl,
       this.nameInput.element,
       this.eqEl,
       this.codeInput.element
@@ -195,10 +198,19 @@ class CellMount {
       const flowRaw = flow ? raw : null;
       const show = flow ? flowRaw!.result.get() : raw;
 
-      const needHeader = name !== "" || flow;
+      const f = focusSignal.value;
+      const isEditingName =
+        f.kind === "focused" &&
+        f.path.join(".") === this.path.join(".") &&
+        f.role === "name";
 
+      this.nameDisplayEl.textContent = name;
       this.nameInput.update(name);
-      this.nameInput.element.classList.toggle("hidden", name === "");
+
+      const needHeader = name !== "" || flow || isEditingName;
+
+      this.nameInput.element.classList.toggle("hidden", !isEditingName);
+      this.nameDisplayEl.classList.toggle("hidden", isEditingName);
 
       this.codeInput.element.classList.toggle("hidden", !flow);
       this.eqEl.classList.toggle("hidden", !flow);
@@ -233,7 +245,7 @@ class CellMount {
 
       const valueEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
       registerBinding(this.path, {
-        ...(name !== "" && { name: this.nameInput.input }),
+        name: this.nameInput.input,
         value: valueEl,
         cell: this.element,
       });

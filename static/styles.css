@@ -139,7 +139,7 @@
 
 .header .equals {
   font-weight: bold;
-  color: oklch(48.8% 0.243 264.376);
+  color: oklch(54.6% 0.245 262.881);
   border-top-left-radius: calc(var(--round) / 2);
   border-bottom-left-radius: calc(var(--round) / 2);
   padding-left: var(--rule);

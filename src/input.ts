@@ -61,7 +61,7 @@ type PathBinding = {
   path: CellPath;
   cell: HTMLElement;
   value: HTMLElement;
-  name?: HTMLElement;
+  name: HTMLInputElement;
   teardowns: (() => void)[];
 };
 
@@ -266,7 +266,7 @@ function updateDOMFocus(next: MachineState, caretPos?: number) {
 
 export function registerBinding(
   path: CellPath,
-  slots: { cell: HTMLElement; value: HTMLElement; name?: HTMLElement }
+  slots: { cell: HTMLElement; value: HTMLElement; name: HTMLInputElement }
 ) {
   const k = keyOf(path);
   const prior = bindings.get(k);
@@ -286,44 +286,46 @@ export function registerBinding(
     bindings.delete(k);
   }
 
-  const binding: PathBinding = { path: path.slice(), ...slots, teardowns: [] };
+  const binding: PathBinding = {
+    path: path.slice(),
+    cell: slots.cell,
+    value: slots.value,
+    name: slots.name,
+    teardowns: [],
+  };
   bindings.set(k, binding);
 
   binding.value.tabIndex = 0;
 
-  if (binding.name) {
-    const nameEl = binding.name as HTMLInputElement;
+  const nameEl = binding.name;
 
-    binding.teardowns.push(
-      on(nameEl, "blur", () => {
-        nameEl.setSelectionRange(0, 0);
-        setName(path, nameEl.value.trim());
-      })
-    );
+  binding.teardowns.push(
+    on(nameEl, "keydown", (e: KeyboardEvent) => {
+      if (e.key === " ") {
+        e.preventDefault();
+        return;
+      }
 
-    binding.teardowns.push(
-      on(nameEl, "keydown", (e: KeyboardEvent) => {
-        switch (e.key) {
-          case "Enter":
-          case "Escape":
-            stop(e);
-            nameEl.blur();
-            return;
-          case "Tab":
-            stop(e);
-            dispatch({ type: "FOCUS", path, role: "value" });
-            return;
-        }
-      })
-    );
+      switch (e.key) {
+        case "Enter":
+          stop(e);
+          setName(path, nameEl.value);
+          dispatch({ type: "FOCUS", path, role: "value" });
+          return;
+        case "Escape":
+        case "Tab":
+          stop(e);
+          dispatch({ type: "FOCUS", path, role: "value" });
+          return;
+      }
+    })
+  );
 
-    binding.teardowns.push(
-      on(nameEl, "mousedown", (e: MouseEvent) => {
-        e.stopPropagation();
-        dispatch({ type: "FOCUS", path, role: "name" });
-      })
-    );
-  }
+  binding.teardowns.push(
+    on(nameEl, "blur", () => {
+      setName(path, nameEl.value);
+    })
+  );
 
   const valueEl = binding.value;
 
@@ -415,6 +417,13 @@ export function registerBinding(
           }
 
           case "Enter": {
+            if (mod) {
+              stop(e);
+              setText(path, valueEl.value);
+              dispatch({ type: "FOCUS", path, role: "name" });
+              return;
+            }
+
             stop(e);
             if (kind === "flow") {
               setText(path, valueEl.value);
