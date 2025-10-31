@@ -16,6 +16,7 @@ import {
   isFlow,
   isWritableSignal,
   newUid,
+  createError,
   createBlank,
   createLiteral,
   createList,
@@ -85,9 +86,15 @@ export function listMap(
 ): ListValue {
   return createList(
     listCellSignals(src).map(({ cell, indexSig, nameSig, valSig }) => ({
-      uid: cell.uid,
+      uid: newUid(),
       name: cell.name,
-      child: createComputed(() => f(valSig, indexSig, nameSig).get()),
+      child: createComputed(() => {
+        try {
+          return f(valSig, indexSig, nameSig).get();
+        } catch (err) {
+          return createError(err instanceof Error ? err.message : String(err));
+        }
+      }),
     }))
   );
 }
@@ -233,28 +240,28 @@ export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
   return [...pp, cs[j]!.uid];
 }
 
-type CellKind = "text" | "list" | "flow";
+type CellKind = "text" | "text-readonly" | "list" | "flow";
 
 export function getCellKind(path: CellPath): CellKind | null {
   const child = resolvePath(path);
   if (!child) return null;
+
   const v = child.peek();
-  return isFlow(v) ? "flow" : isList(v) ? "list" : "text";
+
+  if (isFlow(v)) return "flow";
+  if (isList(v)) return "list";
+
+  return isWritableSignal(child) ? "text" : "text-readonly";
 }
 
-type FlatLeaf = {
-  path: CellPath;
-  editable: boolean;
-};
-
-function flattenLeaves(): FlatLeaf[] {
-  const result: FlatLeaf[] = [];
+function flattenLeaves(): CellPath[] {
+  const result: CellPath[] = [];
 
   function walk(path: CellPath, child: ChildSignal): void {
     const v = child.peek();
 
     if (isFlow(v)) {
-      result.push({ path, editable: isWritableSignal(child) });
+      result.push(path);
 
       const out = v.result.peek();
       if (isList(out)) {
@@ -272,7 +279,7 @@ function flattenLeaves(): FlatLeaf[] {
       return;
     }
 
-    result.push({ path, editable: isWritableSignal(child) });
+    result.push(path);
   }
 
   walk([], getDataRoot());
@@ -280,11 +287,11 @@ function flattenLeaves(): FlatLeaf[] {
 }
 
 export function neighborLeafPath(from: CellPath, dir: -1 | 1): CellPath | null {
-  const leaves = flattenLeaves().filter((l) => l.editable);
+  const leaves = flattenLeaves();
   const key = from.join(".");
-  const i = leaves.findIndex((l) => l.path.join(".") === key);
+  const i = leaves.findIndex((p) => p.join(".") === key);
   if (i === -1) return null;
-  return leaves[i + dir]?.path ?? null;
+  return leaves[i + dir] ?? null;
 }
 
 /* Mutations */
@@ -321,19 +328,19 @@ export function setText(path: CellPath, raw: string): CellPath {
   return path;
 }
 
-export function toggleCodeText(path: CellPath): TransformResult {
+export function toggleTextCode(path: CellPath): TransformResult {
   const sig = resolvePath(path);
   if (!sig || !isWritableSignal(sig)) return null;
 
   const cur = sig.peek();
 
   if (isFlow(cur)) {
-    sig.set(parseTextToValue(cur.code));
+    sig.set(createBlank());
     return { path };
   }
 
   if (isLiteral(cur) || isBlank(cur)) {
-    sig.set(createFlow(sig, isLiteral(cur) ? String(cur.value) : ""));
+    sig.set(createFlow(sig, ""));
     return { path, caret: 0 };
   }
 
@@ -448,7 +455,7 @@ export function wrapWithList(path: CellPath): TransformResult {
   return { path: np };
 }
 
-export function unwrapListIfSingleChild(path: CellPath): TransformResult {
+export function unwrapIfSingleChild(path: CellPath): TransformResult {
   const innerChild = resolvePath(path);
   if (!innerChild) return null;
 
@@ -476,7 +483,7 @@ export function unwrapListIfSingleChild(path: CellPath): TransformResult {
   return { path: np };
 }
 
-export function removeChild(path: CellPath): TransformResult {
+export function removeCell(path: CellPath): TransformResult {
   const np = withLocatedPath(path, ({ parentPath, before, index }) => {
     const removed = before[index]!;
     const after = removeAt(before, index);
@@ -528,7 +535,7 @@ export function splitCell(
   return path;
 }
 
-export function mergeWithPrevious(path: CellPath): TransformResult {
+export function mergeBackward(path: CellPath): TransformResult {
   const prev = siblingPath(path, -1);
   if (!prev) return null;
 
@@ -545,7 +552,7 @@ export function mergeWithPrevious(path: CellPath): TransformResult {
   let nextPath = prev;
   batch(() => {
     setText(prev, prevText + curText);
-    nextPath = removeChild(path)?.path ?? prev;
+    nextPath = removeCell(path)?.path ?? prev;
   });
 
   return { path: nextPath, caret };

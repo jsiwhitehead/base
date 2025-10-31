@@ -6,15 +6,15 @@ import {
   getCellKind,
   neighborLeafPath,
   setText,
-  toggleCodeText,
+  toggleTextCode,
   setName,
   insertBefore,
   insertAfter,
   wrapWithList,
-  unwrapListIfSingleChild,
-  removeChild,
+  unwrapIfSingleChild,
+  removeCell,
   splitCell,
-  mergeWithPrevious,
+  mergeBackward,
 } from "./tree";
 
 export type Role = "name" | "value";
@@ -33,18 +33,18 @@ type EditorEvent =
       caret?: number;
     }
   | { type: "SPLIT"; caret: number; selEnd?: number }
-  | { type: "TRANSFORM"; op: keyof typeof TRANSFORMS }
+  | { type: "TRANSFORM"; op: keyof typeof TRANSFORMS; caret?: number }
   | { type: "CLEAR_GOAL_COLUMN" };
 
 const TRANSFORMS = {
-  "insert-before": insertBefore,
-  "insert-after": insertAfter,
-  wrap: wrapWithList,
-  "unwrap-if-single-child": unwrapListIfSingleChild,
-  "toggle-text-code": toggleCodeText,
-  remove: removeChild,
-  "merge-backward": mergeWithPrevious,
-} as const;
+  insertBefore,
+  insertAfter,
+  wrapWithList,
+  unwrapIfSingleChild,
+  toggleTextCode,
+  removeCell,
+  mergeBackward,
+};
 
 type PathBinding = {
   path: CellPath;
@@ -205,7 +205,7 @@ export function dispatch(ev: EditorEvent): void {
           role: "value",
           goalColumn: undefined,
         };
-        caretPos = res.caret;
+        caretPos = res.caret ?? ev.caret;
       }
       break;
     }
@@ -417,7 +417,7 @@ export function registerBinding(
             if (kind !== "flow") {
               if (!valueEl.value) {
                 stop(e);
-                dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
+                dispatch({ type: "TRANSFORM", op: "toggleTextCode" });
                 return;
               }
             }
@@ -430,7 +430,7 @@ export function registerBinding(
             if (kind === "flow") {
               if (!valueEl.value.trim()) {
                 stop(e);
-                dispatch({ type: "TRANSFORM", op: "toggle-text-code" });
+                dispatch({ type: "TRANSFORM", op: "toggleTextCode" });
                 return;
               }
               stop(e);
@@ -438,7 +438,7 @@ export function registerBinding(
             }
 
             stop(e);
-            dispatch({ type: "TRANSFORM", op: "merge-backward" });
+            dispatch({ type: "TRANSFORM", op: "mergeBackward" });
             return;
           }
 
@@ -446,7 +446,8 @@ export function registerBinding(
             stop(e);
             dispatch({
               type: "TRANSFORM",
-              op: e.shiftKey ? "unwrap-if-single-child" : "wrap",
+              op: e.shiftKey ? "unwrapIfSingleChild" : "wrapWithList",
+              caret: selStart,
             });
             return;
           }
@@ -472,15 +473,17 @@ export function unregisterBinding(path: CellPath) {
 
 export function onRootKeyDown(e: KeyboardEvent) {
   if (state.kind !== "Focused") return;
+
   const kind = getCellKind(state.path);
+  if (!kind || kind === "text") return;
 
   switch (e.key) {
     case "ArrowLeft":
     case "ArrowRight": {
-      if (kind !== "list") return;
       stop(e);
+      const mod = e.metaKey || e.ctrlKey;
       const dir = e.key === "ArrowLeft" ? "left" : "right";
-      dispatch({ type: "MOVE", dir });
+      dispatch({ type: "MOVE", dir, mod });
       return;
     }
 
@@ -497,7 +500,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
       stop(e);
       dispatch({
         type: "TRANSFORM",
-        op: e.shiftKey ? "unwrap-if-single-child" : "wrap",
+        op: e.shiftKey ? "unwrapIfSingleChild" : "wrapWithList",
       });
       return;
     }
