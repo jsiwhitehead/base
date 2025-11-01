@@ -1,4 +1,4 @@
-import { effect } from "@preact/signals-core";
+import { effect, computed } from "@preact/signals-core";
 
 import {
   type BlankValue,
@@ -111,8 +111,8 @@ class ListView implements View<ListValue> {
 
   update(next: ListValue) {
     const cells = next.cells;
-
     const keep = new Set(cells.map((c) => c.uid));
+
     for (const [uid, mount] of Array.from(this.rows)) {
       if (!keep.has(uid)) {
         mount.dispose();
@@ -150,11 +150,16 @@ class CellMount {
   codeInput = new AutosizeInput("");
 
   body?: ListView | LiteralView;
+
   stopShape: () => void;
   stopValue: () => void;
+  stopCode: () => void;
+  stopName: () => void;
   stopFocus: () => void;
 
   constructor(readonly cell: Cell, readonly path: CellPath) {
+    const pathKey = this.path.join(".");
+
     this.nameDisplayEl.classList.add("name");
     this.nameInput.element.classList.add("name");
     this.codeInput.element.classList.add("code");
@@ -167,45 +172,54 @@ class CellMount {
       this.codeInput.element
     );
 
-    this.stopShape = effect(() => {
+    const localFocusSig = computed(() => {
+      const f = focusSignal.value;
+      if (f.kind !== "focused") return 0;
+      return f.path.join(".") === pathKey ? f.role : 0;
+    });
+
+    const shapeSig = computed(() => {
       const name = this.cell.name.get();
       const raw = this.cell.child.get();
-      const flow = isFlow(raw);
-      const flowRaw = flow ? raw : null;
-      const show = flow ? flowRaw!.result.get() : raw;
+      const isFlowNode = isFlow(raw);
+      const show = isFlowNode ? raw.result.get() : raw;
+      const isListDisplay = isList(show);
 
       const f = focusSignal.value;
-      const isEditingName =
+      const nameFocused =
         f.kind === "focused" &&
-        f.path.join(".") === this.path.join(".") &&
+        f.path.join(".") === pathKey &&
         f.role === "name";
 
-      this.nameDisplayEl.textContent = name;
-      this.nameInput.update(name);
+      return JSON.stringify({
+        hasName: name !== "",
+        isFlow: isFlowNode,
+        isList: isListDisplay,
+        nameFocused,
+      });
+    });
 
-      const needHeader = name !== "" || flow || isEditingName;
+    this.stopShape = effect(() => {
+      const { hasName, isFlow, isList, nameFocused } = JSON.parse(
+        shapeSig.value
+      ) as {
+        hasName: boolean;
+        isFlow: boolean;
+        isList: boolean;
+        nameFocused: boolean;
+      };
 
-      this.nameInput.element.classList.toggle("hidden", !isEditingName);
-      this.nameDisplayEl.classList.toggle("hidden", isEditingName);
+      const needHeader = hasName || isFlow || nameFocused;
 
-      this.codeInput.element.classList.toggle("hidden", !flow);
-      this.eqEl.classList.toggle("hidden", !flow);
-
-      this.element.classList.toggle("flow", flow);
-
-      if (flow) {
-        this.codeInput.update(flowRaw!.code);
-        this.codeInput.input.readOnly = !isWritableSignal(this.cell.child);
-      }
-
-      if (!(this.body instanceof (isList(show) ? ListView : LiteralView))) {
+      if (!(this.body instanceof (isList ? ListView : LiteralView))) {
         this.body?.dispose();
-        this.body = isList(show)
+        this.body = isList
           ? new ListView(this.path)
-          : new LiteralView(!flow && isWritableSignal(this.cell.child));
+          : new LiteralView(!isFlow && isWritableSignal(this.cell.child));
       }
 
       const bodyEl = this.body!.element;
+
       if (needHeader) {
         if (this.element.firstElementChild !== this.headerEl) {
           const curBody = this.element.firstElementChild;
@@ -221,7 +235,12 @@ class CellMount {
         this.element.replaceChildren(bodyEl);
       }
 
-      const valueEl = flow ? this.codeInput.input : this.body!.element;
+      this.element.classList.toggle("flow", isFlow);
+      this.codeInput.element.classList.toggle("hidden", !isFlow);
+      this.eqEl.classList.toggle("hidden", !isFlow);
+
+      const valueEl = isFlow ? this.codeInput.input : bodyEl;
+
       registerBinding(this.path, {
         name: this.nameInput.input,
         value: valueEl,
@@ -233,9 +252,9 @@ class CellMount {
       const raw = this.cell.child.get();
       const show = isFlow(raw) ? raw.result.get() : raw;
 
-      if (!this.body) return;
-
       this.element.classList.toggle("error", isError(show));
+
+      if (!this.body) return;
 
       if (isList(show)) {
         (this.body as ListView).update(show);
@@ -250,21 +269,29 @@ class CellMount {
       }
     });
 
+    this.stopCode = effect(() => {
+      const raw = this.cell.child.get();
+      if (!isFlow(raw)) return;
+      this.codeInput.update(raw.code);
+    });
+
+    this.stopName = effect(() => {
+      const name = this.cell.name.get();
+      this.nameDisplayEl.textContent = name;
+      this.nameInput.update(name);
+    });
+
     this.stopFocus = effect(() => {
-      const f = focusSignal.value;
-      const isFocused =
-        f.kind === "focused" && f.path.join(".") === this.path.join(".");
+      const focus = localFocusSig.value;
+      const isFocused = focus !== 0;
 
       this.element.classList.toggle("focused", isFocused);
 
-      this.nameInput.element.classList.toggle(
-        "focused",
-        isFocused && f.role === "name"
-      );
-      this.body?.element.classList.toggle(
-        "focused",
-        isFocused && f.role === "value"
-      );
+      const editingName = focus === "name";
+      this.nameInput.element.classList.toggle("hidden", !editingName);
+      this.nameDisplayEl.classList.toggle("hidden", editingName);
+
+      this.body?.element.classList.toggle("focused", focus === "value");
     });
   }
 
@@ -272,6 +299,8 @@ class CellMount {
     unregisterBinding(this.path);
     this.stopShape();
     this.stopValue();
+    this.stopCode();
+    this.stopName();
     this.stopFocus();
     this.body?.dispose();
   }
