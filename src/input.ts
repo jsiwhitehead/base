@@ -306,6 +306,11 @@ export function registerBinding(
         return;
       }
 
+      if (e.key === "Backspace") {
+        e.stopPropagation();
+        return;
+      }
+
       switch (e.key) {
         case "Enter":
           stop(e);
@@ -356,8 +361,9 @@ export function registerBinding(
     binding.teardowns.push(
       on(valueEl, "blur", () => {
         valueEl.setSelectionRange(0, 0);
+        const next = valueEl.value;
         queueMicrotask(() => {
-          setText(path, valueEl.value);
+          setText(path, next);
         });
       })
     );
@@ -528,6 +534,14 @@ export function onRootKeyDown(e: KeyboardEvent) {
     case "Enter": {
       e.preventDefault();
       e.stopPropagation();
+
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod) {
+        dispatch({ type: "FOCUS", path: state.path, role: "name" });
+        return;
+      }
+
       const res = e.shiftKey
         ? insertBefore(state.path)
         : insertAfter(state.path);
