@@ -191,6 +191,8 @@ class CellMount {
       this.codeInput.element.classList.toggle("hidden", !flow);
       this.eqEl.classList.toggle("hidden", !flow);
 
+      this.element.classList.toggle("flow", flow);
+
       if (flow) {
         this.codeInput.update(flowRaw!.code);
         this.codeInput.input.readOnly = !isWritableSignal(this.cell.child);

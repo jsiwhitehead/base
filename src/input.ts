@@ -254,14 +254,19 @@ function updateDOMFocus(next: MachineState, caretPos?: number) {
   const targetEl = next.role === "name" ? binding?.name : binding?.value;
   if (!binding || !targetEl) return;
 
-  if (document.activeElement !== targetEl) {
-    targetEl.focus({ preventScroll: true });
-  }
+  const wasFocused = document.activeElement === targetEl;
+  if (!wasFocused) targetEl.focus({ preventScroll: true });
 
-  if (caretPos !== undefined && targetEl instanceof HTMLInputElement) {
-    const pos = Math.max(0, Math.min(caretPos, targetEl.value.length));
-    targetEl.setSelectionRange(pos, pos);
-  }
+  if (!(targetEl instanceof HTMLInputElement)) return;
+
+  const pos =
+    caretPos !== undefined
+      ? Math.max(0, Math.min(caretPos, targetEl.value.length))
+      : !wasFocused
+      ? targetEl.value.length
+      : null;
+
+  if (pos != null) targetEl.setSelectionRange(pos, pos);
 }
 
 export function registerBinding(
@@ -298,6 +303,18 @@ export function registerBinding(
   binding.value.tabIndex = 0;
 
   const nameEl = binding.name;
+  const valueEl = binding.value;
+  const cellEl = binding.cell;
+
+  binding.teardowns.push(on(nameEl, "mousedown", (e) => e.stopPropagation()));
+  binding.teardowns.push(on(valueEl, "mousedown", (e) => e.stopPropagation()));
+
+  binding.teardowns.push(
+    on(cellEl, "mousedown", (e) => {
+      dispatch({ type: "FOCUS", path, role: "value" });
+      e.preventDefault();
+    })
+  );
 
   binding.teardowns.push(
     on(nameEl, "keydown", (e: KeyboardEvent) => {
@@ -331,8 +348,6 @@ export function registerBinding(
       setName(path, nameEl.value);
     })
   );
-
-  const valueEl = binding.value;
 
   binding.teardowns.push(
     on(valueEl, "mousedown", (e: MouseEvent) => {

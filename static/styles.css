@@ -64,8 +64,8 @@
   content: "";
   position: absolute;
   left: 0;
-  top: 0;
-  bottom: 0;
+  top: 1px;
+  bottom: 1px;
 
   width: var(--rule);
   background: var(--grey-light);
@@ -79,9 +79,7 @@
   border-bottom-right-radius: var(--round);
 }
 .cell:has(> .header) {
-  &:first-child::before {
-    border-top-right-radius: 0;
-  }
+  padding-top: 1px;
 }
 
 .cell > div.value {
@@ -97,10 +95,22 @@
   padding-left: calc(var(--focus) + var(--gap));
 }
 
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap);
+.value {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.cell:has(> .list),
+.cell:has(> div.value) {
+  cursor: pointer;
+}
+
+.cell:has(> input.value) {
+  cursor: text;
+}
+
+.cell.flow {
+  cursor: text;
 }
 
 .header {
@@ -115,7 +125,7 @@
   max-width: 100%;
   margin-left: calc(-1 * var(--rule));
   padding: 0 var(--rule);
-  margin-bottom: var(--gap);
+  margin-bottom: 1px;
   border-radius: var(--round);
 }
 
@@ -153,6 +163,12 @@
   input {
     padding: 0 var(--rule);
   }
+}
+
+.cell:hover:not(:has(.cell:hover))::before {
+  width: calc(var(--rule) + var(--focus));
+  border-top-right-radius: var(--round);
+  border-bottom-right-radius: var(--round);
 }
 
 .cell.focused::before {
