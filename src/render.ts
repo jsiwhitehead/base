@@ -5,7 +5,6 @@ import {
   type LiteralValue,
   type ListValue,
   type Value,
-  type FlowValue,
   type ValueSignal,
   type Cell,
   isError,
@@ -60,17 +59,11 @@ class AutosizeInput {
   }
 
   update(text: string) {
-    if (this.input.value !== text) {
-      this.input.value = text;
+    if (this.input.value !== text) this.input.value = text;
+    const mirrorText = text || " ";
+    if (this.mirror.textContent !== mirrorText) {
+      this.mirror.textContent = mirrorText;
     }
-    const m = text || " ";
-    if (this.mirror.textContent !== m) {
-      this.mirror.textContent = m;
-    }
-  }
-
-  get focusEl() {
-    return this.input;
   }
 }
 
@@ -78,49 +71,36 @@ interface View<T extends Value> {
   element: HTMLElement;
   update(next: T): void;
   dispose(): void;
-  focusEl: HTMLElement;
 }
 
 class LiteralView implements View<LiteralValue | BlankValue> {
   element: HTMLElement;
-  inputEl?: HTMLInputElement;
   onInput?: (next: string) => void;
 
-  constructor(writable: boolean) {
+  constructor(readonly writable: boolean) {
     if (writable) {
       const input = createTextInput("value");
       input.addEventListener("input", () => this.onInput?.(input.value));
-      this.element = this.inputEl = input;
+      this.element = input;
     } else {
       this.element = createEl("div", "value");
     }
   }
 
   setText(text: string) {
-    if (this.inputEl) {
-      if (this.inputEl.value !== text) {
-        this.inputEl.value = text;
-      }
-    } else {
-      if (this.element.textContent !== text) {
-        this.element.textContent = text;
-      }
+    if (this.writable) {
+      const input = this.element as HTMLInputElement;
+      if (input.value !== text) input.value = text;
+    } else if (this.element.textContent !== text) {
+      this.element.textContent = text;
     }
   }
 
   update(next: LiteralValue | BlankValue) {
-    if (isLiteral(next)) {
-      this.setText(String(next.value));
-    } else {
-      this.setText("");
-    }
+    this.setText(isLiteral(next) ? String(next.value) : "");
   }
 
   dispose() {}
-
-  get focusEl(): HTMLElement {
-    return this.inputEl ?? this.element;
-  }
 }
 
 class ListView implements View<ListValue> {
@@ -157,10 +137,6 @@ class ListView implements View<ListValue> {
   dispose() {
     for (const m of this.rows.values()) m.dispose();
     this.rows.clear();
-  }
-
-  get focusEl() {
-    return this.element;
   }
 }
 
@@ -243,7 +219,7 @@ class CellMount {
         this.element.replaceChildren(bodyEl);
       }
 
-      const valueEl = flow ? this.codeInput.focusEl : this.body!.focusEl;
+      const valueEl = flow ? this.codeInput.input : this.body!.element;
       registerBinding(this.path, {
         name: this.nameInput.input,
         value: valueEl,
