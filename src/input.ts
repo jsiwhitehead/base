@@ -376,9 +376,8 @@ export function registerBinding(
     binding.teardowns.push(
       on(valueEl, "blur", () => {
         valueEl.setSelectionRange(0, 0);
-        const next = valueEl.value;
         queueMicrotask(() => {
-          setText(path, next);
+          setText(path, valueEl.value);
         });
       })
     );
