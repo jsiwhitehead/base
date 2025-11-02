@@ -165,12 +165,6 @@
   }
 }
 
-.cell:hover:not(:has(.cell:hover))::before {
-  width: calc(var(--rule) + var(--focus));
-  border-top-right-radius: var(--round);
-  border-bottom-right-radius: var(--round);
-}
-
 .cell.focused::before {
   width: calc(var(--rule) + var(--focus));
   background: var(--blue-normal) !important;

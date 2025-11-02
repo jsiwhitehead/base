@@ -24,12 +24,12 @@ import {
   childToValue,
 } from "./data";
 import {
+  listNumbersOpt,
+  listTextsOpt,
   listMap,
   listFilter,
   listReduce,
   listSort,
-  listNumbersOpt,
-  listTextsOpt,
 } from "./tree";
 
 function valueFn(op: (...values: Value[]) => Value): ValueSignal {

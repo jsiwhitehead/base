@@ -40,6 +40,11 @@ export const ERR = {
 
 export type Primitive = true | number | string;
 
+export type ErrorValue = {
+  kind: "error";
+  message: string;
+};
+
 export type BlankValue = { kind: "blank" };
 
 export type LiteralValue = {
@@ -52,22 +57,14 @@ export type ListValue = {
   cells: Cell[];
 };
 
+export type RenderValue = ErrorValue | BlankValue | LiteralValue | ListValue;
+
 export type FunctionValue = {
   kind: "function";
   fn: (...args: ValueSignal[]) => ValueSignal;
 };
 
-export type ErrorValue = {
-  kind: "error";
-  message: string;
-};
-
-export type Value =
-  | ErrorValue
-  | BlankValue
-  | LiteralValue
-  | ListValue
-  | FunctionValue;
+export type Value = RenderValue | FunctionValue;
 
 export type FlowValue = {
   kind: "flow";
@@ -96,12 +93,17 @@ export type ChildSignal = ReadSignal<Value> | WriteSignal<Value | EvalValue>;
 export type Cell = {
   uid: number;
   name: WriteSignal<string>;
+  view: WriteSignal<string>;
   child: ChildSignal;
 };
 
 export type StaticError = { kind: "error"; message: string };
 
-export type StaticCell = { name?: string; value: StaticValue };
+export type StaticCell = {
+  name?: string;
+  view?: string; // omitted when ""
+  value: StaticValue;
+};
 
 export type StaticListValue = {
   kind: "list";
@@ -183,6 +185,7 @@ export function createList(
   cells: {
     uid?: number;
     name?: string | WriteSignal<string>;
+    view?: string | WriteSignal<string>;
     child: ChildSignal;
   }[] = []
 ): ListValue {
@@ -195,9 +198,18 @@ export function createList(
       } else {
         nameSig = createSignal<string>(c.name ?? "");
       }
+
+      let viewSig: WriteSignal<string>;
+      if (isSignal(c.view)) {
+        viewSig = c.view;
+      } else {
+        viewSig = createSignal<string>(c.view ?? "");
+      }
+
       return {
         uid: c.uid ?? newUid(),
         name: nameSig,
+        view: viewSig,
         child: c.child,
       };
     }),
@@ -240,6 +252,7 @@ export function createListSignal(
   cells: {
     uid?: number;
     name?: string | WriteSignal<string>;
+    view?: string | WriteSignal<string>;
     child: ChildSignal;
   }[] = []
 ): ValueSignal<ListValue> {
@@ -471,11 +484,21 @@ export function resolveValue(value: Value): StaticValue {
   if (value.kind === "list") {
     const cells: StaticCell[] = value.cells.map((c) => {
       const nm = c.name.get();
+      const vw = c.view.get();
       const outName = nm === "" ? undefined : nm;
+      const outView = vw === "" ? undefined : vw;
       try {
-        return { name: outName, value: resolveValue(childToValue(c.child)) };
+        return {
+          name: outName,
+          view: outView,
+          value: resolveValue(childToValue(c.child)),
+        };
       } catch (err) {
-        return { name: outName, value: toStaticError(err) };
+        return {
+          name: outName,
+          view: outView,
+          value: toStaticError(err),
+        };
       }
     });
     return { kind: "list", cells };

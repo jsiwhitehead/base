@@ -3,16 +3,16 @@ import { effect } from "@preact/signals-core";
 import {
   type Primitive,
   type ListValue,
-  type ValueSignal,
   type Value,
   type EvalValue,
+  type ValueSignal,
+  type ChildSignal,
   createLiteral,
   createFlow,
   createSignal,
   createListSignal,
-  resolveValue,
   setGlobalLibrary,
-  type ChildSignal,
+  resolveValue,
 } from "./data";
 import { setDataRoot } from "./tree";
 import { library } from "./library";

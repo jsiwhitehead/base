@@ -3,8 +3,8 @@ import { signal } from "@preact/signals-core";
 import {
   type CellPath,
   parentPath,
-  siblingPath,
   firstChildPath,
+  siblingPath,
   getCellKind,
   neighborLeafPath,
   setText,

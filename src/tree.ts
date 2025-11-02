@@ -8,13 +8,13 @@ import {
   type ValueSignal,
   type ChildSignal,
   type Cell,
-  getParent,
-  getParentSignal,
   isBlank,
   isLiteral,
   isList,
   isFlow,
   isWritableSignal,
+  getParentSignal,
+  getParent,
   newUid,
   createError,
   createBlank,
@@ -382,7 +382,12 @@ export function withLocatedPath(
 }
 
 function makeBlankCell(child: ChildSignal): Cell {
-  return { uid: newUid(), name: createSignal(""), child };
+  return {
+    uid: newUid(),
+    name: createSignal(""),
+    view: createSignal(""),
+    child,
+  };
 }
 
 function insertAt(cs: Cell[], i: number, cell: Cell): Cell[] {
@@ -444,6 +449,7 @@ export function wrapWithList(path: CellPath): TransformResult {
       const wrapperCell: Cell = {
         uid: wrapperUid,
         name: createSignal(""),
+        view: createSignal(""),
         child: wrapperSig,
       };
       return {
