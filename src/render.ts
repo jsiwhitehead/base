@@ -179,6 +179,21 @@ abstract class View {
   }
 }
 
+function readProp(list: ListValue, name: string): Value | undefined {
+  const c = list.cells.find((x) => x.name.get() === name);
+  return c ? childToValue(c.child) : undefined;
+}
+function readText(list: ListValue, name: string): string | null {
+  const v = readProp(list, name);
+  return v ? toText(v) : null;
+}
+function readNum(list: ListValue, name: string): number | null {
+  const v = readProp(list, name);
+  if (!v) return null;
+  const n = Number(toText(v));
+  return Number.isFinite(n) ? n : null;
+}
+
 class StyledView extends View {
   element = createEl("div", "styled");
 
@@ -202,13 +217,66 @@ class StyledView extends View {
     });
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(this.valueSig));
-      if (isList(v)) {
-        const c = v.cells.find((x) => x.name.get() === "color");
-        this.element.style.color = (c && toText(childToValue(c.child))) || "";
+      const val = toRenderValue(childToValue(this.valueSig));
+
+      this.element.removeAttribute("style");
+      this.element.classList.remove("fill-main");
+
+      this.element.style.setProperty("--lh", "1.5");
+
+      if (!isList(val)) {
+        this.updateChildren([]);
+        this.element.classList.add("trim-half-leading");
+        if (isLiteral(val)) this.element.textContent = String(val.value);
         return;
       }
-      this.element.style.color = "";
+
+      this.element.classList.remove("trim-half-leading");
+      this.updateChildren(val.cells.filter((c) => !c.name.get()));
+
+      const dir = (readText(val, "direction") ?? "column").toLowerCase();
+      const hor = (readText(val, "horizontal") ?? "").toLowerCase();
+      const ver = (readText(val, "vertical") ?? "").toLowerCase();
+      const align = (readText(val, "align") ?? "").toLowerCase();
+
+      const gap = readNum(val, "gap");
+      const fill = readText(val, "fill");
+      const pad = readNum(val, "pad");
+      const round = readNum(val, "round");
+      const color = readText(val, "color");
+      const size = readNum(val, "size");
+
+      const spacing = readNum(val, "spacing");
+      if (spacing != null) {
+        this.element.style.setProperty("--lh", String(spacing));
+      }
+
+      const [main, cross] = dir === "row" ? [hor, ver] : [ver, hor];
+
+      const map: Record<string, string> = {
+        left: "flex-start",
+        top: "flex-start",
+        right: "flex-end",
+        bottom: "flex-end",
+        center: "center",
+        middle: "center",
+        spread: "space-between",
+      };
+
+      const s = this.element.style;
+      s.display = "flex";
+      s.flexDirection = dir === "row" ? "row" : "column";
+      if (gap != null) s.gap = `${gap}px`;
+      if (map[main]) s.justifyContent = map[main];
+      if (map[cross]) s.alignItems = map[cross];
+      if (align) s.textAlign = align;
+      if (fill) s.backgroundColor = fill;
+      if (pad != null) s.padding = `${pad}px`;
+      if (round != null) s.borderRadius = `${round}px`;
+      if (color) s.color = color;
+      if (size != null) s.fontSize = `${size}px`;
+
+      this.element.classList.toggle("fill-main", main === "fill");
     });
   }
 }

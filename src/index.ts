@@ -61,6 +61,18 @@ const root = createListSignal([
       { child: literalSig(20) },
     ]),
   },
+  {
+    view: "styled",
+    child: createListSignal([
+      { name: "color", child: literalSig("red") },
+      { name: "fill", child: literalSig("lightpink") },
+      { name: "round", child: literalSig(10) },
+      { name: "pad", child: literalSig(10) },
+      { name: "gap", child: literalSig(5) },
+      { child: literalSig("Hello") },
+      { child: literalSig("World") },
+    ]),
+  },
   { name: "y", child: literalSig(50) },
   { name: "z", child: flowSig("x") },
   { child: literalSig(10) },

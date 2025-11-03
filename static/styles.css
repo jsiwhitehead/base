@@ -58,7 +58,7 @@
 
 .cell {
   position: relative;
-  padding-left: var(--rule);
+  padding-left: calc(var(--rule) + var(--focus) + var(--gap));
 }
 .cell::before {
   content: "";
@@ -90,11 +90,6 @@
   color: oklch(64.5% 0.246 16.439);
 }
 
-.list,
-.value {
-  padding-left: calc(var(--focus) + var(--gap));
-}
-
 .value {
   padding-top: 1px;
   padding-bottom: 1px;
@@ -123,7 +118,7 @@
   background: var(--grey-light);
   width: fit-content;
   max-width: 100%;
-  margin-left: calc(-1 * var(--rule));
+  margin-left: calc(-1 * (var(--rule) + var(--focus) + var(--gap)));
   padding: 0 var(--rule);
   margin-bottom: 1px;
   border-radius: var(--round);
@@ -190,4 +185,17 @@
       color: oklch(54.6% 0.245 262.881);
     }
   }
+}
+
+.styled {
+  --lh: 1.5;
+  line-height: var(--lh);
+}
+
+.styled.trim-half-leading {
+  margin-block: calc((1 - var(--lh)) * 0.5em);
+}
+
+.styled.fill-main > * {
+  flex: 1 1 0;
 }
