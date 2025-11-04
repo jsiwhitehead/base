@@ -297,19 +297,54 @@ class StyledView extends View {
   }
 }
 
+class SliderView extends View {
+  element: HTMLInputElement;
+
+  constructor(readonly valueSig: ChildSignal, readonly path: CellPath) {
+    super();
+
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.step = "1";
+
+    this.element = input;
+
+    input.addEventListener("input", () => {
+      if (isWritableSignal(this.valueSig)) {
+        const n = Number(input.value);
+        if (Number.isFinite(n)) this.valueSig.set(createLiteral(n));
+      }
+    });
+
+    this.effect(() => {
+      const v = toRenderValue(childToValue(this.valueSig));
+      const n = isLiteral(v) && typeof v.value === "number" ? v.value : 0;
+
+      if (this.element.value !== String(n)) {
+        this.element.value = String(n);
+      }
+
+      this.element.disabled = !isWritableSignal(this.valueSig);
+    });
+  }
+}
+
+const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
+  styled: StyledView,
+  slider: SliderView,
+};
+
 class StandardView extends View {
   element!: HTMLElement;
   scalarEl: HTMLElement;
   listEl: HTMLElement;
 
-  constructor(
-    readonly valueSig: ChildSignal,
-    readonly path: CellPath,
-    readonly writable: boolean
-  ) {
+  constructor(readonly valueSig: ChildSignal, readonly path: CellPath) {
     super();
 
-    this.scalarEl = this.writable
+    this.scalarEl = isWritableSignal(valueSig)
       ? createTextInput("value")
       : createEl("div", "value");
 
@@ -343,7 +378,7 @@ class StandardView extends View {
       const text =
         v.kind === "literal" ? String(v.value) : isErr ? v.message : "";
 
-      if (this.writable) {
+      if (isWritableSignal(valueSig)) {
         (this.scalarEl as HTMLInputElement).value = text;
       } else {
         this.scalarEl.textContent = text;
@@ -432,30 +467,27 @@ class CellView extends View {
           isFlow: isFlow(this.cell.child.get()),
           nameFocused: focusMatches && focus.role === "name",
           viewId: this.cell.view.get(),
-          writable: isWritableSignal(this.cell.child),
         };
       },
-      ({ hasName, isFlow, nameFocused, viewId, writable }) => {
+      ({ hasName, isFlow, nameFocused, viewId }) => {
         const needHeader = hasName || isFlow || nameFocused;
-        const isStyled = viewId === "styled";
 
-        if (!(this.view instanceof (isStyled ? StyledView : StandardView))) {
+        const ViewCtor = views[viewId] ?? StandardView;
+        if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
-          this.view = isStyled
-            ? new StyledView(this.cell.child, this.path)
-            : new StandardView(this.cell.child, this.path, writable);
+          this.view = new ViewCtor(this.cell.child, this.path);
         }
 
         reconcileDomChildren(this.element, [
           needHeader ? this.header.element : null,
-          this.view!.element,
+          this.view.element,
         ]);
 
         this.element.classList.toggle("flow", isFlow);
 
         registerBinding(this.path, {
           name: this.header.getNameInput(),
-          value: isFlow ? this.header.getCodeInput() : this.view!.element,
+          value: isFlow ? this.header.getCodeInput() : this.view.element,
           cell: this.element,
         });
       }
@@ -489,5 +521,5 @@ export default function renderRoot(
   rootSignal: ValueSignal<ListValue>,
   rootPath: CellPath
 ) {
-  return new StandardView(rootSignal, rootPath, false);
+  return new StandardView(rootSignal, rootPath);
 }

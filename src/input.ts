@@ -257,7 +257,8 @@ function updateDOMFocus(next: MachineState, caretPos?: number) {
   const wasFocused = document.activeElement === targetEl;
   if (!wasFocused) targetEl.focus({ preventScroll: true });
 
-  if (!(targetEl instanceof HTMLInputElement)) return;
+  if (!(targetEl instanceof HTMLInputElement) || targetEl.type !== "text")
+    return;
 
   const pos =
     caretPos !== undefined
@@ -375,7 +376,9 @@ export function registerBinding(
 
     binding.teardowns.push(
       on(valueEl, "blur", () => {
-        valueEl.setSelectionRange(0, 0);
+        if (valueEl instanceof HTMLInputElement && valueEl.type === "text") {
+          valueEl.setSelectionRange(0, 0);
+        }
         queueMicrotask(() => {
           setText(path, valueEl.value);
         });

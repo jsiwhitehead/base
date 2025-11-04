@@ -75,7 +75,7 @@ const root = createListSignal([
       { child: literalSig("World") },
     ]),
   },
-  { name: "y", child: literalSig(50) },
+  { name: "y", view: "slider", child: literalSig(50) },
   { name: "z", child: flowSig("x") },
   { child: literalSig(10) },
   {
