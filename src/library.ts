@@ -19,7 +19,6 @@ import {
   textOpt,
   listOpt,
   fnOpt,
-  boolExpect,
   scalarToValue,
   childToValue,
 } from "./data";
@@ -140,6 +139,8 @@ export const library = {
     toBool(l) || toBool(r) ? createLiteral(true) : createBlank()
   ),
 
+  if: valueFn((cond, thenV, elseV) => (toBool(cond) ? thenV : elseV)),
+
   all: valueFn((...values) =>
     values.every((v) => !isBlank(v)) ? createLiteral(true) : createBlank()
   ),
@@ -252,8 +253,10 @@ export const library = {
   ),
 
   filter: typedFn([reqList, reqFn], (source, predValue) =>
-    listFilter(source, (value, index, name) =>
-      boolExpect(predValue.fn(value, index, name).get())
+    listFilter(
+      source,
+      (value, index, name) =>
+        toBool(predValue.fn(value, index, name).get()) === true
     )
   ),
 

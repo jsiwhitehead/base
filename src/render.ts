@@ -1,4 +1,4 @@
-import { effect, computed } from "@preact/signals-core";
+import { effect, computed, untracked } from "@preact/signals-core";
 
 import {
   type RenderValue,
@@ -15,6 +15,7 @@ import {
   isFunction,
   isFlow,
   isWritableSignal,
+  createBlank,
   createLiteral,
   toText,
   childToValue,
@@ -199,6 +200,21 @@ class StyledView extends View {
 
   constructor(readonly valueSig: ChildSignal, readonly path: CellPath) {
     super();
+
+    const setHover = (toTrue: boolean) => {
+      untracked(() => {
+        const value = childToValue(this.valueSig);
+        if (!isList(value)) return;
+
+        const hoverCell = value.cells.find((c) => c.name.get() === "hover");
+        if (!hoverCell || !isWritableSignal(hoverCell.child)) return;
+
+        hoverCell.child.set(toTrue ? createLiteral(true) : createBlank());
+      });
+    };
+
+    this.element.addEventListener("mouseenter", () => setHover(true));
+    this.element.addEventListener("mouseleave", () => setHover(false));
 
     this.initChildren(
       this.element,

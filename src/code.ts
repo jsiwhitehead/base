@@ -13,7 +13,7 @@ import {
   createSignal,
   numOpt,
   textOpt,
-  boolExpect,
+  toBool,
   primExpect,
   numExpect,
   scalarToValue,
@@ -402,7 +402,7 @@ const BINARY_OPS: Partial<
 };
 
 const UNARY_OPS: Record<Unary["op"], (v: Value) => boolean | number | null> = {
-  "!": (v) => !boolExpect(v),
+  "!": (v) => !toBool(v),
 
   "-": (v) => numericOp((x) => -x, v),
   "+": (v) => numericOp((x) => +x, v),

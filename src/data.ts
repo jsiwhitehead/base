@@ -270,18 +270,9 @@ export function createListSignal(
 
 /* Conversions */
 
-function primTruthy(p: Primitive): boolean {
-  if (p === true) return true;
-  if (typeof p === "number") return p !== 0;
-  return p.length > 0;
-}
-
 export function toBool(value: Value): boolean | null {
-  if (isError(value)) return null;
-  if (isBlank(value)) return null;
-  if (isLiteral(value)) return primTruthy(value.value);
-  if (isList(value)) return value.cells.length > 0;
-  return null;
+  if (isError(value) || isBlank(value)) return false;
+  return true;
 }
 
 export function toNumber(value: Value): number | null {
