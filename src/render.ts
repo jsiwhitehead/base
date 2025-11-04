@@ -114,17 +114,14 @@ class ChildViewManager {
         this.cache.delete(uid);
       }
     }
-    const frag = document.createDocumentFragment();
-    for (const cell of nextCells) {
-      const path = [...this.parentPath, cell.uid];
-      let child = this.cache.get(cell.uid);
-      if (!child) {
-        child = this.create(cell, path);
-        this.cache.set(cell.uid, child);
-      }
-      frag.append(child.element);
-    }
-    this.container.replaceChildren(frag);
+    const desired = nextCells.map((cell) => {
+      const view =
+        this.cache.get(cell.uid) ??
+        this.create(cell, [...this.parentPath, cell.uid]);
+      this.cache.set(cell.uid, view);
+      return view.element;
+    });
+    reconcileDomChildren(this.container, desired);
   }
 
   dispose() {
@@ -223,32 +220,30 @@ class StyledView extends View {
     );
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(this.valueSig));
-      if (isList(v)) {
-        this.updateChildren(v.cells.filter((c) => !c.name.get()));
-        return;
-      }
-      this.updateChildren([]);
-      this.element.textContent = isLiteral(v) ? String(v.value) : "";
-    });
-
-    this.effect(() => {
       const val = toRenderValue(childToValue(this.valueSig));
-
-      this.element.removeAttribute("style");
-      this.element.classList.remove("fill-main");
 
       this.element.style.setProperty("--lh", "1.5");
 
       if (!isList(val)) {
         this.updateChildren([]);
         this.element.classList.add("trim-half-leading");
-        if (isLiteral(val)) this.element.textContent = String(val.value);
+
+        const text = isLiteral(val) ? String(val.value) : "";
+        if (this.element.textContent !== text) {
+          this.element.textContent = text;
+        }
         return;
       }
 
       this.element.classList.remove("trim-half-leading");
-      this.updateChildren(val.cells.filter((c) => !c.name.get()));
+
+      this.updateChildren(
+        val.cells.filter((c) => {
+          if (c.name.get()) return false;
+          const v = childToValue(c.child);
+          return !(isBlank(v) || isError(v));
+        })
+      );
 
       const dir = (readText(val, "direction") ?? "column").toLowerCase();
       const hor = (readText(val, "horizontal") ?? "").toLowerCase();
@@ -268,7 +263,6 @@ class StyledView extends View {
       }
 
       const [main, cross] = dir === "row" ? [hor, ver] : [ver, hor];
-
       const map: Record<string, string> = {
         left: "flex-start",
         top: "flex-start",
@@ -283,14 +277,23 @@ class StyledView extends View {
       s.display = "flex";
       s.flexDirection = dir === "row" ? "row" : "column";
       if (gap != null) s.gap = `${gap}px`;
+      else s.removeProperty("gap");
       if (map[main]) s.justifyContent = map[main];
+      else s.removeProperty("justify-content");
       if (map[cross]) s.alignItems = map[cross];
+      else s.removeProperty("align-items");
       if (align) s.textAlign = align;
+      else s.removeProperty("text-align");
       if (fill) s.backgroundColor = fill;
+      else s.removeProperty("background-color");
       if (pad != null) s.padding = `${pad}px`;
+      else s.removeProperty("padding");
       if (round != null) s.borderRadius = `${round}px`;
+      else s.removeProperty("border-radius");
       if (color) s.color = color;
+      else s.removeProperty("color");
       if (size != null) s.fontSize = `${size}px`;
+      else s.removeProperty("font-size");
 
       this.element.classList.toggle("fill-main", main === "fill");
     });
@@ -448,13 +451,15 @@ class CellView extends View {
   element = createEl("div", "cell");
   header: CellHeaderView;
   view!: View;
+  stdView: StandardView;
 
   constructor(readonly cell: Cell, readonly path: CellPath) {
     super();
 
     const pathKey = this.path.join(".");
-
     this.header = new CellHeaderView(this.cell.name, this.cell.child, pathKey);
+
+    this.stdView = new StandardView(this.cell.child, this.path);
 
     this.effect(
       () => {
@@ -473,6 +478,8 @@ class CellView extends View {
         const needHeader = hasName || isFlow || nameFocused;
 
         const ViewCtor = views[viewId] ?? StandardView;
+        const isStandard = ViewCtor === StandardView;
+
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
           this.view = new ViewCtor(this.cell.child, this.path);
@@ -481,13 +488,18 @@ class CellView extends View {
         reconcileDomChildren(this.element, [
           needHeader ? this.header.element : null,
           this.view.element,
+          isStandard ? null : this.stdView.element,
         ]);
 
         this.element.classList.toggle("flow", isFlow);
 
         registerBinding(this.path, {
           name: this.header.getNameInput(),
-          value: isFlow ? this.header.getCodeInput() : this.view.element,
+          value: isFlow
+            ? this.header.getCodeInput()
+            : isStandard
+            ? this.view.element
+            : this.stdView.element,
           cell: this.element,
         });
       }
@@ -513,6 +525,7 @@ class CellView extends View {
       unregisterBinding(this.path);
       this.header.dispose();
       this.view.dispose();
+      this.stdView.dispose();
     });
   }
 }
