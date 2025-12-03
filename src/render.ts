@@ -1,4 +1,10 @@
-import { effect, computed, untracked } from "@preact/signals-core";
+import {
+  type Signal,
+  signal,
+  effect,
+  computed,
+  untracked,
+} from "@preact/signals-core";
 
 import {
   type RenderValue,
@@ -97,8 +103,13 @@ function reconcileDomChildren(
   }
 }
 
+type ChildItem = Cell | { uid: number | string; create: () => HTMLElement };
+
 class ChildViewManager {
-  cache = new Map<number, View>();
+  cache = new Map<
+    number | string,
+    { element: HTMLElement; dispose?: () => void }
+  >();
 
   constructor(
     readonly container: HTMLElement,
@@ -106,26 +117,33 @@ class ChildViewManager {
     readonly create: (cell: Cell, path: CellPath) => View
   ) {}
 
-  update(nextCells: Cell[]) {
-    const keep = new Set(nextCells.map((c) => c.uid));
-    for (const [uid, child] of this.cache) {
+  update(nextItems: ChildItem[]) {
+    const keep = new Set(nextItems.map((i) => i.uid));
+    for (const [uid, rec] of this.cache) {
       if (!keep.has(uid)) {
-        child.dispose();
+        rec.dispose?.();
         this.cache.delete(uid);
       }
     }
-    const desired = nextCells.map((cell) => {
-      const view =
-        this.cache.get(cell.uid) ??
-        this.create(cell, [...this.parentPath, cell.uid]);
-      this.cache.set(cell.uid, view);
-      return view.element;
+
+    const desired = nextItems.map((item) => {
+      let rec = this.cache.get(item.uid);
+      if (!rec) {
+        if ("child" in item) {
+          rec = this.create(item, [...this.parentPath, item.uid]);
+        } else {
+          rec = { element: item.create() };
+        }
+        this.cache.set(item.uid, rec);
+      }
+      return rec.element;
     });
+
     reconcileDomChildren(this.container, desired);
   }
 
   dispose() {
-    for (const child of this.cache.values()) child.dispose();
+    for (const child of this.cache.values()) child.dispose?.();
     this.cache.clear();
   }
 }
@@ -195,12 +213,12 @@ function readNum(list: ListValue, name: string): number | null {
 class StyledView extends View {
   element = createEl("div", "styled");
 
-  constructor(readonly valueSig: ChildSignal, readonly path: CellPath) {
+  constructor(valueSig: ChildSignal, path: CellPath) {
     super();
 
     const setHover = (toTrue: boolean) => {
       untracked(() => {
-        const value = childToValue(this.valueSig);
+        const value = childToValue(valueSig);
         if (!isList(value)) return;
 
         const hoverCell = value.cells.find((c) => c.name.get() === "hover");
@@ -215,12 +233,12 @@ class StyledView extends View {
 
     this.initChildren(
       this.element,
-      this.path,
+      path,
       (cell, childPath) => new StyledView(cell.child, childPath)
     );
 
     this.effect(() => {
-      const val = toRenderValue(childToValue(this.valueSig));
+      const val = toRenderValue(childToValue(valueSig));
 
       this.element.style.setProperty("--lh", "1.5");
 
@@ -303,7 +321,7 @@ class StyledView extends View {
 class SliderView extends View {
   element: HTMLInputElement;
 
-  constructor(readonly valueSig: ChildSignal, readonly path: CellPath) {
+  constructor(valueSig: ChildSignal, path: CellPath) {
     super();
 
     const input = document.createElement("input");
@@ -315,21 +333,203 @@ class SliderView extends View {
     this.element = input;
 
     input.addEventListener("input", () => {
-      if (isWritableSignal(this.valueSig)) {
+      if (isWritableSignal(valueSig)) {
         const n = Number(input.value);
-        if (Number.isFinite(n)) this.valueSig.set(createLiteral(n));
+        if (Number.isFinite(n)) valueSig.set(createLiteral(n));
       }
     });
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(this.valueSig));
+      const v = toRenderValue(childToValue(valueSig));
       const n = isLiteral(v) && typeof v.value === "number" ? v.value : 0;
 
       if (this.element.value !== String(n)) {
         this.element.value = String(n);
       }
 
-      this.element.disabled = !isWritableSignal(this.valueSig);
+      this.element.disabled = !isWritableSignal(valueSig);
+    });
+  }
+}
+
+class RowHeaderView extends View {
+  element = createEl("div", "label");
+  nameDisplayEl = createEl("div", "name");
+  nameInput = new AutosizeInput("", "name");
+
+  constructor(nameSig: WriteSignal<string>, pathKey: string) {
+    super();
+
+    this.effect(
+      () => {
+        const focus = focusSignal.value;
+        return (
+          focus.kind === "focused" &&
+          focus.path.join(".") === pathKey &&
+          focus.role === "name"
+        );
+      },
+      (showNameInput) => {
+        reconcileDomChildren(this.element, [
+          showNameInput ? this.nameInput.element : this.nameDisplayEl,
+        ]);
+      }
+    );
+
+    this.effect(() => {
+      const name = nameSig.get() || "";
+      this.nameDisplayEl.textContent = name;
+      this.nameInput.update(name);
+    });
+  }
+
+  getNameInput(): HTMLInputElement {
+    return this.nameInput.input;
+  }
+}
+
+class RowView extends View {
+  element = createEl("div", "row");
+  header: RowHeaderView;
+
+  constructor(rowCell: Cell, path: CellPath, columnsJsonSig: Signal<string>) {
+    super();
+
+    const pathKey = path.join(".");
+    this.header = new RowHeaderView(rowCell.name, pathKey);
+
+    this.initChildren(
+      this.element,
+      path,
+      (cell, p) => new CellView(cell, p, false)
+    );
+
+    this.effect(() => {
+      const cols: string[] = JSON.parse(columnsJsonSig.value);
+
+      const v = childToValue(rowCell.child);
+      const rowList = isList(v) ? v : null;
+
+      const byName = new Map<string, Cell>();
+      if (rowList) {
+        for (const c of rowList.cells) {
+          const n = c.name.get();
+          if (n) byName.set(n, c);
+        }
+      }
+
+      const items: ChildItem[] = [];
+      items.push({ uid: "label", create: () => this.header.element });
+
+      for (const name of cols) {
+        const real = byName.get(name);
+        if (real) {
+          items.push(real);
+        } else {
+          items.push({ uid: name, create: () => createEl("div", "cell") });
+        }
+      }
+
+      this.childList!.update(items);
+    });
+
+    registerBinding(path, {
+      cell: this.element,
+      value: this.element,
+      name: this.header.getNameInput(),
+    });
+
+    this.effect(() => {
+      const focus = focusSignal.value;
+      const focused =
+        focus.kind === "focused" && focus.path.join(".") === pathKey;
+      const valueFocused = focused && focus.role === "value";
+      this.element.classList.toggle("focused", valueFocused);
+    });
+
+    this.onCleanup(() => {
+      unregisterBinding(path);
+      this.header.dispose();
+    });
+  }
+}
+
+class TableView extends View {
+  element = createEl("div", "table");
+  headerRow = createEl("div", "row");
+  body = createEl("div", "table-body");
+  columnsJsonSig = signal("[]");
+
+  constructor(valueSig: ChildSignal, path: CellPath) {
+    super();
+
+    this.element.append(this.headerRow, this.body);
+    this.headerRow.classList.add("table-header");
+
+    this.initChildren(
+      this.body,
+      path,
+      (cell, p) => new RowView(cell, p, this.columnsJsonSig)
+    );
+
+    this.effect(
+      () => {
+        const list = toRenderValue(childToValue(valueSig));
+        if (!isList(list)) return [];
+
+        const first = list.cells[0]?.child;
+        if (!first) return [];
+
+        const row = childToValue(first);
+        if (!isList(row)) return [];
+
+        return [
+          ...new Set(
+            row.cells.map((c) => c.name.get()).filter((x): x is string => !!x)
+          ),
+        ];
+      },
+      (cols) => {
+        const cells: HTMLElement[] = [createEl("div", "label")];
+        for (const name of cols) cells.push(createEl("div", "cell", name));
+        reconcileDomChildren(this.headerRow, cells);
+        this.columnsJsonSig.value = JSON.stringify(cols);
+      }
+    );
+
+    this.effect(() => {
+      const v = toRenderValue(childToValue(valueSig));
+      this.updateChildren(isList(v) ? v.cells : []);
+    });
+
+    this.effect(() => {
+      const focus = focusSignal.value;
+
+      if (focus.kind !== "focused") {
+        this.headerRow
+          .querySelectorAll(".col-focused")
+          .forEach((el) => el.classList.remove("col-focused"));
+        return;
+      }
+
+      queueMicrotask(() => {
+        let col = -1;
+
+        for (const row of Array.from(this.body.children) as HTMLElement[]) {
+          const kids = Array.from(row.children) as HTMLElement[];
+          const idx = kids.findIndex(
+            (el, i) => i > 0 && el.classList.contains("focused")
+          );
+          if (idx !== -1) {
+            col = idx - 1;
+            break;
+          }
+        }
+
+        Array.from(this.headerRow.children).forEach((el, i) =>
+          el.classList.toggle("col-focused", i === col + 1)
+        );
+      });
     });
   }
 }
@@ -337,6 +537,7 @@ class SliderView extends View {
 const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
   styled: StyledView,
   slider: SliderView,
+  table: TableView,
 };
 
 class StandardView extends View {
@@ -344,7 +545,7 @@ class StandardView extends View {
   scalarEl: HTMLElement;
   listEl: HTMLElement;
 
-  constructor(readonly valueSig: ChildSignal, readonly path: CellPath) {
+  constructor(valueSig: ChildSignal, path: CellPath) {
     super();
 
     this.scalarEl = isWritableSignal(valueSig)
@@ -354,12 +555,12 @@ class StandardView extends View {
     this.listEl = createEl("div", "list");
     this.initChildren(
       this.listEl,
-      this.path,
+      path,
       (cell, childPath) => new CellView(cell, childPath)
     );
 
     this.effect(
-      () => isList(toRenderValue(childToValue(this.valueSig))),
+      () => isList(toRenderValue(childToValue(valueSig))),
       (shouldBeList) => {
         const next = shouldBeList ? this.listEl : this.scalarEl;
         if (this.element !== next) {
@@ -370,7 +571,7 @@ class StandardView extends View {
     );
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(this.valueSig));
+      const v = toRenderValue(childToValue(valueSig));
 
       if (isList(v)) {
         this.updateChildren(v.cells);
@@ -400,9 +601,9 @@ class CellHeaderView extends View {
   codeInput = new AutosizeInput("", "code");
 
   constructor(
-    readonly nameSig: WriteSignal<string>,
-    readonly childSig: ChildSignal,
-    readonly pathKey: string
+    nameSig: WriteSignal<string>,
+    childSig: ChildSignal,
+    pathKey: string
   ) {
     super();
 
@@ -410,10 +611,10 @@ class CellHeaderView extends View {
       () => {
         const focus = focusSignal.value;
         return {
-          isFlowNode: isFlow(this.childSig.get()),
+          isFlowNode: isFlow(childSig.get()),
           showNameInput:
             focus.kind === "focused" &&
-            focus.path.join(".") === this.pathKey &&
+            focus.path.join(".") === pathKey &&
             focus.role === "name",
         };
       },
@@ -427,13 +628,13 @@ class CellHeaderView extends View {
     );
 
     this.effect(() => {
-      const name = this.nameSig.get();
+      const name = nameSig.get();
       this.nameDisplayEl.textContent = name;
       this.nameInput.update(name);
     });
 
     this.effect(() => {
-      const raw = this.childSig.get();
+      const raw = childSig.get();
       if (isFlow(raw)) this.codeInput.update(raw.code);
     });
   }
@@ -453,13 +654,12 @@ class CellView extends View {
   view!: View;
   stdView: StandardView;
 
-  constructor(readonly cell: Cell, readonly path: CellPath) {
+  constructor(cell: Cell, path: CellPath, showHeader: boolean = true) {
     super();
 
-    const pathKey = this.path.join(".");
-    this.header = new CellHeaderView(this.cell.name, this.cell.child, pathKey);
-
-    this.stdView = new StandardView(this.cell.child, this.path);
+    const pathKey = path.join(".");
+    this.header = new CellHeaderView(cell.name, cell.child, pathKey);
+    this.stdView = new StandardView(cell.child, path);
 
     this.effect(
       () => {
@@ -468,36 +668,36 @@ class CellView extends View {
           focus.kind === "focused" && focus.path.join(".") === pathKey;
 
         return {
-          hasName: this.cell.name.get() !== "",
-          isFlow: isFlow(this.cell.child.get()),
+          hasName: cell.name.get() !== "",
+          isFlow: isFlow(cell.child.get()),
           nameFocused: focusMatches && focus.role === "name",
-          viewId: this.cell.view.get(),
+          viewId: cell.view.get(),
         };
       },
       ({ hasName, isFlow, nameFocused, viewId }) => {
-        const needHeader = hasName || isFlow || nameFocused;
+        const needHeader = showHeader && (hasName || isFlow || nameFocused);
 
-        const ViewCtor = views[viewId] ?? StandardView;
-        const isStandard = ViewCtor === StandardView;
+        const ViewCtor = views[viewId] || StandardView;
+        const simpleView = ViewCtor === StandardView || ViewCtor === TableView;
 
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
-          this.view = new ViewCtor(this.cell.child, this.path);
+          this.view = new ViewCtor(cell.child, path);
         }
 
         reconcileDomChildren(this.element, [
           needHeader ? this.header.element : null,
           this.view.element,
-          isStandard ? null : this.stdView.element,
+          simpleView ? null : this.stdView.element,
         ]);
 
         this.element.classList.toggle("flow", isFlow);
 
-        registerBinding(this.path, {
+        registerBinding(path, {
           name: this.header.getNameInput(),
           value: isFlow
             ? this.header.getCodeInput()
-            : isStandard
+            : simpleView
             ? this.view.element
             : this.stdView.element,
           cell: this.element,
@@ -522,7 +722,7 @@ class CellView extends View {
     );
 
     this.onCleanup(() => {
-      unregisterBinding(this.path);
+      unregisterBinding(path);
       this.header.dispose();
       this.view.dispose();
       this.stdView.dispose();

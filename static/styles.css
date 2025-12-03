@@ -1,7 +1,6 @@
 :root {
   --rule: 6px;
-  --focus: 10px;
-  --gap: 2px;
+  --indent: 4px;
   --round: 3px;
 
   --grey-faint: oklch(96.8% 0.007 247.896);
@@ -56,30 +55,41 @@
   color: inherit;
 }
 
-.cell {
+.list > .cell {
   position: relative;
-  padding-left: calc(var(--rule) + var(--focus) + var(--gap));
-}
-.cell::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 1px;
-  bottom: 1px;
-
-  width: var(--rule);
-  background: var(--grey-light);
-}
-.cell:first-child::before {
-  border-top-left-radius: var(--round);
-  border-top-right-radius: var(--round);
-}
-.cell:last-child::before {
-  border-bottom-left-radius: var(--round);
-  border-bottom-right-radius: var(--round);
-}
-.cell:has(> .header) {
+  padding-left: calc(var(--rule) + var(--indent));
   padding-top: 1px;
+  padding-bottom: 1px;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 1px;
+    bottom: 1px;
+
+    width: var(--rule);
+    background: var(--grey-light);
+  }
+
+  &:first-child::before {
+    border-top-left-radius: var(--round);
+    border-top-right-radius: var(--round);
+  }
+  &:last-child::before {
+    border-bottom-left-radius: var(--round);
+    border-bottom-right-radius: var(--round);
+  }
+
+  > input {
+    margin-top: -1px;
+    margin-bottom: -1px;
+  }
+
+  > .list {
+    margin-top: -1px;
+    margin-bottom: -1px;
+  }
 }
 
 .cell > div.value {
@@ -118,9 +128,9 @@
   background: var(--grey-light);
   width: fit-content;
   max-width: 100%;
-  margin-left: calc(-1 * (var(--rule) + var(--focus) + var(--gap)));
+  margin-left: calc(-1 * (var(--rule) + var(--indent)));
   padding: 0 var(--rule);
-  margin-bottom: 1px;
+  margin-bottom: 2px;
   border-radius: var(--round);
 }
 
@@ -153,7 +163,7 @@
 .header .code {
   border-top-right-radius: calc(var(--round) / 2);
   border-bottom-right-radius: calc(var(--round) / 2);
-  margin: var(--gap) 0;
+  margin: 2.5px 0;
   padding: 0 var(--rule);
   input {
     padding: 0 var(--rule);
@@ -161,10 +171,7 @@
 }
 
 .cell.focused::before {
-  width: calc(var(--rule) + var(--focus));
   background: var(--blue-normal) !important;
-  border-top-right-radius: var(--round);
-  border-bottom-right-radius: var(--round);
 }
 
 .cell.focused > .header {
@@ -198,4 +205,121 @@
 
 .styled.fill-main > * {
   flex: 1 1 0;
+}
+
+.table {
+  display: table;
+  width: 100%;
+
+  .row {
+    display: table-row;
+    counter-increment: rowIndex;
+  }
+
+  .label {
+    display: table-cell;
+  }
+
+  .cell {
+    display: table-cell;
+    padding-left: 2px;
+  }
+
+  .table-header {
+    font-size: 10px;
+    font-weight: bold;
+    color: oklch(44.6% 0.043 257.281);
+
+    .col-focused {
+      color: oklch(54.6% 0.245 262.881);
+    }
+  }
+
+  .table-body {
+    display: table-row-group;
+    counter-reset: rowIndex;
+
+    .label {
+      position: relative;
+
+      .name:empty::after {
+        content: counter(rowIndex);
+      }
+
+      &::before {
+        content: "";
+        position: absolute;
+        top: 2px;
+        bottom: 0;
+        left: 0;
+        right: 0;
+
+        z-index: -1;
+        background: var(--grey-light);
+      }
+
+      padding: 12px var(--rule) 0;
+      width: 1px;
+      vertical-align: top;
+
+      font-size: 10px;
+      font-weight: bold;
+      color: oklch(44.6% 0.043 257.281);
+    }
+
+    .row:first-child .label::before {
+      border-top-left-radius: var(--round);
+    }
+    .row:last-child .label::before {
+      border-bottom-left-radius: var(--round);
+    }
+
+    .cell {
+      position: relative;
+      padding-top: calc(var(--rule) + 2px);
+
+      &::before {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        right: 0;
+
+        height: var(--rule);
+        background: var(--grey-light);
+      }
+
+      &:last-child::before {
+        border-top-right-radius: var(--round);
+        border-bottom-right-radius: var(--round);
+      }
+    }
+  }
+
+  .row.focused {
+    .label {
+      &::before {
+        background: var(--blue-normal);
+      }
+      color: oklch(42.4% 0.199 265.638) !important;
+    }
+
+    .cell::before {
+      background: var(--blue-light);
+    }
+  }
+}
+
+.cell.focused > .table .row .label,
+.row:has(.focused) > .label {
+  color: oklch(54.6% 0.245 262.881);
+  &::before {
+    background: var(--blue-light);
+  }
+}
+
+.row:has(.focused) > .cell {
+  &::before {
+    background: var(--blue-light);
+  }
 }

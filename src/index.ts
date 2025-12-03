@@ -55,36 +55,49 @@ const flowSig = (code: string) => {
 };
 
 const root = createListSignal([
+  // {
+  //   name: "x",
+  //   child: createListSignal([
+  //     { child: literalSig(10) },
+  //     { child: literalSig(20) },
+  //   ]),
+  // },
   {
-    name: "x",
+    name: "data",
+    view: "table",
     child: createListSignal([
-      { child: literalSig(10) },
-      { child: literalSig(20) },
+      {
+        child: createListSignal([
+          { name: "Name", child: literalSig("Steve") },
+          { name: "Age", child: literalSig(25) },
+        ]),
+      },
+      {
+        child: createListSignal([
+          { name: "Name", child: literalSig("Lucy") },
+          { name: "Age", child: literalSig(32) },
+        ]),
+      },
+      {
+        child: createListSignal([
+          { name: "Name", child: literalSig("James") },
+          { name: "Age", child: literalSig(18) },
+        ]),
+      },
     ]),
   },
-  {
-    view: "styled",
-    child: createListSignal([
-      { name: "color", child: literalSig("red") },
-      { name: "fill", child: flowSig("if(hover, 'lightblue', 'lightpink')") },
-      { name: "round", child: literalSig(10) },
-      { name: "pad", child: literalSig(10) },
-      { name: "gap", child: literalSig(5) },
-      { name: "hover", child: createSignal(createBlank()) },
-      { child: literalSig("Hello") },
-      { child: literalSig("World") },
-    ]),
-  },
-  { name: "y", view: "slider", child: literalSig(50) },
-  { name: "z", child: flowSig("x") },
-  { child: literalSig(10) },
-  {
-    child: createListSignal([
-      { child: literalSig("Hello") },
-      { child: literalSig("World!") },
-    ]),
-  },
-  { child: literalSig(30) },
+  { child: createSignal(createBlank()) },
+  { child: flowSig("data:map(d -> d.Age):avg()") },
+  // { name: "y", view: "slider", child: literalSig(50) },
+  // { name: "z", child: flowSig("x") },
+  // { child: literalSig(10) },
+  // {
+  //   child: createListSignal([
+  //     { child: literalSig("Hello") },
+  //     { child: literalSig("World!") },
+  //   ]),
+  // },
+  // { child: literalSig(30) },
 ]);
 
 const unmount = render(root, document.getElementById("root")!);
