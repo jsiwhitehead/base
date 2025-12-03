@@ -534,10 +534,64 @@ class TableView extends View {
   }
 }
 
+class BarView extends View {
+  element!: HTMLElement;
+  scalarEl: HTMLElement;
+  listEl: HTMLElement;
+
+  constructor(valueSig: ChildSignal, path: CellPath) {
+    super();
+
+    this.scalarEl = isWritableSignal(valueSig)
+      ? createTextInput("value")
+      : createEl("div", "value");
+
+    this.listEl = createEl("div", "bar");
+    this.initChildren(
+      this.listEl,
+      path,
+      (cell, childPath) => new CellView(cell, childPath)
+    );
+
+    this.effect(
+      () => isList(toRenderValue(childToValue(valueSig))),
+      (shouldBeList) => {
+        const next = shouldBeList ? this.listEl : this.scalarEl;
+        if (this.element !== next) {
+          this.element?.replaceWith?.(next);
+          this.element = next;
+        }
+      }
+    );
+
+    this.effect(() => {
+      const v = toRenderValue(childToValue(valueSig));
+
+      if (isList(v)) {
+        this.updateChildren(v.cells);
+        return;
+      }
+
+      const isErr = v.kind === "error";
+      const text =
+        v.kind === "literal" ? String(v.value) : isErr ? v.message : "";
+
+      if (isWritableSignal(valueSig)) {
+        (this.scalarEl as HTMLInputElement).value = text;
+      } else {
+        this.scalarEl.textContent = text;
+      }
+
+      this.scalarEl.classList.toggle("error", isErr);
+    });
+  }
+}
+
 const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
   styled: StyledView,
   slider: SliderView,
   table: TableView,
+  bar: BarView,
 };
 
 class StandardView extends View {
@@ -678,7 +732,10 @@ class CellView extends View {
         const needHeader = showHeader && (hasName || isFlow || nameFocused);
 
         const ViewCtor = views[viewId] || StandardView;
-        const simpleView = ViewCtor === StandardView || ViewCtor === TableView;
+        const simpleView =
+          ViewCtor === StandardView ||
+          ViewCtor === TableView ||
+          ViewCtor === BarView;
 
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
