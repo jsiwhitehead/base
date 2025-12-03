@@ -314,6 +314,7 @@ export function registerBinding(
     on(cellEl, "mousedown", (e) => {
       dispatch({ type: "FOCUS", path, role: "value" });
       e.preventDefault();
+      e.stopPropagation();
     })
   );
 

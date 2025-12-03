@@ -91,15 +91,19 @@ function reconcileDomChildren(
   parent: HTMLElement,
   next: (HTMLElement | null | undefined)[]
 ) {
-  const desired = next.filter((el): el is HTMLElement => !!el);
-  const current = [...parent.childNodes];
+  const desired = next.filter(
+    (node): node is HTMLElement => node instanceof HTMLElement
+  );
 
-  desired.forEach((node, i) => {
-    if (current[i] !== node) parent.insertBefore(node, current[i] ?? null);
+  desired.forEach((child, i) => {
+    const current = parent.children[i];
+    if (current !== child) {
+      parent.insertBefore(child, current || null);
+    }
   });
 
-  while (parent.childNodes.length > desired.length) {
-    parent.lastChild!.remove();
+  while (parent.children.length > desired.length) {
+    parent.removeChild(parent.lastElementChild!);
   }
 }
 
@@ -670,11 +674,16 @@ class CellHeaderView extends View {
             focus.kind === "focused" &&
             focus.path.join(".") === pathKey &&
             focus.role === "name",
+          hasName: !!nameSig.get(),
         };
       },
-      ({ isFlowNode, showNameInput }) => {
+      ({ isFlowNode, showNameInput, hasName }) => {
         reconcileDomChildren(this.element, [
-          showNameInput ? this.nameInput.element : this.nameDisplayEl,
+          showNameInput
+            ? this.nameInput.element
+            : hasName
+            ? this.nameDisplayEl
+            : null,
           isFlowNode ? this.eqEl : null,
           isFlowNode ? this.codeInput.element : null,
         ]);
@@ -706,14 +715,13 @@ class CellView extends View {
   element = createEl("div", "cell");
   header: CellHeaderView;
   view!: View;
-  stdView: StandardView;
+  stdView?: StandardView;
 
   constructor(cell: Cell, path: CellPath, showHeader: boolean = true) {
     super();
 
     const pathKey = path.join(".");
     this.header = new CellHeaderView(cell.name, cell.child, pathKey);
-    this.stdView = new StandardView(cell.child, path);
 
     this.effect(
       () => {
@@ -742,10 +750,19 @@ class CellView extends View {
           this.view = new ViewCtor(cell.child, path);
         }
 
+        if (!simpleView) {
+          if (!this.stdView) {
+            this.stdView = new StandardView(cell.child, path);
+          }
+        } else if (this.stdView) {
+          this.stdView.dispose();
+          this.stdView = undefined;
+        }
+
         reconcileDomChildren(this.element, [
           needHeader ? this.header.element : null,
           this.view.element,
-          simpleView ? null : this.stdView.element,
+          !simpleView ? this.stdView!.element : null,
         ]);
 
         this.element.classList.toggle("flow", isFlow);
@@ -756,7 +773,7 @@ class CellView extends View {
             ? this.header.getCodeInput()
             : simpleView
             ? this.view.element
-            : this.stdView.element,
+            : this.stdView!.element,
           cell: this.element,
         });
       }
@@ -782,7 +799,7 @@ class CellView extends View {
       unregisterBinding(path);
       this.header.dispose();
       this.view.dispose();
-      this.stdView.dispose();
+      this.stdView?.dispose();
     });
   }
 }

@@ -216,7 +216,7 @@
 
 .table {
   display: table;
-  width: 100%;
+  /* width: 100%; */
 
   .row {
     display: table-row;
@@ -229,7 +229,8 @@
 
   .cell {
     display: table-cell;
-    padding-left: 2px;
+    padding-left: calc(var(--indent) + 2px);
+    padding-right: var(--indent);
   }
 
   .table-header {
@@ -339,6 +340,8 @@
   > .cell {
     position: relative;
     padding-top: calc(var(--rule) + 1px);
+    padding-left: var(--indent);
+    padding-right: var(--indent);
 
     &::before {
       content: "";
