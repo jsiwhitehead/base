@@ -61,7 +61,7 @@ type PathBinding = {
   path: CellPath;
   cell: HTMLElement;
   value: HTMLElement;
-  name: HTMLInputElement;
+  name: HTMLInputElement | HTMLTextAreaElement;
   teardowns: (() => void)[];
 };
 
@@ -84,6 +84,15 @@ function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
 ) {
   el.addEventListener(type, handler);
   return () => el.removeEventListener(type, handler);
+}
+
+function isTextInput(
+  el: HTMLElement
+): el is HTMLInputElement | HTMLTextAreaElement {
+  return (
+    (el instanceof HTMLInputElement && el.type === "text") ||
+    el instanceof HTMLTextAreaElement
+  );
 }
 
 export function dispatch(ev: EditorEvent): void {
@@ -257,8 +266,7 @@ function updateDOMFocus(next: MachineState, caretPos?: number) {
   const wasFocused = document.activeElement === targetEl;
   if (!wasFocused) targetEl.focus({ preventScroll: true });
 
-  if (!(targetEl instanceof HTMLInputElement) || targetEl.type !== "text")
-    return;
+  if (!isTextInput(targetEl)) return;
 
   const pos =
     caretPos !== undefined
@@ -272,7 +280,11 @@ function updateDOMFocus(next: MachineState, caretPos?: number) {
 
 export function registerBinding(
   path: CellPath,
-  slots: { cell: HTMLElement; value: HTMLElement; name: HTMLInputElement }
+  slots: {
+    cell: HTMLElement;
+    value: HTMLElement;
+    name: HTMLInputElement | HTMLTextAreaElement;
+  }
 ) {
   const k = keyOf(path);
   const prior = bindings.get(k);
@@ -355,7 +367,7 @@ export function registerBinding(
     on(valueEl, "mousedown", (e: MouseEvent) => {
       dispatch({ type: "FOCUS", path, role: "value" });
 
-      if (valueEl instanceof HTMLInputElement) {
+      if (isTextInput(valueEl)) {
         e.stopPropagation();
         return;
       }
@@ -366,7 +378,7 @@ export function registerBinding(
     })
   );
 
-  if (valueEl instanceof HTMLInputElement) {
+  if (isTextInput(valueEl)) {
     if (getCellKind(path) !== "flow") {
       binding.teardowns.push(
         on(valueEl, "input", () => {
@@ -377,7 +389,7 @@ export function registerBinding(
 
     binding.teardowns.push(
       on(valueEl, "blur", () => {
-        if (valueEl instanceof HTMLInputElement && valueEl.type === "text") {
+        if (isTextInput(valueEl)) {
           valueEl.setSelectionRange(0, 0);
         }
         queueMicrotask(() => {

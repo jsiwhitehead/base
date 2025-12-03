@@ -29,38 +29,55 @@ import {
 import { type CellPath } from "./tree";
 import { focusSignal, registerBinding, unregisterBinding } from "./input";
 
-function createEl(tag: string, className?: string, text?: string): HTMLElement {
+type CreateOptions = {
+  className?: string;
+  value?: string;
+};
+
+function createEl(
+  tag: string,
+  { className, value }: CreateOptions = {}
+): HTMLElement {
   const el = document.createElement(tag);
   if (className) el.classList.add(className);
-  if (text != null) el.textContent = text;
+  if (value != null) el.textContent = value;
   return el;
 }
 
-function createTextInput(className?: string, value?: string): HTMLInputElement {
-  const input = document.createElement("input");
+function createTextInputEl(
+  multiline: boolean,
+  { className, value }: CreateOptions = {}
+): HTMLInputElement | HTMLTextAreaElement {
+  const input = multiline
+    ? document.createElement("textarea")
+    : document.createElement("input");
   if (className) input.classList.add(className);
   if (value != null) input.value = value;
   input.autocapitalize = "off";
   input.autocomplete = "off";
   input.autocorrect = "off" as any;
   input.spellcheck = false;
+  if (input instanceof HTMLTextAreaElement) {
+    input.rows = 1;
+  }
   return input;
 }
 
 class AutosizeInput {
   element: HTMLElement;
-  input: HTMLInputElement;
+  input: HTMLInputElement | HTMLTextAreaElement;
   mirror: HTMLSpanElement;
 
-  constructor(initialText: string, className?: string) {
-    const wrap = createEl("div", "autosize");
+  constructor(multiline: boolean, { className, value }: CreateOptions = {}) {
+    const wrap = createEl("div", { className: "autosize" });
     if (className) wrap.classList.add(className);
 
     const mirror = createEl("span");
     mirror.setAttribute("aria-hidden", "true");
-    mirror.textContent = initialText || " ";
+    mirror.textContent = value || " ";
 
-    const input = createTextInput(undefined, initialText);
+    const input = createTextInputEl(multiline, { value });
+
     input.addEventListener("input", () => {
       mirror.textContent = input.value || " ";
     });
@@ -215,7 +232,7 @@ function readNum(list: ListValue, name: string): number | null {
 }
 
 class StyledView extends View {
-  element = createEl("div", "styled");
+  element = createEl("div", { className: "styled" });
 
   constructor(valueSig: ChildSignal, path: CellPath) {
     super();
@@ -357,9 +374,9 @@ class SliderView extends View {
 }
 
 class RowHeaderView extends View {
-  element = createEl("div", "label");
-  nameDisplayEl = createEl("div", "name");
-  nameInput = new AutosizeInput("", "name");
+  element = createEl("div", { className: "label" });
+  nameDisplayEl = createEl("div", { className: "name" });
+  nameInput = new AutosizeInput(false, { className: "name" });
 
   constructor(nameSig: WriteSignal<string>, pathKey: string) {
     super();
@@ -387,13 +404,13 @@ class RowHeaderView extends View {
     });
   }
 
-  getNameInput(): HTMLInputElement {
+  getNameInput(): HTMLInputElement | HTMLTextAreaElement {
     return this.nameInput.input;
   }
 }
 
 class RowView extends View {
-  element = createEl("div", "row");
+  element = createEl("div", { className: "row" });
   header: RowHeaderView;
 
   constructor(rowCell: Cell, path: CellPath, columnsJsonSig: Signal<string>) {
@@ -430,7 +447,10 @@ class RowView extends View {
         if (real) {
           items.push(real);
         } else {
-          items.push({ uid: name, create: () => createEl("div", "cell") });
+          items.push({
+            uid: name,
+            create: () => createEl("div", { className: "cell" }),
+          });
         }
       }
 
@@ -459,9 +479,9 @@ class RowView extends View {
 }
 
 class TableView extends View {
-  element = createEl("div", "table");
-  headerRow = createEl("div", "row");
-  body = createEl("div", "table-body");
+  element = createEl("div", { className: "table" });
+  headerRow = createEl("div", { className: "row" });
+  body = createEl("div", { className: "table-body" });
   columnsJsonSig = signal("[]");
 
   constructor(valueSig: ChildSignal, path: CellPath) {
@@ -494,8 +514,10 @@ class TableView extends View {
         ];
       },
       (cols) => {
-        const cells: HTMLElement[] = [createEl("div", "label")];
-        for (const name of cols) cells.push(createEl("div", "cell", name));
+        const cells: HTMLElement[] = [createEl("div", { className: "label" })];
+        for (const name of cols) {
+          cells.push(createEl("div", { className: "cell", value: name }));
+        }
         reconcileDomChildren(this.headerRow, cells);
         this.columnsJsonSig.value = JSON.stringify(cols);
       }
@@ -547,10 +569,10 @@ class BarView extends View {
     super();
 
     this.scalarEl = isWritableSignal(valueSig)
-      ? createTextInput("value")
-      : createEl("div", "value");
+      ? createTextInputEl(true, { className: "value" })
+      : createEl("div", { className: "value" });
 
-    this.listEl = createEl("div", "bar");
+    this.listEl = createEl("div", { className: "bar" });
     this.initChildren(
       this.listEl,
       path,
@@ -607,10 +629,10 @@ class StandardView extends View {
     super();
 
     this.scalarEl = isWritableSignal(valueSig)
-      ? createTextInput("value")
-      : createEl("div", "value");
+      ? createTextInputEl(true, { className: "value" })
+      : createEl("div", { className: "value" });
 
-    this.listEl = createEl("div", "list");
+    this.listEl = createEl("div", { className: "list" });
     this.initChildren(
       this.listEl,
       path,
@@ -652,11 +674,11 @@ class StandardView extends View {
 }
 
 class CellHeaderView extends View {
-  element = createEl("div", "header");
-  nameDisplayEl = createEl("div", "name");
-  nameInput = new AutosizeInput("", "name");
-  eqEl = createEl("span", "equals", "=");
-  codeInput = new AutosizeInput("", "code");
+  element = createEl("div", { className: "header" });
+  nameDisplayEl = createEl("div", { className: "name" });
+  nameInput = new AutosizeInput(false, { className: "name" });
+  eqEl = createEl("span", { className: "equals", value: "=" });
+  codeInput = new AutosizeInput(true, { className: "code" });
 
   constructor(
     nameSig: WriteSignal<string>,
@@ -702,17 +724,17 @@ class CellHeaderView extends View {
     });
   }
 
-  getNameInput(): HTMLInputElement {
+  getNameInput(): HTMLInputElement | HTMLTextAreaElement {
     return this.nameInput.input;
   }
 
-  getCodeInput(): HTMLInputElement {
+  getCodeInput(): HTMLInputElement | HTMLTextAreaElement {
     return this.codeInput.input;
   }
 }
 
 class CellView extends View {
-  element = createEl("div", "cell");
+  element = createEl("div", { className: "cell" });
   header: CellHeaderView;
   view!: View;
   stdView?: StandardView;

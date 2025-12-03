@@ -57,6 +57,7 @@ const flowSig = (code: string) => {
 const root = createListSignal([
   // {
   //   name: "x",
+  //   view: "bar",
   //   child: createListSignal([
   //     { child: literalSig(10) },
   //     { child: literalSig(20) },

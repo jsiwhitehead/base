@@ -31,20 +31,20 @@
   position: relative;
   display: inline-block;
   vertical-align: baseline;
-
   font: inherit;
 }
 .autosize > span {
   visibility: hidden;
-  white-space: pre;
-
+  white-space: pre-wrap;
   font: inherit;
 }
-.autosize > input {
+.autosize > input,
+.autosize > textarea {
   position: absolute;
   inset: 0;
   width: 100%;
   min-width: 1px;
+  height: 100%;
 
   padding: 0;
   margin: 0;
@@ -81,7 +81,7 @@
     border-bottom-right-radius: var(--round);
   }
 
-  > input {
+  > textarea {
     margin-top: -1px;
     margin-bottom: -1px;
   }
@@ -115,7 +115,7 @@
   cursor: pointer;
 }
 
-.cell:has(> input.value) {
+.cell:has(> textarea.value) {
   cursor: text;
 }
 
@@ -170,7 +170,7 @@
   border-bottom-right-radius: calc(var(--round) / 2);
   margin: 2.5px 0;
   padding: 0 var(--rule);
-  input {
+  textarea {
     padding: 0 var(--rule);
   }
 }
