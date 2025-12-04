@@ -7,13 +7,14 @@ import {
 } from "@preact/signals-core";
 
 import {
+  type ErrorValue,
+  type ListValue,
   type RenderValue,
   type Value,
-  type ListValue,
-  type Cell,
   type WriteSignal,
   type ValueSignal,
   type ChildSignal,
+  type Cell,
   isError,
   isBlank,
   isLiteral,
@@ -98,7 +99,7 @@ class AutosizeInput {
   }
 }
 
-function toRenderValue(v: Value): RenderValue {
+function toRenderValue(v: Value): RenderValue | ErrorValue {
   if (isList(v) || isLiteral(v) || isBlank(v) || isError(v)) return v;
   if (isFunction(v)) return createLiteral("[function]");
   return createLiteral("[unknown]");

@@ -57,14 +57,16 @@ export type ListValue = {
   cells: Cell[];
 };
 
-export type RenderValue = ErrorValue | BlankValue | LiteralValue | ListValue;
+export type RenderValue = BlankValue | LiteralValue | ListValue;
 
 export type FunctionValue = {
   kind: "function";
   fn: (...args: ValueSignal[]) => ValueSignal;
 };
 
-export type Value = RenderValue | FunctionValue;
+export type DataValue = RenderValue | FunctionValue;
+
+export type Value = DataValue | ErrorValue;
 
 export type FlowValue = {
   kind: "flow";
@@ -88,7 +90,9 @@ export type ValueSignal<T extends Value = Value> =
   | ReadSignal<T>
   | WriteSignal<T>;
 
-export type ChildSignal = ReadSignal<Value> | WriteSignal<Value | EvalValue>;
+export type ChildSignal =
+  | ReadSignal<Value>
+  | WriteSignal<DataValue | EvalValue>;
 
 export type Cell = {
   uid: number;
@@ -231,7 +235,7 @@ export function createFlow(owner: ChildSignal, code: string): FlowValue {
   return { kind: "flow", code, result };
 }
 
-export function createComputed<T extends Value>(fn: () => T): ReadSignal<T> {
+export function createComputed<T>(fn: () => T): ReadSignal<T> {
   const rsig: PReadonlySignal<T> = computed(fn);
   return { kind: "signal", get: () => rsig.value, peek: () => rsig.peek() };
 }

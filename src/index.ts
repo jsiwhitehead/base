@@ -3,7 +3,7 @@ import { effect } from "@preact/signals-core";
 import {
   type Primitive,
   type ListValue,
-  type Value,
+  type DataValue,
   type EvalValue,
   type ValueSignal,
   type ChildSignal,
@@ -49,7 +49,7 @@ export function render(
 const literalSig = (v: Primitive) => createSignal(createLiteral(v));
 
 const flowSig = (code: string) => {
-  const s: ChildSignal = createSignal<Value | EvalValue>(createLiteral(""));
+  const s: ChildSignal = createSignal<DataValue | EvalValue>(createLiteral(""));
   s.set(createFlow(s, code));
   return s;
 };

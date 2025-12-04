@@ -2,8 +2,9 @@ import { batch } from "@preact/signals-core";
 
 import {
   ERR,
-  type Value,
   type ListValue,
+  type DataValue,
+  type Value,
   type WriteSignal,
   type ValueSignal,
   type ChildSignal,
@@ -298,7 +299,7 @@ export function neighborLeafPath(from: CellPath, dir: -1 | 1): CellPath | null {
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-export function parseTextToValue(text: string): Value {
+export function parseTextToValue(text: string): DataValue {
   const trimmed = text.trim();
   if (NUM_RE.test(trimmed)) {
     const n = Number(trimmed);

@@ -1,8 +1,8 @@
 import {
   ERR,
-  type Value,
   type ListValue,
   type FunctionValue,
+  type Value,
   type ValueSignal,
   isBlank,
   isList,
