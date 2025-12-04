@@ -325,8 +325,7 @@ export function registerBinding(
   binding.teardowns.push(
     on(cellEl, "mousedown", (e) => {
       dispatch({ type: "FOCUS", path, role: "value" });
-      e.preventDefault();
-      e.stopPropagation();
+      stop(e);
     })
   );
 
@@ -460,6 +459,11 @@ export function registerBinding(
               return;
             }
 
+            if (e.shiftKey) {
+              setText(path, valueEl.value);
+              return;
+            }
+
             stop(e);
             if (kind === "flow") {
               setText(path, valueEl.value);
@@ -562,8 +566,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
     }
 
     case "Enter": {
-      e.preventDefault();
-      e.stopPropagation();
+      stop(e);
 
       const mod = e.metaKey || e.ctrlKey;
 

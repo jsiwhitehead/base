@@ -64,6 +64,12 @@ function createTextInputEl(
   return input;
 }
 
+function getMirrorText(text: string): string {
+  if (!text) return " ";
+  if (text.endsWith("\n")) return text + "\u00a0";
+  return text;
+}
+
 class AutosizeInput {
   element: HTMLElement;
   input: HTMLInputElement | HTMLTextAreaElement;
@@ -75,12 +81,12 @@ class AutosizeInput {
 
     const mirror = createEl("span");
     mirror.setAttribute("aria-hidden", "true");
-    mirror.textContent = value || " ";
+    mirror.textContent = getMirrorText(value ?? "");
 
     const input = createTextInputEl(multiline, { value });
 
     input.addEventListener("input", () => {
-      mirror.textContent = input.value || " ";
+      mirror.textContent = getMirrorText(input.value);
     });
 
     wrap.append(mirror, input);
@@ -94,7 +100,7 @@ class AutosizeInput {
 
   update(text: string) {
     if (this.input.value !== text) this.input.value = text;
-    const mirrorText = text || " ";
+    const mirrorText = getMirrorText(text);
     if (this.mirror.textContent !== mirrorText) {
       this.mirror.textContent = mirrorText;
     }

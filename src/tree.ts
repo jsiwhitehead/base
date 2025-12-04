@@ -305,7 +305,7 @@ export function parseTextToValue(text: string): DataValue {
     const n = Number(trimmed);
     if (Number.isFinite(n)) return createLiteral(n);
   }
-  return createLiteral(trimmed);
+  return createLiteral(text);
 }
 
 export function setText(path: CellPath, raw: string): CellPath {
