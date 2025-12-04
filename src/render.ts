@@ -85,6 +85,8 @@ class AutosizeInput {
 
     wrap.append(mirror, input);
 
+    (wrap as any).__textInputTarget = input;
+
     this.element = wrap;
     this.input = input;
     this.mirror = mirror;
@@ -561,77 +563,21 @@ class TableView extends View {
   }
 }
 
-class BarView extends View {
-  element!: HTMLElement;
-  scalarEl: HTMLElement;
-  listEl: HTMLElement;
-
-  constructor(valueSig: ChildSignal, path: CellPath) {
-    super();
-
-    this.scalarEl = isWritableSignal(valueSig)
-      ? createTextInputEl(true, { className: "value" })
-      : createEl("div", { className: "value" });
-
-    this.listEl = createEl("div", { className: "bar" });
-    this.initChildren(
-      this.listEl,
-      path,
-      (cell, childPath) => new CellView(cell, childPath)
-    );
-
-    this.effect(
-      () => isList(toRenderValue(childToValue(valueSig))),
-      (shouldBeList) => {
-        const next = shouldBeList ? this.listEl : this.scalarEl;
-        if (this.element !== next) {
-          this.element?.replaceWith?.(next);
-          this.element = next;
-        }
-      }
-    );
-
-    this.effect(() => {
-      const v = toRenderValue(childToValue(valueSig));
-
-      if (isList(v)) {
-        this.updateChildren(v.cells);
-        return;
-      }
-
-      const isErr = v.kind === "error";
-      const text =
-        v.kind === "literal" ? String(v.value) : isErr ? v.message : "";
-
-      if (isWritableSignal(valueSig)) {
-        (this.scalarEl as HTMLInputElement).value = text;
-      } else {
-        this.scalarEl.textContent = text;
-      }
-
-      this.scalarEl.classList.toggle("error", isErr);
-    });
-  }
-}
-
-const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
-  styled: StyledView,
-  slider: SliderView,
-  table: TableView,
-  bar: BarView,
-};
-
 class StandardView extends View {
   element!: HTMLElement;
+  scalarInput?: AutosizeInput;
   scalarEl: HTMLElement;
   listEl: HTMLElement;
 
   constructor(valueSig: ChildSignal, path: CellPath) {
     super();
 
-    this.scalarEl = isWritableSignal(valueSig)
-      ? createTextInputEl(true, { className: "value" })
-      : createEl("div", { className: "value" });
+    if (isWritableSignal(valueSig)) {
+      this.scalarInput = new AutosizeInput(true, { className: "value" });
+      this.scalarEl = this.scalarInput.element;
+    } else {
+      this.scalarEl = createEl("div", { className: "value" });
+    }
 
     this.listEl = createEl("div", { className: "list" });
     this.initChildren(
@@ -663,8 +609,8 @@ class StandardView extends View {
       const text =
         v.kind === "literal" ? String(v.value) : isErr ? v.message : "";
 
-      if (isWritableSignal(valueSig)) {
-        (this.scalarEl as HTMLInputElement).value = text;
+      if (this.scalarInput) {
+        this.scalarInput.update(text);
       } else {
         this.scalarEl.textContent = text;
       }
@@ -673,6 +619,21 @@ class StandardView extends View {
     });
   }
 }
+
+class BarView extends StandardView {
+  constructor(valueSig: ChildSignal, path: CellPath) {
+    super(valueSig, path);
+    this.listEl.classList.remove("list");
+    this.listEl.classList.add("bar");
+  }
+}
+
+const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
+  styled: StyledView,
+  slider: SliderView,
+  table: TableView,
+  bar: BarView,
+};
 
 class CellHeaderView extends View {
   element = createEl("div", { className: "header" });
@@ -790,13 +751,14 @@ class CellView extends View {
 
         this.element.classList.toggle("flow", isFlow);
 
+        const valueEl = isFlow
+          ? this.header.getCodeInput()
+          : simpleView
+          ? this.view.element
+          : this.stdView!.element;
         registerBinding(path, {
           name: this.header.getNameInput(),
-          value: isFlow
-            ? this.header.getCodeInput()
-            : simpleView
-            ? this.view.element
-            : this.stdView!.element,
+          value: (valueEl as any).__textInputTarget || valueEl,
           cell: this.element,
         });
       }

@@ -55,14 +55,17 @@ const flowSig = (code: string) => {
 };
 
 const root = createListSignal([
-  // {
-  //   name: "x",
-  //   view: "bar",
-  //   child: createListSignal([
-  //     { child: literalSig(10) },
-  //     { child: literalSig(20) },
-  //   ]),
-  // },
+  { child: literalSig(10) },
+  { child: literalSig(20) },
+  { child: literalSig(30) },
+  {
+    name: "x",
+    view: "bar",
+    child: createListSignal([
+      { child: literalSig(10) },
+      { child: literalSig(20) },
+    ]),
+  },
   {
     name: "data",
     view: "table",

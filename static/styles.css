@@ -34,9 +34,10 @@
   font: inherit;
 }
 .autosize > span {
-  visibility: hidden;
+  /* visibility: hidden; */
   white-space: pre-wrap;
   font: inherit;
+  color: red;
 }
 .autosize > input,
 .autosize > textarea {
@@ -81,11 +82,6 @@
     border-bottom-right-radius: var(--round);
   }
 
-  > textarea {
-    margin-top: -1px;
-    margin-bottom: -1px;
-  }
-
   > .list {
     margin-top: -1px;
     margin-bottom: -1px;
@@ -97,25 +93,11 @@
   }
 }
 
-.cell > div.value {
-  min-height: 21px;
-}
-
 .cell.error > .value {
   color: oklch(64.5% 0.246 16.439);
 }
 
-.value {
-  padding-top: 1px;
-  padding-bottom: 1px;
-}
-
-.cell:has(> .list),
-.cell:has(> div.value) {
-  cursor: pointer;
-}
-
-.cell:has(> textarea.value) {
+.cell:has(> .value) {
   cursor: text;
 }
 
@@ -230,7 +212,7 @@
   .cell {
     display: table-cell;
     padding-left: calc(var(--indent) + 2px);
-    padding-right: var(--indent);
+    padding-right: calc(var(--indent) * 4);
   }
 
   .table-header {
@@ -341,7 +323,7 @@
     position: relative;
     padding-top: calc(var(--rule) + 1px);
     padding-left: var(--indent);
-    padding-right: var(--indent);
+    padding-right: calc(var(--indent) * 4);
 
     &::before {
       content: "";
