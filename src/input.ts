@@ -29,6 +29,8 @@ export const focusSignal = signal<FocusState>({ kind: "idle" });
 
 export type Role = "name" | "value";
 
+type Anchor = "top" | "bottom";
+
 type MachineState =
   | { kind: "Idle"; goalColumn?: number }
   | { kind: "Focused"; path: CellPath; role: Role; goalColumn?: number };
@@ -98,6 +100,7 @@ function isTextInput(
 export function dispatch(ev: EditorEvent): void {
   const prev = state;
   let caretPos: number | undefined;
+  let anchor: Anchor | undefined;
 
   switch (ev.type) {
     case "FOCUS": {
@@ -170,6 +173,7 @@ export function dispatch(ev: EditorEvent): void {
       if (ev.dir === "up" || ev.dir === "down") {
         const sign = ev.dir === "up" ? -1 : 1;
         const isList = kind === "list";
+
         const goal = state.goalColumn ?? ev.caret ?? 0;
         const useSiblings = ev.mod || isList;
 
@@ -178,28 +182,14 @@ export function dispatch(ev: EditorEvent): void {
           : neighborLeafPath(state.path, sign);
         if (!nextPath) break;
 
-        const targetKind = getCellKind(nextPath);
-        const isTextToText =
-          kind === "text" && targetKind === "text" && !!ev.mod;
-
-        const nextGoal = isTextToText
-          ? goal
-          : useSiblings
-          ? state.goalColumn
-          : goal;
-        const nextCaret = isTextToText
-          ? goal
-          : useSiblings
-          ? state.goalColumn ?? goal
-          : goal;
-
         state = {
           kind: "Focused",
           path: nextPath,
           role: "value",
-          goalColumn: nextGoal,
+          goalColumn: goal,
         };
-        caretPos = nextCaret;
+
+        anchor = ev.dir === "up" ? "bottom" : "top";
       }
       break;
     }
@@ -241,7 +231,7 @@ export function dispatch(ev: EditorEvent): void {
   }
 
   publishFocus(state);
-  updateDOMFocus(state, caretPos);
+  updateDOMFocus(state, caretPos, anchor);
 }
 
 function publishFocus(next: MachineState) {
@@ -256,7 +246,29 @@ function publishFocus(next: MachineState) {
   }
 }
 
-function updateDOMFocus(next: MachineState, caretPos?: number) {
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function computeAnchoredPos(
+  text: string,
+  column: number,
+  anchor: Anchor
+): number {
+  const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
+  if (nl === -1) {
+    return clamp(column, 0, text.length);
+  }
+  const lineStart = anchor === "top" ? 0 : nl + 1;
+  const lineLen = text.length - lineStart;
+  return lineStart + clamp(column, 0, lineLen);
+}
+
+function updateDOMFocus(
+  next: MachineState,
+  caretPos?: number,
+  anchor?: Anchor
+) {
   if (next.kind !== "Focused") return;
 
   const binding = bindings.get(keyOf(next.path));
@@ -268,14 +280,23 @@ function updateDOMFocus(next: MachineState, caretPos?: number) {
 
   if (!isTextInput(targetEl)) return;
 
-  const pos =
-    caretPos !== undefined
-      ? Math.max(0, Math.min(caretPos, targetEl.value.length))
-      : !wasFocused
-      ? targetEl.value.length
-      : null;
+  let pos: number | null = null;
 
-  if (pos != null) targetEl.setSelectionRange(pos, pos);
+  if (caretPos !== undefined) {
+    pos = Math.max(0, Math.min(caretPos, targetEl.value.length));
+  } else if (
+    !wasFocused &&
+    next.goalColumn !== undefined &&
+    anchor !== undefined
+  ) {
+    pos = computeAnchoredPos(targetEl.value, next.goalColumn, anchor);
+  } else if (!wasFocused) {
+    pos = targetEl.value.length;
+  }
+
+  if (pos != null) {
+    targetEl.setSelectionRange(pos, pos);
+  }
 }
 
 export function registerBinding(
@@ -443,11 +464,33 @@ export function registerBinding(
 
           case "ArrowUp":
           case "ArrowDown": {
+            const dir = e.key === "ArrowUp" ? -1 : 1;
+            const text = valueEl.value;
+            const pos = selStart;
+
+            const lineStart = text.lastIndexOf("\n", pos - 1);
+            const lineEnd = text.indexOf("\n", pos);
+
+            const structuralMove =
+              mod ||
+              (dir === -1 && lineStart === -1) ||
+              (dir === 1 && lineEnd === -1);
+
+            if (!structuralMove) {
+              dispatch({ type: "CLEAR_GOAL_COLUMN" });
+              return;
+            }
+
             stop(e);
-            setText(path, valueEl.value);
-            const caret = selStart;
-            const dir = e.key === "ArrowUp" ? "up" : "down";
-            dispatch({ type: "MOVE", dir, mod, caret });
+            setText(path, text);
+
+            dispatch({
+              type: "MOVE",
+              dir: dir === -1 ? "up" : "down",
+              mod,
+              caret: pos - (lineStart + 1),
+            });
+
             return;
           }
 

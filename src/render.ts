@@ -289,7 +289,11 @@ class StyledView extends View {
         val.cells.filter((c) => {
           if (c.name.get()) return false;
           const v = childToValue(c.child);
-          return !(isBlank(v) || isError(v));
+          if (isBlank(v) || isError(v)) return false;
+          if (isLiteral(v) && typeof v.value === "string") {
+            if (v.value.trim() === "") return false;
+          }
+          return true;
         })
       );
 

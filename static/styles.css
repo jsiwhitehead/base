@@ -136,7 +136,7 @@
 }
 .header .equals,
 .header .code {
-  background: white;
+  background: oklch(97% 0.014 254.604);
 }
 
 .header .equals {
