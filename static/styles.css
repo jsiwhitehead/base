@@ -183,6 +183,10 @@
   }
 }
 
+.slider {
+  width: auto;
+}
+
 .styled {
   --lh: 1.5;
   line-height: var(--lh);
@@ -248,7 +252,7 @@
         background: var(--grey-light);
       }
 
-      padding: 12px var(--rule) 0;
+      padding: 10px var(--rule) 0;
       width: 1px;
       vertical-align: top;
 

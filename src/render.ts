@@ -359,6 +359,7 @@ class SliderView extends View {
     super();
 
     const input = document.createElement("input");
+    input.classList.add("slider");
     input.type = "range";
     input.min = "0";
     input.max = "100";
@@ -737,7 +738,8 @@ class CellView extends View {
         const simpleView =
           ViewCtor === StandardView ||
           ViewCtor === TableView ||
-          ViewCtor === BarView;
+          ViewCtor === BarView ||
+          ViewCtor === SliderView;
 
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();

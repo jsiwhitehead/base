@@ -343,10 +343,6 @@ export function registerBinding(
         e.stopPropagation();
         return;
       }
-
-      if (getNavContext(path).kind !== "text-readonly") {
-        stop(e);
-      }
     })
   );
 
