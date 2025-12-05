@@ -652,9 +652,11 @@ class CellHeaderView extends View {
   nameInput = new AutosizeInput(false, { className: "name" });
   eqEl = createEl("span", { className: "equals", value: "=" });
   codeInput = new AutosizeInput(true, { className: "code" });
+  viewEl = createEl("div", { className: "view" });
 
   constructor(
     nameSig: WriteSignal<string>,
+    viewSig: WriteSignal<string>,
     childSig: ChildSignal,
     pathKey: string
   ) {
@@ -670,9 +672,10 @@ class CellHeaderView extends View {
             focus.path.join(".") === pathKey &&
             focus.role === "name",
           hasName: !!nameSig.get(),
+          hasView: !!viewSig.get(),
         };
       },
-      ({ isFlowNode, showNameInput, hasName }) => {
+      ({ isFlowNode, showNameInput, hasName, hasView }) => {
         reconcileDomChildren(this.element, [
           showNameInput
             ? this.nameInput.element
@@ -681,6 +684,7 @@ class CellHeaderView extends View {
             : null,
           isFlowNode ? this.eqEl : null,
           isFlowNode ? this.codeInput.element : null,
+          hasView ? this.viewEl : null,
         ]);
       }
     );
@@ -694,6 +698,11 @@ class CellHeaderView extends View {
     this.effect(() => {
       const raw = childSig.get();
       if (isFlow(raw)) this.codeInput.update(raw.code);
+    });
+
+    this.effect(() => {
+      const viewId = viewSig.get() || "";
+      this.viewEl.textContent = viewId;
     });
   }
 
@@ -716,7 +725,7 @@ class CellView extends View {
     super();
 
     const pathKey = path.join(".");
-    this.header = new CellHeaderView(cell.name, cell.child, pathKey);
+    this.header = new CellHeaderView(cell.name, cell.view, cell.child, pathKey);
 
     this.effect(
       () => {

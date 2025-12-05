@@ -157,6 +157,16 @@
   }
 }
 
+.header .view {
+  font-size: 10px;
+  font-weight: bold;
+  color: oklch(44.6% 0.043 257.281);
+  border-radius: 100px;
+  background: white;
+  margin: 2.5px 0 2.5px var(--rule);
+  padding: 0 var(--rule);
+}
+
 .cell.focused::before {
   background: var(--blue-normal) !important;
 }
