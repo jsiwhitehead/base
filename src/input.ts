@@ -2,11 +2,9 @@ import { signal } from "@preact/signals-core";
 
 import {
   type CellPath,
-  parentPath,
   firstChildPath,
-  siblingPath,
-  getCellKind,
-  neighborLeafPath,
+  getNavContext,
+  navigatePath,
   setText,
   toggleTextCode,
   setName,
@@ -41,7 +39,7 @@ type EditorEvent =
   | {
       type: "MOVE";
       dir: "up" | "down" | "left" | "right";
-      mod?: boolean;
+      mod: boolean;
       caret?: number;
     }
   | { type: "SPLIT"; caret: number; selEnd?: number }
@@ -123,74 +121,28 @@ export function dispatch(ev: EditorEvent): void {
     case "MOVE": {
       if (state.kind !== "Focused") break;
 
-      const kind = getCellKind(state.path);
+      const { dir, mod } = ev;
+      const nextPath = navigatePath(state.path, dir, mod);
+      if (!nextPath) break;
 
-      if (ev.dir === "left" || ev.dir === "right") {
-        const sign = ev.dir === "left" ? -1 : 1;
-        state = { ...state, goalColumn: undefined };
+      let goalColumn = state.goalColumn;
 
-        if (kind === "list") {
-          const target =
-            sign === -1 ? parentPath(state.path) : firstChildPath(state.path);
-          if (!target) break;
-          if (sign === -1 && target.length === 0) break;
-
-          state = {
-            kind: "Focused",
-            path: target,
-            role: "value",
-            goalColumn: undefined,
-          };
-          if (sign === 1) caretPos = 0;
-          break;
-        }
-
-        if (ev.mod && sign === -1) {
-          const parent = parentPath(state.path);
-          if (!parent || parent.length === 0) break;
-          state = {
-            kind: "Focused",
-            path: parent,
-            role: "value",
-            goalColumn: undefined,
-          };
-          break;
-        }
-
-        const nextPath = neighborLeafPath(state.path, sign);
-        if (!nextPath) break;
-
-        state = {
-          kind: "Focused",
-          path: nextPath,
-          role: "value",
-          goalColumn: undefined,
-        };
-        caretPos = sign === -1 ? Infinity : 0;
-        break;
+      if (dir === "left" || dir === "right") {
+        const caret = ev.caret ?? goalColumn ?? 0;
+        goalColumn = mod ? caret : undefined;
+        caretPos = mod ? caret : dir === "left" ? Infinity : 0;
+      } else {
+        goalColumn = goalColumn ?? ev.caret ?? 0;
+        anchor = dir === "up" ? "bottom" : "top";
       }
 
-      if (ev.dir === "up" || ev.dir === "down") {
-        const sign = ev.dir === "up" ? -1 : 1;
-        const isList = kind === "list";
+      state = {
+        kind: "Focused",
+        path: nextPath,
+        role: "value",
+        goalColumn,
+      };
 
-        const goal = state.goalColumn ?? ev.caret ?? 0;
-        const useSiblings = ev.mod || isList;
-
-        const nextPath = useSiblings
-          ? siblingPath(state.path, sign)
-          : neighborLeafPath(state.path, sign);
-        if (!nextPath) break;
-
-        state = {
-          kind: "Focused",
-          path: nextPath,
-          role: "value",
-          goalColumn: goal,
-        };
-
-        anchor = ev.dir === "up" ? "bottom" : "top";
-      }
       break;
     }
 
@@ -392,14 +344,14 @@ export function registerBinding(
         return;
       }
 
-      if (getCellKind(path) !== "text-readonly") {
+      if (getNavContext(path).kind !== "text-readonly") {
         stop(e);
       }
     })
   );
 
   if (isTextInput(valueEl)) {
-    if (getCellKind(path) !== "flow") {
+    if (getNavContext(path).kind !== "flow") {
       binding.teardowns.push(
         on(valueEl, "input", () => {
           setText(path, valueEl.value);
@@ -424,7 +376,7 @@ export function registerBinding(
         const len = valueEl.value.length;
         const selStart = valueEl.selectionStart ?? 0;
         const selEnd = valueEl.selectionEnd ?? selStart;
-        const kind = getCellKind(path);
+        const kind = getNavContext(path).kind;
 
         switch (e.key) {
           case "ArrowLeft":
@@ -433,28 +385,26 @@ export function registerBinding(
             const atStart = selStart === 0 && selEnd === 0;
             const atEnd = selStart === len && selEnd === len;
 
-            if (!mod && ((dir === -1 && atStart) || (dir === 1 && atEnd))) {
+            if (mod) {
               stop(e);
               setText(path, valueEl.value);
-              dispatch({ type: "MOVE", dir: dir === -1 ? "left" : "right" });
+              dispatch({
+                type: "MOVE",
+                dir: dir === -1 ? "left" : "right",
+                mod: true,
+                caret: selStart,
+              });
               return;
             }
 
-            if (mod && dir === -1 && atStart) {
+            if ((dir === -1 && atStart) || (dir === 1 && atEnd)) {
               stop(e);
               setText(path, valueEl.value);
-              const parent = parentPath(path);
-              if (!parent || parent.length === 0) return;
-              dispatch({ type: "MOVE", dir: "left", mod: true });
-              return;
-            }
-
-            if (mod && dir === 1 && atEnd) {
-              stop(e);
-              setText(path, valueEl.value);
-              if (kind === "flow") {
-                dispatch({ type: "MOVE", dir: "right" });
-              }
+              dispatch({
+                type: "MOVE",
+                dir: dir === -1 ? "left" : "right",
+                mod: false,
+              });
               return;
             }
 
@@ -586,7 +536,7 @@ export function unregisterBinding(path: CellPath) {
 export function onRootKeyDown(e: KeyboardEvent) {
   if (state.kind !== "Focused") return;
 
-  const kind = getCellKind(state.path);
+  const { kind } = getNavContext(state.path);
   if (!kind || kind === "text" || kind === "flow") return;
 
   switch (e.key) {

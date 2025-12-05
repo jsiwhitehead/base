@@ -198,16 +198,43 @@ export function listSort(
 
 export type CellPath = number[];
 
-function resolvePath(path: CellPath): ChildSignal | null {
-  let cur: ChildSignal = getDataRoot();
+export type CellKind = "text" | "text-readonly" | "list" | "flow";
+
+export type ViewContext = "default" | "table-cell" | "bar-child";
+
+export type NavContext = {
+  kind: CellKind | null;
+  viewContext: ViewContext;
+};
+
+function cellsAlongPath(path: CellPath): Cell[] {
+  const cells: Cell[] = [];
+  let child: ChildSignal = getDataRoot();
+
   for (const uid of path) {
-    const v = childToValue(cur);
-    if (!isList(v)) return null;
-    const cell = v.cells.find((e) => e.uid === uid);
-    if (!cell) return null;
-    cur = cell.child;
+    const v = childToValue(child);
+    if (!isList(v)) return [];
+    const cell = v.cells.find((c) => c.uid === uid);
+    if (!cell) return [];
+    cells.push(cell);
+    child = cell.child;
   }
-  return cur;
+
+  return cells;
+}
+
+function resolvePath(path: CellPath): ChildSignal | null {
+  if (path.length === 0) return getDataRoot();
+  const cells = cellsAlongPath(path);
+  const last = cells[cells.length - 1];
+  return last ? last.child : null;
+}
+
+function getListAt(path: CellPath): ListValue | null {
+  const child = resolvePath(path);
+  if (!child) return null;
+  const v = childToValue(child);
+  return isList(v) ? v : null;
 }
 
 export function parentPath(path: CellPath): CellPath | null {
@@ -215,10 +242,9 @@ export function parentPath(path: CellPath): CellPath | null {
 }
 
 export function firstChildPath(path: CellPath): CellPath | null {
-  const child = resolvePath(path);
-  if (!child) return null;
-  const v = childToValue(child);
-  return isList(v) && v.cells.length ? [...path, v.cells[0]!.uid] : null;
+  const list = getListAt(path);
+  const first = list?.cells[0];
+  return first ? [...path, first.uid] : null;
 }
 
 export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
@@ -227,32 +253,47 @@ export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
   const pp = parentPath(path);
   if (!pp) return null;
 
-  const parentChild = resolvePath(pp);
-  if (!parentChild) return null;
-
-  const list = childToValue(parentChild);
-  if (!isList(list)) return null;
+  const list = getListAt(pp);
+  if (!list) return null;
 
   const cs = list.cells;
-  const i = cs.findIndex((e) => e.uid === path[path.length - 1]!);
+  const uid = path[path.length - 1]!;
+  const i = cs.findIndex((e) => e.uid === uid);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= cs.length) return null;
 
   return [...pp, cs[j]!.uid];
 }
 
-type CellKind = "text" | "text-readonly" | "list" | "flow";
+export function getNavContext(path: CellPath): NavContext {
+  const cells = cellsAlongPath(path);
 
-export function getCellKind(path: CellPath): CellKind | null {
-  const child = resolvePath(path);
-  if (!child) return null;
+  const cell = cells[cells.length - 1];
+  const parentCell = cells[cells.length - 2];
+  const grandparentCell = cells[cells.length - 3];
 
-  const v = child.peek();
+  let kind: CellKind | null = null;
 
-  if (isFlow(v)) return "flow";
-  if (isList(v)) return "list";
+  if (cell) {
+    const child = cell.child;
+    const v = child.peek();
 
-  return isWritableSignal(child) ? "text" : "text-readonly";
+    if (isFlow(v)) kind = "flow";
+    else if (isList(v)) kind = "list";
+    else kind = isWritableSignal(child) ? "text" : "text-readonly";
+  }
+
+  const parentView = parentCell?.view.peek() ?? "";
+  const grandparentView = grandparentCell?.view.peek() ?? "";
+
+  const viewContext: ViewContext =
+    grandparentView === "table"
+      ? "table-cell"
+      : parentView === "bar"
+      ? "bar-child"
+      : "default";
+
+  return { kind, viewContext };
 }
 
 function flattenLeaves(): CellPath[] {
@@ -287,12 +328,116 @@ function flattenLeaves(): CellPath[] {
   return result;
 }
 
-export function neighborLeafPath(from: CellPath, dir: -1 | 1): CellPath | null {
+function neighborLeaf(
+  from: CellPath,
+  dir: -1 | 1,
+  blockPrefix?: CellPath
+): CellPath | null {
   const leaves = flattenLeaves();
-  const key = from.join(".");
-  const i = leaves.findIndex((p) => p.join(".") === key);
+  const fromKey = from.join(".");
+  const blockKey = blockPrefix?.length ? blockPrefix.join(".") : null;
+
+  const i = leaves.findIndex((p) => p.join(".") === fromKey);
   if (i === -1) return null;
-  return leaves[i + dir] ?? null;
+
+  let j = i + dir;
+  while (j >= 0 && j < leaves.length) {
+    const p = leaves[j]!;
+    const key = p.join(".");
+    if (!blockKey || !key.startsWith(blockKey)) return p;
+    j += dir;
+  }
+
+  return null;
+}
+
+function tableVerticalNeighborPath(
+  from: CellPath,
+  dir: -1 | 1
+): CellPath | null {
+  if (from.length < 2) return null;
+
+  const rowPath = parentPath(from);
+  const nextRowPath = rowPath && siblingPath(rowPath, dir);
+  if (!rowPath || !nextRowPath) return null;
+
+  const row = getListAt(rowPath);
+  const nextRow = getListAt(nextRowPath);
+  if (!row || !nextRow) return null;
+
+  const uid = from[from.length - 1]!;
+  const colIndex = row.cells.findIndex((c) => c.uid === uid);
+  if (colIndex === -1) return null;
+
+  const colName = row.cells[colIndex]!.name.peek();
+  if (!colName) return null;
+
+  const target = nextRow.cells.find((c) => c.name.peek() === colName);
+  return target ? [...nextRowPath, target.uid] : null;
+}
+
+export function navigatePath(
+  path: CellPath,
+  dir: "left" | "right" | "up" | "down",
+  mod: boolean
+): CellPath | null {
+  const { kind, viewContext } = getNavContext(path);
+
+  if (dir === "left" || dir === "right") {
+    const sign: -1 | 1 = dir === "left" ? -1 : 1;
+
+    if (mod && (viewContext === "table-cell" || viewContext === "bar-child")) {
+      if (sign === -1) {
+        const left = siblingPath(path, -1);
+        return left ?? parentPath(path);
+      }
+      return siblingPath(path, 1);
+    }
+
+    if (sign === -1 && (kind === "list" || mod)) {
+      const p = parentPath(path);
+      if (p && p.length) return p;
+    }
+
+    if (sign === 1) {
+      if (kind === "list") return firstChildPath(path);
+      if (mod) return null;
+    }
+
+    return neighborLeaf(path, sign);
+  }
+
+  const sign: -1 | 1 = dir === "up" ? -1 : 1;
+
+  if (viewContext === "table-cell") {
+    const next = tableVerticalNeighborPath(path, sign);
+    if (mod || next) return next ?? null;
+
+    const blockPrefix = path.length > 2 ? path.slice(0, -2) : path.slice(0, 1);
+    return neighborLeaf(path, sign, blockPrefix);
+  }
+
+  if (viewContext === "bar-child") {
+    return mod ? null : neighborLeaf(path, sign, path.slice(0, -1));
+  }
+
+  if (mod || kind === "list") {
+    return siblingPath(path, sign);
+  }
+
+  const target = neighborLeaf(path, sign);
+  if (!target) return null;
+
+  const { viewContext: targetView } = getNavContext(target);
+  if (targetView === "table-cell" || targetView === "bar-child") {
+    const rowPath = parentPath(target);
+    const row = rowPath && getListAt(rowPath);
+    const first = row?.cells[0];
+    if (!rowPath || !first) return target;
+    return [...rowPath, first.uid];
+  }
+
+  return target;
 }
 
 /* Mutations */

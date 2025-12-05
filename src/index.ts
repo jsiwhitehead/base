@@ -64,8 +64,16 @@ const root = createListSignal([
     child: createListSignal([
       { child: literalSig(10) },
       { child: literalSig(20) },
+      { child: literalSig(30) },
     ]),
   },
+  {
+    child: createListSignal([
+      { child: literalSig(10) },
+      { child: literalSig(20) },
+    ]),
+  },
+  { child: literalSig(10) },
   {
     name: "data",
     view: "table",
