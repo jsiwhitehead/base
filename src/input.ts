@@ -292,7 +292,12 @@ export function registerBinding(
   const valueEl = binding.value;
   const cellEl = binding.cell;
 
-  binding.teardowns.push(on(nameEl, "mousedown", (e) => e.stopPropagation()));
+  binding.teardowns.push(
+    on(nameEl, "mousedown", (e) => {
+      dispatch({ type: "FOCUS", path, role: "name" });
+      e.stopPropagation();
+    })
+  );
   binding.teardowns.push(on(valueEl, "mousedown", (e) => e.stopPropagation()));
 
   binding.teardowns.push(

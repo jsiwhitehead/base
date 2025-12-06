@@ -1,6 +1,6 @@
 :root {
-  --rule: 6px;
-  --indent: 4px;
+  --rule: 8px;
+  --indent: 6px;
   --round: 3px;
 
   --grey-faint: oklch(96.8% 0.007 247.896);
@@ -37,7 +37,7 @@
   /* visibility: hidden; */
   white-space: pre-wrap;
   font: inherit;
-  color: red;
+  color: transparent;
 }
 .autosize > input,
 .autosize > textarea {
@@ -97,6 +97,10 @@
   color: oklch(64.5% 0.246 16.439);
 }
 
+.cell {
+  cursor: pointer;
+}
+
 .cell:has(> .value) {
   cursor: text;
 }
@@ -109,6 +113,7 @@
   display: flex;
   flex-direction: row;
   align-items: center;
+  gap: var(--rule);
 
   position: relative;
   z-index: 1;
@@ -121,8 +126,17 @@
   border-radius: var(--round);
 }
 
+.header .wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: oklch(97% 0.014 254.604);
+  border-radius: calc(var(--round) / 2);
+  margin: 2.5px 0;
+}
+
 .header .name {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: bold;
   color: oklch(44.6% 0.043 257.281);
   padding: 0 var(--rule);
@@ -131,40 +145,23 @@
   }
 }
 
-.header:has(.code:not(.hidden)) .name {
-  margin-right: var(--rule);
-}
-.header .equals,
-.header .code {
-  background: oklch(97% 0.014 254.604);
-}
-
 .header .equals {
+  line-height: 1;
   font-weight: bold;
   color: oklch(54.6% 0.245 262.881);
-  border-top-left-radius: calc(var(--round) / 2);
-  border-bottom-left-radius: calc(var(--round) / 2);
-  padding-left: var(--rule);
+  &:first-child {
+    padding-left: var(--rule);
+  }
+  &:last-child {
+    padding-right: var(--rule);
+  }
 }
 
 .header .code {
-  border-top-right-radius: calc(var(--round) / 2);
-  border-bottom-right-radius: calc(var(--round) / 2);
-  margin: 2.5px 0;
   padding: 0 var(--rule);
   textarea {
     padding: 0 var(--rule);
   }
-}
-
-.header .view {
-  font-size: 10px;
-  font-weight: bold;
-  color: oklch(44.6% 0.043 257.281);
-  border-radius: 100px;
-  background: white;
-  margin: 2.5px 0 2.5px var(--rule);
-  padding: 0 var(--rule);
 }
 
 .cell.focused::before {
@@ -173,9 +170,6 @@
 
 .cell.focused > .header {
   background: var(--blue-normal) !important;
-  .name {
-    color: oklch(42.4% 0.199 265.638) !important;
-  }
 }
 
 .cell.focused > .list > .cell,

@@ -648,69 +648,56 @@ const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
 
 class CellHeaderView extends View {
   element = createEl("div", { className: "header" });
-  nameDisplayEl = createEl("div", { className: "name" });
+  wrapEl = createEl("div", { className: "wrap" });
   nameInput = new AutosizeInput(false, { className: "name" });
-  eqEl = createEl("span", { className: "equals", value: "=" });
+  equalsEl = createEl("span", { className: "equals", value: "=" });
   codeInput = new AutosizeInput(true, { className: "code" });
-  viewEl = createEl("div", { className: "view" });
 
   constructor(
     nameSig: WriteSignal<string>,
-    viewSig: WriteSignal<string>,
     childSig: ChildSignal,
     pathKey: string
   ) {
     super();
 
+    this.element.append(this.wrapEl);
+
     this.effect(
       () => {
-        const focus = focusSignal.value;
+        const focused = focusSignal.value;
+        const nameFocused =
+          focused.kind === "focused" &&
+          focused.role === "name" &&
+          focused.path.join(".") === pathKey;
         return {
           isFlowNode: isFlow(childSig.get()),
-          showNameInput:
-            focus.kind === "focused" &&
-            focus.path.join(".") === pathKey &&
-            focus.role === "name",
-          hasName: !!nameSig.get(),
-          hasView: !!viewSig.get(),
+          nameVisible: !!nameSig.get() || nameFocused,
         };
       },
-      ({ isFlowNode, showNameInput, hasName, hasView }) => {
-        reconcileDomChildren(this.element, [
-          showNameInput
-            ? this.nameInput.element
-            : hasName
-            ? this.nameDisplayEl
-            : null,
-          isFlowNode ? this.eqEl : null,
+      ({ isFlowNode, nameVisible }) => {
+        reconcileDomChildren(this.wrapEl, [
+          nameVisible ? this.nameInput.element : null,
+          nameVisible || isFlowNode ? this.equalsEl : null,
           isFlowNode ? this.codeInput.element : null,
-          hasView ? this.viewEl : null,
         ]);
       }
     );
 
     this.effect(() => {
-      const name = nameSig.get();
-      this.nameDisplayEl.textContent = name;
-      this.nameInput.update(name);
+      this.nameInput.update(nameSig.get());
     });
 
     this.effect(() => {
-      const raw = childSig.get();
-      if (isFlow(raw)) this.codeInput.update(raw.code);
-    });
-
-    this.effect(() => {
-      const viewId = viewSig.get() || "";
-      this.viewEl.textContent = viewId;
+      const v = childSig.get();
+      if (isFlow(v)) this.codeInput.update(v.code);
     });
   }
 
-  getNameInput(): HTMLInputElement | HTMLTextAreaElement {
+  getNameInput() {
     return this.nameInput.input;
   }
 
-  getCodeInput(): HTMLInputElement | HTMLTextAreaElement {
+  getCodeInput() {
     return this.codeInput.input;
   }
 }
@@ -725,7 +712,7 @@ class CellView extends View {
     super();
 
     const pathKey = path.join(".");
-    this.header = new CellHeaderView(cell.name, cell.view, cell.child, pathKey);
+    this.header = new CellHeaderView(cell.name, cell.child, pathKey);
 
     this.effect(
       () => {
@@ -735,12 +722,12 @@ class CellView extends View {
 
         return {
           hasName: cell.name.get() !== "",
-          isFlow: isFlow(cell.child.get()),
           nameFocused: focusMatches && focus.role === "name",
+          isFlow: isFlow(cell.child.get()),
           viewId: cell.view.get(),
         };
       },
-      ({ hasName, isFlow, nameFocused, viewId }) => {
+      ({ hasName, nameFocused, isFlow, viewId }) => {
         const needHeader = showHeader && (hasName || isFlow || nameFocused);
 
         const ViewCtor = views[viewId] || StandardView;
