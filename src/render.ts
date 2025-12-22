@@ -660,7 +660,7 @@ class CellHeaderView extends View {
   ) {
     super();
 
-    this.element.append(this.wrapEl);
+    this.wrapEl.append(this.equalsEl, this.codeInput.element);
 
     this.effect(
       () => {
@@ -675,10 +675,9 @@ class CellHeaderView extends View {
         };
       },
       ({ isFlowNode, nameVisible }) => {
-        reconcileDomChildren(this.wrapEl, [
+        reconcileDomChildren(this.element, [
           nameVisible ? this.nameInput.element : null,
-          nameVisible || isFlowNode ? this.equalsEl : null,
-          isFlowNode ? this.codeInput.element : null,
+          isFlowNode ? this.wrapEl : null,
         ]);
       }
     );

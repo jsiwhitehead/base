@@ -170,6 +170,9 @@
 
 .cell.focused > .header {
   background: var(--blue-normal) !important;
+  .name {
+    color: oklch(42.4% 0.199 265.638) !important;
+  }
 }
 
 .cell.focused > .list > .cell,
