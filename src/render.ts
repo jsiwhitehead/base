@@ -21,6 +21,7 @@ import {
   isList,
   isFunction,
   isFlow,
+  isLink,
   isWritableSignal,
   createBlank,
   createLiteral,
@@ -648,10 +649,20 @@ const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
 
 class CellHeaderView extends View {
   element = createEl("div", { className: "header" });
-  wrapEl = createEl("div", { className: "wrap" });
+
   nameInput = new AutosizeInput(false, { className: "name" });
-  equalsEl = createEl("span", { className: "equals", value: "=" });
-  codeInput = new AutosizeInput(true, { className: "code" });
+
+  flowWrapEl = createEl("div", { className: "wrap" });
+  flowEqualsEl = createEl("span", { className: "equals", value: "=" });
+  flowCodeInput = new AutosizeInput(true, { className: "code" });
+
+  sourceWrapEl = createEl("div", { className: "wrap" });
+  sourceTildeEl = createEl("span", { className: "equals", value: "~" });
+  sourceCodeInput = new AutosizeInput(false, { className: "code" });
+
+  filterWrapEl = createEl("div", { className: "wrap" });
+  filterLabelEl = createEl("span", { className: "equals", value: "filter:" });
+  filterCodeInput = new AutosizeInput(true, { className: "code" });
 
   constructor(
     nameSig: WriteSignal<string>,
@@ -660,7 +671,9 @@ class CellHeaderView extends View {
   ) {
     super();
 
-    this.wrapEl.append(this.equalsEl, this.codeInput.element);
+    this.flowWrapEl.append(this.flowEqualsEl, this.flowCodeInput.element);
+    this.sourceWrapEl.append(this.sourceTildeEl, this.sourceCodeInput.element);
+    this.filterWrapEl.append(this.filterLabelEl, this.filterCodeInput.element);
 
     this.effect(
       () => {
@@ -669,15 +682,18 @@ class CellHeaderView extends View {
           focused.kind === "focused" &&
           focused.role === "name" &&
           focused.path.join(".") === pathKey;
+        const child = childSig.get();
         return {
-          isFlowNode: isFlow(childSig.get()),
+          isFlowNode: isFlow(child),
+          isLinkNode: isLink(child),
           nameVisible: !!nameSig.get() || nameFocused,
         };
       },
-      ({ isFlowNode, nameVisible }) => {
+      ({ isFlowNode, isLinkNode, nameVisible }) => {
         reconcileDomChildren(this.element, [
           nameVisible ? this.nameInput.element : null,
-          isFlowNode ? this.wrapEl : null,
+          isFlowNode ? this.flowWrapEl : null,
+          ...(isLinkNode ? [this.sourceWrapEl, this.filterWrapEl] : []),
         ]);
       }
     );
@@ -688,7 +704,12 @@ class CellHeaderView extends View {
 
     this.effect(() => {
       const v = childSig.get();
-      if (isFlow(v)) this.codeInput.update(v.code);
+      if (isFlow(v)) {
+        this.flowCodeInput.update(v.code);
+      } else if (isLink(v)) {
+        this.sourceCodeInput.update(v.source);
+        this.filterCodeInput.update(v.filter);
+      }
     });
   }
 
@@ -696,8 +717,16 @@ class CellHeaderView extends View {
     return this.nameInput.input;
   }
 
-  getCodeInput() {
-    return this.codeInput.input;
+  getFlowCodeInput() {
+    return this.flowCodeInput.input;
+  }
+
+  getLinkSourceInput() {
+    return this.sourceCodeInput.input;
+  }
+
+  getLinkFilterInput() {
+    return this.filterCodeInput.input;
   }
 }
 
@@ -718,16 +747,18 @@ class CellView extends View {
         const focus = focusSignal.value;
         const focusMatches =
           focus.kind === "focused" && focus.path.join(".") === pathKey;
-
+        const child = cell.child.get();
         return {
           hasName: cell.name.get() !== "",
           nameFocused: focusMatches && focus.role === "name",
-          isFlow: isFlow(cell.child.get()),
+          isFlow: isFlow(child),
+          isLink: isLink(child),
           viewId: cell.view.get(),
         };
       },
-      ({ hasName, nameFocused, isFlow, viewId }) => {
-        const needHeader = showHeader && (hasName || isFlow || nameFocused);
+      ({ hasName, nameFocused, isFlow, isLink, viewId }) => {
+        const needHeader =
+          showHeader && (hasName || isFlow || isLink || nameFocused);
 
         const ViewCtor = views[viewId] || StandardView;
         const simpleView =
@@ -756,16 +787,20 @@ class CellView extends View {
           !simpleView ? this.stdView!.element : null,
         ]);
 
-        this.element.classList.toggle("flow", isFlow);
+        this.element.classList.toggle("flow", isFlow || isLink);
 
+        const child = cell.child.get();
         const valueEl = isFlow
-          ? this.header.getCodeInput()
+          ? this.header.getFlowCodeInput()
+          : isLink
+          ? this.header.getLinkSourceInput()
           : simpleView
           ? this.view.element
           : this.stdView!.element;
         registerBinding(path, {
           name: this.header.getNameInput(),
           value: (valueEl as any).__textInputTarget || valueEl,
+          filter: isLink ? this.header.getLinkFilterInput() : undefined,
           cell: this.element,
         });
       }

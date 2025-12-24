@@ -5,8 +5,13 @@ import {
   type Value,
   type ValueSignal,
   isBlank,
+  isLiteral,
   isList,
   isFunction,
+  listMap,
+  listFilter,
+  listReduce,
+  listSort,
   createBlank,
   createLiteral,
   createList,
@@ -22,14 +27,6 @@ import {
   scalarToValue,
   childToValue,
 } from "./data";
-import {
-  listNumbersOpt,
-  listTextsOpt,
-  listMap,
-  listFilter,
-  listReduce,
-  listSort,
-} from "./tree";
 
 function valueFn(op: (...values: Value[]) => Value): ValueSignal {
   return createSignal(
@@ -87,6 +84,28 @@ function typedFn<A extends any[]>(
       return createSignal(impl(...(resolved as A)));
     })
   );
+}
+
+function listNumbersOpt(list: ListValue): number[] {
+  const out: number[] = [];
+  for (const { child } of list.cells) {
+    const v = childToValue(child);
+    if (isBlank(v)) continue;
+    if (isLiteral(v) && typeof v.value === "number") out.push(v.value);
+    else throw new TypeError(ERR.numOrBlank);
+  }
+  return out;
+}
+
+function listTextsOpt(list: ListValue): string[] {
+  const out: string[] = [];
+  for (const { child } of list.cells) {
+    const v = childToValue(child);
+    if (isBlank(v)) continue;
+    if (isLiteral(v) && typeof v.value === "string") out.push(v.value);
+    else throw new TypeError(ERR.textOrBlank);
+  }
+  return out;
 }
 
 function reduceNumbers(
@@ -253,11 +272,7 @@ export const library = {
   ),
 
   filter: typedFn([reqList, reqFn], (source, predValue) =>
-    listFilter(
-      source,
-      (value, index, name) =>
-        toBool(predValue.fn(value, index, name).get()) === true
-    )
+    listFilter(source, (value, index, name) => predValue.fn(value, index, name))
   ),
 
   sort: typedFn([reqList, optFn(null)], (source, keyValue) =>

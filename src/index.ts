@@ -12,6 +12,7 @@ import {
   createFlow,
   createSignal,
   createListSignal,
+  createLink,
   setGlobalLibrary,
   resolveValue,
 } from "./data";
@@ -54,6 +55,12 @@ const flowSig = (code: string) => {
   return s;
 };
 
+const linkSig = (source: string, filter: string = "") => {
+  const s: ChildSignal = createSignal<DataValue | EvalValue>(createLiteral(""));
+  s.set(createLink(s, source, filter));
+  return s;
+};
+
 const root = createListSignal([
   { child: literalSig(10) },
   { child: literalSig(20) },
@@ -66,6 +73,9 @@ const root = createListSignal([
       { child: literalSig(20) },
       { child: literalSig(30) },
     ]),
+  },
+  {
+    child: linkSig("x", "a => a > 15"),
   },
   {
     child: createListSignal([

@@ -74,7 +74,14 @@ export type FlowValue = {
   result: ReadSignal<Value>;
 };
 
-export type EvalValue = FlowValue;
+export type LinkValue = {
+  kind: "link";
+  source: string;
+  filter: string;
+  result: ReadSignal<Value>;
+};
+
+export type EvalValue = FlowValue | LinkValue;
 
 type ReadSignal<T> = {
   kind: "signal";
@@ -136,6 +143,7 @@ export const isFunction = (v: unknown): v is FunctionValue =>
 export const isValue = (v: unknown): v is Value =>
   isError(v) || isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
 export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
+export const isLink = (v: unknown): v is LinkValue => hasKind(v, "link");
 export const isSignal = (
   v: unknown
 ): v is ReadSignal<unknown> | WriteSignal<unknown> => hasKind(v, "signal");
@@ -164,6 +172,143 @@ export function getParent(
   child: ChildSignal
 ): WriteSignal<ListValue> | undefined {
   return getParentSignal(child).peek();
+}
+
+/* Lists */
+
+function listCellSignals(src: ListValue): {
+  cell: Cell;
+  indexSig: ValueSignal;
+  nameSig: ValueSignal;
+  valSig: ValueSignal;
+}[] {
+  return src.cells.map((c, i) => {
+    const indexSig = createSignal(createLiteral(i + 1));
+    const nameSig = createComputed(() => {
+      const n = c.name.get();
+      return n ? createLiteral(n) : createBlank();
+    });
+    const valSig = createComputed(() => childToValue(c.child));
+    return { cell: c, indexSig, nameSig, valSig };
+  });
+}
+
+export function listMap(
+  src: ListValue,
+  f: (value: ValueSignal, index: ValueSignal, name: ValueSignal) => ValueSignal
+): ListValue {
+  return createList(
+    listCellSignals(src).map(({ cell, indexSig, nameSig, valSig }) => ({
+      uid: newUid(),
+      name: cell.name,
+      child: createComputed(() => {
+        try {
+          return f(valSig, indexSig, nameSig).get();
+        } catch (err) {
+          return createError(err instanceof Error ? err.message : String(err));
+        }
+      }),
+    }))
+  );
+}
+
+export function listFilter(
+  src: ListValue,
+  pred: (
+    value: ValueSignal,
+    index: ValueSignal,
+    name: ValueSignal
+  ) => ValueSignal
+): ListValue {
+  return createList(
+    listCellSignals(src)
+      .filter(
+        ({ valSig, indexSig, nameSig }) =>
+          toBool(pred(valSig, indexSig, nameSig).get()) === true
+      )
+      .map(({ cell }) => cell)
+  );
+}
+
+export function listReduce(
+  src: ListValue,
+  rf: (
+    acc: ValueSignal,
+    value: ValueSignal,
+    index: ValueSignal,
+    name: ValueSignal
+  ) => ValueSignal,
+  init: ValueSignal
+): ValueSignal {
+  const seq = listCellSignals(src);
+  if (seq.length === 0) return init;
+
+  const step = (acc: ValueSignal, e: (typeof seq)[number]) =>
+    rf(acc, e.valSig, e.indexSig, e.nameSig);
+
+  if (!isBlank(init.get())) {
+    return seq.reduce(step, init);
+  }
+
+  const first = createSignal(childToValue(src.cells[0]!.child));
+  return seq.slice(1).reduce(step, first);
+}
+
+function sortRank(v: Value): [number, any] {
+  // numbers < text < true < other < blank
+  if (isBlank(v)) return [4, null];
+  if (isLiteral(v)) {
+    const lit = v.value;
+    if (typeof lit === "number") return [0, lit];
+    if (typeof lit === "string") return [1, lit];
+    if (lit === true) return [2, 1];
+  }
+  return [3, null];
+}
+
+const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+function sortCmp<T extends { sortKey: Value; index: number }>(
+  a: T,
+  b: T
+): number {
+  const [ra, va] = sortRank(a.sortKey);
+  const [rb, vb] = sortRank(b.sortKey);
+  if (ra !== rb) return ra - rb;
+  if (ra === 0) {
+    const d = va - vb;
+    if (d) return d;
+  } else if (ra === 1) {
+    const d = collator.compare(va, vb);
+    if (d) return d;
+  }
+  return a.index - b.index;
+}
+
+export function listSort(
+  src: ListValue,
+  keySelector:
+    | null
+    | ((
+        value: ValueSignal,
+        index: ValueSignal,
+        name: ValueSignal
+      ) => ValueSignal)
+): ListValue {
+  const rows = listCellSignals(src).map(
+    ({ cell, indexSig, nameSig, valSig }, i) => ({
+      uid: cell.uid,
+      name: cell.name,
+      child: cell.child,
+      index: i,
+      sortKey: keySelector
+        ? keySelector(valSig, indexSig, nameSig).get()
+        : childToValue(cell.child),
+    })
+  );
+
+  rows.sort(sortCmp);
+  return createList(rows);
 }
 
 /* Constructors */
@@ -233,6 +378,33 @@ export function createFlow(owner: ChildSignal, code: string): FlowValue {
     }
   });
   return { kind: "flow", code, result };
+}
+
+export function createLink(
+  owner: ChildSignal,
+  source: string,
+  filter: string
+): LinkValue {
+  const result = createComputed<Value>(() => {
+    try {
+      if (!source.trim()) return createBlank();
+
+      const target = lookupInScope(source, owner).get();
+      if (!isList(target)) return target;
+
+      const code = filter.trim();
+      if (!code) return createList(target.cells);
+
+      const pred = evalCode(code, (n: string) => lookupInScope(n, owner));
+      if (!isFunction(pred)) throw new TypeError(ERR.function);
+
+      return listFilter(target, pred.fn);
+    } catch (err) {
+      return createError(err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  return { kind: "link", source, filter, result };
 }
 
 export function createComputed<T>(fn: () => T): ReadSignal<T> {
@@ -467,10 +639,17 @@ export function childToValue(sig: ChildSignal): Value {
     return v.result.get();
   }
 
+  if (isLink(v)) {
+    return v.result.get();
+  }
+
   return v;
 }
 
 export function resolveValue(value: Value): StaticValue {
+  // Resolve through eval nodes if someone passes them directly (defensive)
+  if (isLink(value as any)) return resolveValue((value as any).result.get());
+
   if (value.kind === "error") return value;
 
   if (value.kind === "blank") return { kind: "blank" };

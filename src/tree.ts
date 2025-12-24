@@ -1,28 +1,25 @@
 import { batch } from "@preact/signals-core";
 
 import {
-  ERR,
   type ListValue,
   type DataValue,
-  type Value,
   type WriteSignal,
-  type ValueSignal,
   type ChildSignal,
   type Cell,
   isBlank,
   isLiteral,
   isList,
   isFlow,
+  isLink,
   isWritableSignal,
   getParentSignal,
   getParent,
   newUid,
-  createError,
   createBlank,
   createLiteral,
   createList,
   createFlow,
-  createComputed,
+  createLink,
   createSignal,
   childToValue,
 } from "./data";
@@ -40,165 +37,11 @@ export function getDataRoot(): ChildSignal {
   return __dataRoot;
 }
 
-/* Lists */
-
-export function listNumbersOpt(list: ListValue): number[] {
-  const out: number[] = [];
-  for (const { child } of list.cells) {
-    const v = childToValue(child);
-    if (isBlank(v)) continue;
-    if (isLiteral(v) && typeof v.value === "number") out.push(v.value);
-    else throw new TypeError(ERR.numOrBlank);
-  }
-  return out;
-}
-
-export function listTextsOpt(list: ListValue): string[] {
-  const out: string[] = [];
-  for (const { child } of list.cells) {
-    const v = childToValue(child);
-    if (isBlank(v)) continue;
-    if (isLiteral(v) && typeof v.value === "string") out.push(v.value);
-    else throw new TypeError(ERR.textOrBlank);
-  }
-  return out;
-}
-
-function listCellSignals(src: ListValue): {
-  cell: Cell;
-  indexSig: ValueSignal;
-  nameSig: ValueSignal;
-  valSig: ValueSignal;
-}[] {
-  return src.cells.map((c, i) => {
-    const indexSig = createSignal(createLiteral(i + 1));
-    const nameSig = createComputed(() => {
-      const n = c.name.get();
-      return n ? createLiteral(n) : createBlank();
-    });
-    const valSig = createSignal(childToValue(c.child));
-    return { cell: c, indexSig, nameSig, valSig };
-  });
-}
-
-export function listMap(
-  src: ListValue,
-  f: (value: ValueSignal, index: ValueSignal, name: ValueSignal) => ValueSignal
-): ListValue {
-  return createList(
-    listCellSignals(src).map(({ cell, indexSig, nameSig, valSig }) => ({
-      uid: newUid(),
-      name: cell.name,
-      child: createComputed(() => {
-        try {
-          return f(valSig, indexSig, nameSig).get();
-        } catch (err) {
-          return createError(err instanceof Error ? err.message : String(err));
-        }
-      }),
-    }))
-  );
-}
-
-export function listFilter(
-  src: ListValue,
-  pred: (value: ValueSignal, index: ValueSignal, name: ValueSignal) => boolean
-): ListValue {
-  return createList(
-    listCellSignals(src)
-      .filter(({ indexSig, nameSig, valSig }) =>
-        pred(valSig, indexSig, nameSig)
-      )
-      .map(({ cell }) => cell)
-  );
-}
-
-export function listReduce(
-  src: ListValue,
-  rf: (
-    acc: ValueSignal,
-    value: ValueSignal,
-    index: ValueSignal,
-    name: ValueSignal
-  ) => ValueSignal,
-  init: ValueSignal
-): ValueSignal {
-  const seq = listCellSignals(src);
-  if (seq.length === 0) return init;
-
-  const step = (acc: ValueSignal, e: (typeof seq)[number]) =>
-    rf(acc, e.valSig, e.indexSig, e.nameSig);
-
-  if (!isBlank(init.get())) {
-    return seq.reduce(step, init);
-  }
-
-  const first = createSignal(childToValue(src.cells[0]!.child));
-  return seq.slice(1).reduce(step, first);
-}
-
-function sortRank(v: Value): [number, any] {
-  // numbers < text < true < other < blank
-  if (isBlank(v)) return [4, null];
-  if (isLiteral(v)) {
-    const lit = v.value;
-    if (typeof lit === "number") return [0, lit];
-    if (typeof lit === "string") return [1, lit];
-    if (lit === true) return [2, 1];
-  }
-  return [3, null];
-}
-
-const collator = new Intl.Collator(undefined, { sensitivity: "base" });
-
-function sortCmp<T extends { sortKey: Value; index: number }>(
-  a: T,
-  b: T
-): number {
-  const [ra, va] = sortRank(a.sortKey);
-  const [rb, vb] = sortRank(b.sortKey);
-  if (ra !== rb) return ra - rb;
-  if (ra === 0) {
-    const d = va - vb;
-    if (d) return d;
-  } else if (ra === 1) {
-    const d = collator.compare(va, vb);
-    if (d) return d;
-  }
-  return a.index - b.index;
-}
-
-export function listSort(
-  src: ListValue,
-  keySelector:
-    | null
-    | ((
-        value: ValueSignal,
-        index: ValueSignal,
-        name: ValueSignal
-      ) => ValueSignal)
-): ListValue {
-  const rows = listCellSignals(src).map(
-    ({ cell, indexSig, nameSig, valSig }, i) => ({
-      uid: cell.uid,
-      name: cell.name,
-      child: cell.child,
-      index: i,
-      sortKey: keySelector
-        ? keySelector(valSig, indexSig, nameSig).get()
-        : childToValue(cell.child),
-    })
-  );
-
-  rows.sort(sortCmp);
-  return createList(rows);
-}
-
 /* Navigation */
 
 export type CellPath = number[];
 
-export type CellKind = "text" | "text-readonly" | "list" | "flow";
+export type CellKind = "text" | "text-readonly" | "list" | "flow" | "link";
 
 export type ViewContext = "default" | "table-cell" | "bar-child";
 
@@ -279,6 +122,7 @@ export function getNavContext(path: CellPath): NavContext {
     const v = child.peek();
 
     if (isFlow(v)) kind = "flow";
+    else if (isLink(v)) kind = "link";
     else if (isList(v)) kind = "list";
     else kind = isWritableSignal(child) ? "text" : "text-readonly";
   }
@@ -302,7 +146,7 @@ function flattenLeaves(): CellPath[] {
   function walk(path: CellPath, child: ChildSignal): void {
     const v = child.peek();
 
-    if (isFlow(v)) {
+    if (isFlow(v) || isLink(v)) {
       result.push(path);
 
       const out = v.result.peek();
@@ -464,6 +308,11 @@ export function setText(path: CellPath, raw: string): CellPath {
     return path;
   }
 
+  if (isLink(cur)) {
+    if (cur.source !== raw) sig.set(createLink(sig, raw, cur.filter));
+    return path;
+  }
+
   if (!isLiteral(cur) && !isBlank(cur)) return path;
 
   const next = parseTextToValue(raw);
@@ -474,13 +323,24 @@ export function setText(path: CellPath, raw: string): CellPath {
   return path;
 }
 
+export function setLinkFilter(path: CellPath, filter: string): CellPath {
+  const sig = resolvePath(path);
+  if (!sig || !isWritableSignal(sig)) return path;
+
+  const cur = sig.peek();
+  if (!isLink(cur)) return path;
+
+  if (cur.filter !== filter) sig.set(createLink(sig, cur.source, filter));
+  return path;
+}
+
 export function toggleTextCode(path: CellPath): TransformResult {
   const sig = resolvePath(path);
   if (!sig || !isWritableSignal(sig)) return null;
 
   const cur = sig.peek();
 
-  if (isFlow(cur)) {
+  if (isFlow(cur) || isLink(cur)) {
     sig.set(createBlank());
     return { path };
   }
@@ -664,6 +524,8 @@ export function splitCell(
   const cur = sig.peek();
   const text = isFlow(cur)
     ? cur.code
+    : isLink(cur)
+    ? cur.source
     : isLiteral(cur)
     ? String(cur.value)
     : isBlank(cur)

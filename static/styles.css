@@ -159,6 +159,7 @@
 
 .header .code {
   padding: 0 var(--rule);
+  input,
   textarea {
     padding: 0 var(--rule);
   }
