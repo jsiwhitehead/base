@@ -447,6 +447,8 @@ export function wrapWithList(path: CellPath): TransformResult {
     ({ parent, parentPath, before, index, child }) => {
       const oldCell = before[index]!;
       const wrapperUid = newUid();
+      const outerNameSig = oldCell.name;
+      oldCell.name = createSignal("");
 
       const wrapperSig = createSignal(createList([oldCell]));
       getParentSignal(wrapperSig).value = parent;
@@ -454,7 +456,7 @@ export function wrapWithList(path: CellPath): TransformResult {
 
       const wrapperCell: Cell = {
         uid: wrapperUid,
-        name: createSignal(""),
+        name: outerNameSig,
         view: createSignal(""),
         child: wrapperSig,
       };
@@ -484,6 +486,7 @@ export function unwrapIfSingleChild(path: CellPath): TransformResult {
     pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
       const innerCell = wrapperValue.cells[0]!;
+      innerCell.name = before[index]!.name;
       getParentSignal(innerChild).value = grandparent;
       getParentSignal(wrapperSig).value = undefined;
       return {
