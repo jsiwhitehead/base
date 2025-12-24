@@ -11,7 +11,6 @@ import {
   type ListValue,
   type RenderValue,
   type Value,
-  type WriteSignal,
   type ValueSignal,
   type ChildSignal,
   type Cell,
@@ -393,7 +392,7 @@ class RowHeaderView extends View {
   nameDisplayEl = createEl("div", { className: "name" });
   nameInput = new AutosizeInput(false, { className: "name" });
 
-  constructor(nameSig: WriteSignal<string>, pathKey: string) {
+  constructor(nameSig: ValueSignal<string>, pathKey: string) {
     super();
 
     this.effect(
@@ -665,7 +664,7 @@ class CellHeaderView extends View {
   filterCodeInput = new AutosizeInput(true, { className: "code" });
 
   constructor(
-    nameSig: WriteSignal<string>,
+    nameSig: ValueSignal<string>,
     childSig: ChildSignal,
     pathKey: string
   ) {

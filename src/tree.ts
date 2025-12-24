@@ -410,7 +410,8 @@ function removeAt(cs: Cell[], i: number): Cell[] {
 
 export function setName(path: CellPath, name: string): CellPath {
   return withLocatedPath(path, ({ before, index, parentPath }) => {
-    before[index]!.name.set(name);
+    const nm = before[index]!.name;
+    if (isWritableSignal(nm)) nm.set(name);
     return { after: before, path: [...parentPath, before[index]!.uid] };
   });
 }

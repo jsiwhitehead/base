@@ -93,9 +93,7 @@ export type WriteSignal<T> = ReadSignal<T> & {
   set(next: T): void;
 };
 
-export type ValueSignal<T extends Value = Value> =
-  | ReadSignal<T>
-  | WriteSignal<T>;
+export type ValueSignal<T = Value> = ReadSignal<T> | WriteSignal<T>;
 
 export type ChildSignal =
   | ReadSignal<Value>
@@ -103,8 +101,8 @@ export type ChildSignal =
 
 export type Cell = {
   uid: number;
-  name: WriteSignal<string>;
-  view: WriteSignal<string>;
+  name: ValueSignal<string>;
+  view: ValueSignal<string>;
   child: ChildSignal;
 };
 
@@ -112,7 +110,7 @@ export type StaticError = { kind: "error"; message: string };
 
 export type StaticCell = {
   name?: string;
-  view?: string; // omitted when ""
+  view?: string;
   value: StaticValue;
 };
 
@@ -299,6 +297,7 @@ export function listSort(
     ({ cell, indexSig, nameSig, valSig }, i) => ({
       uid: cell.uid,
       name: cell.name,
+      view: cell.view,
       child: cell.child,
       index: i,
       sortKey: keySelector
@@ -333,22 +332,22 @@ export const createLiteral = (value: Primitive): LiteralValue => ({
 export function createList(
   cells: {
     uid?: number;
-    name?: string | WriteSignal<string>;
-    view?: string | WriteSignal<string>;
+    name?: string | ValueSignal<string>;
+    view?: string | ValueSignal<string>;
     child: ChildSignal;
   }[] = []
 ): ListValue {
   return {
     kind: "list",
     cells: cells.map((c) => {
-      let nameSig: WriteSignal<string>;
+      let nameSig: ValueSignal<string>;
       if (isSignal(c.name)) {
         nameSig = c.name;
       } else {
         nameSig = createSignal<string>(c.name ?? "");
       }
 
-      let viewSig: WriteSignal<string>;
+      let viewSig: ValueSignal<string>;
       if (isSignal(c.view)) {
         viewSig = c.view;
       } else {
@@ -390,7 +389,7 @@ export function createLink(
       if (!source.trim()) return createBlank();
 
       const target = lookupInScope(source, owner).get();
-      if (!isList(target)) return target;
+      if (!isList(target)) throw new TypeError(ERR.list);
 
       const code = filter.trim();
       if (!code) return createList(target.cells);
@@ -427,8 +426,8 @@ export function createSignal<T>(initial: T): WriteSignal<T> {
 export function createListSignal(
   cells: {
     uid?: number;
-    name?: string | WriteSignal<string>;
-    view?: string | WriteSignal<string>;
+    name?: string | ValueSignal<string>;
+    view?: string | ValueSignal<string>;
     child: ChildSignal;
   }[] = []
 ): ValueSignal<ListValue> {
@@ -442,6 +441,29 @@ export function createListSignal(
   });
 
   return parent;
+}
+
+/* Flow readonly view */
+
+function asReadOnlySignal<T>(sig: ValueSignal<T>): ReadSignal<T> {
+  return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
+}
+
+function readonlyValue(v: Value): Value {
+  if (isError(v) || isBlank(v) || isLiteral(v) || isFunction(v)) return v;
+
+  const roCells = v.cells.map((c) => {
+    getParentSignal(c.child).value = undefined;
+
+    return {
+      uid: c.uid,
+      name: asReadOnlySignal(c.name),
+      view: asReadOnlySignal(c.view),
+      child: createComputed(() => readonlyValue(childToValue(c.child))),
+    };
+  });
+
+  return createList(roCells);
 }
 
 /* Conversions */
@@ -636,7 +658,7 @@ export function childToValue(sig: ChildSignal): Value {
   const v = sig.get();
 
   if (isFlow(v)) {
-    return v.result.get();
+    return readonlyValue(v.result.get());
   }
 
   if (isLink(v)) {
