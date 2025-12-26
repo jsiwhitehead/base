@@ -9,6 +9,7 @@ import {
   type ChildSignal,
   createBlank,
   createLiteral,
+  createList,
   createFlow,
   createSignal,
   createListSignal,
@@ -61,55 +62,73 @@ const linkSig = (source: string, filter: string = "") => {
   return s;
 };
 
+function resultListSig(
+  cells: Parameters<typeof createList>[0],
+  resultIndex1: number
+) {
+  const base = createList(cells);
+  return createListSignal(base.cells, base.cells[resultIndex1]!.uid);
+}
+
 const root = createListSignal([
   { child: literalSig(10) },
   { child: literalSig(20) },
   { child: literalSig(30) },
   {
-    name: "x",
-    view: "bar",
-    child: createListSignal([
-      { child: literalSig(10) },
-      { child: literalSig(20) },
-      { child: literalSig(30) },
-    ]),
+    child: resultListSig(
+      [
+        { child: literalSig(10) },
+        { child: literalSig(20) },
+        { child: literalSig(30) },
+      ],
+      2
+    ),
   },
-  {
-    child: linkSig("x", "a => a > 15"),
-  },
-  {
-    child: createListSignal([
-      { child: literalSig(10) },
-      { child: literalSig(20) },
-    ]),
-  },
-  { child: literalSig(10) },
-  {
-    name: "data",
-    view: "table",
-    child: createListSignal([
-      {
-        child: createListSignal([
-          { name: "Name", child: literalSig("Steve") },
-          { name: "Age", child: literalSig(25) },
-        ]),
-      },
-      {
-        child: createListSignal([
-          { name: "Name", child: literalSig("Lucy") },
-          { name: "Age", child: literalSig(32) },
-        ]),
-      },
-      {
-        child: createListSignal([
-          { name: "Name", child: literalSig("James") },
-          { name: "Age", child: literalSig(18) },
-        ]),
-      },
-    ]),
-  },
-  { child: createSignal(createBlank()) },
-  { child: flowSig("data:map(d -> d.Age):avg()") },
+  // {
+  //   name: "x",
+  //   view: "bar",
+  //   child: createListSignal([
+  //     { child: literalSig(10) },
+  //     { child: literalSig(20) },
+  //     { child: literalSig(30) },
+  //   ]),
+  // },
+  // {
+  //   child: linkSig("x", "a => a > 15"),
+  // },
+  // {
+  //   child: createListSignal([
+  //     { child: literalSig(10) },
+  //     { child: literalSig(20) },
+  //   ]),
+  // },
+  // { child: literalSig(10) },
+  // {
+  //   name: "data",
+  //   view: "table",
+  //   child: createListSignal([
+  //     {
+  //       child: createListSignal([
+  //         { name: "Name", child: literalSig("Steve") },
+  //         { name: "Age", child: literalSig(25) },
+  //       ]),
+  //     },
+  //     {
+  //       child: createListSignal([
+  //         { name: "Name", child: literalSig("Lucy") },
+  //         { name: "Age", child: literalSig(32) },
+  //       ]),
+  //     },
+  //     {
+  //       child: createListSignal([
+  //         { name: "Name", child: literalSig("James") },
+  //         { name: "Age", child: literalSig(18) },
+  //       ]),
+  //     },
+  //   ]),
+  // },
+  // { child: createSignal(createBlank()) },
+  // { child: flowSig("data:map(d -> d.Age):avg()") },
   // { name: "y", view: "slider", child: literalSig(50) },
   // { name: "z", child: flowSig("x") },
   // { child: literalSig(10) },

@@ -55,6 +55,7 @@ export type LiteralValue = {
 export type ListValue = {
   kind: "list";
   cells: Cell[];
+  resultUid?: number;
 };
 
 export type RenderValue = BlankValue | LiteralValue | ListValue;
@@ -186,7 +187,7 @@ function listCellSignals(src: ListValue): {
       const n = c.name.get();
       return n ? createLiteral(n) : createBlank();
     });
-    const valSig = createComputed(() => childToValue(c.child));
+    const valSig = createComputed(() => evalValue(c.child));
     return { cell: c, indexSig, nameSig, valSig };
   });
 }
@@ -224,7 +225,8 @@ export function listFilter(
         ({ valSig, indexSig, nameSig }) =>
           toBool(pred(valSig, indexSig, nameSig).get()) === true
       )
-      .map(({ cell }) => cell)
+      .map(({ cell }) => cell),
+    src.resultUid
   );
 }
 
@@ -248,7 +250,7 @@ export function listReduce(
     return seq.reduce(step, init);
   }
 
-  const first = createSignal(childToValue(src.cells[0]!.child));
+  const first = createSignal(evalValue(src.cells[0]!.child));
   return seq.slice(1).reduce(step, first);
 }
 
@@ -302,12 +304,12 @@ export function listSort(
       index: i,
       sortKey: keySelector
         ? keySelector(valSig, indexSig, nameSig).get()
-        : childToValue(cell.child),
+        : evalValue(cell.child),
     })
   );
 
   rows.sort(sortCmp);
-  return createList(rows);
+  return createList(rows, src.resultUid);
 }
 
 /* Constructors */
@@ -335,32 +337,35 @@ export function createList(
     name?: string | ValueSignal<string>;
     view?: string | ValueSignal<string>;
     child: ChildSignal;
-  }[] = []
+  }[] = [],
+  resultUid?: number
 ): ListValue {
+  const outCells = cells.map((c) => {
+    let nameSig: ValueSignal<string>;
+    if (isSignal(c.name)) {
+      nameSig = c.name;
+    } else {
+      nameSig = createSignal<string>(c.name ?? "");
+    }
+
+    let viewSig: ValueSignal<string>;
+    if (isSignal(c.view)) {
+      viewSig = c.view;
+    } else {
+      viewSig = createSignal<string>(c.view ?? "");
+    }
+
+    return {
+      uid: c.uid ?? newUid(),
+      name: nameSig,
+      view: viewSig,
+      child: c.child,
+    };
+  });
   return {
     kind: "list",
-    cells: cells.map((c) => {
-      let nameSig: ValueSignal<string>;
-      if (isSignal(c.name)) {
-        nameSig = c.name;
-      } else {
-        nameSig = createSignal<string>(c.name ?? "");
-      }
-
-      let viewSig: ValueSignal<string>;
-      if (isSignal(c.view)) {
-        viewSig = c.view;
-      } else {
-        viewSig = createSignal<string>(c.view ?? "");
-      }
-
-      return {
-        uid: c.uid ?? newUid(),
-        name: nameSig,
-        view: viewSig,
-        child: c.child,
-      };
-    }),
+    cells: outCells,
+    resultUid: outCells.find((c) => c.uid === resultUid)?.uid,
   };
 }
 
@@ -392,7 +397,7 @@ export function createLink(
       if (!isList(target)) throw new TypeError(ERR.list);
 
       const code = filter.trim();
-      if (!code) return createList(target.cells);
+      if (!code) return createList(target.cells, target.resultUid);
 
       const pred = evalCode(code, (n: string) => lookupInScope(n, owner));
       if (!isFunction(pred)) throw new TypeError(ERR.function);
@@ -429,7 +434,8 @@ export function createListSignal(
     name?: string | ValueSignal<string>;
     view?: string | ValueSignal<string>;
     child: ChildSignal;
-  }[] = []
+  }[] = [],
+  resultUid?: number
 ): ValueSignal<ListValue> {
   const parent = createSignal(createList([]));
 
@@ -437,7 +443,7 @@ export function createListSignal(
     for (const c of cells) {
       getParentSignal(c.child).value = parent;
     }
-    parent.set(createList(cells));
+    parent.set(createList(cells, resultUid));
   });
 
   return parent;
@@ -459,11 +465,11 @@ function readonlyValue(v: Value): Value {
       uid: c.uid,
       name: asReadOnlySignal(c.name),
       view: asReadOnlySignal(c.view),
-      child: createComputed(() => readonlyValue(childToValue(c.child))),
+      child: createComputed(() => readonlyValue(evalValue(c.child))),
     };
   });
 
-  return createList(roCells);
+  return createList(roCells, v.resultUid);
 }
 
 /* Conversions */
@@ -603,7 +609,7 @@ export function sliceList(
 ): ListValue {
   const indices = computeSliceIndices(start, end, step, list.cells.length);
   const cells = indices.map((oneBased) => list.cells[oneBased - 1]!);
-  return createList(cells);
+  return createList(cells, list.resultUid);
 }
 
 export function createRangeList(
@@ -642,7 +648,7 @@ function lookupInScope(name: string, start: ChildSignal): ValueSignal {
   while (scope) {
     const { cells } = scope.get();
     const found = cells.find((v) => v.name.get() === name);
-    if (found) return createSignal(childToValue(found.child));
+    if (found) return createSignal(evalValue(found.child));
     scope = getParentSignal(scope).value;
   }
 
@@ -654,7 +660,7 @@ function lookupInScope(name: string, start: ChildSignal): ValueSignal {
   throw new Error(ERR.unboundIdentifier(name));
 }
 
-export function childToValue(sig: ChildSignal): Value {
+export function evalStructural(sig: ChildSignal): Value {
   const v = sig.get();
 
   if (isFlow(v)) {
@@ -668,8 +674,13 @@ export function childToValue(sig: ChildSignal): Value {
   return v;
 }
 
+export function evalValue(sig: ChildSignal): Value {
+  const value = evalStructural(sig);
+  if (!isList(value) || value.resultUid === undefined) return value;
+  return evalValue(value.cells.find((c) => c.uid === value.resultUid)!.child);
+}
+
 export function resolveValue(value: Value): StaticValue {
-  // Resolve through eval nodes if someone passes them directly (defensive)
   if (isLink(value as any)) return resolveValue((value as any).result.get());
 
   if (value.kind === "error") return value;
@@ -678,6 +689,12 @@ export function resolveValue(value: Value): StaticValue {
   if (value.kind === "literal") return value.value;
 
   if (value.kind === "list") {
+    if (value.resultUid !== undefined) {
+      return resolveValue(
+        evalValue(value.cells.find((c) => c.uid === value.resultUid)!.child)
+      );
+    }
+
     const cells: StaticCell[] = value.cells.map((c) => {
       const nm = c.name.get();
       const vw = c.view.get();
@@ -687,7 +704,7 @@ export function resolveValue(value: Value): StaticValue {
         return {
           name: outName,
           view: outView,
-          value: resolveValue(childToValue(c.child)),
+          value: resolveValue(evalValue(c.child)),
         };
       } catch (err) {
         return {
@@ -729,7 +746,7 @@ export function getByName(list: Value, name: string, strict = false): Value {
     if (!isList(list)) throw new TypeError(ERR.propOnNonList(name));
     const cell = list.cells.find((v) => v.name.get() === name);
     if (!cell) throw new ReferenceError(ERR.unknownProperty(name));
-    return childToValue(cell.child);
+    return evalValue(cell.child);
   });
 }
 
@@ -742,7 +759,7 @@ export function getByIndex(list: Value, index1: number, strict = false): Value {
     const cell = list.cells[idx0];
     if (!cell)
       throw new RangeError(ERR.indexOutOfRange(index1, list.cells.length));
-    return childToValue(cell.child);
+    return evalValue(cell.child);
   });
 }
 

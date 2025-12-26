@@ -25,7 +25,7 @@ import {
   listOpt,
   fnOpt,
   scalarToValue,
-  childToValue,
+  evalStructural,
 } from "./data";
 
 function valueFn(op: (...values: Value[]) => Value): ValueSignal {
@@ -89,7 +89,7 @@ function typedFn<A extends any[]>(
 function listNumbersOpt(list: ListValue): number[] {
   const out: number[] = [];
   for (const { child } of list.cells) {
-    const v = childToValue(child);
+    const v = evalStructural(child);
     if (isBlank(v)) continue;
     if (isLiteral(v) && typeof v.value === "number") out.push(v.value);
     else throw new TypeError(ERR.numOrBlank);
@@ -100,7 +100,7 @@ function listNumbersOpt(list: ListValue): number[] {
 function listTextsOpt(list: ListValue): string[] {
   const out: string[] = [];
   for (const { child } of list.cells) {
-    const v = childToValue(child);
+    const v = evalStructural(child);
     if (isBlank(v)) continue;
     if (isLiteral(v) && typeof v.value === "string") out.push(v.value);
     else throw new TypeError(ERR.textOrBlank);
@@ -257,13 +257,13 @@ export const library = {
 
   count: typedFn([reqList], (source) =>
     createLiteral(
-      source.cells.filter((c) => !isBlank(childToValue(c.child))).length
+      source.cells.filter((c) => !isBlank(evalStructural(c.child))).length
     )
   ),
 
   count_blank: typedFn([reqList], (source) =>
     createLiteral(
-      source.cells.filter((c) => isBlank(childToValue(c.child))).length
+      source.cells.filter((c) => isBlank(evalStructural(c.child))).length
     )
   ),
 

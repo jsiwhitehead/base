@@ -93,6 +93,22 @@
   }
 }
 
+.list > .cell.result {
+  &::after {
+    content: "";
+    position: absolute;
+    left: calc(-1 * var(--rule) + -1 * var(--indent));
+    top: 1px;
+    bottom: 1px;
+
+    width: calc(var(--indent) + var(--rule) * 2);
+    background: var(--grey-light);
+    border-radius: var(--round);
+
+    z-index: -1;
+  }
+}
+
 .cell.error > .value {
   color: oklch(64.5% 0.246 16.439);
 }
@@ -165,22 +181,28 @@
   }
 }
 
-.cell.focused::before {
-  background: var(--blue-normal) !important;
-}
-
-.cell.focused > .header {
-  background: var(--blue-normal) !important;
-  .name {
-    color: oklch(42.4% 0.199 265.638) !important;
+.cell.focused {
+  &::before {
+    background: var(--blue-normal) !important;
+  }
+  > .header {
+    background: var(--blue-normal) !important;
+    .name {
+      color: oklch(42.4% 0.199 265.638) !important;
+    }
   }
 }
 
 .cell.focused > .list > .cell,
+.cell.focused > .list > .cell > .list > .cell.result,
 .list:has(.focused) > .cell,
+.list:has(.focused) > .cell > .list > .cell.result,
 .cell.focused > .bar > .cell,
 .bar:has(.focused) > .cell {
   &::before {
+    background: var(--blue-light);
+  }
+  &::after {
     background: var(--blue-light);
   }
   > .header {

@@ -25,7 +25,7 @@ import {
   createBlank,
   createLiteral,
   toText,
-  childToValue,
+  evalStructural,
 } from "./data";
 import { type CellPath } from "./tree";
 import { focusSignal, registerBinding, unregisterBinding } from "./input";
@@ -227,7 +227,7 @@ abstract class View {
 
 function readProp(list: ListValue, name: string): Value | undefined {
   const c = list.cells.find((x) => x.name.get() === name);
-  return c ? childToValue(c.child) : undefined;
+  return c ? evalStructural(c.child) : undefined;
 }
 function readText(list: ListValue, name: string): string | null {
   const v = readProp(list, name);
@@ -248,7 +248,7 @@ class StyledView extends View {
 
     const setHover = (toTrue: boolean) => {
       untracked(() => {
-        const value = childToValue(valueSig);
+        const value = evalStructural(valueSig);
         if (!isList(value)) return;
 
         const hoverCell = value.cells.find((c) => c.name.get() === "hover");
@@ -268,7 +268,7 @@ class StyledView extends View {
     );
 
     this.effect(() => {
-      const val = toRenderValue(childToValue(valueSig));
+      const val = toRenderValue(evalStructural(valueSig));
 
       this.element.style.setProperty("--lh", "1.5");
 
@@ -288,7 +288,7 @@ class StyledView extends View {
       this.updateChildren(
         val.cells.filter((c) => {
           if (c.name.get()) return false;
-          const v = childToValue(c.child);
+          const v = evalStructural(c.child);
           if (isBlank(v) || isError(v)) return false;
           if (isLiteral(v) && typeof v.value === "string") {
             if (v.value.trim() === "") return false;
@@ -375,7 +375,7 @@ class SliderView extends View {
     });
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(valueSig));
+      const v = toRenderValue(evalStructural(valueSig));
       const n = isLiteral(v) && typeof v.value === "number" ? v.value : 0;
 
       if (this.element.value !== String(n)) {
@@ -442,7 +442,7 @@ class RowView extends View {
     this.effect(() => {
       const cols: string[] = JSON.parse(columnsJsonSig.value);
 
-      const v = childToValue(rowCell.child);
+      const v = evalStructural(rowCell.child);
       const rowList = isList(v) ? v : null;
 
       const byName = new Map<string, Cell>();
@@ -512,13 +512,13 @@ class TableView extends View {
 
     this.effect(
       () => {
-        const list = toRenderValue(childToValue(valueSig));
+        const list = toRenderValue(evalStructural(valueSig));
         if (!isList(list)) return [];
 
         const first = list.cells[0]?.child;
         if (!first) return [];
 
-        const row = childToValue(first);
+        const row = evalStructural(first);
         if (!isList(row)) return [];
 
         return [
@@ -538,7 +538,7 @@ class TableView extends View {
     );
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(valueSig));
+      const v = toRenderValue(evalStructural(valueSig));
       this.updateChildren(isList(v) ? v.cells : []);
     });
 
@@ -598,7 +598,7 @@ class StandardView extends View {
     );
 
     this.effect(
-      () => isList(toRenderValue(childToValue(valueSig))),
+      () => isList(toRenderValue(evalStructural(valueSig))),
       (shouldBeList) => {
         const next = shouldBeList ? this.listEl : this.scalarEl;
         if (this.element !== next) {
@@ -609,11 +609,22 @@ class StandardView extends View {
     );
 
     this.effect(() => {
-      const v = toRenderValue(childToValue(valueSig));
+      const v = toRenderValue(evalStructural(valueSig));
 
       if (isList(v)) {
         this.updateChildren(v.cells);
+
+        const kids = this.listEl.children;
+        for (const el of kids) el.classList.remove("result");
+        kids[v.cells.findIndex((c) => c.uid === v.resultUid)]?.classList.add(
+          "result"
+        );
+
         return;
+      }
+
+      for (const el of this.listEl.children) {
+        el.classList.remove("result");
       }
 
       const isErr = v.kind === "error";

@@ -21,7 +21,7 @@ import {
   createFlow,
   createLink,
   createSignal,
-  childToValue,
+  evalStructural,
 } from "./data";
 
 /* Root */
@@ -55,7 +55,7 @@ function cellsAlongPath(path: CellPath): Cell[] {
   let child: ChildSignal = getDataRoot();
 
   for (const uid of path) {
-    const v = childToValue(child);
+    const v = evalStructural(child);
     if (!isList(v)) return [];
     const cell = v.cells.find((c) => c.uid === uid);
     if (!cell) return [];
@@ -76,7 +76,7 @@ function resolvePath(path: CellPath): ChildSignal | null {
 function getListAt(path: CellPath): ListValue | null {
   const child = resolvePath(path);
   if (!child) return null;
-  const v = childToValue(child);
+  const v = evalStructural(child);
   return isList(v) ? v : null;
 }
 
@@ -372,16 +372,17 @@ export function withLocatedPath(
   if (!parent) return path;
 
   const parentPath = path.slice(0, -1);
-  const before = parent.peek().cells;
+  const { cells: before, resultUid } = parent.peek();
+
   const uid = path[path.length - 1]!;
-  const index = before.findIndex((e) => e.uid === uid);
+  const index = before.findIndex((c) => c.uid === uid);
   if (index < 0) return path;
 
   let nextPath = path;
   batch(() => {
     const { after, path: p } = fn({ parent, parentPath, before, index, child });
     nextPath = p;
-    if (after !== before) parent.set(createList(after));
+    if (after !== before) parent.set(createList(after, resultUid));
   });
 
   return nextPath;
@@ -561,8 +562,8 @@ export function mergeBackward(path: CellPath): TransformResult {
   const curSig = resolvePath(path);
   if (!prevSig || !curSig) return null;
 
-  const pv = childToValue(prevSig);
-  const cv = childToValue(curSig);
+  const pv = evalStructural(prevSig);
+  const cv = evalStructural(curSig);
   const prevText = isLiteral(pv) ? String(pv.value) : "";
   const curText = isLiteral(cv) ? String(cv.value) : "";
   const caret = prevText.length;
@@ -584,8 +585,8 @@ export function mergeForward(path: CellPath): TransformResult {
   const nextSig = resolvePath(next);
   if (!curSig || !nextSig) return null;
 
-  const cv = childToValue(curSig);
-  const nv = childToValue(nextSig);
+  const cv = evalStructural(curSig);
+  const nv = evalStructural(nextSig);
   const curText = isLiteral(cv) ? String(cv.value) : "";
   const nextText = isLiteral(nv) ? String(nv.value) : "";
 
