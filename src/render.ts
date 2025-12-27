@@ -21,6 +21,7 @@ import {
   isFunction,
   isFlow,
   isLink,
+  isTemplate,
   isWritableSignal,
   createBlank,
   createLiteral,
@@ -674,6 +675,10 @@ class CellHeaderView extends View {
   filterLabelEl = createEl("span", { className: "equals", value: "filter:" });
   filterCodeInput = new AutosizeInput(true, { className: "code" });
 
+  templateWrapEl = createEl("div", { className: "wrap" });
+  templateLabelEl = createEl("span", { className: "equals", value: "=>" });
+  templateParamInput = new AutosizeInput(false, { className: "code" });
+
   constructor(
     nameSig: ValueSignal<string>,
     childSig: ChildSignal,
@@ -684,6 +689,10 @@ class CellHeaderView extends View {
     this.flowWrapEl.append(this.flowEqualsEl, this.flowCodeInput.element);
     this.sourceWrapEl.append(this.sourceTildeEl, this.sourceCodeInput.element);
     this.filterWrapEl.append(this.filterLabelEl, this.filterCodeInput.element);
+    this.templateWrapEl.append(
+      this.templateParamInput.element,
+      this.templateLabelEl
+    );
 
     this.effect(
       () => {
@@ -696,12 +705,14 @@ class CellHeaderView extends View {
         return {
           isFlowNode: isFlow(child),
           isLinkNode: isLink(child),
+          isTemplateNode: isTemplate(child),
           nameVisible: !!nameSig.get() || nameFocused,
         };
       },
-      ({ isFlowNode, isLinkNode, nameVisible }) => {
+      ({ isFlowNode, isLinkNode, isTemplateNode, nameVisible }) => {
         reconcileDomChildren(this.element, [
           nameVisible ? this.nameInput.element : null,
+          isTemplateNode ? this.templateWrapEl : null,
           isFlowNode ? this.flowWrapEl : null,
           ...(isLinkNode ? [this.sourceWrapEl, this.filterWrapEl] : []),
         ]);
@@ -719,6 +730,8 @@ class CellHeaderView extends View {
       } else if (isLink(v)) {
         this.sourceCodeInput.update(v.source);
         this.filterCodeInput.update(v.filter);
+      } else if (isTemplate(v)) {
+        this.templateParamInput.update(v.param);
       }
     });
   }
@@ -737,6 +750,10 @@ class CellHeaderView extends View {
 
   getLinkFilterInput() {
     return this.filterCodeInput.input;
+  }
+
+  getTemplateParamInput() {
+    return this.templateParamInput.input;
   }
 }
 
@@ -763,12 +780,14 @@ class CellView extends View {
           nameFocused: focusMatches && focus.role === "name",
           isFlow: isFlow(child),
           isLink: isLink(child),
+          isTemplate: isTemplate(child),
           viewId: cell.view.get(),
         };
       },
-      ({ hasName, nameFocused, isFlow, isLink, viewId }) => {
+      ({ hasName, nameFocused, isFlow, isLink, isTemplate, viewId }) => {
         const needHeader =
-          showHeader && (hasName || isFlow || isLink || nameFocused);
+          showHeader &&
+          (hasName || isFlow || isLink || isTemplate || nameFocused);
 
         const ViewCtor = views[viewId] || StandardView;
         const simpleView =
@@ -799,7 +818,6 @@ class CellView extends View {
 
         this.element.classList.toggle("flow", isFlow || isLink);
 
-        const child = cell.child.get();
         const valueEl = isFlow
           ? this.header.getFlowCodeInput()
           : isLink
@@ -811,6 +829,7 @@ class CellView extends View {
           name: this.header.getNameInput(),
           value: (valueEl as any).__textInputTarget || valueEl,
           filter: isLink ? this.header.getLinkFilterInput() : undefined,
+          param: isTemplate ? this.header.getTemplateParamInput() : undefined,
           cell: this.element,
         });
       }

@@ -17,6 +17,7 @@ import {
   mergeBackward,
   mergeForward,
   setLinkFilter,
+  setTemplateParam,
 } from "./tree";
 
 export type FocusRole = "name" | "value" | "filter";
@@ -64,6 +65,7 @@ type PathBinding = {
   value: HTMLElement;
   name: HTMLInputElement | HTMLTextAreaElement;
   filter?: HTMLInputElement | HTMLTextAreaElement;
+  param?: HTMLInputElement | HTMLTextAreaElement;
   teardowns: (() => void)[];
 };
 
@@ -430,6 +432,7 @@ export function registerBinding(
     value: HTMLElement;
     name: HTMLInputElement | HTMLTextAreaElement;
     filter?: HTMLInputElement | HTMLTextAreaElement;
+    param?: HTMLInputElement | HTMLTextAreaElement;
   }
 ) {
   const k = keyOf(path);
@@ -440,7 +443,8 @@ export function registerBinding(
     prior.cell === slots.cell &&
     prior.value === slots.value &&
     prior.name === slots.name &&
-    prior.filter === slots.filter
+    prior.filter === slots.filter &&
+    prior.param === slots.param
   ) {
     updateDOMFocus(state);
     return;
@@ -457,6 +461,7 @@ export function registerBinding(
     value: slots.value,
     name: slots.name,
     filter: slots.filter,
+    param: slots.param,
     teardowns: [],
   };
   bindings.set(k, binding);
@@ -467,6 +472,7 @@ export function registerBinding(
   const valueEl = binding.value;
   const cellEl = binding.cell;
   const filterEl = binding.filter;
+  const paramEl = binding.param;
 
   binding.teardowns.push(
     on(nameEl, "mousedown", (e) => {
@@ -551,6 +557,18 @@ export function registerBinding(
 
     bindEditor(binding, path, filterEl, "filter", (text) =>
       setLinkFilter(path, text)
+    );
+  }
+
+  if (paramEl) {
+    binding.teardowns.push(
+      on(paramEl, "mousedown", (e: MouseEvent) => {
+        e.stopPropagation();
+      })
+    );
+
+    bindEditor(binding, path, paramEl, "eval", (text) =>
+      setTemplateParam(path, text)
     );
   }
 

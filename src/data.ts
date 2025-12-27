@@ -33,6 +33,7 @@ export const ERR = {
   unknownProperty: (prop: string) => `Unknown property '${prop}'`,
 
   unboundIdentifier: (name: string) => `Unbound identifier: ${name}`,
+  templateParameter: (name: string) => `Template parameter: ${name}`,
   cannotResolveFunctionValue: "Cannot statically resolve a function value",
 } as const;
 
@@ -82,7 +83,13 @@ export type LinkValue = {
   result: ReadSignal<Value>;
 };
 
-export type EvalValue = FlowValue | LinkValue;
+export type TemplateValue = {
+  kind: "template";
+  param: string;
+  body: DataValue | EvalValue;
+};
+
+export type EvalValue = FlowValue | LinkValue | TemplateValue;
 
 type ReadSignal<T> = {
   kind: "signal";
@@ -143,6 +150,8 @@ export const isValue = (v: unknown): v is Value =>
   isError(v) || isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
 export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
 export const isLink = (v: unknown): v is LinkValue => hasKind(v, "link");
+export const isTemplate = (v: unknown): v is TemplateValue =>
+  hasKind(v, "template");
 export const isSignal = (
   v: unknown
 ): v is ReadSignal<unknown> | WriteSignal<unknown> => hasKind(v, "signal");
@@ -155,7 +164,7 @@ export const isStaticList = (v: unknown): v is StaticListValue =>
 
 /* Parents */
 
-type ParentSig = PSignal<WriteSignal<ListValue> | undefined>;
+type ParentSig = PSignal<WriteSignal<ListValue | TemplateValue> | undefined>;
 const parentMap = new WeakMap<ChildSignal, ParentSig>();
 
 export function getParentSignal(sig: ChildSignal): ParentSig {
@@ -169,7 +178,7 @@ export function getParentSignal(sig: ChildSignal): ParentSig {
 
 export function getParent(
   child: ChildSignal
-): WriteSignal<ListValue> | undefined {
+): WriteSignal<ListValue | TemplateValue> | undefined {
   return getParentSignal(child).peek();
 }
 
@@ -314,9 +323,9 @@ export function listSort(
 
 /* Constructors */
 
-let __nextCellUid = 1;
+let nextCellUid = 1;
 export function newUid() {
-  return __nextCellUid++;
+  return nextCellUid++;
 }
 
 export const createError = (message: string): ErrorValue => ({
@@ -373,15 +382,24 @@ export const createFunction = (
   fn: (...args: ValueSignal[]) => ValueSignal
 ): FunctionValue => ({ kind: "function", fn });
 
-export function createFlow(owner: ChildSignal, code: string): FlowValue {
-  const result = createComputed<Value>(() => {
+function flowComputed(
+  owner: ChildSignal,
+  code: string,
+  params?: ScopeParams
+): ReadSignal<Value> {
+  return createComputed<Value>(() => {
     try {
-      return evalCode(code, (name: string) => lookupInScope(name, owner));
+      return evalCode(code, (name: string) =>
+        lookupInScope(name, owner, params)
+      );
     } catch (err) {
       return createError(err instanceof Error ? err.message : String(err));
     }
   });
-  return { kind: "flow", code, result };
+}
+
+export function createFlow(owner: ChildSignal, code: string): FlowValue {
+  return { kind: "flow", code, result: flowComputed(owner, code) };
 }
 
 export function createLink(
@@ -411,6 +429,13 @@ export function createLink(
   return { kind: "link", source, filter, result };
 }
 
+export function createTemplate(
+  param: string,
+  body: DataValue | EvalValue
+): TemplateValue {
+  return { kind: "template", param, body };
+}
+
 export function createComputed<T>(fn: () => T): ReadSignal<T> {
   const rsig: PReadonlySignal<T> = computed(fn);
   return { kind: "signal", get: () => rsig.value, peek: () => rsig.peek() };
@@ -436,7 +461,7 @@ export function createListSignal(
     child: ChildSignal;
   }[] = [],
   resultUid?: number
-): ValueSignal<ListValue> {
+): WriteSignal<ListValue> {
   const parent = createSignal(createList([]));
 
   batch(() => {
@@ -449,32 +474,52 @@ export function createListSignal(
   return parent;
 }
 
+export function createTemplateListSignal(
+  param: string,
+  cells: {
+    uid?: number;
+    name?: string | ValueSignal<string>;
+    view?: string | ValueSignal<string>;
+    child: ChildSignal;
+  }[] = [],
+  resultUid?: number
+): WriteSignal<TemplateValue> {
+  const parent = createSignal(createTemplate(param, createList()));
+
+  batch(() => {
+    for (const c of cells) {
+      getParentSignal(c.child).value = parent;
+    }
+    parent.set(createTemplate(param, createList(cells, resultUid)));
+  });
+
+  return parent;
+}
+
 /* Flow readonly view */
 
 function asReadOnlySignal<T>(sig: ValueSignal<T>): ReadSignal<T> {
   return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
 }
 
-function readonlyValue(v: Value): Value {
+function readonlyValue(v: Value, params?: ScopeParams): Value {
   if (isError(v) || isBlank(v) || isLiteral(v) || isFunction(v)) return v;
-
-  const roCells = v.cells.map((c) => {
-    getParentSignal(c.child).value = undefined;
-
-    return {
-      uid: c.uid,
+  return createList(
+    v.cells.map((c) => ({
+      uid: newUid(),
       name: asReadOnlySignal(c.name),
       view: asReadOnlySignal(c.view),
-      child: createComputed(() => readonlyValue(evalValue(c.child))),
-    };
-  });
-
-  return createList(roCells, v.resultUid);
+      child: createComputed(() =>
+        readonlyValue(evalValue(c.child, params), params)
+      ),
+    })),
+    v.resultUid
+  );
 }
 
 /* Conversions */
 
-export function toBool(value: Value): boolean | null {
+export function toBool(value: Value): boolean {
   if (isError(value) || isBlank(value)) return false;
   return true;
 }
@@ -643,46 +688,80 @@ export function setGlobalLibrary(entries: Record<string, ValueSignal>) {
   );
 }
 
-function lookupInScope(name: string, start: ChildSignal): ValueSignal {
+type ScopeParams = Map<ChildSignal, Record<string, ValueSignal>>;
+
+function lookupInScope(
+  name: string,
+  start: ChildSignal,
+  params?: ScopeParams
+): ValueSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
-    const { cells } = scope.get();
-    const found = cells.find((v) => v.name.get() === name);
-    if (found) return createSignal(evalValue(found.child));
+    const outer = scope.get();
+    const inner = isTemplate(outer) ? outer.body : outer;
+
+    if (isList(inner)) {
+      const found = inner.cells.find((c) => c.name.get() === name);
+      if (found) return createSignal(evalValue(found.child, params));
+    }
+
+    if (isTemplate(outer) && outer.param === name) {
+      const found = params?.get(scope)?.[name];
+      if (found) return createSignal(evalValue(found, params));
+      throw new Error(ERR.templateParameter(name));
+    }
+
     scope = getParentSignal(scope).value;
   }
 
-  if (__globalLib) {
-    const libSig = __globalLib.get(name.toLowerCase());
-    if (libSig) return createSignal(libSig.get());
-  }
+  const libSig = __globalLib?.get(name.toLowerCase());
+  if (libSig) return createSignal(libSig.get());
 
   throw new Error(ERR.unboundIdentifier(name));
 }
 
-export function evalStructural(sig: ChildSignal): Value {
+export function evalStructural(sig: ChildSignal, params?: ScopeParams): Value {
   const v = sig.get();
-
   if (isFlow(v)) {
-    return readonlyValue(v.result.get());
+    if (params) {
+      return flowComputed(sig, v.code, params).get();
+    }
+    return v.result.get();
   }
 
   if (isLink(v)) {
     return v.result.get();
   }
 
+  if (isTemplate(v)) {
+    return evalStructural(createSignal(v.body), params);
+  }
+
   return v;
 }
 
-export function evalValue(sig: ChildSignal): Value {
-  const value = evalStructural(sig);
+export function evalValue(sig: ChildSignal, params?: ScopeParams): Value {
+  const v = sig.get();
+
+  if (isTemplate(v)) {
+    return createFunction((arg) => {
+      const argOpt = arg || createSignal(createBlank());
+      return createComputed(() => {
+        const params = new Map([[sig, { [v.param]: argOpt }]]);
+        return readonlyValue(evalValue(createSignal(v.body), params), params);
+      });
+    });
+  }
+
+  const value = evalStructural(sig, params);
   if (!isList(value) || value.resultUid === undefined) return value;
-  return evalValue(value.cells.find((c) => c.uid === value.resultUid)!.child);
+  return evalValue(
+    value.cells.find((c) => c.uid === value.resultUid)!.child,
+    params
+  );
 }
 
 export function resolveValue(value: Value): StaticValue {
-  if (isLink(value as any)) return resolveValue((value as any).result.get());
-
   if (value.kind === "error") return value;
 
   if (value.kind === "blank") return { kind: "blank" };

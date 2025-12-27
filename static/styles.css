@@ -102,7 +102,9 @@
     bottom: 1px;
 
     width: calc(var(--indent) + var(--rule) * 2);
-    background: var(--grey-light);
+    border-top: var(--rule) solid;
+    border-bottom: var(--rule) solid;
+    border-color: var(--grey-light);
     border-radius: var(--round);
 
     z-index: -1;
@@ -123,6 +125,10 @@
 
 .cell.flow {
   cursor: text;
+}
+
+.value {
+  min-height: 21px;
 }
 
 .header {
@@ -203,7 +209,7 @@
     background: var(--blue-light);
   }
   &::after {
-    background: var(--blue-light);
+    border-color: var(--blue-light);
   }
   > .header {
     background: var(--blue-light);

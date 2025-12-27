@@ -16,6 +16,7 @@ import {
   createLink,
   setGlobalLibrary,
   resolveValue,
+  createTemplateListSignal,
 } from "./data";
 import { setDataRoot } from "./tree";
 import { library } from "./library";
@@ -74,12 +75,24 @@ const root = createListSignal([
   { child: literalSig(10) },
   { child: literalSig(20) },
   { child: literalSig(30) },
+  { child: createSignal(createBlank()) },
+  {
+    name: "f",
+    child: createTemplateListSignal("arg", [
+      { child: literalSig(10) },
+      { child: literalSig(20) },
+      { child: flowSig("arg * 3") },
+    ]),
+  },
+  { child: createSignal(createBlank()) },
+  { child: flowSig("f(10)") },
+  { child: createSignal(createBlank()) },
   {
     child: resultListSig(
       [
-        { child: literalSig(10) },
-        { child: literalSig(20) },
-        { child: literalSig(30) },
+        { name: "a", child: literalSig(10) },
+        { name: "b", child: literalSig(20) },
+        { child: flowSig("a * b") },
       ],
       2
     ),

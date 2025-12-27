@@ -2,6 +2,7 @@ import { batch } from "@preact/signals-core";
 
 import {
   type ListValue,
+  type TemplateValue,
   type DataValue,
   type WriteSignal,
   type ChildSignal,
@@ -11,6 +12,7 @@ import {
   isList,
   isFlow,
   isLink,
+  isTemplate,
   isWritableSignal,
   getParentSignal,
   getParent,
@@ -20,6 +22,7 @@ import {
   createList,
   createFlow,
   createLink,
+  createTemplate,
   createSignal,
   evalStructural,
 } from "./data";
@@ -123,7 +126,7 @@ export function getNavContext(path: CellPath): NavContext {
 
     if (isFlow(v)) kind = "flow";
     else if (isLink(v)) kind = "link";
-    else if (isList(v)) kind = "list";
+    else if (isList(v) || isTemplate(v)) kind = "list";
     else kind = isWritableSignal(child) ? "text" : "text-readonly";
   }
 
@@ -154,6 +157,18 @@ function flattenLeaves(): CellPath[] {
         for (const cell of out.cells) {
           walk([...path, cell.uid], cell.child);
         }
+      }
+      return;
+    }
+
+    if (isTemplate(v)) {
+      const out = evalStructural(child);
+      if (isList(out)) {
+        for (const cell of out.cells) {
+          walk([...path, cell.uid], cell.child);
+        }
+      } else {
+        result.push(path);
       }
       return;
     }
@@ -334,6 +349,18 @@ export function setLinkFilter(path: CellPath, filter: string): CellPath {
   return path;
 }
 
+export function setTemplateParam(path: CellPath, param: string): CellPath {
+  const sig = resolvePath(path);
+  if (!sig || !isWritableSignal(sig)) return path;
+
+  const cur = sig.peek();
+  if (!isTemplate(cur)) return path;
+
+  const next = param.trim();
+  if (cur.param !== next) sig.set(createTemplate(next, cur.body));
+  return path;
+}
+
 export function toggleTextCode(path: CellPath): TransformResult {
   const sig = resolvePath(path);
   if (!sig || !isWritableSignal(sig)) return null;
@@ -353,10 +380,26 @@ export function toggleTextCode(path: CellPath): TransformResult {
   return null;
 }
 
+type ParentValue = ListValue | TemplateValue;
+type ParentSignal = WriteSignal<ParentValue>;
+
+function getParentInfo(v: ParentValue) {
+  return {
+    ...(isTemplate(v) ? (v.body as ListValue) : v),
+    param: isTemplate(v) ? v.param : undefined,
+  };
+}
+
+function setParentInfo(list: Cell[], resultUid?: number, param?: string) {
+  const nextList = createList(list, resultUid);
+  if (param !== undefined) return createTemplate(param, nextList);
+  return nextList;
+}
+
 export function withLocatedPath(
   path: CellPath,
   fn: (ctx: {
-    parent: WriteSignal<ListValue>;
+    parent: ParentSignal;
     parentPath: CellPath;
     before: Cell[];
     index: number;
@@ -372,7 +415,8 @@ export function withLocatedPath(
   if (!parent) return path;
 
   const parentPath = path.slice(0, -1);
-  const { cells: before, resultUid } = parent.peek();
+  const parentValue = parent.peek();
+  const { cells: before, resultUid, param } = getParentInfo(parentValue)!;
 
   const uid = path[path.length - 1]!;
   const index = before.findIndex((c) => c.uid === uid);
@@ -382,7 +426,10 @@ export function withLocatedPath(
   batch(() => {
     const { after, path: p } = fn({ parent, parentPath, before, index, child });
     nextPath = p;
-    if (after !== before) parent.set(createList(after, resultUid));
+
+    if (after !== before) {
+      parent.set(setParentInfo(after, resultUid, param));
+    }
   });
 
   return nextPath;
@@ -478,8 +525,8 @@ export function unwrapIfSingleChild(path: CellPath): TransformResult {
   const wrapperSig = getParent(innerChild);
   if (!wrapperSig) return null;
 
-  const wrapperValue = wrapperSig.peek();
-  if (wrapperValue.cells.length !== 1) return null;
+  const { cells } = getParentInfo(wrapperSig.peek());
+  if (cells.length !== 1) return null;
 
   const pPath = parentPath(path);
   if (!pPath) return null;
@@ -487,7 +534,7 @@ export function unwrapIfSingleChild(path: CellPath): TransformResult {
   const np = withLocatedPath(
     pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
-      const innerCell = wrapperValue.cells[0]!;
+      const innerCell = cells[0]!;
       innerCell.name = before[index]!.name;
       getParentSignal(innerChild).value = grandparent;
       getParentSignal(wrapperSig).value = undefined;
