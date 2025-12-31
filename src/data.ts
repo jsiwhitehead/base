@@ -85,7 +85,7 @@ export type LinkValue = {
 
 export type TemplateValue = {
   kind: "template";
-  param: string;
+  params: string[];
   body: DataValue | EvalValue;
 };
 
@@ -430,10 +430,10 @@ export function createLink(
 }
 
 export function createTemplate(
-  param: string,
+  params: string[],
   body: DataValue | EvalValue
 ): TemplateValue {
-  return { kind: "template", param, body };
+  return { kind: "template", params, body };
 }
 
 export function createComputed<T>(fn: () => T): ReadSignal<T> {
@@ -475,7 +475,7 @@ export function createListSignal(
 }
 
 export function createTemplateListSignal(
-  param: string,
+  params: string[],
   cells: {
     uid?: number;
     name?: string | ValueSignal<string>;
@@ -484,13 +484,13 @@ export function createTemplateListSignal(
   }[] = [],
   resultUid?: number
 ): WriteSignal<TemplateValue> {
-  const parent = createSignal(createTemplate(param, createList()));
+  const parent = createSignal(createTemplate(params, createList()));
 
   batch(() => {
     for (const c of cells) {
       getParentSignal(c.child).value = parent;
     }
-    parent.set(createTemplate(param, createList(cells, resultUid)));
+    parent.set(createTemplate(params, createList(cells, resultUid)));
   });
 
   return parent;
@@ -705,7 +705,7 @@ function lookupInScope(
       if (found) return createSignal(evalValue(found.child, params));
     }
 
-    if (isTemplate(outer) && outer.param === name) {
+    if (isTemplate(outer) && outer.params.includes(name)) {
       const found = params?.get(scope)?.[name];
       if (found) return createSignal(evalValue(found, params));
       throw new Error(ERR.templateParameter(name));
@@ -744,17 +744,26 @@ export function evalValue(sig: ChildSignal, params?: ScopeParams): Value {
   const v = sig.get();
 
   if (isTemplate(v)) {
-    return createFunction((arg) => {
-      const argOpt = arg || createSignal(createBlank());
-      return createComputed(() => {
-        const params = new Map([[sig, { [v.param]: argOpt }]]);
-        return readonlyValue(evalValue(createSignal(v.body), params), params);
-      });
-    });
+    return createFunction((...args) =>
+      createComputed(() => {
+        const nextParams = new Map(params);
+        nextParams.set(
+          sig,
+          Object.fromEntries(
+            v.params.map((p, i) => [p, args[i] ?? createSignal(createBlank())])
+          )
+        );
+        return readonlyValue(
+          evalValue(createSignal(v.body), nextParams),
+          nextParams
+        );
+      })
+    );
   }
 
   const value = evalStructural(sig, params);
   if (!isList(value) || value.resultUid === undefined) return value;
+
   return evalValue(
     value.cells.find((c) => c.uid === value.resultUid)!.child,
     params

@@ -731,7 +731,7 @@ class CellHeaderView extends View {
         this.sourceCodeInput.update(v.source);
         this.filterCodeInput.update(v.filter);
       } else if (isTemplate(v)) {
-        this.templateParamInput.update(v.param);
+        this.templateParamInput.update(v.params.join(", "));
       }
     });
   }

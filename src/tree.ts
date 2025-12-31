@@ -349,15 +349,23 @@ export function setLinkFilter(path: CellPath, filter: string): CellPath {
   return path;
 }
 
-export function setTemplateParam(path: CellPath, param: string): CellPath {
+export function setTemplateParam(path: CellPath, paramText: string): CellPath {
   const sig = resolvePath(path);
   if (!sig || !isWritableSignal(sig)) return path;
 
   const cur = sig.peek();
   if (!isTemplate(cur)) return path;
 
-  const next = param.trim();
-  if (cur.param !== next) sig.set(createTemplate(next, cur.body));
+  const nextParams = paramText
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const same =
+    cur.params.length === nextParams.length &&
+    cur.params.every((p, i) => p === nextParams[i]);
+
+  if (!same) sig.set(createTemplate(nextParams, cur.body));
   return path;
 }
 
@@ -386,13 +394,13 @@ type ParentSignal = WriteSignal<ParentValue>;
 function getParentInfo(v: ParentValue) {
   return {
     ...(isTemplate(v) ? (v.body as ListValue) : v),
-    param: isTemplate(v) ? v.param : undefined,
+    params: isTemplate(v) ? v.params : undefined,
   };
 }
 
-function setParentInfo(list: Cell[], resultUid?: number, param?: string) {
+function setParentInfo(list: Cell[], resultUid?: number, params?: string[]) {
   const nextList = createList(list, resultUid);
-  if (param !== undefined) return createTemplate(param, nextList);
+  if (params !== undefined) return createTemplate(params, nextList);
   return nextList;
 }
 
@@ -416,7 +424,7 @@ export function withLocatedPath(
 
   const parentPath = path.slice(0, -1);
   const parentValue = parent.peek();
-  const { cells: before, resultUid, param } = getParentInfo(parentValue)!;
+  const { cells: before, resultUid, params } = getParentInfo(parentValue)!;
 
   const uid = path[path.length - 1]!;
   const index = before.findIndex((c) => c.uid === uid);
@@ -428,7 +436,7 @@ export function withLocatedPath(
     nextPath = p;
 
     if (after !== before) {
-      parent.set(setParentInfo(after, resultUid, param));
+      parent.set(setParentInfo(after, resultUid, params));
     }
   });
 

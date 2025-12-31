@@ -78,14 +78,17 @@ const root = createListSignal([
   { child: createSignal(createBlank()) },
   {
     name: "f",
-    child: createTemplateListSignal("arg", [
-      { child: literalSig(10) },
-      { child: literalSig(20) },
-      { child: flowSig("arg * 3") },
-    ]),
+    child: createTemplateListSignal(
+      ["arg1", "arg2"],
+      [
+        { child: literalSig(10) },
+        { child: literalSig(20) },
+        { child: flowSig("arg1 * arg2 * 3") },
+      ]
+    ),
   },
   { child: createSignal(createBlank()) },
-  { child: flowSig("f(10)") },
+  { child: flowSig("f(10, 20)") },
   { child: createSignal(createBlank()) },
   {
     child: resultListSig(
