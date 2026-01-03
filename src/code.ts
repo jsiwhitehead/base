@@ -4,19 +4,19 @@ import {
   ERR,
   type Value,
   type ValueSignal,
-  isLiteral,
+  isScalar,
   isList,
   isFunction,
   createBlank,
-  createLiteral,
+  createScalar,
   createFunction,
   createSignal,
   numOpt,
   textOpt,
-  toBool,
+  isTruthy,
   primExpect,
   numExpect,
-  scalarToValue,
+  primitiveToValue,
   size,
   sliceText,
   sliceList,
@@ -152,14 +152,14 @@ export interface Index {
   type: "Index";
   list: Expr;
   index: Expr;
-  strict: boolean;
+  required: boolean;
 }
 
 export interface Member {
   type: "Member";
   list: Expr;
   name: Ident;
-  strict: boolean;
+  required: boolean;
 }
 
 export interface Slice {
@@ -280,7 +280,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       type: "Index",
       list: receiver,
       index: expr.ast,
-      strict: false,
+      required: false,
     });
   },
   Index_expr(_open, expr, _close, maybeBang) {
@@ -288,7 +288,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       type: "Index",
       list: receiver,
       index: expr.ast,
-      strict: !!maybeBang.sourceString,
+      required: !!maybeBang.sourceString,
     });
   },
   Member(_dot, nameTok, maybeBang) {
@@ -296,7 +296,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       type: "Member",
       list: receiver,
       name: { type: "Ident", name: nameTok.sourceString },
-      strict: !!maybeBang.sourceString,
+      required: !!maybeBang.sourceString,
     });
   },
   Pipe(_colon, nameTok, _open, list, _close) {
@@ -327,7 +327,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       type: "Index",
       list: IMPLICIT_PARAM,
       index: expr.ast,
-      strict: !!maybeBang.sourceString,
+      required: !!maybeBang.sourceString,
     } as Index;
   },
   Prim_dot(_dot, nameTok, maybeBang) {
@@ -335,7 +335,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       type: "Member",
       list: IMPLICIT_PARAM,
       name: { type: "Ident", name: nameTok.sourceString },
-      strict: !!maybeBang.sourceString,
+      required: !!maybeBang.sourceString,
     } as Member;
   },
 
@@ -402,7 +402,7 @@ const BINARY_OPS: Partial<
 };
 
 const UNARY_OPS: Record<Unary["op"], (v: Value) => boolean | number | null> = {
-  "!": (v) => !toBool(v),
+  "!": (v) => !isTruthy(v),
 
   "-": (v) => numericOp((x) => -x, v),
   "+": (v) => numericOp((x) => +x, v),
@@ -440,7 +440,7 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
       const { op, left, right } = e;
       const f = BINARY_OPS[op]!;
       return createSignal(
-        scalarToValue(
+        primitiveToValue(
           f(evalExpr(left, scope).get(), evalExpr(right, scope).get())
         )
       );
@@ -448,7 +448,9 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
 
     case "Unary": {
       const f = UNARY_OPS[e.op]!;
-      return createSignal(scalarToValue(f(evalExpr(e.argument, scope).get())));
+      return createSignal(
+        primitiveToValue(f(evalExpr(e.argument, scope).get()))
+      );
     }
 
     case "Call": {
@@ -468,9 +470,9 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
         const endN = evalNumberOpt(e.index.end, scope);
         const stepN = evalNumberOpt(e.index.step, scope);
 
-        if (isLiteral(target) && typeof target.value === "string") {
+        if (isScalar(target) && typeof target.value === "string") {
           return createSignal(
-            createLiteral(sliceText(target.value, startN, endN, stepN))
+            createScalar(sliceText(target.value, startN, endN, stepN))
           );
         }
 
@@ -483,12 +485,12 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
 
       const target = evalExpr(e.list, scope).get();
       const indexOrName = evalExpr(e.index, scope).get();
-      return createSignal(getByIndexOrName(target, indexOrName, e.strict));
+      return createSignal(getByIndexOrName(target, indexOrName, e.required));
     }
 
     case "Member": {
       const target = evalExpr(e.list, scope).get();
-      return createSignal(getByName(target, e.name.name, e.strict));
+      return createSignal(getByName(target, e.name.name, e.required));
     }
 
     case "Slice": {
@@ -499,7 +501,7 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
     }
 
     case "Lit":
-      return createSignal(createLiteral(e.value));
+      return createSignal(createScalar(e.value));
 
     case "Template": {
       let out = "";
@@ -511,7 +513,7 @@ function evalExpr(e: Expr, scope: (name: string) => ValueSignal): ValueSignal {
           out += textOpt(v.get()) ?? "";
         }
       }
-      return createSignal(createLiteral(out));
+      return createSignal(createScalar(out));
     }
 
     case "Blank":

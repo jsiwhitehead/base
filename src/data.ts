@@ -9,7 +9,7 @@ import {
 /* Errors */
 
 export const ERR = {
-  boolean: "Expected condition (true or blank)",
+  flag: "Expected flag (true or blank)",
   literal: "Expected literal value",
   number: "Expected number",
   numOrBlank: "Expected number or blank",
@@ -28,9 +28,9 @@ export const ERR = {
   indexOutOfRange: (index: number, len: number) =>
     `Index ${index} is out of range (length ${len})`,
   indexNameMustBeTextOrNumber: "Index/name must evaluate to text or number",
-  propOnNonList: (prop: string) =>
-    `Cannot access property '${prop}' of non-list value`,
-  unknownProperty: (prop: string) => `Unknown property '${prop}'`,
+  nameOnNonList: (name: string) =>
+    `Cannot access name '${name}' of non-list value`,
+  unknownName: (name: string) => `Unknown name '${name}'`,
 
   unboundIdentifier: (name: string) => `Unbound identifier: ${name}`,
   templateParameter: (name: string) => `Template parameter: ${name}`,
@@ -39,7 +39,7 @@ export const ERR = {
 
 /* Types */
 
-export type Primitive = true | number | string;
+export type ScalarPrimitive = true | number | string;
 
 export type ErrorValue = {
   kind: "error";
@@ -48,25 +48,25 @@ export type ErrorValue = {
 
 export type BlankValue = { kind: "blank" };
 
-export type LiteralValue = {
-  kind: "literal";
-  value: Primitive;
+export type ScalarValue = {
+  kind: "scalar";
+  value: ScalarPrimitive;
 };
 
 export type ListValue = {
   kind: "list";
   cells: Cell[];
-  resultUid?: number;
+  valueCellUid?: number;
 };
 
-export type RenderValue = BlankValue | LiteralValue | ListValue;
+export type StructuralValue = BlankValue | ScalarValue | ListValue;
 
 export type FunctionValue = {
   kind: "function";
   fn: (...args: ValueSignal[]) => ValueSignal;
 };
 
-export type DataValue = RenderValue | FunctionValue;
+export type DataValue = StructuralValue | FunctionValue;
 
 export type Value = DataValue | ErrorValue;
 
@@ -83,10 +83,15 @@ export type LinkValue = {
   result: ReadSignal<Value>;
 };
 
-export type TemplateValue = {
+export type TemplateValue<
+  Body extends DataValue | FlowValue | LinkValue =
+    | DataValue
+    | FlowValue
+    | LinkValue
+> = {
   kind: "template";
   params: string[];
-  body: DataValue | EvalValue;
+  body: Body;
 };
 
 export type EvalValue = FlowValue | LinkValue | TemplateValue;
@@ -101,17 +106,19 @@ export type WriteSignal<T> = ReadSignal<T> & {
   set(next: T): void;
 };
 
-export type ValueSignal<T = Value> = ReadSignal<T> | WriteSignal<T>;
+export type Signal<T> = ReadSignal<T> | WriteSignal<T>;
 
-export type ChildSignal =
+export type ValueSignal<T extends Value = Value> = Signal<T>;
+
+export type CellValueSignal =
   | ReadSignal<Value>
   | WriteSignal<DataValue | EvalValue>;
 
 export type Cell = {
   uid: number;
-  name: ValueSignal<string>;
-  view: ValueSignal<string>;
-  child: ChildSignal;
+  name: Signal<string>;
+  view: Signal<string>;
+  value: CellValueSignal;
 };
 
 export type StaticError = { kind: "error"; message: string };
@@ -130,7 +137,7 @@ export type StaticListValue = {
 export type StaticValue =
   | StaticError
   | BlankValue
-  | Primitive
+  | ScalarPrimitive
   | StaticListValue;
 
 /* Guards */
@@ -141,13 +148,12 @@ function hasKind(v: unknown, k: string): boolean {
 
 export const isError = (v: unknown): v is ErrorValue => hasKind(v, "error");
 export const isBlank = (v: unknown): v is BlankValue => hasKind(v, "blank");
-export const isLiteral = (v: unknown): v is LiteralValue =>
-  hasKind(v, "literal");
+export const isScalar = (v: unknown): v is ScalarValue => hasKind(v, "scalar");
 export const isList = (v: unknown): v is ListValue => hasKind(v, "list");
 export const isFunction = (v: unknown): v is FunctionValue =>
   hasKind(v, "function");
 export const isValue = (v: unknown): v is Value =>
-  isError(v) || isBlank(v) || isLiteral(v) || isList(v) || isFunction(v);
+  isError(v) || isBlank(v) || isScalar(v) || isList(v) || isFunction(v);
 export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
 export const isLink = (v: unknown): v is LinkValue => hasKind(v, "link");
 export const isTemplate = (v: unknown): v is TemplateValue =>
@@ -164,10 +170,12 @@ export const isStaticList = (v: unknown): v is StaticListValue =>
 
 /* Parents */
 
-type ParentSig = PSignal<WriteSignal<ListValue | TemplateValue> | undefined>;
-const parentMap = new WeakMap<ChildSignal, ParentSig>();
+type ParentSig = PSignal<
+  WriteSignal<ListValue | TemplateValue<ListValue>> | undefined
+>;
+const parentMap = new WeakMap<CellValueSignal, ParentSig>();
 
-export function getParentSignal(sig: ChildSignal): ParentSig {
+export function getParentSignal(sig: CellValueSignal): ParentSig {
   let p = parentMap.get(sig);
   if (!p) {
     p = signal(undefined);
@@ -177,9 +185,9 @@ export function getParentSignal(sig: ChildSignal): ParentSig {
 }
 
 export function getParent(
-  child: ChildSignal
-): WriteSignal<ListValue | TemplateValue> | undefined {
-  return getParentSignal(child).peek();
+  value: CellValueSignal
+): WriteSignal<ListValue | TemplateValue<ListValue>> | undefined {
+  return getParentSignal(value).peek();
 }
 
 /* Lists */
@@ -191,12 +199,12 @@ function listCellSignals(src: ListValue): {
   valSig: ValueSignal;
 }[] {
   return src.cells.map((c, i) => {
-    const indexSig = createSignal(createLiteral(i + 1));
+    const indexSig = createSignal(createScalar(i + 1));
     const nameSig = createComputed(() => {
       const n = c.name.get();
-      return n ? createLiteral(n) : createBlank();
+      return n ? createScalar(n) : createBlank();
     });
-    const valSig = createComputed(() => evalValue(c.child));
+    const valSig = createComputed(() => evalValue(c.value));
     return { cell: c, indexSig, nameSig, valSig };
   });
 }
@@ -209,7 +217,7 @@ export function listMap(
     listCellSignals(src).map(({ cell, indexSig, nameSig, valSig }) => ({
       uid: newUid(),
       name: cell.name,
-      child: createComputed(() => {
+      value: createComputed(() => {
         try {
           return f(valSig, indexSig, nameSig).get();
         } catch (err) {
@@ -230,12 +238,11 @@ export function listFilter(
 ): ListValue {
   return createList(
     listCellSignals(src)
-      .filter(
-        ({ valSig, indexSig, nameSig }) =>
-          toBool(pred(valSig, indexSig, nameSig).get()) === true
+      .filter(({ valSig, indexSig, nameSig }) =>
+        isTruthy(pred(valSig, indexSig, nameSig).get())
       )
       .map(({ cell }) => cell),
-    src.resultUid
+    src.valueCellUid
   );
 }
 
@@ -259,14 +266,14 @@ export function listReduce(
     return seq.reduce(step, init);
   }
 
-  const first = createSignal(evalValue(src.cells[0]!.child));
+  const first = createSignal(evalValue(src.cells[0]!.value));
   return seq.slice(1).reduce(step, first);
 }
 
 function sortRank(v: Value): [number, any] {
   // numbers < text < true < other < blank
   if (isBlank(v)) return [4, null];
-  if (isLiteral(v)) {
+  if (isScalar(v)) {
     const lit = v.value;
     if (typeof lit === "number") return [0, lit];
     if (typeof lit === "string") return [1, lit];
@@ -309,16 +316,16 @@ export function listSort(
       uid: cell.uid,
       name: cell.name,
       view: cell.view,
-      child: cell.child,
+      value: cell.value,
       index: i,
       sortKey: keySelector
         ? keySelector(valSig, indexSig, nameSig).get()
-        : evalValue(cell.child),
+        : evalValue(cell.value),
     })
   );
 
   rows.sort(sortCmp);
-  return createList(rows, src.resultUid);
+  return createList(rows, src.valueCellUid);
 }
 
 /* Constructors */
@@ -335,29 +342,29 @@ export const createError = (message: string): ErrorValue => ({
 
 export const createBlank = (): BlankValue => ({ kind: "blank" });
 
-export const createLiteral = (value: Primitive): LiteralValue => ({
-  kind: "literal",
+export const createScalar = (value: ScalarPrimitive): ScalarValue => ({
+  kind: "scalar",
   value,
 });
 
 export function createList(
   cells: {
     uid?: number;
-    name?: string | ValueSignal<string>;
-    view?: string | ValueSignal<string>;
-    child: ChildSignal;
+    name?: string | Signal<string>;
+    view?: string | Signal<string>;
+    value: CellValueSignal;
   }[] = [],
-  resultUid?: number
+  valueCellUid?: number
 ): ListValue {
   const outCells = cells.map((c) => {
-    let nameSig: ValueSignal<string>;
+    let nameSig: Signal<string>;
     if (isSignal(c.name)) {
       nameSig = c.name;
     } else {
       nameSig = createSignal<string>(c.name ?? "");
     }
 
-    let viewSig: ValueSignal<string>;
+    let viewSig: Signal<string>;
     if (isSignal(c.view)) {
       viewSig = c.view;
     } else {
@@ -368,13 +375,13 @@ export function createList(
       uid: c.uid ?? newUid(),
       name: nameSig,
       view: viewSig,
-      child: c.child,
+      value: c.value,
     };
   });
   return {
     kind: "list",
     cells: outCells,
-    resultUid: outCells.find((c) => c.uid === resultUid)?.uid,
+    valueCellUid: outCells.find((c) => c.uid === valueCellUid)?.uid,
   };
 }
 
@@ -383,7 +390,7 @@ export const createFunction = (
 ): FunctionValue => ({ kind: "function", fn });
 
 function flowComputed(
-  owner: ChildSignal,
+  owner: CellValueSignal,
   code: string,
   params?: ScopeParams
 ): ReadSignal<Value> {
@@ -398,12 +405,12 @@ function flowComputed(
   });
 }
 
-export function createFlow(owner: ChildSignal, code: string): FlowValue {
+export function createFlow(owner: CellValueSignal, code: string): FlowValue {
   return { kind: "flow", code, result: flowComputed(owner, code) };
 }
 
 export function createLink(
-  owner: ChildSignal,
+  owner: CellValueSignal,
   source: string,
   filter: string
 ): LinkValue {
@@ -415,7 +422,7 @@ export function createLink(
       if (!isList(target)) throw new TypeError(ERR.list);
 
       const code = filter.trim();
-      if (!code) return createList(target.cells, target.resultUid);
+      if (!code) return createList(target.cells, target.valueCellUid);
 
       const pred = evalCode(code, (n: string) => lookupInScope(n, owner));
       if (!isFunction(pred)) throw new TypeError(ERR.function);
@@ -429,10 +436,10 @@ export function createLink(
   return { kind: "link", source, filter, result };
 }
 
-export function createTemplate(
+export function createTemplate<Body extends DataValue | FlowValue | LinkValue>(
   params: string[],
-  body: DataValue | EvalValue
-): TemplateValue {
+  body: Body
+): TemplateValue<Body> {
   return { kind: "template", params, body };
 }
 
@@ -456,19 +463,19 @@ export function createSignal<T>(initial: T): WriteSignal<T> {
 export function createListSignal(
   cells: {
     uid?: number;
-    name?: string | ValueSignal<string>;
-    view?: string | ValueSignal<string>;
-    child: ChildSignal;
+    name?: string | Signal<string>;
+    view?: string | Signal<string>;
+    value: CellValueSignal;
   }[] = [],
-  resultUid?: number
+  valueCellUid?: number
 ): WriteSignal<ListValue> {
   const parent = createSignal(createList([]));
 
   batch(() => {
     for (const c of cells) {
-      getParentSignal(c.child).value = parent;
+      getParentSignal(c.value).value = parent;
     }
-    parent.set(createList(cells, resultUid));
+    parent.set(createList(cells, valueCellUid));
   });
 
   return parent;
@@ -478,19 +485,19 @@ export function createTemplateListSignal(
   params: string[],
   cells: {
     uid?: number;
-    name?: string | ValueSignal<string>;
-    view?: string | ValueSignal<string>;
-    child: ChildSignal;
+    name?: string | Signal<string>;
+    view?: string | Signal<string>;
+    value: CellValueSignal;
   }[] = [],
-  resultUid?: number
-): WriteSignal<TemplateValue> {
+  valueCellUid?: number
+): WriteSignal<TemplateValue<ListValue>> {
   const parent = createSignal(createTemplate(params, createList()));
 
   batch(() => {
     for (const c of cells) {
-      getParentSignal(c.child).value = parent;
+      getParentSignal(c.value).value = parent;
     }
-    parent.set(createTemplate(params, createList(cells, resultUid)));
+    parent.set(createTemplate(params, createList(cells, valueCellUid)));
   });
 
   return parent;
@@ -498,35 +505,35 @@ export function createTemplateListSignal(
 
 /* Flow readonly view */
 
-function asReadOnlySignal<T>(sig: ValueSignal<T>): ReadSignal<T> {
+function asReadOnlySignal<T>(sig: Signal<T>): ReadSignal<T> {
   return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
 }
 
 function readonlyValue(v: Value, params?: ScopeParams): Value {
-  if (isError(v) || isBlank(v) || isLiteral(v) || isFunction(v)) return v;
+  if (isError(v) || isBlank(v) || isScalar(v) || isFunction(v)) return v;
   return createList(
     v.cells.map((c) => ({
       uid: newUid(),
       name: asReadOnlySignal(c.name),
       view: asReadOnlySignal(c.view),
-      child: createComputed(() =>
-        readonlyValue(evalValue(c.child, params), params)
+      value: createComputed(() =>
+        readonlyValue(evalValue(c.value, params), params)
       ),
     })),
-    v.resultUid
+    v.valueCellUid
   );
 }
 
 /* Conversions */
 
-export function toBool(value: Value): boolean {
+export function isTruthy(value: Value): boolean {
   if (isError(value) || isBlank(value)) return false;
   return true;
 }
 
 export function toNumber(value: Value): number | null {
   if (isBlank(value)) return null;
-  if (isLiteral(value)) {
+  if (isScalar(value)) {
     const v = value.value;
     if (typeof v === "number") return v;
     if (v === true) return 1;
@@ -541,19 +548,19 @@ export function toNumber(value: Value): number | null {
 export function toText(value: Value): string | null {
   if (isError(value)) return value.message;
   if (isBlank(value)) return null;
-  if (isLiteral(value)) return String(value.value);
+  if (isScalar(value)) return String(value.value);
   return null;
 }
 
 export function numOpt(value: Value): number | null {
   if (isBlank(value)) return null;
-  if (isLiteral(value) && typeof value.value === "number") return value.value;
+  if (isScalar(value) && typeof value.value === "number") return value.value;
   throw new TypeError(ERR.numOrBlank);
 }
 
 export function textOpt(value: Value): string | null {
   if (isBlank(value)) return null;
-  if (isLiteral(value) && typeof value.value === "string") return value.value;
+  if (isScalar(value) && typeof value.value === "string") return value.value;
   throw new TypeError(ERR.textOrBlank);
 }
 
@@ -569,36 +576,47 @@ export function fnOpt(value: Value): FunctionValue | null {
   throw new TypeError(ERR.function);
 }
 
-export function boolExpect(value: Value): boolean {
+export function flagExpect(value: Value): boolean {
   if (isBlank(value)) return false;
-  if (isLiteral(value) && value.value === true) return true;
-  throw new TypeError(ERR.boolean);
+  if (isScalar(value) && value.value === true) return true;
+  throw new TypeError(ERR.flag);
 }
 
-export function primExpect(value: Value): Primitive {
-  if (isLiteral(value)) return value.value;
+export function primExpect(value: Value): ScalarPrimitive {
+  if (isScalar(value)) return value.value;
   throw new TypeError(ERR.literal);
 }
 
 export function numExpect(value: Value): number {
-  if (isLiteral(value) && typeof value.value === "number") return value.value;
+  if (isScalar(value) && typeof value.value === "number") return value.value;
   throw new TypeError(ERR.number);
 }
 
-export function scalarToValue(
+export function primitiveToValue(
   v: boolean | number | string | null
-): BlankValue | LiteralValue {
+): BlankValue | ScalarValue {
   if (v === null || v === false) return createBlank();
-  return createLiteral(v);
+  return createScalar(v);
 }
 
 export function size(value: Value): number | null {
   if (isError(value)) return null;
   if (isBlank(value)) return null;
-  if (isLiteral(value) && typeof value.value === "string")
+  if (isScalar(value) && typeof value.value === "string")
     return value.value.length;
   if (isList(value)) return value.cells.length;
   throw new TypeError(ERR.textOrList);
+}
+
+const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+export function parseScalarInput(text: string): DataValue {
+  const trimmed = text.trim();
+  if (NUM_RE.test(trimmed)) {
+    const n = Number(trimmed);
+    if (Number.isFinite(n)) return createScalar(n);
+  }
+  return createScalar(text);
 }
 
 /* Slice */
@@ -654,7 +672,7 @@ export function sliceList(
 ): ListValue {
   const indices = computeSliceIndices(start, end, step, list.cells.length);
   const cells = indices.map((oneBased) => list.cells[oneBased - 1]!);
-  return createList(cells, list.resultUid);
+  return createList(cells, list.valueCellUid);
 }
 
 export function createRangeList(
@@ -664,7 +682,7 @@ export function createRangeList(
 ): ListValue {
   const indices = computeSliceIndices(start, end, step, null);
   const cells = indices.map((n) => ({
-    child: createSignal(createLiteral(n)),
+    value: createSignal(createScalar(n)),
   }));
   return createList(cells);
 }
@@ -688,11 +706,11 @@ export function setGlobalLibrary(entries: Record<string, ValueSignal>) {
   );
 }
 
-type ScopeParams = Map<ChildSignal, Record<string, ValueSignal>>;
+type ScopeParams = Map<CellValueSignal, Record<string, ValueSignal>>;
 
 function lookupInScope(
   name: string,
-  start: ChildSignal,
+  start: CellValueSignal,
   params?: ScopeParams
 ): ValueSignal {
   let scope = getParentSignal(start).value;
@@ -702,7 +720,7 @@ function lookupInScope(
 
     if (isList(inner)) {
       const found = inner.cells.find((c) => c.name.get() === name);
-      if (found) return createSignal(evalValue(found.child, params));
+      if (found) return createSignal(evalValue(found.value, params));
     }
 
     if (isTemplate(outer) && outer.params.includes(name)) {
@@ -720,13 +738,17 @@ function lookupInScope(
   throw new Error(ERR.unboundIdentifier(name));
 }
 
-export function evalStructural(sig: ChildSignal, params?: ScopeParams): Value {
+export function evalStructural(
+  sig: CellValueSignal,
+  params?: ScopeParams
+): Value {
   const v = sig.get();
   if (isFlow(v)) {
-    if (params) {
-      return flowComputed(sig, v.code, params).get();
-    }
-    return v.result.get();
+    const out = params
+      ? flowComputed(sig, v.code, params).get()
+      : v.result.get();
+
+    return readonlyValue(out, params);
   }
 
   if (isLink(v)) {
@@ -740,7 +762,7 @@ export function evalStructural(sig: ChildSignal, params?: ScopeParams): Value {
   return v;
 }
 
-export function evalValue(sig: ChildSignal, params?: ScopeParams): Value {
+export function evalValue(sig: CellValueSignal, params?: ScopeParams): Value {
   const v = sig.get();
 
   if (isTemplate(v)) {
@@ -762,10 +784,10 @@ export function evalValue(sig: ChildSignal, params?: ScopeParams): Value {
   }
 
   const value = evalStructural(sig, params);
-  if (!isList(value) || value.resultUid === undefined) return value;
+  if (!isList(value) || value.valueCellUid === undefined) return value;
 
   return evalValue(
-    value.cells.find((c) => c.uid === value.resultUid)!.child,
+    value.cells.find((c) => c.uid === value.valueCellUid)!.value,
     params
   );
 }
@@ -774,12 +796,12 @@ export function resolveValue(value: Value): StaticValue {
   if (value.kind === "error") return value;
 
   if (value.kind === "blank") return { kind: "blank" };
-  if (value.kind === "literal") return value.value;
+  if (value.kind === "scalar") return value.value;
 
   if (value.kind === "list") {
-    if (value.resultUid !== undefined) {
+    if (value.valueCellUid !== undefined) {
       return resolveValue(
-        evalValue(value.cells.find((c) => c.uid === value.resultUid)!.child)
+        evalValue(value.cells.find((c) => c.uid === value.valueCellUid)!.value)
       );
     }
 
@@ -792,7 +814,7 @@ export function resolveValue(value: Value): StaticValue {
         return {
           name: outName,
           view: outView,
-          value: resolveValue(evalValue(c.child)),
+          value: resolveValue(evalValue(c.value)),
         };
       } catch (err) {
         return {
@@ -813,8 +835,8 @@ export function resolveValue(value: Value): StaticValue {
 
 /* Getters */
 
-function softWrap<T>(strict: boolean, fn: () => T): T | BlankValue {
-  if (strict) return fn();
+function softWrap<T>(required: boolean, fn: () => T): T | BlankValue {
+  if (required) return fn();
   try {
     return fn();
   } catch (err) {
@@ -829,17 +851,21 @@ function softWrap<T>(strict: boolean, fn: () => T): T | BlankValue {
   }
 }
 
-export function getByName(list: Value, name: string, strict = false): Value {
-  return softWrap(strict, () => {
-    if (!isList(list)) throw new TypeError(ERR.propOnNonList(name));
+export function getByName(list: Value, name: string, required = false): Value {
+  return softWrap(required, () => {
+    if (!isList(list)) throw new TypeError(ERR.nameOnNonList(name));
     const cell = list.cells.find((v) => v.name.get() === name);
-    if (!cell) throw new ReferenceError(ERR.unknownProperty(name));
-    return evalValue(cell.child);
+    if (!cell) throw new ReferenceError(ERR.unknownName(name));
+    return evalValue(cell.value);
   });
 }
 
-export function getByIndex(list: Value, index1: number, strict = false): Value {
-  return softWrap(strict, () => {
+export function getByIndex(
+  list: Value,
+  index1: number,
+  required = false
+): Value {
+  return softWrap(required, () => {
     if (!Number.isFinite(index1)) throw new TypeError(ERR.indexFinite);
     const idx0 = Math.trunc(index1) - 1;
     if (idx0 < 0) throw new RangeError(ERR.indexOneBased);
@@ -847,22 +873,313 @@ export function getByIndex(list: Value, index1: number, strict = false): Value {
     const cell = list.cells[idx0];
     if (!cell)
       throw new RangeError(ERR.indexOutOfRange(index1, list.cells.length));
-    return evalValue(cell.child);
+    return evalValue(cell.value);
   });
 }
 
 export function getByIndexOrName(
   list: Value,
   value: Value,
-  strict = false
+  required = false
 ): Value {
-  return softWrap(strict, () => {
+  return softWrap(required, () => {
     if (!isList(list)) throw new TypeError(ERR.indexNonList);
-    if (isLiteral(value)) {
+    if (isScalar(value)) {
       const lit = value.value;
-      if (typeof lit === "number") return getByIndex(list, lit, strict);
-      if (typeof lit === "string") return getByName(list, lit, strict);
+      if (typeof lit === "number") return getByIndex(list, lit, required);
+      if (typeof lit === "string") return getByName(list, lit, required);
     }
     throw new TypeError(ERR.indexNameMustBeTextOrNumber);
   });
+}
+
+/* Projections */
+
+export type NavLayoutContext = "default" | "table-cell" | "bar-child";
+
+export function getLayoutContext(
+  parentCell?: Cell,
+  grandparentCell?: Cell
+): NavLayoutContext {
+  const parentView = parentCell?.view.peek() ?? "";
+  const grandparentView = grandparentCell?.view.peek() ?? "";
+
+  return grandparentView === "table"
+    ? "table-cell"
+    : parentView === "bar"
+    ? "bar-child"
+    : "default";
+}
+
+export type RenderScalar = {
+  kind: "scalar";
+  text: string;
+  number?: number;
+  isError: boolean;
+  editable: boolean;
+};
+
+export type RenderModel = RenderScalar | ListValue;
+
+export function getRenderModel(
+  sig: CellValueSignal,
+  params?: ScopeParams
+): RenderModel {
+  const v = evalStructural(sig, params);
+
+  if (isList(v)) return v;
+
+  const stored = sig.get();
+  const bodyEditable =
+    isWritableSignal(sig) &&
+    !isFlow(stored) &&
+    !isLink(stored) &&
+    !isTemplate(stored);
+
+  if (isError(v)) {
+    return {
+      kind: "scalar",
+      text: v.message,
+      isError: true,
+      editable: bodyEditable,
+    };
+  }
+
+  if (isBlank(v)) {
+    return {
+      kind: "scalar",
+      text: "",
+      isError: false,
+      editable: bodyEditable,
+    };
+  }
+
+  if (isScalar(v)) {
+    return {
+      kind: "scalar",
+      text: String(v.value),
+      isError: false,
+      editable: bodyEditable,
+      number: typeof v.value === "number" ? v.value : undefined,
+    };
+  }
+
+  if (isFunction(v)) {
+    return {
+      kind: "scalar",
+      text: "[function]",
+      isError: false,
+      editable: false,
+    };
+  }
+
+  return {
+    kind: "scalar",
+    text: "[unknown]",
+    isError: false,
+    editable: false,
+  };
+}
+
+export function getRenderChildren(
+  sig: CellValueSignal,
+  params?: ScopeParams
+): Cell[] {
+  const v = evalStructural(sig, params);
+  return isList(v) ? v.cells : [];
+}
+
+export type EditorFieldMode = "body" | "name" | "header" | "header-multi";
+
+export type EditorField = {
+  mode: EditorFieldMode;
+  label?: string;
+  get: PReadonlySignal<string | null>;
+  set?: (next: string) => void;
+};
+
+export function getRenderEditors(cell: Cell): EditorField[] {
+  const childSig = cell.value;
+  const fields: EditorField[] = [];
+
+  if (isFlow(childSig.get())) {
+    fields.push({
+      mode: "header-multi",
+      label: "=",
+      get: computed(() => {
+        const v = childSig.get();
+        return isFlow(v) ? v.code : null;
+      }),
+      set: isWritableSignal(childSig)
+        ? (next) => {
+            const cur = childSig.peek();
+            if (isFlow(cur) && cur.code !== next) {
+              childSig.set(createFlow(childSig, next));
+            }
+          }
+        : undefined,
+    });
+    return fields;
+  }
+
+  if (isLink(childSig.get())) {
+    fields.push({
+      mode: "header",
+      label: "~",
+      get: computed(() => {
+        const v = childSig.get();
+        return isLink(v) ? v.source : null;
+      }),
+      set: isWritableSignal(childSig)
+        ? (next) => {
+            const cur = childSig.peek();
+            if (isLink(cur) && cur.source !== next) {
+              childSig.set(createLink(childSig, next, cur.filter));
+            }
+          }
+        : undefined,
+    });
+
+    fields.push({
+      mode: "header-multi",
+      label: "filter:",
+      get: computed(() => {
+        const v = childSig.get();
+        return isLink(v) ? v.filter : null;
+      }),
+      set: isWritableSignal(childSig)
+        ? (next) => {
+            const cur = childSig.peek();
+            if (isLink(cur) && cur.filter !== next) {
+              childSig.set(createLink(childSig, cur.source, next));
+            }
+          }
+        : undefined,
+    });
+
+    return fields;
+  }
+
+  if (isTemplate(childSig.get())) {
+    fields.push({
+      mode: "header",
+      label: "=>",
+      get: computed(() => {
+        const v = childSig.get();
+        return isTemplate(v) ? v.params.join(", ") : null;
+      }),
+      set: isWritableSignal(childSig)
+        ? (next) => {
+            const cur = childSig.peek();
+            if (isTemplate(cur)) {
+              const nextParams = next
+                .split(",")
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+
+              const same =
+                cur.params.length === nextParams.length &&
+                cur.params.every((p, i) => p === nextParams[i]);
+
+              if (!same) childSig.set(createTemplate(nextParams, cur.body));
+            }
+          }
+        : undefined,
+    });
+
+    return fields;
+  }
+
+  return fields;
+}
+
+type RenderProps = {
+  truthy(name: string): boolean;
+  text(name: string): string | null;
+  num(name: string): number | null;
+  setFlag(name: string, on: boolean): boolean;
+};
+
+export function getRenderProps(
+  sig: CellValueSignal,
+  params?: ScopeParams
+): RenderProps | null {
+  const v = evalStructural(sig, params);
+  if (!isList(v)) return null;
+
+  const byName = new Map<string, Cell>();
+  for (const c of v.cells) {
+    const n = c.name.get();
+    if (n) byName.set(n, c);
+  }
+
+  const read = (name: string): Value => {
+    const c = byName.get(name);
+    return c ? evalStructural(c.value, params) : createBlank();
+  };
+
+  return {
+    truthy: (name) => isTruthy(read(name)),
+
+    text: (name) => toText(read(name)),
+
+    num: (name) => toNumber(read(name)),
+
+    setFlag(name: string, value: boolean): boolean {
+      const c = byName.get(name);
+      if (!c || !isWritableSignal(c.value)) return false;
+      c.value.set(primitiveToValue(value));
+      return true;
+    },
+  };
+}
+
+type ParentEditContext = {
+  parent: WriteSignal<ListValue | TemplateValue<ListValue>>;
+  before: Cell[];
+  index: number;
+  valueCellUid?: number;
+  params?: string[];
+};
+
+type ParentEditResult = {
+  after: Cell[];
+  valueCellUid?: number;
+};
+
+export function editParentList(
+  value: CellValueSignal,
+  childUid: number,
+  fn: (ctx: ParentEditContext) => ParentEditResult
+): ParentEditResult | null {
+  const parent = getParent(value);
+  if (!parent) return null;
+
+  const pv = parent.peek();
+  const isTpl = isTemplate(pv);
+  const list = isTpl ? pv.body : pv;
+
+  const before = list.cells;
+  const index = before.findIndex((c) => c.uid === childUid);
+  if (index < 0) return null;
+
+  let result: ParentEditResult | null = null;
+
+  batch(() => {
+    const edit = fn({
+      parent,
+      before,
+      index,
+      valueCellUid: list.valueCellUid,
+      params: isTpl ? pv.params : undefined,
+    });
+
+    const valueCellUid = edit.valueCellUid ?? list.valueCellUid;
+    const nextList = createList(edit.after, valueCellUid);
+
+    parent.set(isTpl ? createTemplate(pv.params, nextList) : nextList);
+    result = { after: edit.after, valueCellUid: edit.valueCellUid };
+  });
+
+  return result;
 }

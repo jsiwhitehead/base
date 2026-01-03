@@ -5,7 +5,7 @@ import {
   type Value,
   type ValueSignal,
   isBlank,
-  isLiteral,
+  isScalar,
   isList,
   isFunction,
   listMap,
@@ -13,18 +13,18 @@ import {
   listReduce,
   listSort,
   createBlank,
-  createLiteral,
+  createScalar,
   createList,
   createFunction,
   createSignal,
-  toBool,
+  isTruthy,
   toNumber,
   toText,
   numOpt,
   textOpt,
   listOpt,
   fnOpt,
-  scalarToValue,
+  primitiveToValue,
   evalStructural,
 } from "./data";
 
@@ -88,10 +88,10 @@ function typedFn<A extends any[]>(
 
 function listNumbersOpt(list: ListValue): number[] {
   const out: number[] = [];
-  for (const { child } of list.cells) {
-    const v = evalStructural(child);
+  for (const { value } of list.cells) {
+    const v = evalStructural(value);
     if (isBlank(v)) continue;
-    if (isLiteral(v) && typeof v.value === "number") out.push(v.value);
+    if (isScalar(v) && typeof v.value === "number") out.push(v.value);
     else throw new TypeError(ERR.numOrBlank);
   }
   return out;
@@ -99,10 +99,10 @@ function listNumbersOpt(list: ListValue): number[] {
 
 function listTextsOpt(list: ListValue): string[] {
   const out: string[] = [];
-  for (const { child } of list.cells) {
-    const v = evalStructural(child);
+  for (const { value } of list.cells) {
+    const v = evalStructural(value);
     if (isBlank(v)) continue;
-    if (isLiteral(v) && typeof v.value === "string") out.push(v.value);
+    if (isScalar(v) && typeof v.value === "string") out.push(v.value);
     else throw new TypeError(ERR.textOrBlank);
   }
   return out;
@@ -119,22 +119,20 @@ function reduceNumbers(
 export const library = {
   /* Converters */
 
-  to_bool: valueFn((v) => scalarToValue(toBool(v))),
+  to_flag: valueFn((v) => primitiveToValue(isTruthy(v))),
 
-  to_text: valueFn((v) => scalarToValue(toText(v))),
+  to_text: valueFn((v) => primitiveToValue(toText(v))),
 
-  to_number: valueFn((v) => scalarToValue(toNumber(v))),
+  to_number: valueFn((v) => primitiveToValue(toNumber(v))),
 
   number_or: valueFn((value, fallback) => {
     const n = numOpt(value);
-    return createLiteral(n === null ? numOpt(fallback) ?? 0 : n);
+    return createScalar(n === null ? numOpt(fallback) ?? 0 : n);
   }),
 
   text_or: valueFn((value, fallback) => {
     const t = textOpt(value);
-    return t === null
-      ? createLiteral(textOpt(fallback) ?? "")
-      : createLiteral(t);
+    return t === null ? createScalar(textOpt(fallback) ?? "") : createScalar(t);
   }),
 
   if_blank: valueFn((value, fallback) =>
@@ -148,38 +146,38 @@ export const library = {
 
   /* Logic */
 
-  not: valueFn((v) => (toBool(v) ? createBlank() : createLiteral(true))),
+  not: valueFn((v) => (isTruthy(v) ? createBlank() : createScalar(true))),
 
   and: valueFn((l, r) =>
-    toBool(l) && toBool(r) ? createLiteral(true) : createBlank()
+    isTruthy(l) && isTruthy(r) ? createScalar(true) : createBlank()
   ),
 
   or: valueFn((l, r) =>
-    toBool(l) || toBool(r) ? createLiteral(true) : createBlank()
+    isTruthy(l) || isTruthy(r) ? createScalar(true) : createBlank()
   ),
 
-  if: valueFn((cond, thenV, elseV) => (toBool(cond) ? thenV : elseV)),
+  if: valueFn((cond, thenV, elseV) => (isTruthy(cond) ? thenV : elseV)),
 
   all: valueFn((...values) =>
-    values.every((v) => !isBlank(v)) ? createLiteral(true) : createBlank()
+    values.every((v) => !isBlank(v)) ? createScalar(true) : createBlank()
   ),
 
   any: valueFn((...values) =>
-    values.some((v) => !isBlank(v)) ? createLiteral(true) : createBlank()
+    values.some((v) => !isBlank(v)) ? createScalar(true) : createBlank()
   ),
 
   /* Number */
 
-  abs: typedFn([reqNum], (n) => createLiteral(Math.abs(n))),
+  abs: typedFn([reqNum], (n) => createScalar(Math.abs(n))),
 
   round: typedFn([reqNum, optNum(0)], (n, p) => {
     const f = 10 ** p;
-    return createLiteral(Math.round(n * f) / f);
+    return createScalar(Math.round(n * f) / f);
   }),
 
-  ceil: typedFn([reqNum], (n) => createLiteral(Math.ceil(n))),
+  ceil: typedFn([reqNum], (n) => createScalar(Math.ceil(n))),
 
-  floor: typedFn([reqNum], (n) => createLiteral(Math.floor(n))),
+  floor: typedFn([reqNum], (n) => createScalar(Math.floor(n))),
 
   clamp: typedFn(
     [
@@ -187,64 +185,64 @@ export const library = {
       optNum(Number.NEGATIVE_INFINITY),
       optNum(Number.POSITIVE_INFINITY),
     ],
-    (n, lo, hi) => createLiteral(Math.min(Math.max(n, lo), hi))
+    (n, lo, hi) => createScalar(Math.min(Math.max(n, lo), hi))
   ),
 
-  pow: typedFn([reqNum, optNum(1)], (b, e) => createLiteral(b ** e)),
+  pow: typedFn([reqNum, optNum(1)], (b, e) => createScalar(b ** e)),
 
-  sqrt: typedFn([reqNum], (n) => createLiteral(Math.sqrt(n))),
+  sqrt: typedFn([reqNum], (n) => createScalar(Math.sqrt(n))),
 
-  mod: typedFn([reqNum, optNum(1)], (d, m) => createLiteral(((d % m) + m) % m)),
+  mod: typedFn([reqNum, optNum(1)], (d, m) => createScalar(((d % m) + m) % m)),
 
   /* Text */
 
-  trim: typedFn([reqText], (t) => createLiteral(t.trim())),
+  trim: typedFn([reqText], (t) => createScalar(t.trim())),
 
   starts_with: typedFn([reqText, reqText], (t, p) =>
-    t.startsWith(p) ? createLiteral(true) : createBlank()
+    t.startsWith(p) ? createScalar(true) : createBlank()
   ),
 
   ends_with: typedFn([reqText, reqText], (t, s) =>
-    t.endsWith(s) ? createLiteral(true) : createBlank()
+    t.endsWith(s) ? createScalar(true) : createBlank()
   ),
 
   contains: typedFn([reqText, reqText], (t, s) =>
-    t.includes(s) ? createLiteral(true) : createBlank()
+    t.includes(s) ? createScalar(true) : createBlank()
   ),
 
-  lower: typedFn([reqText], (t) => createLiteral(t.toLowerCase())),
+  lower: typedFn([reqText], (t) => createScalar(t.toLowerCase())),
 
-  upper: typedFn([reqText], (t) => createLiteral(t.toUpperCase())),
+  upper: typedFn([reqText], (t) => createScalar(t.toUpperCase())),
 
   capitalize: typedFn([reqText], (t) =>
-    createLiteral(t ? t.charAt(0).toUpperCase() + t.slice(1) : "")
+    createScalar(t ? t.charAt(0).toUpperCase() + t.slice(1) : "")
   ),
 
   replace: typedFn([reqText, reqText, reqText], (t, s, r) =>
-    createLiteral(t.replaceAll(s, r))
+    createScalar(t.replaceAll(s, r))
   ),
 
   index_of: typedFn([reqText, optText(""), optNum(0)], (t, s, from) =>
-    createLiteral(t.indexOf(s, from))
+    createScalar(t.indexOf(s, from))
   ),
 
   pad_start: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (t, targetLen, padText) => createLiteral(t.padStart(targetLen, padText))
+    (t, targetLen, padText) => createScalar(t.padStart(targetLen, padText))
   ),
 
   pad_end: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (t, targetLen, padText) => createLiteral(t.padEnd(targetLen, padText))
+    (t, targetLen, padText) => createScalar(t.padEnd(targetLen, padText))
   ),
 
   repeat: typedFn([reqText, optNum(0)], (t, times) =>
-    createLiteral(t.repeat(Math.max(0, Math.floor(times))))
+    createScalar(t.repeat(Math.max(0, Math.floor(times))))
   ),
 
   split: typedFn([reqText, optText("")], (t, sep) => {
     return createList(
-      t.split(sep).map((p) => ({ child: createSignal(createLiteral(p)) }))
+      t.split(sep).map((p) => ({ value: createSignal(createScalar(p)) }))
     );
   }),
 
@@ -252,18 +250,18 @@ export const library = {
 
   join: typedFn([reqList, optText(",")], (listV, sep) => {
     const parts = listTextsOpt(listV);
-    return parts.length ? createLiteral(parts.join(sep)) : createBlank();
+    return parts.length ? createScalar(parts.join(sep)) : createBlank();
   }),
 
   count: typedFn([reqList], (source) =>
-    createLiteral(
-      source.cells.filter((c) => !isBlank(evalStructural(c.child))).length
+    createScalar(
+      source.cells.filter((c) => !isBlank(evalStructural(c.value))).length
     )
   ),
 
   count_blank: typedFn([reqList], (source) =>
-    createLiteral(
-      source.cells.filter((c) => isBlank(evalStructural(c.child))).length
+    createScalar(
+      source.cells.filter((c) => isBlank(evalStructural(c.value))).length
     )
   ),
 
@@ -305,20 +303,22 @@ export const library = {
   /* Number reducers */
 
   sum: typedFn([reqList], (source) =>
-    scalarToValue(reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0)))
+    primitiveToValue(
+      reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0))
+    )
   ),
 
   avg: typedFn([reqList], (source) =>
-    scalarToValue(
+    primitiveToValue(
       reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0) / ns.length)
     )
   ),
 
   min: typedFn([reqList], (source) =>
-    scalarToValue(reduceNumbers(source, (ns) => Math.min(...ns)))
+    primitiveToValue(reduceNumbers(source, (ns) => Math.min(...ns)))
   ),
 
   max: typedFn([reqList], (source) =>
-    scalarToValue(reduceNumbers(source, (ns) => Math.max(...ns)))
+    primitiveToValue(reduceNumbers(source, (ns) => Math.max(...ns)))
   ),
 };

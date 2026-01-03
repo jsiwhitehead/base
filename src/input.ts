@@ -1,42 +1,45 @@
 import { signal } from "@preact/signals-core";
 
+import { type EditorFieldMode } from "./data";
 import {
   type CellPath,
   firstChildPath,
-  getNavContext,
-  navigatePath,
-  setText,
-  toggleTextCode,
-  setName,
-  insertBefore,
-  insertAfter,
-  wrapWithList,
-  unwrapIfSingleChild,
-  removeCell,
+  getCellNavContext,
+  standardMove,
+  setCellText,
+  setCellAsFlow,
+  insertCellBefore,
+  insertCellAfter,
+  wrapCellInList,
+  unwrapSingleCellList,
+  removeCellBackward,
+  removeCellForward,
   splitCell,
-  mergeBackward,
-  mergeForward,
-  setLinkFilter,
-  setTemplateParam,
+  mergeCellWithPrev,
+  mergeCellWithNext,
 } from "./tree";
 
-export type FocusRole = "name" | "value" | "filter";
+export type FocusTarget = { kind: "body" } | { kind: "header"; index: number };
+
 export type FocusState =
   | { kind: "idle" }
-  | { kind: "focused"; path: CellPath; role: FocusRole };
+  | { kind: "focused"; path: CellPath; target: FocusTarget };
 
 export const focusSignal = signal<FocusState>({ kind: "idle" });
-
-export type Role = "name" | "value" | "filter";
 
 type Anchor = "top" | "bottom";
 
 type MachineState =
   | { kind: "Idle"; goalColumn?: number }
-  | { kind: "Focused"; path: CellPath; role: Role; goalColumn?: number };
+  | {
+      kind: "Focused";
+      path: CellPath;
+      target: FocusTarget;
+      goalColumn?: number;
+    };
 
 type EditorEvent =
-  | { type: "FOCUS"; path: CellPath; role: Role; caret?: number }
+  | { type: "FOCUS"; path: CellPath; target: FocusTarget; caret?: number }
   | { type: "CLEAR_FOCUS" }
   | {
       type: "MOVE";
@@ -49,23 +52,28 @@ type EditorEvent =
   | { type: "CLEAR_GOAL_COLUMN" };
 
 const TRANSFORMS = {
-  insertBefore,
-  insertAfter,
-  wrapWithList,
-  unwrapIfSingleChild,
-  toggleTextCode,
-  removeCell,
-  mergeBackward,
-  mergeForward,
+  insertCellBefore,
+  insertCellAfter,
+  wrapCellInList,
+  unwrapSingleCellList,
+  setCellAsFlow,
+  removeCellBackward,
+  removeCellForward,
+  mergeCellWithPrev,
+  mergeCellWithNext,
+};
+
+type HeaderSlot = {
+  el: HTMLInputElement | HTMLTextAreaElement;
+  mode: EditorFieldMode;
+  commit: (text: string) => void;
 };
 
 type PathBinding = {
   path: CellPath;
   cell: HTMLElement;
-  value: HTMLElement;
-  name: HTMLInputElement | HTMLTextAreaElement;
-  filter?: HTMLInputElement | HTMLTextAreaElement;
-  param?: HTMLInputElement | HTMLTextAreaElement;
+  body: HTMLElement;
+  header: HeaderSlot[];
   teardowns: (() => void)[];
 };
 
@@ -99,20 +107,28 @@ function isTextInput(
   );
 }
 
+function defaultTargetForPath(path: CellPath): FocusTarget {
+  const { hasExtraHeaderEditors } = getCellNavContext(path);
+  return hasExtraHeaderEditors
+    ? { kind: "header", index: 1 }
+    : { kind: "body" };
+}
+
 function bindEditor(
   binding: PathBinding,
   path: CellPath,
   el: HTMLInputElement | HTMLTextAreaElement,
-  mode: "normal" | "eval" | "filter",
+  mode: EditorFieldMode,
   commit: (text: string) => void
 ) {
-  if (mode === "normal") {
+  if (mode === "body") {
     binding.teardowns.push(on(el, "input", () => commit(el.value)));
   }
 
   binding.teardowns.push(
     on(el, "blur", () => {
       if (isTextInput(el)) el.setSelectionRange(0, 0);
+      if (mode === "body") return;
       queueMicrotask(() => commit(el.value));
     })
   );
@@ -125,6 +141,39 @@ function bindEditor(
       const selEnd = el.selectionEnd ?? selStart;
       const hasSelection = selStart !== selEnd;
 
+      if (mode === "name") {
+        if (e.key === " ") {
+          e.preventDefault();
+          return;
+        }
+        if (e.key === "Backspace") {
+          e.stopPropagation();
+          return;
+        }
+
+        switch (e.key) {
+          case "Enter": {
+            if (e.shiftKey) {
+              stop(e);
+              return;
+            }
+            stop(e);
+            commit(el.value);
+            dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+            return;
+          }
+
+          case "Escape":
+          case "Tab":
+            stop(e);
+            commit(el.value);
+            dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+            return;
+        }
+
+        return;
+      }
+
       switch (e.key) {
         case "ArrowLeft":
         case "ArrowRight": {
@@ -132,25 +181,14 @@ function bindEditor(
           const atStart = selStart === 0 && selEnd === 0;
           const atEnd = selStart === len && selEnd === len;
 
-          if (modKey) {
+          if (modKey || (dir === -1 && atStart) || (dir === 1 && atEnd)) {
             stop(e);
-            commit(el.value);
+            if (mode !== "body") commit(el.value);
             dispatch({
               type: "MOVE",
               dir: dir === -1 ? "left" : "right",
-              mod: true,
+              mod: modKey,
               caret: selStart,
-            });
-            break;
-          }
-
-          if ((dir === -1 && atStart) || (dir === 1 && atEnd)) {
-            stop(e);
-            commit(el.value);
-            dispatch({
-              type: "MOVE",
-              dir: dir === -1 ? "left" : "right",
-              mod: false,
             });
             break;
           }
@@ -179,7 +217,7 @@ function bindEditor(
           }
 
           stop(e);
-          commit(text);
+          if (mode !== "body") commit(text);
 
           dispatch({
             type: "MOVE",
@@ -191,28 +229,50 @@ function bindEditor(
         }
 
         case "Enter": {
-          if (modKey) {
-            stop(e);
-            commit(el.value);
-            dispatch({ type: "FOCUS", path, role: "name" });
-            break;
-          }
-
           if (e.shiftKey) {
-            commit(el.value);
+            if (mode === "header") {
+              stop(e);
+              break;
+            }
+
+            if (mode === "header-multi") {
+              dispatch({ type: "CLEAR_GOAL_COLUMN" });
+              break;
+            }
+
+            dispatch({ type: "CLEAR_GOAL_COLUMN" });
             break;
           }
 
-          if (mode === "normal") {
+          if (modKey && mode === "body") {
             stop(e);
-            dispatch({ type: "SPLIT", caret: selStart, selEnd });
+            commit(el.value);
+            dispatch({
+              type: "FOCUS",
+              path,
+              target: { kind: "header", index: 0 },
+            });
             break;
           }
 
-          if (mode === "filter") {
+          if (mode === "body") {
             stop(e);
-            commit(el.value);
-            dispatch({ type: "FOCUS", path, role: "filter", caret: selStart });
+
+            const { kind } = getCellNavContext(path);
+
+            if (kind === "text") {
+              dispatch({ type: "SPLIT", caret: selStart, selEnd });
+              break;
+            }
+
+            const res = insertCellAfter(path);
+            if (res) {
+              dispatch({
+                type: "FOCUS",
+                path: res.path,
+                target: { kind: "body" },
+              });
+            }
             break;
           }
 
@@ -222,39 +282,32 @@ function bindEditor(
         }
 
         case "Backspace": {
-          if (mode === "eval") {
-            if (!el.value.trim()) {
-              stop(e);
-              dispatch({ type: "TRANSFORM", op: "toggleTextCode" });
-              break;
-            }
-            e.stopPropagation();
-            break;
-          }
-
-          if (mode === "normal") {
-            if (hasSelection || selStart !== 0 || selEnd !== 0) break;
+          if (mode === "body" && !hasSelection && selStart === 0) {
             stop(e);
-            dispatch({ type: "TRANSFORM", op: "mergeBackward" });
-            break;
+            dispatch({
+              type: "TRANSFORM",
+              op: len === 0 ? "removeCellBackward" : "mergeCellWithPrev",
+            });
           }
-
           break;
         }
 
         case "Delete": {
-          if (mode !== "normal") break;
-          if (hasSelection || selStart !== len || selEnd !== len) break;
-          stop(e);
-          dispatch({ type: "TRANSFORM", op: "mergeForward" });
+          if (mode === "body" && !hasSelection && selStart === len) {
+            stop(e);
+            dispatch({
+              type: "TRANSFORM",
+              op: len === 0 ? "removeCellForward" : "mergeCellWithNext",
+            });
+          }
           break;
         }
 
         case "=": {
-          if (mode !== "normal") break;
-          if (el.value) break;
-          stop(e);
-          dispatch({ type: "TRANSFORM", op: "toggleTextCode" });
+          if (mode === "body" && !el.value) {
+            stop(e);
+            dispatch({ type: "TRANSFORM", op: "setCellAsFlow" });
+          }
           break;
         }
 
@@ -262,7 +315,7 @@ function bindEditor(
           stop(e);
           dispatch({
             type: "TRANSFORM",
-            op: e.shiftKey ? "unwrapIfSingleChild" : "wrapWithList",
+            op: e.shiftKey ? "unwrapSingleCellList" : "wrapCellInList",
             caret: selStart,
           });
           break;
@@ -272,19 +325,18 @@ function bindEditor(
   );
 }
 
-export function dispatch(ev: EditorEvent): void {
+function dispatch(ev: EditorEvent): void {
   const prev = state;
   let caretPos: number | undefined;
   let anchor: Anchor | undefined;
 
   switch (ev.type) {
     case "FOCUS": {
-      const keepGoal = prev.kind === "Focused" ? prev.goalColumn : undefined;
       state = {
         kind: "Focused",
         path: ev.path,
-        role: ev.role,
-        goalColumn: keepGoal,
+        target: ev.target,
+        goalColumn: prev.kind === "Focused" ? prev.goalColumn : undefined,
       };
       caretPos = ev.caret;
       break;
@@ -299,7 +351,7 @@ export function dispatch(ev: EditorEvent): void {
       if (state.kind !== "Focused") break;
 
       const { dir, mod } = ev;
-      const nextPath = navigatePath(state.path, dir, mod);
+      const nextPath = standardMove(state.path, dir, mod);
       if (!nextPath) break;
 
       let goalColumn = state.goalColumn;
@@ -316,7 +368,7 @@ export function dispatch(ev: EditorEvent): void {
       state = {
         kind: "Focused",
         path: nextPath,
-        role: "value",
+        target: defaultTargetForPath(nextPath),
         goalColumn,
       };
 
@@ -329,7 +381,7 @@ export function dispatch(ev: EditorEvent): void {
       state = {
         kind: "Focused",
         path: np,
-        role: "value",
+        target: { kind: "body" },
         goalColumn: undefined,
       };
       caretPos = 0;
@@ -343,7 +395,7 @@ export function dispatch(ev: EditorEvent): void {
         state = {
           kind: "Focused",
           path: res.path,
-          role: "value",
+          target: defaultTargetForPath(res.path),
           goalColumn: undefined,
         };
         caretPos = res.caret ?? ev.caret;
@@ -366,7 +418,7 @@ export function dispatch(ev: EditorEvent): void {
 function publishFocus(next: MachineState) {
   focusSignal.value =
     next.kind === "Focused"
-      ? { kind: "focused", path: next.path, role: next.role }
+      ? { kind: "focused", path: next.path, target: next.target }
       : { kind: "idle" };
 }
 
@@ -397,11 +449,9 @@ function updateDOMFocus(
 
   const binding = bindings.get(keyOf(next.path));
   const targetEl =
-    next.role === "name"
-      ? binding?.name
-      : next.role === "filter"
-      ? binding?.filter
-      : binding?.value;
+    next.target.kind === "header"
+      ? binding?.header[next.target.index]?.el
+      : binding?.body;
 
   if (!binding || !targetEl) return;
 
@@ -429,10 +479,8 @@ export function registerBinding(
   path: CellPath,
   slots: {
     cell: HTMLElement;
-    value: HTMLElement;
-    name: HTMLInputElement | HTMLTextAreaElement;
-    filter?: HTMLInputElement | HTMLTextAreaElement;
-    param?: HTMLInputElement | HTMLTextAreaElement;
+    body: HTMLElement;
+    header: HeaderSlot[];
   }
 ) {
   const k = keyOf(path);
@@ -441,10 +489,11 @@ export function registerBinding(
   if (
     prior &&
     prior.cell === slots.cell &&
-    prior.value === slots.value &&
-    prior.name === slots.name &&
-    prior.filter === slots.filter &&
-    prior.param === slots.param
+    prior.body === slots.body &&
+    prior.header.length === slots.header.length &&
+    prior.header.every(
+      (h, i) => h.el === slots.header[i]!.el && h.mode === slots.header[i]!.mode
+    )
   ) {
     updateDOMFocus(state);
     return;
@@ -458,117 +507,52 @@ export function registerBinding(
   const binding: PathBinding = {
     path: path.slice(),
     cell: slots.cell,
-    value: slots.value,
-    name: slots.name,
-    filter: slots.filter,
-    param: slots.param,
+    body: slots.body,
+    header: slots.header,
     teardowns: [],
   };
   bindings.set(k, binding);
 
-  binding.value.tabIndex = 0;
-
-  const nameEl = binding.name;
-  const valueEl = binding.value;
-  const cellEl = binding.cell;
-  const filterEl = binding.filter;
-  const paramEl = binding.param;
+  binding.body.tabIndex = 0;
 
   binding.teardowns.push(
-    on(nameEl, "mousedown", (e) => {
-      dispatch({ type: "FOCUS", path, role: "name" });
-      e.stopPropagation();
-    })
-  );
-
-  binding.teardowns.push(on(valueEl, "mousedown", (e) => e.stopPropagation()));
-
-  binding.teardowns.push(
-    on(cellEl, "mousedown", (e) => {
-      dispatch({ type: "FOCUS", path, role: "value" });
+    on(binding.cell, "mousedown", (e) => {
+      dispatch({ type: "FOCUS", path, target: { kind: "body" } });
       stop(e);
     })
   );
 
   binding.teardowns.push(
-    on(nameEl, "keydown", (e: KeyboardEvent) => {
-      if (e.key === " ") {
-        e.preventDefault();
-        return;
-      }
-
-      if (e.key === "Backspace") {
+    on(binding.body, "mousedown", (e) => {
+      dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+      if (
+        binding.body instanceof HTMLInputElement ||
+        binding.body instanceof HTMLTextAreaElement
+      ) {
         e.stopPropagation();
-        return;
-      }
-
-      switch (e.key) {
-        case "Enter": {
-          stop(e);
-          setName(path, nameEl.value);
-          dispatch({ type: "FOCUS", path, role: "value" });
-          break;
-        }
-
-        case "Escape":
-        case "Tab": {
-          stop(e);
-          dispatch({ type: "FOCUS", path, role: "value" });
-          break;
-        }
       }
     })
   );
 
-  binding.teardowns.push(
-    on(nameEl, "blur", () => {
-      setName(path, nameEl.value);
-    })
-  );
-
-  binding.teardowns.push(
-    on(valueEl, "mousedown", (e: MouseEvent) => {
-      dispatch({ type: "FOCUS", path, role: "value" });
-      if (isTextInput(valueEl)) {
-        e.stopPropagation();
-        return;
-      }
-    })
-  );
-
-  if (isTextInput(valueEl)) {
-    const kindNow = getNavContext(path).kind;
-    bindEditor(
-      binding,
-      path,
-      valueEl,
-      kindNow === "flow" || kindNow === "link" ? "eval" : "normal",
-      (text) => setText(path, text)
-    );
-  }
-
-  if (filterEl) {
+  for (let i = 0; i < binding.header.length; i++) {
+    const slot = binding.header[i]!;
     binding.teardowns.push(
-      on(filterEl, "mousedown", (e: MouseEvent) => {
-        dispatch({ type: "FOCUS", path, role: "filter" });
+      on(slot.el, "mousedown", (e) => {
+        dispatch({
+          type: "FOCUS",
+          path,
+          target: { kind: "header", index: i },
+        });
         e.stopPropagation();
       })
     );
 
-    bindEditor(binding, path, filterEl, "filter", (text) =>
-      setLinkFilter(path, text)
-    );
+    bindEditor(binding, path, slot.el, slot.mode, slot.commit);
   }
 
-  if (paramEl) {
-    binding.teardowns.push(
-      on(paramEl, "mousedown", (e: MouseEvent) => {
-        e.stopPropagation();
-      })
-    );
-
-    bindEditor(binding, path, paramEl, "eval", (text) =>
-      setTemplateParam(path, text)
+  if (isTextInput(binding.body)) {
+    bindEditor(binding, path, binding.body, "body", (text) =>
+      setCellText(path, text)
     );
   }
 
@@ -588,16 +572,17 @@ export function unregisterBinding(path: CellPath) {
 }
 
 export function onRootKeyDown(e: KeyboardEvent) {
-  if (state.kind !== "Focused") return;
+  if (state.kind !== "Focused" || state.target.kind === "header") return;
 
-  const { kind } = getNavContext(state.path);
-  if (!kind || kind === "text" || kind === "flow" || kind === "link") return;
+  const { kind } = getCellNavContext(state.path);
+  if (kind !== "list") return;
+
+  const mod = e.metaKey || e.ctrlKey;
 
   switch (e.key) {
     case "ArrowLeft":
     case "ArrowRight": {
       stop(e);
-      const mod = e.metaKey || e.ctrlKey;
       const dir = e.key === "ArrowLeft" ? "left" : "right";
       dispatch({ type: "MOVE", dir, mod });
       break;
@@ -606,7 +591,6 @@ export function onRootKeyDown(e: KeyboardEvent) {
     case "ArrowUp":
     case "ArrowDown": {
       stop(e);
-      const mod = e.metaKey || e.ctrlKey;
       const dir = e.key === "ArrowUp" ? "up" : "down";
       dispatch({ type: "MOVE", dir, mod });
       break;
@@ -615,27 +599,33 @@ export function onRootKeyDown(e: KeyboardEvent) {
     case "Enter": {
       stop(e);
 
-      const mod = e.metaKey || e.ctrlKey;
-
       if (mod) {
-        dispatch({ type: "FOCUS", path: state.path, role: "name" });
+        dispatch({
+          type: "FOCUS",
+          path: state.path,
+          target: { kind: "header", index: 0 },
+        });
         break;
       }
 
       const res = e.shiftKey
-        ? insertBefore(state.path)
-        : insertAfter(state.path);
+        ? insertCellBefore(state.path)
+        : insertCellAfter(state.path);
       if (res) {
-        dispatch({ type: "FOCUS", path: res.path, role: "value" });
+        dispatch({ type: "FOCUS", path: res.path, target: { kind: "body" } });
       }
       break;
     }
 
     case "Backspace": {
-      if (kind === "list") {
-        stop(e);
-        dispatch({ type: "TRANSFORM", op: "removeCell" });
-      }
+      stop(e);
+      dispatch({ type: "TRANSFORM", op: "removeCellBackward" });
+      break;
+    }
+
+    case "Delete": {
+      stop(e);
+      dispatch({ type: "TRANSFORM", op: "removeCellForward" });
       break;
     }
 
@@ -643,7 +633,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
       stop(e);
       dispatch({
         type: "TRANSFORM",
-        op: e.shiftKey ? "unwrapIfSingleChild" : "wrapWithList",
+        op: e.shiftKey ? "unwrapSingleCellList" : "wrapCellInList",
       });
       break;
     }
@@ -653,6 +643,8 @@ export function onRootKeyDown(e: KeyboardEvent) {
 export function focusFirstRootCell(): void {
   const p = firstChildPath([]);
   dispatch(
-    p ? { type: "FOCUS", path: p, role: "value" } : { type: "CLEAR_FOCUS" }
+    p
+      ? { type: "FOCUS", path: p, target: defaultTargetForPath(p) }
+      : { type: "CLEAR_FOCUS" }
   );
 }

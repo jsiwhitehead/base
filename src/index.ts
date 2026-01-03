@@ -1,14 +1,14 @@
 import { effect } from "@preact/signals-core";
 
 import {
-  type Primitive,
+  type ScalarPrimitive,
   type ListValue,
   type DataValue,
   type EvalValue,
   type ValueSignal,
-  type ChildSignal,
+  type CellValueSignal,
   createBlank,
-  createLiteral,
+  createScalar,
   createList,
   createFlow,
   createSignal,
@@ -49,16 +49,20 @@ export function render(
 
 /* Test */
 
-const literalSig = (v: Primitive) => createSignal(createLiteral(v));
+const literalSig = (v: ScalarPrimitive) => createSignal(createScalar(v));
 
 const flowSig = (code: string) => {
-  const s: ChildSignal = createSignal<DataValue | EvalValue>(createLiteral(""));
+  const s: CellValueSignal = createSignal<DataValue | EvalValue>(
+    createScalar("")
+  );
   s.set(createFlow(s, code));
   return s;
 };
 
 const linkSig = (source: string, filter: string = "") => {
-  const s: ChildSignal = createSignal<DataValue | EvalValue>(createLiteral(""));
+  const s: CellValueSignal = createSignal<DataValue | EvalValue>(
+    createScalar("")
+  );
   s.set(createLink(s, source, filter));
   return s;
 };
@@ -72,89 +76,89 @@ function resultListSig(
 }
 
 const root = createListSignal([
-  { child: literalSig(10) },
-  { child: literalSig(20) },
-  { child: literalSig(30) },
-  { child: createSignal(createBlank()) },
-  {
-    name: "f",
-    child: createTemplateListSignal(
-      ["arg1", "arg2"],
-      [
-        { child: literalSig(10) },
-        { child: literalSig(20) },
-        { child: flowSig("arg1 * arg2 * 3") },
-      ]
-    ),
-  },
-  { child: createSignal(createBlank()) },
-  { child: flowSig("f(10, 20)") },
-  { child: createSignal(createBlank()) },
-  {
-    child: resultListSig(
-      [
-        { name: "a", child: literalSig(10) },
-        { name: "b", child: literalSig(20) },
-        { child: flowSig("a * b") },
-      ],
-      2
-    ),
-  },
+  { value: literalSig(10) },
+  { value: literalSig(20) },
+  { value: literalSig(30) },
+  // { value: createSignal(createBlank()) },
+  // {
+  //   name: "f",
+  //   value: createTemplateListSignal(
+  //     ["arg1", "arg2"],
+  //     [
+  //       { value: literalSig(10) },
+  //       { value: literalSig(20) },
+  //       { value: flowSig("arg1 * arg2 * 3") },
+  //     ]
+  //   ),
+  // },
+  // { value: createSignal(createBlank()) },
+  // { value: flowSig("f(10, 20)") },
+  // { value: createSignal(createBlank()) },
+  // {
+  //   value: resultListSig(
+  //     [
+  //       { name: "a", value: literalSig(10) },
+  //       { name: "b", value: literalSig(20) },
+  //       { value: flowSig("a * b") },
+  //     ],
+  //     2
+  //   ),
+  // },
   // {
   //   name: "x",
   //   view: "bar",
-  //   child: createListSignal([
-  //     { child: literalSig(10) },
-  //     { child: literalSig(20) },
-  //     { child: literalSig(30) },
+  //   value: createListSignal([
+  //     { value: literalSig(10) },
+  //     { value: literalSig(20) },
+  //     { value: literalSig(30) },
   //   ]),
   // },
   // {
-  //   child: linkSig("x", "a => a > 15"),
+  //   value: linkSig("x", "a => a > 15"),
   // },
   // {
-  //   child: createListSignal([
-  //     { child: literalSig(10) },
-  //     { child: literalSig(20) },
+  //   value: createListSignal([
+  //     { value: literalSig(10) },
+  //     { value: literalSig(20) },
   //   ]),
   // },
-  // { child: literalSig(10) },
+  // { value: literalSig(10) },
   // {
   //   name: "data",
   //   view: "table",
-  //   child: createListSignal([
+  //   value: createListSignal([
   //     {
-  //       child: createListSignal([
-  //         { name: "Name", child: literalSig("Steve") },
-  //         { name: "Age", child: literalSig(25) },
+  //       value: createListSignal([
+  //         { name: "Name", value: literalSig("Steve") },
+  //         { name: "Age", value: literalSig(25) },
   //       ]),
   //     },
   //     {
-  //       child: createListSignal([
-  //         { name: "Name", child: literalSig("Lucy") },
-  //         { name: "Age", child: literalSig(32) },
+  //       value: createListSignal([
+  //         { name: "Name", value: literalSig("Lucy") },
+  //         { name: "Age", value: literalSig(32) },
   //       ]),
   //     },
   //     {
-  //       child: createListSignal([
-  //         { name: "Name", child: literalSig("James") },
-  //         { name: "Age", child: literalSig(18) },
+  //       value: createListSignal([
+  //         { name: "Name", value: literalSig("James") },
+  //         { name: "Age", value: literalSig(18) },
   //       ]),
   //     },
   //   ]),
   // },
-  // { child: createSignal(createBlank()) },
-  // { child: flowSig("data:map(d -> d.Age):avg()") },
-  // { name: "y", view: "slider", child: literalSig(50) },
-  // { name: "z", child: flowSig("x") },
-  // { child: literalSig(10) },
+  // { value: createSignal(createBlank()) },
+  // { value: flowSig("data:map(d -> d.Age):avg()") },
+  // { name: "y", view: "slider", value: literalSig(50) },
+  // { name: "z", value: flowSig("x") },
+  // { value: literalSig(10) },
   // {
-  //   child: createListSignal([
-  //     { child: literalSig("Hello") },
-  //     { child: literalSig("World!") },
+  //   value: createListSignal([
+  //     { value: literalSig("Hello") },
+  //     { value: literalSig("World!") },
   //   ]),
   // },
-  // { child: literalSig(30) },
+  // { value: literalSig(30) },
 ]);
 
 const unmount = render(root, document.getElementById("root")!);

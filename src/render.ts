@@ -1,5 +1,5 @@
 import {
-  type Signal,
+  type Signal as PSignal,
   signal,
   effect,
   computed,
@@ -7,26 +7,17 @@ import {
 } from "@preact/signals-core";
 
 import {
-  type ErrorValue,
   type ListValue,
-  type RenderValue,
-  type Value,
   type ValueSignal,
-  type ChildSignal,
+  type CellValueSignal,
   type Cell,
-  isError,
-  isBlank,
-  isLiteral,
-  isList,
-  isFunction,
-  isFlow,
-  isLink,
-  isTemplate,
+  type EditorFieldMode,
+  type Signal,
+  getRenderEditors,
   isWritableSignal,
-  createBlank,
-  createLiteral,
-  toText,
-  evalStructural,
+  createScalar,
+  getRenderModel,
+  getRenderProps,
 } from "./data";
 import { type CellPath } from "./tree";
 import { focusSignal, registerBinding, unregisterBinding } from "./input";
@@ -108,12 +99,6 @@ class AutosizeInput {
   }
 }
 
-function toRenderValue(v: Value): RenderValue | ErrorValue {
-  if (isList(v) || isLiteral(v) || isBlank(v) || isError(v)) return v;
-  if (isFunction(v)) return createLiteral("[function]");
-  return createLiteral("[unknown]");
-}
-
 function reconcileDomChildren(
   parent: HTMLElement,
   next: (HTMLElement | null | undefined)[]
@@ -160,7 +145,7 @@ class ChildViewManager {
     const desired = nextItems.map((item) => {
       let rec = this.cache.get(item.uid);
       if (!rec) {
-        if ("child" in item) {
+        if ("value" in item) {
           rec = this.create(item, [...this.parentPath, item.uid]);
         } else {
           rec = { element: item.create() };
@@ -226,36 +211,16 @@ abstract class View {
   }
 }
 
-function readProp(list: ListValue, name: string): Value | undefined {
-  const c = list.cells.find((x) => x.name.get() === name);
-  return c ? evalStructural(c.child) : undefined;
-}
-function readText(list: ListValue, name: string): string | null {
-  const v = readProp(list, name);
-  return v ? toText(v) : null;
-}
-function readNum(list: ListValue, name: string): number | null {
-  const v = readProp(list, name);
-  if (!v) return null;
-  const n = Number(toText(v));
-  return Number.isFinite(n) ? n : null;
-}
-
 class StyledView extends View {
   element = createEl("div", { className: "styled" });
 
-  constructor(valueSig: ChildSignal, path: CellPath) {
+  constructor(valueSig: CellValueSignal, path: CellPath) {
     super();
 
     const setHover = (toTrue: boolean) => {
       untracked(() => {
-        const value = evalStructural(valueSig);
-        if (!isList(value)) return;
-
-        const hoverCell = value.cells.find((c) => c.name.get() === "hover");
-        if (!hoverCell || !isWritableSignal(hoverCell.child)) return;
-
-        hoverCell.child.set(toTrue ? createLiteral(true) : createBlank());
+        const p = getRenderProps(valueSig);
+        p?.setFlag("hover", toTrue);
       });
     };
 
@@ -265,19 +230,19 @@ class StyledView extends View {
     this.initChildren(
       this.element,
       path,
-      (cell, childPath) => new StyledView(cell.child, childPath)
+      (cell, childPath) => new StyledView(cell.value, childPath)
     );
 
     this.effect(() => {
-      const val = toRenderValue(evalStructural(valueSig));
+      const m = getRenderModel(valueSig);
 
       this.element.style.setProperty("--lh", "1.5");
 
-      if (!isList(val)) {
+      if (m.kind !== "list") {
         this.updateChildren([]);
         this.element.classList.add("trim-half-leading");
 
-        const text = isLiteral(val) ? String(val.value) : "";
+        const text = m.text;
         if (this.element.textContent !== text) {
           this.element.textContent = text;
         }
@@ -286,31 +251,23 @@ class StyledView extends View {
 
       this.element.classList.remove("trim-half-leading");
 
-      this.updateChildren(
-        val.cells.filter((c) => {
-          if (c.name.get()) return false;
-          const v = evalStructural(c.child);
-          if (isBlank(v) || isError(v)) return false;
-          if (isLiteral(v) && typeof v.value === "string") {
-            if (v.value.trim() === "") return false;
-          }
-          return true;
-        })
-      );
+      this.updateChildren(m.cells);
 
-      const dir = (readText(val, "direction") ?? "column").toLowerCase();
-      const hor = (readText(val, "horizontal") ?? "").toLowerCase();
-      const ver = (readText(val, "vertical") ?? "").toLowerCase();
-      const align = (readText(val, "align") ?? "").toLowerCase();
+      const p = getRenderProps(valueSig);
 
-      const gap = readNum(val, "gap");
-      const fill = readText(val, "fill");
-      const pad = readNum(val, "pad");
-      const round = readNum(val, "round");
-      const color = readText(val, "color");
-      const size = readNum(val, "size");
+      const dir = (p?.text("direction") ?? "column").toLowerCase();
+      const hor = (p?.text("horizontal") ?? "").toLowerCase();
+      const ver = (p?.text("vertical") ?? "").toLowerCase();
+      const align = (p?.text("align") ?? "").toLowerCase();
 
-      const spacing = readNum(val, "spacing");
+      const gap = p?.num("gap") ?? null;
+      const fill = p?.text("fill") ?? null;
+      const pad = p?.num("pad") ?? null;
+      const round = p?.num("round") ?? null;
+      const color = p?.text("color") ?? null;
+      const size = p?.num("size") ?? null;
+
+      const spacing = p?.num("spacing") ?? null;
       if (spacing != null) {
         this.element.style.setProperty("--lh", String(spacing));
       }
@@ -356,7 +313,7 @@ class StyledView extends View {
 class SliderView extends View {
   element: HTMLInputElement;
 
-  constructor(valueSig: ChildSignal, path: CellPath) {
+  constructor(valueSig: CellValueSignal, path: CellPath) {
     super();
 
     const input = document.createElement("input");
@@ -371,30 +328,43 @@ class SliderView extends View {
     input.addEventListener("input", () => {
       if (isWritableSignal(valueSig)) {
         const n = Number(input.value);
-        if (Number.isFinite(n)) valueSig.set(createLiteral(n));
+        if (Number.isFinite(n)) valueSig.set(createScalar(n));
       }
     });
 
     this.effect(() => {
-      const v = toRenderValue(evalStructural(valueSig));
-      const n = isLiteral(v) && typeof v.value === "number" ? v.value : 0;
+      const m = getRenderModel(valueSig);
+      const n = m.kind === "scalar" && m.number !== undefined ? m.number : 0;
 
       if (this.element.value !== String(n)) {
         this.element.value = String(n);
       }
-
-      this.element.disabled = !isWritableSignal(valueSig);
+      this.element.disabled = !(m.kind === "scalar" && m.editable);
     });
   }
 }
+
+type HeaderSlot = {
+  el: HTMLInputElement | HTMLTextAreaElement;
+  mode: EditorFieldMode;
+  commit: (text: string) => void;
+};
 
 class RowHeaderView extends View {
   element = createEl("div", { className: "label" });
   nameDisplayEl = createEl("div", { className: "name" });
   nameInput = new AutosizeInput(false, { className: "name" });
 
-  constructor(nameSig: ValueSignal<string>, pathKey: string) {
+  slot: HeaderSlot = {
+    el: this.nameInput.input,
+    mode: "name",
+    commit: () => {},
+  };
+
+  constructor(nameSig: Signal<string>, pathKey: string) {
     super();
+
+    this.slot.commit = isWritableSignal(nameSig) ? nameSig.set : () => {};
 
     this.effect(
       () => {
@@ -402,7 +372,8 @@ class RowHeaderView extends View {
         return (
           focus.kind === "focused" &&
           focus.path.join(".") === pathKey &&
-          focus.role === "name"
+          focus.target.kind === "header" &&
+          focus.target.index === 0
         );
       },
       (showNameInput) => {
@@ -419,8 +390,8 @@ class RowHeaderView extends View {
     });
   }
 
-  getNameInput(): HTMLInputElement | HTMLTextAreaElement {
-    return this.nameInput.input;
+  getHeaderSlots(): HeaderSlot[] {
+    return [this.slot];
   }
 }
 
@@ -428,7 +399,7 @@ class RowView extends View {
   element = createEl("div", { className: "row" });
   header: RowHeaderView;
 
-  constructor(rowCell: Cell, path: CellPath, columnsJsonSig: Signal<string>) {
+  constructor(rowCell: Cell, path: CellPath, columnsJsonSig: PSignal<string>) {
     super();
 
     const pathKey = path.join(".");
@@ -443,8 +414,8 @@ class RowView extends View {
     this.effect(() => {
       const cols: string[] = JSON.parse(columnsJsonSig.value);
 
-      const v = evalStructural(rowCell.child);
-      const rowList = isList(v) ? v : null;
+      const rm = getRenderModel(rowCell.value);
+      const rowList = rm.kind === "list" ? rm : null;
 
       const byName = new Map<string, Cell>();
       if (rowList) {
@@ -474,15 +445,15 @@ class RowView extends View {
 
     registerBinding(path, {
       cell: this.element,
-      value: this.element,
-      name: this.header.getNameInput(),
+      body: this.element,
+      header: this.header.getHeaderSlots(),
     });
 
     this.effect(() => {
       const focus = focusSignal.value;
       const focused =
         focus.kind === "focused" && focus.path.join(".") === pathKey;
-      const valueFocused = focused && focus.role === "value";
+      const valueFocused = focused && focus.target.kind === "body";
       this.element.classList.toggle("focused", valueFocused);
     });
 
@@ -499,7 +470,7 @@ class TableView extends View {
   body = createEl("div", { className: "table-body" });
   columnsJsonSig = signal("[]");
 
-  constructor(valueSig: ChildSignal, path: CellPath) {
+  constructor(valueSig: CellValueSignal, path: CellPath) {
     super();
 
     this.element.append(this.headerRow, this.body);
@@ -513,18 +484,18 @@ class TableView extends View {
 
     this.effect(
       () => {
-        const list = toRenderValue(evalStructural(valueSig));
-        if (!isList(list)) return [];
+        const m = getRenderModel(valueSig);
+        if (m.kind !== "list") return [];
 
-        const first = list.cells[0]?.child;
+        const first = m.cells[0]?.value;
         if (!first) return [];
 
-        const row = evalStructural(first);
-        if (!isList(row)) return [];
+        const rm = getRenderModel(first);
+        if (rm.kind !== "list") return [];
 
         return [
           ...new Set(
-            row.cells.map((c) => c.name.get()).filter((x): x is string => !!x)
+            rm.cells.map((c) => c.name.get()).filter((x): x is string => !!x)
           ),
         ];
       },
@@ -539,8 +510,8 @@ class TableView extends View {
     );
 
     this.effect(() => {
-      const v = toRenderValue(evalStructural(valueSig));
-      this.updateChildren(isList(v) ? v.cells : []);
+      const m = getRenderModel(valueSig);
+      this.updateChildren(m.kind === "list" ? m.cells : []);
     });
 
     this.effect(() => {
@@ -581,7 +552,7 @@ class StandardView extends View {
   scalarEl: HTMLElement;
   listEl: HTMLElement;
 
-  constructor(valueSig: ChildSignal, path: CellPath) {
+  constructor(valueSig: CellValueSignal, path: CellPath) {
     super();
 
     if (isWritableSignal(valueSig)) {
@@ -599,7 +570,7 @@ class StandardView extends View {
     );
 
     this.effect(
-      () => isList(toRenderValue(evalStructural(valueSig))),
+      () => getRenderModel(valueSig).kind === "list",
       (shouldBeList) => {
         const next = shouldBeList ? this.listEl : this.scalarEl;
         if (this.element !== next) {
@@ -610,48 +581,44 @@ class StandardView extends View {
     );
 
     this.effect(() => {
-      const v = toRenderValue(evalStructural(valueSig));
+      const m = getRenderModel(valueSig);
 
-      if (isList(v)) {
-        this.updateChildren(v.cells);
+      if (m.kind === "list") {
+        this.updateChildren(m.cells);
 
         const kids = this.listEl.children;
         for (const el of kids) el.classList.remove("result");
-        kids[v.cells.findIndex((c) => c.uid === v.resultUid)]?.classList.add(
-          "result"
-        );
 
+        if (m.valueCellUid !== undefined) {
+          const idx = m.cells.findIndex((c) => c.uid === m.valueCellUid);
+          kids[idx]?.classList.add("result");
+        }
         return;
       }
 
-      for (const el of this.listEl.children) {
-        el.classList.remove("result");
-      }
-
-      const isErr = v.kind === "error";
-      const text =
-        v.kind === "literal" ? String(v.value) : isErr ? v.message : "";
+      for (const el of this.listEl.children) el.classList.remove("result");
 
       if (this.scalarInput) {
-        this.scalarInput.update(text);
+        this.scalarInput.update(m.text);
+        this.scalarInput.input.readOnly = !m.editable;
       } else {
-        this.scalarEl.textContent = text;
+        this.scalarEl.textContent = m.text;
       }
 
-      this.scalarEl.classList.toggle("error", isErr);
+      this.scalarEl.classList.toggle("error", m.isError);
     });
   }
 }
 
 class BarView extends StandardView {
-  constructor(valueSig: ChildSignal, path: CellPath) {
+  constructor(valueSig: CellValueSignal, path: CellPath) {
     super(valueSig, path);
     this.listEl.classList.remove("list");
     this.listEl.classList.add("bar");
   }
 }
 
-const views: Record<string, new (c: ChildSignal, p: CellPath) => View> = {
+const views: Record<string, new (c: CellValueSignal, p: CellPath) => View> = {
   styled: StyledView,
   slider: SliderView,
   table: TableView,
@@ -662,98 +629,109 @@ class CellHeaderView extends View {
   element = createEl("div", { className: "header" });
 
   nameInput = new AutosizeInput(false, { className: "name" });
+  nameSlot: HeaderSlot = {
+    el: this.nameInput.input,
+    mode: "name",
+    commit: () => {},
+  };
 
-  flowWrapEl = createEl("div", { className: "wrap" });
-  flowEqualsEl = createEl("span", { className: "equals", value: "=" });
-  flowCodeInput = new AutosizeInput(true, { className: "code" });
+  cache: (
+    | {
+        wrap: HTMLElement;
+        label: HTMLElement;
+        input: AutosizeInput;
+        slot: HeaderSlot;
+        multiline: boolean;
+      }
+    | undefined
+  )[] = [];
 
-  sourceWrapEl = createEl("div", { className: "wrap" });
-  sourceTildeEl = createEl("span", { className: "equals", value: "~" });
-  sourceCodeInput = new AutosizeInput(false, { className: "code" });
+  slots: HeaderSlot[] = [this.nameSlot];
 
-  filterWrapEl = createEl("div", { className: "wrap" });
-  filterLabelEl = createEl("span", { className: "equals", value: "filter:" });
-  filterCodeInput = new AutosizeInput(true, { className: "code" });
-
-  templateWrapEl = createEl("div", { className: "wrap" });
-  templateLabelEl = createEl("span", { className: "equals", value: "=>" });
-  templateParamInput = new AutosizeInput(false, { className: "code" });
-
-  constructor(
-    nameSig: ValueSignal<string>,
-    childSig: ChildSignal,
-    pathKey: string
-  ) {
+  constructor(cell: Cell) {
     super();
 
-    this.flowWrapEl.append(this.flowEqualsEl, this.flowCodeInput.element);
-    this.sourceWrapEl.append(this.sourceTildeEl, this.sourceCodeInput.element);
-    this.filterWrapEl.append(this.filterLabelEl, this.filterCodeInput.element);
-    this.templateWrapEl.append(
-      this.templateParamInput.element,
-      this.templateLabelEl
-    );
-
     this.effect(
-      () => {
-        const focused = focusSignal.value;
-        const nameFocused =
-          focused.kind === "focused" &&
-          focused.role === "name" &&
-          focused.path.join(".") === pathKey;
-        const child = childSig.get();
-        return {
-          isFlowNode: isFlow(child),
-          isLinkNode: isLink(child),
-          isTemplateNode: isTemplate(child),
-          nameVisible: !!nameSig.get() || nameFocused,
-        };
-      },
-      ({ isFlowNode, isLinkNode, isTemplateNode, nameVisible }) => {
-        reconcileDomChildren(this.element, [
-          nameVisible ? this.nameInput.element : null,
-          isTemplateNode ? this.templateWrapEl : null,
-          isFlowNode ? this.flowWrapEl : null,
-          ...(isLinkNode ? [this.sourceWrapEl, this.filterWrapEl] : []),
-        ]);
+      () =>
+        getRenderEditors(cell).map((f) => ({
+          mode: f.mode,
+          label: f.label ?? "",
+        })),
+      (defs) => {
+        const nodes: HTMLElement[] = [this.nameInput.element];
+        const slots: HeaderSlot[] = [this.nameSlot];
+
+        for (let i = 0; i < defs.length; i++) {
+          const d = defs[i]!;
+          const multiline = d.mode === "header-multi";
+
+          let rec = this.cache[i];
+          if (!rec || rec.multiline !== multiline) {
+            rec?.wrap.remove();
+
+            const wrap = createEl("div", { className: "wrap" });
+            const label = createEl("span", { className: "equals" });
+            const input = new AutosizeInput(multiline, { className: "code" });
+            wrap.append(label, input.element);
+
+            rec = {
+              wrap,
+              label,
+              input,
+              slot: { el: input.input, mode: d.mode, commit: () => {} },
+              multiline,
+            };
+            this.cache[i] = rec;
+          }
+
+          rec.slot.mode = d.mode;
+          rec.label.textContent = d.label;
+          rec.label.style.display = d.label ? "" : "none";
+
+          nodes.push(rec.wrap);
+          slots.push(rec.slot);
+        }
+
+        for (let i = defs.length; i < this.cache.length; i++) {
+          this.cache[i]?.wrap.remove();
+          this.cache[i] = undefined;
+        }
+
+        reconcileDomChildren(this.element, nodes);
+        this.slots = slots;
       }
     );
 
     this.effect(() => {
-      this.nameInput.update(nameSig.get());
+      const text = cell.name.get() || "";
+      this.nameInput.update(text);
+
+      this.nameInput.input.readOnly = !isWritableSignal(cell.name);
+      this.nameInput.input.disabled = false;
+      this.nameSlot.commit = isWritableSignal(cell.name)
+        ? cell.name.set
+        : () => {};
     });
 
     this.effect(() => {
-      const v = childSig.get();
-      if (isFlow(v)) {
-        this.flowCodeInput.update(v.code);
-      } else if (isLink(v)) {
-        this.sourceCodeInput.update(v.source);
-        this.filterCodeInput.update(v.filter);
-      } else if (isTemplate(v)) {
-        this.templateParamInput.update(v.params.join(", "));
+      const eds = getRenderEditors(cell);
+      for (let i = 0; i < eds.length; i++) {
+        const rec = this.cache[i];
+        if (!rec) continue;
+
+        const f = eds[i]!;
+        rec.input.update(f.get.value ?? "");
+
+        const canEdit = !!f.set;
+        rec.input.input.readOnly = !canEdit;
+        rec.input.input.disabled = false;
+        rec.slot.commit = canEdit ? (t) => f.set!(t) : () => {};
       }
     });
   }
 
-  getNameInput() {
-    return this.nameInput.input;
-  }
-
-  getFlowCodeInput() {
-    return this.flowCodeInput.input;
-  }
-
-  getLinkSourceInput() {
-    return this.sourceCodeInput.input;
-  }
-
-  getLinkFilterInput() {
-    return this.filterCodeInput.input;
-  }
-
-  getTemplateParamInput() {
-    return this.templateParamInput.input;
+  getHeaderSlots(): HeaderSlot[] {
+    return this.slots;
   }
 }
 
@@ -767,28 +745,31 @@ class CellView extends View {
     super();
 
     const pathKey = path.join(".");
-    this.header = new CellHeaderView(cell.name, cell.child, pathKey);
+
+    this.header = new CellHeaderView(cell);
 
     this.effect(
       () => {
         const focus = focusSignal.value;
         const focusMatches =
           focus.kind === "focused" && focus.path.join(".") === pathKey;
-        const child = cell.child.get();
+
+        const nameFocused =
+          focusMatches &&
+          focus.target.kind === "header" &&
+          focus.target.index === 0;
+
+        const nameIsBlank = (cell.name.get() || "").trim() === "";
+        const hasName = !nameIsBlank;
+
+        const hasOtherEditors = getRenderEditors(cell).length > 0;
+
         return {
-          hasName: cell.name.get() !== "",
-          nameFocused: focusMatches && focus.role === "name",
-          isFlow: isFlow(child),
-          isLink: isLink(child),
-          isTemplate: isTemplate(child),
+          needHeader: showHeader && (hasOtherEditors || hasName || nameFocused),
           viewId: cell.view.get(),
         };
       },
-      ({ hasName, nameFocused, isFlow, isLink, isTemplate, viewId }) => {
-        const needHeader =
-          showHeader &&
-          (hasName || isFlow || isLink || isTemplate || nameFocused);
-
+      ({ needHeader, viewId }) => {
         const ViewCtor = views[viewId] || StandardView;
         const simpleView =
           ViewCtor === StandardView ||
@@ -798,13 +779,11 @@ class CellView extends View {
 
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
-          this.view = new ViewCtor(cell.child, path);
+          this.view = new ViewCtor(cell.value, path);
         }
 
         if (!simpleView) {
-          if (!this.stdView) {
-            this.stdView = new StandardView(cell.child, path);
-          }
+          if (!this.stdView) this.stdView = new StandardView(cell.value, path);
         } else if (this.stdView) {
           this.stdView.dispose();
           this.stdView = undefined;
@@ -816,21 +795,15 @@ class CellView extends View {
           !simpleView ? this.stdView!.element : null,
         ]);
 
-        this.element.classList.toggle("flow", isFlow || isLink);
-
-        const valueEl = isFlow
-          ? this.header.getFlowCodeInput()
-          : isLink
-          ? this.header.getLinkSourceInput()
-          : simpleView
+        const rawBodyEl = simpleView
           ? this.view.element
           : this.stdView!.element;
+        const bodyEl = (rawBodyEl as any).__textInputTarget || rawBodyEl;
+
         registerBinding(path, {
-          name: this.header.getNameInput(),
-          value: (valueEl as any).__textInputTarget || valueEl,
-          filter: isLink ? this.header.getLinkFilterInput() : undefined,
-          param: isTemplate ? this.header.getTemplateParamInput() : undefined,
           cell: this.element,
+          body: bodyEl,
+          header: this.header.getHeaderSlots(),
         });
       }
     );
@@ -838,16 +811,26 @@ class CellView extends View {
     this.effect(
       () => {
         const focus = focusSignal.value;
-        const match =
+        const focusMatches =
           focus.kind === "focused" && focus.path.join(".") === pathKey;
+
+        const nameFocused =
+          focusMatches &&
+          focus.target.kind === "header" &&
+          focus.target.index === 0;
+
+        const nameIsBlank = (cell.name.get() || "").trim() === "";
+
         return {
-          focused: match,
-          valueFocused: match && focus.role === "value",
+          focused: focusMatches,
+          valueFocused: focusMatches && focus.target.kind === "body",
+          hideName: nameIsBlank && !nameFocused,
         };
       },
-      ({ focused, valueFocused }) => {
+      ({ focused, valueFocused, hideName }) => {
         this.element.classList.toggle("focused", focused);
         this.view.element.classList.toggle("focused", valueFocused);
+        this.header.nameInput.element.classList.toggle("hidden", hideName);
       }
     );
 
