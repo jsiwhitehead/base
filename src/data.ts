@@ -83,6 +83,23 @@ export type LinkValue = {
   result: ReadSignal<Value>;
 };
 
+export type MatchPattern =
+  | { kind: "pany" }
+  | { kind: "plit"; value: ScalarPrimitive }
+  | { kind: "plist"; cells: { name?: string; pat: MatchPattern }[] };
+
+export type MatchValue = {
+  kind: "match";
+  arg: string;
+  matches: {
+    uid: number;
+    pattern: Signal<MatchPattern>;
+    body: CellValueSignal;
+  }[];
+  match: ReadSignal<number | null>;
+  result: ReadSignal<Value>;
+};
+
 export type TemplateValue<
   Body extends DataValue | FlowValue | LinkValue =
     | DataValue
@@ -94,7 +111,7 @@ export type TemplateValue<
   body: Body;
 };
 
-export type EvalValue = FlowValue | LinkValue | TemplateValue;
+export type EvalValue = FlowValue | LinkValue | MatchValue | TemplateValue;
 
 type ReadSignal<T> = {
   kind: "signal";
@@ -156,6 +173,7 @@ export const isValue = (v: unknown): v is Value =>
   isError(v) || isBlank(v) || isScalar(v) || isList(v) || isFunction(v);
 export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
 export const isLink = (v: unknown): v is LinkValue => hasKind(v, "link");
+export const isMatch = (v: unknown): v is MatchValue => hasKind(v, "match");
 export const isTemplate = (v: unknown): v is TemplateValue =>
   hasKind(v, "template");
 export const isSignal = (
@@ -170,9 +188,10 @@ export const isStaticList = (v: unknown): v is StaticListValue =>
 
 /* Parents */
 
-type ParentSig = PSignal<
-  WriteSignal<ListValue | TemplateValue<ListValue>> | undefined
+type ParentOwnerSig = WriteSignal<
+  ListValue | TemplateValue<ListValue> | MatchValue
 >;
+type ParentSig = PSignal<ParentOwnerSig | undefined>;
 const parentMap = new WeakMap<CellValueSignal, ParentSig>();
 
 export function getParentSignal(sig: CellValueSignal): ParentSig {
@@ -184,10 +203,8 @@ export function getParentSignal(sig: CellValueSignal): ParentSig {
   return p;
 }
 
-export function getParent(
-  value: CellValueSignal
-): WriteSignal<ListValue | TemplateValue<ListValue>> | undefined {
-  return getParentSignal(value).peek();
+export function getParent(value: CellValueSignal): ParentOwnerSig | undefined {
+  return getParentSignal(value).value;
 }
 
 /* Lists */
@@ -436,6 +453,103 @@ export function createLink(
   return { kind: "link", source, filter, result };
 }
 
+function patternToText(p: MatchPattern): string {
+  return JSON.stringify(p);
+}
+
+function textToPattern(text: string): MatchPattern {
+  try {
+    return JSON.parse(text) as MatchPattern;
+  } catch {
+    return { kind: "pany" };
+  }
+}
+
+function matchPattern(value: Value, pat: MatchPattern, params?: ScopeParams) {
+  if (isError(value)) return false;
+
+  switch (pat.kind) {
+    case "pany":
+      return true;
+
+    case "plit":
+      return isScalar(value) && value.value === pat.value;
+
+    case "plist": {
+      if (!isList(value)) return false;
+
+      for (let i = 0; i < pat.cells.length; i++) {
+        const { name, pat: sub } = pat.cells[i]!;
+        let cell: Cell | undefined;
+
+        if (name) cell = value.cells.find((c) => c.name.get() === name);
+        else cell = value.cells[i];
+
+        if (!cell) return false;
+
+        const v = evalValue(cell.value, params);
+        if (!matchPattern(v, sub, params)) return false;
+      }
+      return true;
+    }
+  }
+}
+
+export function createMatchSignal(
+  arg: string,
+  matches: {
+    uid?: number;
+    pattern: MatchPattern;
+    body: CellValueSignal;
+  }[] = []
+): WriteSignal<MatchValue> {
+  const sig = createSignal<MatchValue>(null as any);
+
+  batch(() => {
+    const norm = matches.map((m) => ({
+      uid: m.uid ?? newUid(),
+      pattern: createSignal<MatchPattern>(m.pattern),
+      body: m.body,
+    }));
+
+    for (const m of norm) getParentSignal(m.body).value = sig;
+
+    const match = createComputed(() => {
+      try {
+        const name = arg.trim();
+        if (!name) return null;
+
+        const v = lookupInScope(name, sig).get();
+
+        for (const arm of norm) {
+          if (matchPattern(v, arm.pattern.get())) return arm.uid;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    });
+
+    const result = createComputed(() => {
+      try {
+        const uid = match.get();
+        if (uid == null) return createBlank();
+
+        const arm = norm.find((m) => m.uid === uid);
+        if (!arm) return createBlank();
+
+        return evalValue(arm.body);
+      } catch (err) {
+        return createError(err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    sig.set({ kind: "match", arg, matches: norm, match, result });
+  });
+
+  return sig;
+}
+
 export function createTemplate<Body extends DataValue | FlowValue | LinkValue>(
   params: string[],
   body: Body
@@ -469,16 +583,16 @@ export function createListSignal(
   }[] = [],
   valueCellUid?: number
 ): WriteSignal<ListValue> {
-  const parent = createSignal(createList([]));
+  const sig = createSignal<ListValue>(null as any);
 
   batch(() => {
     for (const c of cells) {
-      getParentSignal(c.value).value = parent;
+      getParentSignal(c.value).value = sig;
     }
-    parent.set(createList(cells, valueCellUid));
+    sig.set(createList(cells, valueCellUid));
   });
 
-  return parent;
+  return sig;
 }
 
 export function createTemplateListSignal(
@@ -491,19 +605,17 @@ export function createTemplateListSignal(
   }[] = [],
   valueCellUid?: number
 ): WriteSignal<TemplateValue<ListValue>> {
-  const parent = createSignal(createTemplate(params, createList()));
+  const sig = createSignal<TemplateValue<ListValue>>(null as any);
 
   batch(() => {
     for (const c of cells) {
-      getParentSignal(c.value).value = parent;
+      getParentSignal(c.value).value = sig;
     }
-    parent.set(createTemplate(params, createList(cells, valueCellUid)));
+    sig.set(createTemplate(params, createList(cells, valueCellUid)));
   });
 
-  return parent;
+  return sig;
 }
-
-/* Flow readonly view */
 
 function asReadOnlySignal<T>(sig: Signal<T>): ReadSignal<T> {
   return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
@@ -743,6 +855,7 @@ export function evalStructural(
   params?: ScopeParams
 ): Value {
   const v = sig.get();
+
   if (isFlow(v)) {
     const out = params
       ? flowComputed(sig, v.code, params).get()
@@ -755,6 +868,17 @@ export function evalStructural(
     return v.result.get();
   }
 
+  if (isMatch(v)) {
+    return createList(
+      v.matches.map((m) => ({
+        uid: m.uid,
+        name: createSignal(""),
+        view: createSignal(""),
+        value: m.body,
+      }))
+    );
+  }
+
   if (isTemplate(v)) {
     return evalStructural(createSignal(v.body), params);
   }
@@ -764,6 +888,10 @@ export function evalStructural(
 
 export function evalValue(sig: CellValueSignal, params?: ScopeParams): Value {
   const v = sig.get();
+
+  if (isMatch(v)) {
+    return v.result.get();
+  }
 
   if (isTemplate(v)) {
     return createFunction((...args) =>
@@ -934,6 +1062,7 @@ export function getRenderModel(
     isWritableSignal(sig) &&
     !isFlow(stored) &&
     !isLink(stored) &&
+    !isMatch(stored) &&
     !isTemplate(stored);
 
   if (isError(v)) {
@@ -989,7 +1118,12 @@ export function getRenderChildren(
   return isList(v) ? v.cells : [];
 }
 
-export type EditorFieldMode = "body" | "name" | "header" | "header-multi";
+export type EditorFieldMode =
+  | "body"
+  | "name"
+  | "header"
+  | "header-multi"
+  | "pattern";
 
 export type EditorField = {
   mode: EditorFieldMode;
@@ -1060,6 +1194,26 @@ export function getRenderEditors(cell: Cell): EditorField[] {
     return fields;
   }
 
+  if (isMatch(childSig.get())) {
+    fields.push({
+      mode: "header",
+      label: "◇",
+      get: computed(() => {
+        const v = childSig.get();
+        return isMatch(v) ? v.arg : null;
+      }),
+      set: isWritableSignal(childSig)
+        ? (next) => {
+            const cur = childSig.peek();
+            if (isMatch(cur) && cur.arg !== next) {
+              childSig.set({ ...cur, arg: next });
+            }
+          }
+        : undefined,
+    });
+    return fields;
+  }
+
   if (isTemplate(childSig.get())) {
     fields.push({
       mode: "header",
@@ -1088,6 +1242,26 @@ export function getRenderEditors(cell: Cell): EditorField[] {
     });
 
     return fields;
+  }
+
+  const parent = getParent(cell.value);
+  const pv = parent?.get();
+  if (pv && isMatch(pv)) {
+    const arm = pv.matches.find((m) => m.uid === cell.uid);
+    if (arm) {
+      const pattern = arm.pattern;
+      fields.push({
+        mode: "pattern",
+        label: "pattern:",
+        get: computed(() => patternToText(pattern.get())),
+        set: isWritableSignal(pattern)
+          ? (nextText) => {
+              const nextPat = textToPattern(nextText);
+              pattern.set(nextPat);
+            }
+          : undefined,
+      });
+    }
   }
 
   return fields;
@@ -1152,12 +1326,17 @@ export function editParentList(
   childUid: number,
   fn: (ctx: ParentEditContext) => ParentEditResult
 ): ParentEditResult | null {
-  const parent = getParent(value);
-  if (!parent) return null;
+  const parentAny = getParent(value);
+  if (!parentAny) return null;
 
-  const pv = parent.peek();
+  const pv = parentAny.peek?.();
+  if (!pv) return null;
+
   const isTpl = isTemplate(pv);
   const list = isTpl ? pv.body : pv;
+  if (!isList(list)) return null;
+
+  const parent = parentAny as WriteSignal<ListValue | TemplateValue<ListValue>>;
 
   const before = list.cells;
   const index = before.findIndex((c) => c.uid === childUid);

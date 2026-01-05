@@ -174,6 +174,9 @@ function bindEditor(
         return;
       }
 
+      const isSingleHeader = mode === "header" || mode === "pattern";
+      const isMultiHeader = mode === "header-multi";
+
       switch (e.key) {
         case "ArrowLeft":
         case "ArrowRight": {
@@ -230,12 +233,12 @@ function bindEditor(
 
         case "Enter": {
           if (e.shiftKey) {
-            if (mode === "header") {
+            if (isSingleHeader) {
               stop(e);
               break;
             }
 
-            if (mode === "header-multi") {
+            if (isMultiHeader) {
               dispatch({ type: "CLEAR_GOAL_COLUMN" });
               break;
             }
