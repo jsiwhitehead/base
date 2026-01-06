@@ -1,6 +1,6 @@
 import {
   type Signal as PSignal,
-  type ReadonlySignal as PReadonlySignal,
+  type ReadonlySignal as PGetSignal,
   signal,
   computed,
   batch,
@@ -73,14 +73,14 @@ export type Content = DirectContent | IssueContent;
 export type DerivedContent = {
   kind: "derived";
   code: string;
-  result: ReadSignal<Content>;
+  result: GetSignal<Content>;
 };
 
 export type LensContent = {
   kind: "lens";
   source: string;
   filter: string;
-  result: ReadSignal<Content>;
+  result: GetSignal<Content>;
 };
 
 export type MatchPattern =
@@ -96,8 +96,8 @@ export type MatchContent = {
     pattern: Signal<MatchPattern>;
     body: ItemContentSignal;
   }[];
-  match: ReadSignal<number | null>;
-  result: ReadSignal<Content>;
+  match: GetSignal<number | null>;
+  result: GetSignal<Content>;
 };
 
 export type TemplateContent<
@@ -117,23 +117,23 @@ export type RelationalContent =
   | MatchContent
   | TemplateContent;
 
-type ReadSignal<T> = {
+type GetSignal<T> = {
   kind: "signal";
   get(): T;
   peek(): T;
 };
 
-export type WriteSignal<T> = ReadSignal<T> & {
+export type SetSignal<T> = GetSignal<T> & {
   set(next: T): void;
 };
 
-export type Signal<T> = ReadSignal<T> | WriteSignal<T>;
+export type Signal<T> = GetSignal<T> | SetSignal<T>;
 
 export type ContentSignal<T extends Content = Content> = Signal<T>;
 
 export type ItemContentSignal =
-  | ReadSignal<Content>
-  | WriteSignal<DirectContent | RelationalContent>;
+  | GetSignal<Content>
+  | SetSignal<DirectContent | RelationalContent>;
 
 export type Item = {
   uid: number;
@@ -184,8 +184,8 @@ export const isTemplate = (v: unknown): v is TemplateContent =>
   hasKind(v, "template");
 export const isSignal = (
   v: unknown
-): v is ReadSignal<unknown> | WriteSignal<unknown> => hasKind(v, "signal");
-export const isWritableSignal = (v: unknown): v is WriteSignal<unknown> =>
+): v is GetSignal<unknown> | SetSignal<unknown> => hasKind(v, "signal");
+export const isSetSignal = (v: unknown): v is SetSignal<unknown> =>
   isSignal(v) && typeof (v as any).set === "function";
 export const isStaticIssue = (v: unknown): v is StaticIssue =>
   hasKind(v, "issue");
@@ -194,7 +194,7 @@ export const isStaticGroup = (v: unknown): v is StaticGroupContent =>
 
 /* Parents */
 
-type ParentOwnerSig = WriteSignal<
+type ParentOwnerSig = SetSignal<
   GroupContent | TemplateContent<GroupContent> | MatchContent
 >;
 type ParentSig = PSignal<ParentOwnerSig | undefined>;
@@ -422,7 +422,7 @@ function derivedComputed(
   owner: ItemContentSignal,
   code: string,
   params?: ContextParams
-): ReadSignal<Content> {
+): GetSignal<Content> {
   return createComputed<Content>(() => {
     try {
       return interpretExpr(code, (name: string) =>
@@ -523,7 +523,7 @@ export function createMatchSignal(
     pattern: MatchPattern;
     body: ItemContentSignal;
   }[] = []
-): WriteSignal<MatchContent> {
+): SetSignal<MatchContent> {
   const sig = createSignal<MatchContent>(null as any);
 
   batch(() => {
@@ -577,12 +577,12 @@ export function createTemplate<
   return { kind: "template", params, body };
 }
 
-export function createComputed<T>(fn: () => T): ReadSignal<T> {
-  const rsig: PReadonlySignal<T> = computed(fn);
+export function createComputed<T>(fn: () => T): GetSignal<T> {
+  const rsig: PGetSignal<T> = computed(fn);
   return { kind: "signal", get: () => rsig.value, peek: () => rsig.peek() };
 }
 
-export function createSignal<T>(initial: T): WriteSignal<T> {
+export function createSignal<T>(initial: T): SetSignal<T> {
   const sig = signal(initial);
   return {
     kind: "signal",
@@ -602,7 +602,7 @@ export function createGroupSignal(
     content: ItemContentSignal;
   }[] = [],
   contentItemUid?: number
-): WriteSignal<GroupContent> {
+): SetSignal<GroupContent> {
   const sig = createSignal<GroupContent>(null as any);
 
   batch(() => {
@@ -624,7 +624,7 @@ export function createTemplateGroupSignal(
     content: ItemContentSignal;
   }[] = [],
   contentItemUid?: number
-): WriteSignal<TemplateContent<GroupContent>> {
+): SetSignal<TemplateContent<GroupContent>> {
   const sig = createSignal<TemplateContent<GroupContent>>(null as any);
 
   batch(() => {
@@ -637,19 +637,19 @@ export function createTemplateGroupSignal(
   return sig;
 }
 
-function asReadOnlySignal<T>(sig: Signal<T>): ReadSignal<T> {
+function asGetSignal<T>(sig: Signal<T>): GetSignal<T> {
   return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
 }
 
-function readonlyContent(v: Content, params?: ContextParams): Content {
+function notSettableContent(v: Content, params?: ContextParams): Content {
   if (isIssue(v) || isBlank(v) || isScalar(v) || isFunction(v)) return v;
   return createGroup(
     v.items.map((c) => ({
       uid: newUid(),
-      name: asReadOnlySignal(c.name),
-      view: asReadOnlySignal(c.view),
+      name: asGetSignal(c.name),
+      view: asGetSignal(c.view),
       content: createComputed(() =>
-        readonlyContent(resolveContent(c.content, params), params)
+        notSettableContent(resolveContent(c.content, params), params)
       ),
     })),
     v.contentItemUid
@@ -878,7 +878,7 @@ export function resolveStructural(
     const out = params
       ? derivedComputed(sig, v.code, params).get()
       : v.result.get();
-    return readonlyContent(out, params);
+    return notSettableContent(out, params);
   }
 
   if (isLens(v)) {
@@ -923,7 +923,7 @@ export function resolveContent(
             v.params.map((p, i) => [p, args[i] ?? createSignal(createBlank())])
           )
         );
-        return readonlyContent(
+        return notSettableContent(
           resolveContent(createSignal(v.body), nextParams),
           nextParams
         );
@@ -1075,7 +1075,7 @@ export type ViewScalar = {
   text: string;
   number?: number;
   isIssue: boolean;
-  editable: boolean;
+  settable: boolean;
 };
 
 export type ViewModel = ViewScalar | GroupContent;
@@ -1089,8 +1089,8 @@ export function getViewModel(
   if (isGroup(v)) return v;
 
   const stored = sig.get();
-  const bodyEditable =
-    isWritableSignal(sig) &&
+  const bodySettable =
+    isSetSignal(sig) &&
     !isDerived(stored) &&
     !isLens(stored) &&
     !isMatch(stored) &&
@@ -1101,7 +1101,7 @@ export function getViewModel(
       kind: "scalar",
       text: v.message,
       isIssue: true,
-      editable: bodyEditable,
+      settable: bodySettable,
     };
   }
 
@@ -1110,7 +1110,7 @@ export function getViewModel(
       kind: "scalar",
       text: "",
       isIssue: false,
-      editable: bodyEditable,
+      settable: bodySettable,
     };
   }
 
@@ -1119,7 +1119,7 @@ export function getViewModel(
       kind: "scalar",
       text: String(v.value),
       isIssue: false,
-      editable: bodyEditable,
+      settable: bodySettable,
       number: typeof v.value === "number" ? v.value : undefined,
     };
   }
@@ -1129,7 +1129,7 @@ export function getViewModel(
       kind: "scalar",
       text: "[function]",
       isIssue: false,
-      editable: false,
+      settable: false,
     };
   }
 
@@ -1137,7 +1137,7 @@ export function getViewModel(
     kind: "scalar",
     text: "[unknown]",
     isIssue: false,
-    editable: false,
+    settable: false,
   };
 }
 
@@ -1149,23 +1149,23 @@ export function getViewChildren(
   return isGroup(v) ? v.items : [];
 }
 
-export type EditorFieldMode =
+export type InputFieldMode =
   | "body"
   | "name"
   | "header"
   | "header-multi"
   | "pattern";
 
-export type EditorField = {
-  mode: EditorFieldMode;
+export type InputField = {
+  mode: InputFieldMode;
   label?: string;
-  get: PReadonlySignal<string | null>;
+  get: PGetSignal<string | null>;
   set?: (next: string) => void;
 };
 
-export function getViewEditors(item: Item): EditorField[] {
+export function getViewInputs(item: Item): InputField[] {
   const childSig = item.content;
-  const fields: EditorField[] = [];
+  const fields: InputField[] = [];
 
   if (isDerived(childSig.get())) {
     fields.push({
@@ -1175,7 +1175,7 @@ export function getViewEditors(item: Item): EditorField[] {
         const v = childSig.get();
         return isDerived(v) ? v.code : null;
       }),
-      set: isWritableSignal(childSig)
+      set: isSetSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
             if (isDerived(cur) && cur.code !== next) {
@@ -1195,7 +1195,7 @@ export function getViewEditors(item: Item): EditorField[] {
         const v = childSig.get();
         return isLens(v) ? v.source : null;
       }),
-      set: isWritableSignal(childSig)
+      set: isSetSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
             if (isLens(cur) && cur.source !== next) {
@@ -1212,7 +1212,7 @@ export function getViewEditors(item: Item): EditorField[] {
         const v = childSig.get();
         return isLens(v) ? v.filter : null;
       }),
-      set: isWritableSignal(childSig)
+      set: isSetSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
             if (isLens(cur) && cur.filter !== next) {
@@ -1233,7 +1233,7 @@ export function getViewEditors(item: Item): EditorField[] {
         const v = childSig.get();
         return isMatch(v) ? v.arg : null;
       }),
-      set: isWritableSignal(childSig)
+      set: isSetSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
             if (isMatch(cur) && cur.arg !== next) {
@@ -1253,7 +1253,7 @@ export function getViewEditors(item: Item): EditorField[] {
         const v = childSig.get();
         return isTemplate(v) ? v.params.join(", ") : null;
       }),
-      set: isWritableSignal(childSig)
+      set: isSetSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
             if (isTemplate(cur)) {
@@ -1285,7 +1285,7 @@ export function getViewEditors(item: Item): EditorField[] {
         mode: "pattern",
         label: "pattern:",
         get: computed(() => patternToText(pattern.get())),
-        set: isWritableSignal(pattern)
+        set: isSetSignal(pattern)
           ? (nextText) => {
               const nextPat = textToPattern(nextText);
               pattern.set(nextPat);
@@ -1318,45 +1318,45 @@ export function getViewProps(
     if (n) byName.set(n, c);
   }
 
-  const read = (name: string): Content => {
+  const get = (name: string): Content => {
     const c = byName.get(name);
     return c ? resolveStructural(c.content, params) : createBlank();
   };
 
   return {
-    truthy: (name) => isTruthy(read(name)),
+    truthy: (name) => isTruthy(get(name)),
 
-    text: (name) => toText(read(name)),
+    text: (name) => toText(get(name)),
 
-    num: (name) => toNumber(read(name)),
+    num: (name) => toNumber(get(name)),
 
     setFlag(name: string, value: boolean): boolean {
       const c = byName.get(name);
-      if (!c || !isWritableSignal(c.content)) return false;
+      if (!c || !isSetSignal(c.content)) return false;
       c.content.set(primitiveToContent(value));
       return true;
     },
   };
 }
 
-type ParentEditContext = {
-  parent: WriteSignal<GroupContent | TemplateContent<GroupContent>>;
+type ParentUpdateContext = {
+  parent: SetSignal<GroupContent | TemplateContent<GroupContent>>;
   before: Item[];
   index: number;
   contentItemUid?: number;
   params?: string[];
 };
 
-type ParentEditResult = {
+type ParentUpdateResult = {
   after: Item[];
   contentItemUid?: number;
 };
 
-export function editParentGroup(
+export function updateParentGroup(
   content: ItemContentSignal,
   childUid: number,
-  fn: (ctx: ParentEditContext) => ParentEditResult
-): ParentEditResult | null {
+  fn: (ctx: ParentUpdateContext) => ParentUpdateResult
+): ParentUpdateResult | null {
   const parentAny = getParent(content);
   if (!parentAny) return null;
 
@@ -1367,7 +1367,7 @@ export function editParentGroup(
   const group = isTpl ? pv.body : pv;
   if (!isGroup(group)) return null;
 
-  const parent = parentAny as WriteSignal<
+  const parent = parentAny as SetSignal<
     GroupContent | TemplateContent<GroupContent>
   >;
 
@@ -1375,10 +1375,10 @@ export function editParentGroup(
   const index = before.findIndex((c) => c.uid === childUid);
   if (index < 0) return null;
 
-  let result: ParentEditResult | null = null;
+  let result: ParentUpdateResult | null = null;
 
   batch(() => {
-    const edit = fn({
+    const update = fn({
       parent,
       before,
       index,
@@ -1386,11 +1386,11 @@ export function editParentGroup(
       params: isTpl ? pv.params : undefined,
     });
 
-    const contentItemUid = edit.contentItemUid ?? group.contentItemUid;
-    const nextGroup = createGroup(edit.after, contentItemUid);
+    const contentItemUid = update.contentItemUid ?? group.contentItemUid;
+    const nextGroup = createGroup(update.after, contentItemUid);
 
     parent.set(isTpl ? createTemplate(pv.params, nextGroup) : nextGroup);
-    result = { after: edit.after, contentItemUid: edit.contentItemUid };
+    result = { after: update.after, contentItemUid: update.contentItemUid };
   });
 
   return result;

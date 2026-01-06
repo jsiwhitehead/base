@@ -3,11 +3,11 @@ import { batch } from "@preact/signals-core";
 import {
   type GroupContent,
   type TemplateContent,
-  type WriteSignal,
+  type SetSignal,
   type ItemContentSignal,
   type Item,
   type NavLayoutContext,
-  isWritableSignal,
+  isSetSignal,
   getParentSignal,
   getParent,
   newUid,
@@ -17,8 +17,8 @@ import {
   createSignal,
   getViewModel,
   getViewChildren,
-  getViewEditors,
-  editParentGroup,
+  getViewInputs,
+  updateParentGroup,
   parseScalarInput,
   getLayoutContext,
 } from "./model";
@@ -95,12 +95,12 @@ export function siblingPath(path: ItemPath, dir: -1 | 1): ItemPath | null {
   return [...pp, kids[j]!.uid];
 }
 
-type ItemEditKind = "text" | "text-readonly" | "group";
+type ItemUpdateKind = "text" | "text-get-only" | "group";
 
 type ItemNavContext = {
-  kind: ItemEditKind | null;
+  kind: ItemUpdateKind | null;
   viewContext: NavLayoutContext;
-  hasExtraHeaderEditors: boolean;
+  hasExtraHeaderInputs: boolean;
 };
 
 export function getItemNavContext(path: ItemPath): ItemNavContext {
@@ -110,28 +110,28 @@ export function getItemNavContext(path: ItemPath): ItemNavContext {
   const parentItem = items[items.length - 2];
   const grandparentItem = items[items.length - 3];
 
-  let kind: ItemEditKind | null = null;
-  let hasExtraHeaderEditors = false;
+  let kind: ItemUpdateKind | null = null;
+  let hasExtraHeaderInputs = false;
 
   if (item) {
     const m = getViewModel(item.content);
     if (m.kind === "group") kind = "group";
-    else kind = m.editable ? "text" : "text-readonly";
+    else kind = m.settable ? "text" : "text-get-only";
 
-    hasExtraHeaderEditors = getViewEditors(item).some(
+    hasExtraHeaderInputs = getViewInputs(item).some(
       (f) => f.get.value !== null
     );
   }
 
   const viewContext = getLayoutContext(parentItem, grandparentItem);
-  return { kind, viewContext, hasExtraHeaderEditors };
+  return { kind, viewContext, hasExtraHeaderInputs };
 }
 
 function isNavStop(item: Item | null, content: ItemContentSignal): boolean {
   const kids = getViewChildren(content);
   if (kids.length === 0) return true;
   if (!item) return false;
-  return getViewEditors(item).some((f) => f.get.value !== null);
+  return getViewInputs(item).some((f) => f.get.value !== null);
 }
 
 function collectNavStops(): ItemPath[] {
@@ -267,30 +267,30 @@ export function standardMove(
   return target;
 }
 
-/* Mutations */
+/* Updates */
 
-export type TransformResult = { path: ItemPath; caret?: number } | null;
+export type UpdateResult = { path: ItemPath; caret?: number } | null;
 
-export function setItemText(path: ItemPath, raw: string): ItemPath {
+export function updateItemText(path: ItemPath, raw: string): ItemPath {
   const sig = childSignalAtPath(path);
-  if (!sig || !isWritableSignal(sig)) return path;
+  if (!sig || !isSetSignal(sig)) return path;
 
   sig.set(parseScalarInput(raw));
   return path;
 }
 
-export function setItemAsDerived(path: ItemPath): TransformResult {
+export function setItemAsDerived(path: ItemPath): UpdateResult {
   const sig = childSignalAtPath(path);
-  if (!sig || !isWritableSignal(sig)) return null;
+  if (!sig || !isSetSignal(sig)) return null;
 
   sig.set(createDerived(sig, ""));
   return { path, caret: 0 };
 }
 
-function editParentAtPath(
+function updateParentAtPath(
   path: ItemPath,
   fn: (ctx: {
-    parent: WriteSignal<GroupContent | TemplateContent<GroupContent>>;
+    parent: SetSignal<GroupContent | TemplateContent<GroupContent>>;
     parentPath: ItemPath;
     before: Item[];
     index: number;
@@ -310,7 +310,7 @@ function editParentAtPath(
 
   let nextPath = path;
 
-  const out = editParentGroup(
+  const out = updateParentGroup(
     child,
     uid,
     ({ parent, before, index, contentItemUid, params }) => {
@@ -353,34 +353,40 @@ function removeAt(items: Item[], i: number): Item[] {
   return [...items.slice(0, i), ...items.slice(i + 1)];
 }
 
-export function insertItemBefore(path: ItemPath): TransformResult {
-  const np = editParentAtPath(path, ({ parent, parentPath, before, index }) => {
-    const content = createSignal(createBlank());
-    getParentSignal(content).value = parent;
+export function addItemBefore(path: ItemPath): UpdateResult {
+  const np = updateParentAtPath(
+    path,
+    ({ parent, parentPath, before, index }) => {
+      const content = createSignal(createBlank());
+      getParentSignal(content).value = parent;
 
-    const item = makeBlankItem(content);
-    const after = insertAt(before, index, item);
-    return { after, path: [...parentPath, item.uid] };
-  });
-
-  return { path: np };
-}
-
-export function insertItemAfter(path: ItemPath): TransformResult {
-  const np = editParentAtPath(path, ({ parent, parentPath, before, index }) => {
-    const content = createSignal(createBlank());
-    getParentSignal(content).value = parent;
-
-    const item = makeBlankItem(content);
-    const after = insertAt(before, index + 1, item);
-    return { after, path: [...parentPath, item.uid] };
-  });
+      const item = makeBlankItem(content);
+      const after = insertAt(before, index, item);
+      return { after, path: [...parentPath, item.uid] };
+    }
+  );
 
   return { path: np };
 }
 
-export function wrapItemInGroup(path: ItemPath): TransformResult {
-  const np = editParentAtPath(
+export function addItemAfter(path: ItemPath): UpdateResult {
+  const np = updateParentAtPath(
+    path,
+    ({ parent, parentPath, before, index }) => {
+      const content = createSignal(createBlank());
+      getParentSignal(content).value = parent;
+
+      const item = makeBlankItem(content);
+      const after = insertAt(before, index + 1, item);
+      return { after, path: [...parentPath, item.uid] };
+    }
+  );
+
+  return { path: np };
+}
+
+export function groupItem(path: ItemPath): UpdateResult {
+  const np = updateParentAtPath(
     path,
     ({ parent, parentPath, before, index, child }) => {
       const oldItem = before[index]!;
@@ -410,7 +416,7 @@ export function wrapItemInGroup(path: ItemPath): TransformResult {
   return { path: np };
 }
 
-export function unwrapSingleItemGroup(path: ItemPath): TransformResult {
+export function ungroupItem(path: ItemPath): UpdateResult {
   const innerChild = childSignalAtPath(path);
   if (!innerChild) return null;
 
@@ -423,7 +429,7 @@ export function unwrapSingleItemGroup(path: ItemPath): TransformResult {
   const pPath = parentPath(path);
   if (!pPath) return null;
 
-  const np = editParentAtPath(
+  const np = updateParentAtPath(
     pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
       const innerItem = items[0]!;
@@ -442,11 +448,8 @@ export function unwrapSingleItemGroup(path: ItemPath): TransformResult {
   return { path: np };
 }
 
-function removeItemWithFocus(
-  path: ItemPath,
-  prefer: "prev" | "next"
-): TransformResult {
-  const np = editParentAtPath(
+function removeItemDir(path: ItemPath, prefer: "prev" | "next"): UpdateResult {
+  const np = updateParentAtPath(
     path,
     ({ parentPath, before, index, contentItemUid }) => {
       const removed = before[index]!;
@@ -476,21 +479,21 @@ function removeItemWithFocus(
   return { path: np };
 }
 
-export function removeItemBackward(path: ItemPath): TransformResult {
-  return removeItemWithFocus(path, "prev");
+export function removeItemBackward(path: ItemPath): UpdateResult {
+  return removeItemDir(path, "prev");
 }
 
-export function removeItemForward(path: ItemPath): TransformResult {
-  return removeItemWithFocus(path, "next");
+export function removeItemForward(path: ItemPath): UpdateResult {
+  return removeItemDir(path, "next");
 }
 
-export function splitItem(
+export function splitItemAt(
   path: ItemPath,
   caretStart: number,
   caretEnd: number = caretStart
 ): ItemPath {
   const sig = childSignalAtPath(path);
-  if (!sig || !isWritableSignal(sig)) return path;
+  if (!sig || !isSetSignal(sig)) return path;
 
   const m = getViewModel(sig);
   const text = m.kind === "scalar" ? m.text : "";
@@ -503,16 +506,16 @@ export function splitItem(
   const right = text.slice(end);
 
   batch(() => {
-    setItemText(path, left);
-    const next = insertItemAfter(path)!.path;
-    setItemText(next, right);
+    updateItemText(path, left);
+    const next = addItemAfter(path)!.path;
+    updateItemText(next, right);
     path = next;
   });
 
   return path;
 }
 
-export function mergeItemWithPrev(path: ItemPath): TransformResult {
+export function joinWithBefore(path: ItemPath): UpdateResult {
   const prev = siblingPath(path, -1);
   if (!prev) return null;
 
@@ -533,14 +536,14 @@ export function mergeItemWithPrev(path: ItemPath): TransformResult {
 
   let nextPath = prev;
   batch(() => {
-    setItemText(prev, prevText + curText);
+    updateItemText(prev, prevText + curText);
     nextPath = removeItemBackward(path)?.path ?? prev;
   });
 
   return { path: nextPath, caret };
 }
 
-export function mergeItemWithNext(path: ItemPath): TransformResult {
+export function joinWithAfter(path: ItemPath): UpdateResult {
   const next = siblingPath(path, 1);
   if (!next) return null;
 
@@ -559,7 +562,7 @@ export function mergeItemWithNext(path: ItemPath): TransformResult {
 
   let nextPathOut = path;
   batch(() => {
-    setItemText(path, curText + nextText);
+    updateItemText(path, curText + nextText);
     nextPathOut = removeItemBackward(next)?.path ?? path;
   });
 

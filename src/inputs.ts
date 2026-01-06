@@ -1,22 +1,22 @@
 import { signal } from "@preact/signals-core";
 
-import { type EditorFieldMode } from "./model";
+import { type InputFieldMode } from "./model";
 import {
   type ItemPath,
   firstChildPath,
   getItemNavContext,
   standardMove,
-  setItemText,
+  updateItemText,
   setItemAsDerived,
-  insertItemBefore,
-  insertItemAfter,
-  wrapItemInGroup,
-  unwrapSingleItemGroup,
+  addItemBefore,
+  addItemAfter,
+  groupItem,
+  ungroupItem,
   removeItemBackward,
   removeItemForward,
-  splitItem,
-  mergeItemWithPrev,
-  mergeItemWithNext,
+  splitItemAt,
+  joinWithBefore,
+  joinWithAfter,
 } from "./interact";
 
 export type FocusTarget = { kind: "body" } | { kind: "header"; index: number };
@@ -38,7 +38,7 @@ type MachineState =
       goalColumn?: number;
     };
 
-type EditorEvent =
+type InputEvent =
   | { type: "FOCUS"; path: ItemPath; target: FocusTarget; caret?: number }
   | { type: "CLEAR_FOCUS" }
   | {
@@ -52,20 +52,20 @@ type EditorEvent =
   | { type: "CLEAR_GOAL_COLUMN" };
 
 const TRANSFORMS = {
-  insertItemBefore,
-  insertItemAfter,
-  wrapItemInGroup,
-  unwrapSingleItemGroup,
+  addItemBefore,
+  addItemAfter,
+  groupItem,
+  ungroupItem,
   setItemAsDerived,
   removeItemBackward,
   removeItemForward,
-  mergeItemWithPrev,
-  mergeItemWithNext,
+  joinWithBefore,
+  joinWithAfter,
 };
 
 type HeaderSlot = {
   el: HTMLInputElement | HTMLTextAreaElement;
-  mode: EditorFieldMode;
+  mode: InputFieldMode;
   commit: (text: string) => void;
 };
 
@@ -108,17 +108,15 @@ function isTextInput(
 }
 
 function defaultTargetForPath(path: ItemPath): FocusTarget {
-  const { hasExtraHeaderEditors } = getItemNavContext(path);
-  return hasExtraHeaderEditors
-    ? { kind: "header", index: 1 }
-    : { kind: "body" };
+  const { hasExtraHeaderInputs } = getItemNavContext(path);
+  return hasExtraHeaderInputs ? { kind: "header", index: 1 } : { kind: "body" };
 }
 
-function bindEditor(
+function bindInput(
   binding: PathBinding,
   path: ItemPath,
   el: HTMLInputElement | HTMLTextAreaElement,
-  mode: EditorFieldMode,
+  mode: InputFieldMode,
   commit: (text: string) => void
 ) {
   if (mode === "body") {
@@ -268,7 +266,7 @@ function bindEditor(
               break;
             }
 
-            const res = insertItemAfter(path);
+            const res = addItemAfter(path);
             if (res) {
               dispatch({
                 type: "FOCUS",
@@ -289,7 +287,7 @@ function bindEditor(
             stop(e);
             dispatch({
               type: "TRANSFORM",
-              op: len === 0 ? "removeItemBackward" : "mergeItemWithPrev",
+              op: len === 0 ? "removeItemBackward" : "joinWithBefore",
             });
           }
           break;
@@ -300,7 +298,7 @@ function bindEditor(
             stop(e);
             dispatch({
               type: "TRANSFORM",
-              op: len === 0 ? "removeItemForward" : "mergeItemWithNext",
+              op: len === 0 ? "removeItemForward" : "joinWithAfter",
             });
           }
           break;
@@ -318,7 +316,7 @@ function bindEditor(
           stop(e);
           dispatch({
             type: "TRANSFORM",
-            op: e.shiftKey ? "unwrapSingleItemGroup" : "wrapItemInGroup",
+            op: e.shiftKey ? "ungroupItem" : "groupItem",
             caret: selStart,
           });
           break;
@@ -328,7 +326,7 @@ function bindEditor(
   );
 }
 
-function dispatch(ev: EditorEvent): void {
+function dispatch(ev: InputEvent): void {
   const prev = state;
   let caretPos: number | undefined;
   let anchor: Anchor | undefined;
@@ -380,7 +378,7 @@ function dispatch(ev: EditorEvent): void {
 
     case "SPLIT": {
       if (state.kind !== "Focused") break;
-      const np = splitItem(state.path, ev.caret, ev.selEnd ?? ev.caret);
+      const np = splitItemAt(state.path, ev.caret, ev.selEnd ?? ev.caret);
       state = {
         kind: "Focused",
         path: np,
@@ -550,12 +548,12 @@ export function registerBinding(
       })
     );
 
-    bindEditor(binding, path, slot.el, slot.mode, slot.commit);
+    bindInput(binding, path, slot.el, slot.mode, slot.commit);
   }
 
   if (isTextInput(binding.body)) {
-    bindEditor(binding, path, binding.body, "body", (text) =>
-      setItemText(path, text)
+    bindInput(binding, path, binding.body, "body", (text) =>
+      updateItemText(path, text)
     );
   }
 
@@ -612,8 +610,8 @@ export function onRootKeyDown(e: KeyboardEvent) {
       }
 
       const res = e.shiftKey
-        ? insertItemBefore(state.path)
-        : insertItemAfter(state.path);
+        ? addItemBefore(state.path)
+        : addItemAfter(state.path);
       if (res) {
         dispatch({ type: "FOCUS", path: res.path, target: { kind: "body" } });
       }
@@ -636,7 +634,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
       stop(e);
       dispatch({
         type: "TRANSFORM",
-        op: e.shiftKey ? "unwrapSingleItemGroup" : "wrapItemInGroup",
+        op: e.shiftKey ? "ungroupItem" : "groupItem",
       });
       break;
     }

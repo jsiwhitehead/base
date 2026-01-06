@@ -11,10 +11,10 @@ import {
   type ContentSignal,
   type ItemContentSignal,
   type Item,
-  type EditorFieldMode,
+  type InputFieldMode,
   type Signal,
-  getViewEditors,
-  isWritableSignal,
+  getViewInputs,
+  isSetSignal,
   createScalar,
   getViewModel,
   getViewProps,
@@ -326,7 +326,7 @@ class SliderView extends View {
     this.element = input;
 
     input.addEventListener("input", () => {
-      if (isWritableSignal(contentSig)) {
+      if (isSetSignal(contentSig)) {
         const n = Number(input.value);
         if (Number.isFinite(n)) contentSig.set(createScalar(n));
       }
@@ -339,14 +339,14 @@ class SliderView extends View {
       if (this.element.value !== String(n)) {
         this.element.value = String(n);
       }
-      this.element.disabled = !(m.kind === "scalar" && m.editable);
+      this.element.disabled = !(m.kind === "scalar" && m.settable);
     });
   }
 }
 
 type HeaderSlot = {
   el: HTMLInputElement | HTMLTextAreaElement;
-  mode: EditorFieldMode;
+  mode: InputFieldMode;
   commit: (text: string) => void;
 };
 
@@ -364,7 +364,7 @@ class RowHeaderView extends View {
   constructor(nameSig: Signal<string>, pathKey: string) {
     super();
 
-    this.slot.commit = isWritableSignal(nameSig) ? nameSig.set : () => {};
+    this.slot.commit = isSetSignal(nameSig) ? nameSig.set : () => {};
 
     this.effect(
       () => {
@@ -555,7 +555,7 @@ class StandardView extends View {
   constructor(contentSig: ItemContentSignal, path: ItemPath) {
     super();
 
-    if (isWritableSignal(contentSig)) {
+    if (isSetSignal(contentSig)) {
       this.scalarInput = new AutosizeInput(true, { className: "content" });
       this.scalarEl = this.scalarInput.element;
     } else {
@@ -600,7 +600,7 @@ class StandardView extends View {
 
       if (this.scalarInput) {
         this.scalarInput.update(m.text);
-        this.scalarInput.input.readOnly = !m.editable;
+        this.scalarInput.input.readOnly = !m.settable;
       } else {
         this.scalarEl.textContent = m.text;
       }
@@ -653,7 +653,7 @@ class ItemHeaderView extends View {
 
     this.effect(
       () =>
-        getViewEditors(item).map((f) => ({
+        getViewInputs(item).map((f) => ({
           mode: f.mode,
           label: f.label ?? "",
         })),
@@ -706,15 +706,13 @@ class ItemHeaderView extends View {
       const text = item.name.get() || "";
       this.nameInput.update(text);
 
-      this.nameInput.input.readOnly = !isWritableSignal(item.name);
+      this.nameInput.input.readOnly = !isSetSignal(item.name);
       this.nameInput.input.disabled = false;
-      this.nameSlot.commit = isWritableSignal(item.name)
-        ? item.name.set
-        : () => {};
+      this.nameSlot.commit = isSetSignal(item.name) ? item.name.set : () => {};
     });
 
     this.effect(() => {
-      const eds = getViewEditors(item);
+      const eds = getViewInputs(item);
       for (let i = 0; i < eds.length; i++) {
         const rec = this.cache[i];
         if (!rec) continue;
@@ -722,10 +720,10 @@ class ItemHeaderView extends View {
         const f = eds[i]!;
         rec.input.update(f.get.value ?? "");
 
-        const canEdit = !!f.set;
-        rec.input.input.readOnly = !canEdit;
+        const settable = !!f.set;
+        rec.input.input.readOnly = !settable;
         rec.input.input.disabled = false;
-        rec.slot.commit = canEdit ? (t) => f.set!(t) : () => {};
+        rec.slot.commit = settable ? (t) => f.set!(t) : () => {};
       }
     });
   }
@@ -762,10 +760,10 @@ class ItemView extends View {
         const nameIsBlank = (item.name.get() || "").trim() === "";
         const hasName = !nameIsBlank;
 
-        const hasOtherEditors = getViewEditors(item).length > 0;
+        const hasOtherInputs = getViewInputs(item).length > 0;
 
         return {
-          needHeader: showHeader && (hasOtherEditors || hasName || nameFocused),
+          needHeader: showHeader && (hasOtherInputs || hasName || nameFocused),
           viewId: item.view.get(),
         };
       },
