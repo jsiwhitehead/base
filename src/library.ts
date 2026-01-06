@@ -1,20 +1,20 @@
 import {
   ERR,
-  type ListValue,
-  type FunctionValue,
-  type Value,
-  type ValueSignal,
+  type GroupContent,
+  type FunctionContent,
+  type Content,
+  type ContentSignal,
   isBlank,
   isScalar,
-  isList,
+  isGroup,
   isFunction,
-  listMap,
-  listFilter,
-  listReduce,
-  listSort,
+  groupMap,
+  groupFilter,
+  groupReduce,
+  groupSort,
   createBlank,
   createScalar,
-  createList,
+  createGroup,
   createFunction,
   createSignal,
   isTruthy,
@@ -22,26 +22,26 @@ import {
   toText,
   numOpt,
   textOpt,
-  listOpt,
+  groupOpt,
   fnOpt,
-  primitiveToValue,
+  primitiveToContent,
   evalStructural,
 } from "./data";
 
-function valueFn(op: (...values: Value[]) => Value): ValueSignal {
+function contentFn(op: (...contents: Content[]) => Content): ContentSignal {
   return createSignal(
-    createFunction((...args: (ValueSignal | undefined)[]) => {
-      const values = Array.from({ length: op.length }, (_, i) =>
+    createFunction((...args: (ContentSignal | undefined)[]) => {
+      const contents = Array.from({ length: op.length }, (_, i) =>
         args[i] ? args[i]!.get() : createBlank()
       );
-      return createSignal(op(...values));
+      return createSignal(op(...contents));
     })
   );
 }
 
 type ArgSpec<T> =
-  | { kind: "req"; convert: (value: Value) => T | null }
-  | { kind: "opt"; convert: (value: Value) => T | null; fallback: T };
+  | { kind: "req"; convert: (content: Content) => T | null }
+  | { kind: "opt"; convert: (content: Content) => T | null; fallback: T };
 
 const reqNum = { kind: "req", convert: numOpt } as const;
 const optNum = (d: number) =>
@@ -51,21 +51,21 @@ const reqText = { kind: "req", convert: textOpt } as const;
 const optText = (d: string) =>
   ({ kind: "opt", convert: textOpt, fallback: d } as const);
 
-const reqList = { kind: "req", convert: listOpt } as const;
-const optList = (d: ListValue) =>
-  ({ kind: "opt", convert: listOpt, fallback: d } as const);
+const reqGroup = { kind: "req", convert: groupOpt } as const;
+const optGroup = (d: GroupContent) =>
+  ({ kind: "opt", convert: groupOpt, fallback: d } as const);
 
 const reqFn = { kind: "req", convert: fnOpt } as const;
-const optFn = <F extends FunctionValue | null>(d: F) =>
+const optFn = <F extends FunctionContent | null>(d: F) =>
   ({ kind: "opt", convert: fnOpt, fallback: d } as const);
 
 function typedFn<A extends any[]>(
   specs: { [K in keyof A]: ArgSpec<A[K]> },
-  impl: (...args: A) => Value
-): ValueSignal {
+  impl: (...args: A) => Content
+): ContentSignal {
   return createSignal(
-    createFunction((...sigArgs: (ValueSignal | undefined)[]) => {
-      const inputs: Value[] = Array.from({ length: specs.length }, (_, i) =>
+    createFunction((...sigArgs: (ContentSignal | undefined)[]) => {
+      const inputs: Content[] = Array.from({ length: specs.length }, (_, i) =>
         sigArgs[i] ? sigArgs[i]!.get() : createBlank()
       );
 
@@ -86,10 +86,10 @@ function typedFn<A extends any[]>(
   );
 }
 
-function listNumbersOpt(list: ListValue): number[] {
+function groupNumbersOpt(group: GroupContent): number[] {
   const out: number[] = [];
-  for (const { value } of list.cells) {
-    const v = evalStructural(value);
+  for (const { content } of group.items) {
+    const v = evalStructural(content);
     if (isBlank(v)) continue;
     if (isScalar(v) && typeof v.value === "number") out.push(v.value);
     else throw new TypeError(ERR.numOrBlank);
@@ -97,10 +97,10 @@ function listNumbersOpt(list: ListValue): number[] {
   return out;
 }
 
-function listTextsOpt(list: ListValue): string[] {
+function groupTextsOpt(group: GroupContent): string[] {
   const out: string[] = [];
-  for (const { value } of list.cells) {
-    const v = evalStructural(value);
+  for (const { content } of group.items) {
+    const v = evalStructural(content);
     if (isBlank(v)) continue;
     if (isScalar(v) && typeof v.value === "string") out.push(v.value);
     else throw new TypeError(ERR.textOrBlank);
@@ -109,61 +109,61 @@ function listTextsOpt(list: ListValue): string[] {
 }
 
 function reduceNumbers(
-  source: ListValue,
+  source: GroupContent,
   op: (nums: number[]) => number | null
 ): number | null {
-  const nums = listNumbersOpt(source);
+  const nums = groupNumbersOpt(source);
   return nums.length ? op(nums) : null;
 }
 
 export const library = {
   /* Converters */
 
-  to_flag: valueFn((v) => primitiveToValue(isTruthy(v))),
+  to_flag: contentFn((v) => primitiveToContent(isTruthy(v))),
 
-  to_text: valueFn((v) => primitiveToValue(toText(v))),
+  to_text: contentFn((v) => primitiveToContent(toText(v))),
 
-  to_number: valueFn((v) => primitiveToValue(toNumber(v))),
+  to_number: contentFn((v) => primitiveToContent(toNumber(v))),
 
-  number_or: valueFn((value, fallback) => {
-    const n = numOpt(value);
+  number_or: contentFn((content, fallback) => {
+    const n = numOpt(content);
     return createScalar(n === null ? numOpt(fallback) ?? 0 : n);
   }),
 
-  text_or: valueFn((value, fallback) => {
-    const t = textOpt(value);
+  text_or: contentFn((content, fallback) => {
+    const t = textOpt(content);
     return t === null ? createScalar(textOpt(fallback) ?? "") : createScalar(t);
   }),
 
-  if_blank: valueFn((value, fallback) =>
-    isBlank(value) ? fallback ?? createBlank() : value
+  if_blank: contentFn((content, fallback) =>
+    isBlank(content) ? fallback ?? createBlank() : content
   ),
 
-  first_present: valueFn((...values) => {
-    for (const v of values) if (!isBlank(v)) return v;
+  first_present: contentFn((...contents) => {
+    for (const v of contents) if (!isBlank(v)) return v;
     return createBlank();
   }),
 
   /* Logic */
 
-  not: valueFn((v) => (isTruthy(v) ? createBlank() : createScalar(true))),
+  not: contentFn((v) => (isTruthy(v) ? createBlank() : createScalar(true))),
 
-  and: valueFn((l, r) =>
+  and: contentFn((l, r) =>
     isTruthy(l) && isTruthy(r) ? createScalar(true) : createBlank()
   ),
 
-  or: valueFn((l, r) =>
+  or: contentFn((l, r) =>
     isTruthy(l) || isTruthy(r) ? createScalar(true) : createBlank()
   ),
 
-  if: valueFn((cond, thenV, elseV) => (isTruthy(cond) ? thenV : elseV)),
+  if: contentFn((cond, thenV, elseV) => (isTruthy(cond) ? thenV : elseV)),
 
-  all: valueFn((...values) =>
-    values.every((v) => !isBlank(v)) ? createScalar(true) : createBlank()
+  all: contentFn((...contents) =>
+    contents.every((v) => !isBlank(v)) ? createScalar(true) : createBlank()
   ),
 
-  any: valueFn((...values) =>
-    values.some((v) => !isBlank(v)) ? createScalar(true) : createBlank()
+  any: contentFn((...contents) =>
+    contents.some((v) => !isBlank(v)) ? createScalar(true) : createBlank()
   ),
 
   /* Number */
@@ -241,42 +241,46 @@ export const library = {
   ),
 
   split: typedFn([reqText, optText("")], (t, sep) => {
-    return createList(
-      t.split(sep).map((p) => ({ value: createSignal(createScalar(p)) }))
+    return createGroup(
+      t.split(sep).map((p) => ({ content: createSignal(createScalar(p)) }))
     );
   }),
 
-  /* Lists */
+  /* Groups */
 
-  join: typedFn([reqList, optText(",")], (listV, sep) => {
-    const parts = listTextsOpt(listV);
+  join: typedFn([reqGroup, optText(",")], (groupV, sep) => {
+    const parts = groupTextsOpt(groupV);
     return parts.length ? createScalar(parts.join(sep)) : createBlank();
   }),
 
-  count: typedFn([reqList], (source) =>
+  count: typedFn([reqGroup], (source) =>
     createScalar(
-      source.cells.filter((c) => !isBlank(evalStructural(c.value))).length
+      source.items.filter((c) => !isBlank(evalStructural(c.content))).length
     )
   ),
 
-  count_blank: typedFn([reqList], (source) =>
+  count_blank: typedFn([reqGroup], (source) =>
     createScalar(
-      source.cells.filter((c) => isBlank(evalStructural(c.value))).length
+      source.items.filter((c) => isBlank(evalStructural(c.content))).length
     )
   ),
 
-  map: typedFn([reqList, reqFn], (source, fnValue) =>
-    listMap(source, (value, index, name) => fnValue.fn(value, index, name))
+  map: typedFn([reqGroup, reqFn], (source, fnValue) =>
+    groupMap(source, (content, index, name) => fnValue.fn(content, index, name))
   ),
 
-  filter: typedFn([reqList, reqFn], (source, predValue) =>
-    listFilter(source, (value, index, name) => predValue.fn(value, index, name))
+  filter: typedFn([reqGroup, reqFn], (source, predValue) =>
+    groupFilter(source, (content, index, name) =>
+      predValue.fn(content, index, name)
+    )
   ),
 
-  sort: typedFn([reqList, optFn(null)], (source, keyValue) =>
-    listSort(
+  sort: typedFn([reqGroup, optFn(null)], (source, keyValue) =>
+    groupSort(
       source,
-      keyValue ? (value, index, name) => keyValue.fn(value, index, name) : null
+      keyValue
+        ? (content, index, name) => keyValue.fn(content, index, name)
+        : null
     )
   ),
 
@@ -288,12 +292,12 @@ export const library = {
         initSig = createSignal(createBlank())
       ) => {
         const src = sourceSig.get();
-        if (!isList(src)) throw new TypeError(ERR.list);
+        if (!isGroup(src)) throw new TypeError(ERR.group);
         const rf = fnSig.get();
         if (!isFunction(rf)) throw new TypeError(ERR.function);
-        return listReduce(
+        return groupReduce(
           src,
-          (acc, value, index, name) => rf.fn(acc, value, index, name),
+          (acc, content, index, name) => rf.fn(acc, content, index, name),
           initSig
         );
       }
@@ -302,23 +306,23 @@ export const library = {
 
   /* Number reducers */
 
-  sum: typedFn([reqList], (source) =>
-    primitiveToValue(
+  sum: typedFn([reqGroup], (source) =>
+    primitiveToContent(
       reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0))
     )
   ),
 
-  avg: typedFn([reqList], (source) =>
-    primitiveToValue(
+  avg: typedFn([reqGroup], (source) =>
+    primitiveToContent(
       reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0) / ns.length)
     )
   ),
 
-  min: typedFn([reqList], (source) =>
-    primitiveToValue(reduceNumbers(source, (ns) => Math.min(...ns)))
+  min: typedFn([reqGroup], (source) =>
+    primitiveToContent(reduceNumbers(source, (ns) => Math.min(...ns)))
   ),
 
-  max: typedFn([reqList], (source) =>
-    primitiveToValue(reduceNumbers(source, (ns) => Math.max(...ns)))
+  max: typedFn([reqGroup], (source) =>
+    primitiveToContent(reduceNumbers(source, (ns) => Math.max(...ns)))
   ),
 };

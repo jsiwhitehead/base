@@ -15,8 +15,8 @@ export const ERR = {
   numOrBlank: "Expected number or blank",
   text: "Expected text",
   textOrBlank: "Expected text or blank",
-  textOrList: "Expected text or list",
-  list: "Expected list",
+  textOrGroup: "Expected text or group",
+  group: "Expected group",
   function: "Expected function",
   funcOrBlank: "Expected function or blank",
 
@@ -24,94 +24,98 @@ export const ERR = {
 
   indexFinite: "Index must be a finite number",
   indexOneBased: "Index must be 1 or greater",
-  indexNonList: "Cannot index into a non-list value",
+  indexNonGroup: "Cannot index into a non-group content",
   indexOutOfRange: (index: number, len: number) =>
     `Index ${index} is out of range (length ${len})`,
   indexNameMustBeTextOrNumber: "Index/name must evaluate to text or number",
-  nameOnNonList: (name: string) =>
-    `Cannot access name '${name}' of non-list value`,
+  nameOnNonGroup: (name: string) =>
+    `Cannot access name '${name}' of non-group content`,
   unknownName: (name: string) => `Unknown name '${name}'`,
 
   unboundIdentifier: (name: string) => `Unbound identifier: ${name}`,
   templateParameter: (name: string) => `Template parameter: ${name}`,
-  cannotResolveFunctionValue: "Cannot statically resolve a function value",
+  cannotResolveFunctionContent: "Cannot statically resolve a function content",
 } as const;
 
 /* Types */
 
 export type ScalarPrimitive = true | number | string;
 
-export type ErrorValue = {
+export type ErrorContent = {
   kind: "error";
   message: string;
 };
 
-export type BlankValue = { kind: "blank" };
+export type BlankContent = { kind: "blank" };
 
-export type ScalarValue = {
+export type ScalarContent = {
   kind: "scalar";
   value: ScalarPrimitive;
 };
 
-export type ListValue = {
-  kind: "list";
-  cells: Cell[];
-  valueCellUid?: number;
+export type GroupContent = {
+  kind: "group";
+  items: Item[];
+  contentItemUid?: number;
 };
 
-export type StructuralValue = BlankValue | ScalarValue | ListValue;
+export type StructuralContent = BlankContent | ScalarContent | GroupContent;
 
-export type FunctionValue = {
+export type FunctionContent = {
   kind: "function";
-  fn: (...args: ValueSignal[]) => ValueSignal;
+  fn: (...args: ContentSignal[]) => ContentSignal;
 };
 
-export type DataValue = StructuralValue | FunctionValue;
+export type DataContent = StructuralContent | FunctionContent;
 
-export type Value = DataValue | ErrorValue;
+export type Content = DataContent | ErrorContent;
 
-export type FlowValue = {
-  kind: "flow";
+export type DerivedContent = {
+  kind: "derived";
   code: string;
-  result: ReadSignal<Value>;
+  result: ReadSignal<Content>;
 };
 
-export type LinkValue = {
-  kind: "link";
+export type LensContent = {
+  kind: "lens";
   source: string;
   filter: string;
-  result: ReadSignal<Value>;
+  result: ReadSignal<Content>;
 };
 
 export type MatchPattern =
   | { kind: "pany" }
   | { kind: "plit"; value: ScalarPrimitive }
-  | { kind: "plist"; cells: { name?: string; pat: MatchPattern }[] };
+  | { kind: "pgroup"; items: { name?: string; pat: MatchPattern }[] };
 
-export type MatchValue = {
+export type MatchContent = {
   kind: "match";
   arg: string;
   matches: {
     uid: number;
     pattern: Signal<MatchPattern>;
-    body: CellValueSignal;
+    body: ItemContentSignal;
   }[];
   match: ReadSignal<number | null>;
-  result: ReadSignal<Value>;
+  result: ReadSignal<Content>;
 };
 
-export type TemplateValue<
-  Body extends DataValue | FlowValue | LinkValue =
-    | DataValue
-    | FlowValue
-    | LinkValue
+export type TemplateContent<
+  Body extends DataContent | DerivedContent | LensContent =
+    | DataContent
+    | DerivedContent
+    | LensContent
 > = {
   kind: "template";
   params: string[];
   body: Body;
 };
 
-export type EvalValue = FlowValue | LinkValue | MatchValue | TemplateValue;
+export type EvalContent =
+  | DerivedContent
+  | LensContent
+  | MatchContent
+  | TemplateContent;
 
 type ReadSignal<T> = {
   kind: "signal";
@@ -125,37 +129,37 @@ export type WriteSignal<T> = ReadSignal<T> & {
 
 export type Signal<T> = ReadSignal<T> | WriteSignal<T>;
 
-export type ValueSignal<T extends Value = Value> = Signal<T>;
+export type ContentSignal<T extends Content = Content> = Signal<T>;
 
-export type CellValueSignal =
-  | ReadSignal<Value>
-  | WriteSignal<DataValue | EvalValue>;
+export type ItemContentSignal =
+  | ReadSignal<Content>
+  | WriteSignal<DataContent | EvalContent>;
 
-export type Cell = {
+export type Item = {
   uid: number;
   name: Signal<string>;
   view: Signal<string>;
-  value: CellValueSignal;
+  content: ItemContentSignal;
 };
 
 export type StaticError = { kind: "error"; message: string };
 
-export type StaticCell = {
+export type StaticItem = {
   name?: string;
   view?: string;
-  value: StaticValue;
+  content: StaticContent;
 };
 
-export type StaticListValue = {
-  kind: "list";
-  cells: StaticCell[];
+export type StaticGroupContent = {
+  kind: "group";
+  items: StaticItem[];
 };
 
-export type StaticValue =
+export type StaticContent =
   | StaticError
-  | BlankValue
+  | BlankContent
   | ScalarPrimitive
-  | StaticListValue;
+  | StaticGroupContent;
 
 /* Guards */
 
@@ -163,18 +167,20 @@ function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
 }
 
-export const isError = (v: unknown): v is ErrorValue => hasKind(v, "error");
-export const isBlank = (v: unknown): v is BlankValue => hasKind(v, "blank");
-export const isScalar = (v: unknown): v is ScalarValue => hasKind(v, "scalar");
-export const isList = (v: unknown): v is ListValue => hasKind(v, "list");
-export const isFunction = (v: unknown): v is FunctionValue =>
+export const isError = (v: unknown): v is ErrorContent => hasKind(v, "error");
+export const isBlank = (v: unknown): v is BlankContent => hasKind(v, "blank");
+export const isScalar = (v: unknown): v is ScalarContent =>
+  hasKind(v, "scalar");
+export const isGroup = (v: unknown): v is GroupContent => hasKind(v, "group");
+export const isFunction = (v: unknown): v is FunctionContent =>
   hasKind(v, "function");
-export const isValue = (v: unknown): v is Value =>
-  isError(v) || isBlank(v) || isScalar(v) || isList(v) || isFunction(v);
-export const isFlow = (v: unknown): v is FlowValue => hasKind(v, "flow");
-export const isLink = (v: unknown): v is LinkValue => hasKind(v, "link");
-export const isMatch = (v: unknown): v is MatchValue => hasKind(v, "match");
-export const isTemplate = (v: unknown): v is TemplateValue =>
+export const isContent = (v: unknown): v is Content =>
+  isError(v) || isBlank(v) || isScalar(v) || isGroup(v) || isFunction(v);
+export const isDerived = (v: unknown): v is DerivedContent =>
+  hasKind(v, "derived");
+export const isLens = (v: unknown): v is LensContent => hasKind(v, "lens");
+export const isMatch = (v: unknown): v is MatchContent => hasKind(v, "match");
+export const isTemplate = (v: unknown): v is TemplateContent =>
   hasKind(v, "template");
 export const isSignal = (
   v: unknown
@@ -183,18 +189,18 @@ export const isWritableSignal = (v: unknown): v is WriteSignal<unknown> =>
   isSignal(v) && typeof (v as any).set === "function";
 export const isStaticError = (v: unknown): v is StaticError =>
   hasKind(v, "error");
-export const isStaticList = (v: unknown): v is StaticListValue =>
-  hasKind(v, "list");
+export const isStaticGroup = (v: unknown): v is StaticGroupContent =>
+  hasKind(v, "group");
 
 /* Parents */
 
 type ParentOwnerSig = WriteSignal<
-  ListValue | TemplateValue<ListValue> | MatchValue
+  GroupContent | TemplateContent<GroupContent> | MatchContent
 >;
 type ParentSig = PSignal<ParentOwnerSig | undefined>;
-const parentMap = new WeakMap<CellValueSignal, ParentSig>();
+const parentMap = new WeakMap<ItemContentSignal, ParentSig>();
 
-export function getParentSignal(sig: CellValueSignal): ParentSig {
+export function getParentSignal(sig: ItemContentSignal): ParentSig {
   let p = parentMap.get(sig);
   if (!p) {
     p = signal(undefined);
@@ -203,40 +209,46 @@ export function getParentSignal(sig: CellValueSignal): ParentSig {
   return p;
 }
 
-export function getParent(value: CellValueSignal): ParentOwnerSig | undefined {
-  return getParentSignal(value).value;
+export function getParent(
+  content: ItemContentSignal
+): ParentOwnerSig | undefined {
+  return getParentSignal(content).value;
 }
 
-/* Lists */
+/* Groups */
 
-function listCellSignals(src: ListValue): {
-  cell: Cell;
-  indexSig: ValueSignal;
-  nameSig: ValueSignal;
-  valSig: ValueSignal;
+function groupItemSignals(src: GroupContent): {
+  item: Item;
+  indexSig: ContentSignal;
+  nameSig: ContentSignal;
+  contentSig: ContentSignal;
 }[] {
-  return src.cells.map((c, i) => {
+  return src.items.map((c, i) => {
     const indexSig = createSignal(createScalar(i + 1));
     const nameSig = createComputed(() => {
       const n = c.name.get();
       return n ? createScalar(n) : createBlank();
     });
-    const valSig = createComputed(() => evalValue(c.value));
-    return { cell: c, indexSig, nameSig, valSig };
+    const contentSig = createComputed(() => evalContent(c.content));
+    return { item: c, indexSig, nameSig, contentSig };
   });
 }
 
-export function listMap(
-  src: ListValue,
-  f: (value: ValueSignal, index: ValueSignal, name: ValueSignal) => ValueSignal
-): ListValue {
-  return createList(
-    listCellSignals(src).map(({ cell, indexSig, nameSig, valSig }) => ({
+export function groupMap(
+  src: GroupContent,
+  f: (
+    content: ContentSignal,
+    index: ContentSignal,
+    name: ContentSignal
+  ) => ContentSignal
+): GroupContent {
+  return createGroup(
+    groupItemSignals(src).map(({ item, indexSig, nameSig, contentSig }) => ({
       uid: newUid(),
-      name: cell.name,
-      value: createComputed(() => {
+      name: item.name,
+      content: createComputed(() => {
         try {
-          return f(valSig, indexSig, nameSig).get();
+          return f(contentSig, indexSig, nameSig).get();
         } catch (err) {
           return createError(err instanceof Error ? err.message : String(err));
         }
@@ -245,49 +257,49 @@ export function listMap(
   );
 }
 
-export function listFilter(
-  src: ListValue,
+export function groupFilter(
+  src: GroupContent,
   pred: (
-    value: ValueSignal,
-    index: ValueSignal,
-    name: ValueSignal
-  ) => ValueSignal
-): ListValue {
-  return createList(
-    listCellSignals(src)
-      .filter(({ valSig, indexSig, nameSig }) =>
-        isTruthy(pred(valSig, indexSig, nameSig).get())
+    content: ContentSignal,
+    index: ContentSignal,
+    name: ContentSignal
+  ) => ContentSignal
+): GroupContent {
+  return createGroup(
+    groupItemSignals(src)
+      .filter(({ contentSig, indexSig, nameSig }) =>
+        isTruthy(pred(contentSig, indexSig, nameSig).get())
       )
-      .map(({ cell }) => cell),
-    src.valueCellUid
+      .map(({ item }) => item),
+    src.contentItemUid
   );
 }
 
-export function listReduce(
-  src: ListValue,
+export function groupReduce(
+  src: GroupContent,
   rf: (
-    acc: ValueSignal,
-    value: ValueSignal,
-    index: ValueSignal,
-    name: ValueSignal
-  ) => ValueSignal,
-  init: ValueSignal
-): ValueSignal {
-  const seq = listCellSignals(src);
+    acc: ContentSignal,
+    content: ContentSignal,
+    index: ContentSignal,
+    name: ContentSignal
+  ) => ContentSignal,
+  init: ContentSignal
+): ContentSignal {
+  const seq = groupItemSignals(src);
   if (seq.length === 0) return init;
 
-  const step = (acc: ValueSignal, e: (typeof seq)[number]) =>
-    rf(acc, e.valSig, e.indexSig, e.nameSig);
+  const step = (acc: ContentSignal, e: (typeof seq)[number]) =>
+    rf(acc, e.contentSig, e.indexSig, e.nameSig);
 
   if (!isBlank(init.get())) {
     return seq.reduce(step, init);
   }
 
-  const first = createSignal(evalValue(src.cells[0]!.value));
+  const first = createSignal(evalContent(src.items[0]!.content));
   return seq.slice(1).reduce(step, first);
 }
 
-function sortRank(v: Value): [number, any] {
+function sortRank(v: Content): [number, any] {
   // numbers < text < true < other < blank
   if (isBlank(v)) return [4, null];
   if (isScalar(v)) {
@@ -301,7 +313,7 @@ function sortRank(v: Value): [number, any] {
 
 const collator = new Intl.Collator(undefined, { sensitivity: "base" });
 
-function sortCmp<T extends { sortKey: Value; index: number }>(
+function sortCmp<T extends { sortKey: Content; index: number }>(
   a: T,
   b: T
 ): number {
@@ -318,62 +330,62 @@ function sortCmp<T extends { sortKey: Value; index: number }>(
   return a.index - b.index;
 }
 
-export function listSort(
-  src: ListValue,
+export function groupSort(
+  src: GroupContent,
   keySelector:
     | null
     | ((
-        value: ValueSignal,
-        index: ValueSignal,
-        name: ValueSignal
-      ) => ValueSignal)
-): ListValue {
-  const rows = listCellSignals(src).map(
-    ({ cell, indexSig, nameSig, valSig }, i) => ({
-      uid: cell.uid,
-      name: cell.name,
-      view: cell.view,
-      value: cell.value,
+        content: ContentSignal,
+        index: ContentSignal,
+        name: ContentSignal
+      ) => ContentSignal)
+): GroupContent {
+  const rows = groupItemSignals(src).map(
+    ({ item, indexSig, nameSig, contentSig }, i) => ({
+      uid: item.uid,
+      name: item.name,
+      view: item.view,
+      content: item.content,
       index: i,
       sortKey: keySelector
-        ? keySelector(valSig, indexSig, nameSig).get()
-        : evalValue(cell.value),
+        ? keySelector(contentSig, indexSig, nameSig).get()
+        : evalContent(item.content),
     })
   );
 
   rows.sort(sortCmp);
-  return createList(rows, src.valueCellUid);
+  return createGroup(rows, src.contentItemUid);
 }
 
 /* Constructors */
 
-let nextCellUid = 1;
+let nextItemUid = 1;
 export function newUid() {
-  return nextCellUid++;
+  return nextItemUid++;
 }
 
-export const createError = (message: string): ErrorValue => ({
+export const createError = (message: string): ErrorContent => ({
   kind: "error",
   message,
 });
 
-export const createBlank = (): BlankValue => ({ kind: "blank" });
+export const createBlank = (): BlankContent => ({ kind: "blank" });
 
-export const createScalar = (value: ScalarPrimitive): ScalarValue => ({
+export const createScalar = (value: ScalarPrimitive): ScalarContent => ({
   kind: "scalar",
   value,
 });
 
-export function createList(
-  cells: {
+export function createGroup(
+  items: {
     uid?: number;
     name?: string | Signal<string>;
     view?: string | Signal<string>;
-    value: CellValueSignal;
+    content: ItemContentSignal;
   }[] = [],
-  valueCellUid?: number
-): ListValue {
-  const outCells = cells.map((c) => {
+  contentItemUid?: number
+): GroupContent {
+  const outItems = items.map((c) => {
     let nameSig: Signal<string>;
     if (isSignal(c.name)) {
       nameSig = c.name;
@@ -392,26 +404,26 @@ export function createList(
       uid: c.uid ?? newUid(),
       name: nameSig,
       view: viewSig,
-      value: c.value,
+      content: c.content,
     };
   });
   return {
-    kind: "list",
-    cells: outCells,
-    valueCellUid: outCells.find((c) => c.uid === valueCellUid)?.uid,
+    kind: "group",
+    items: outItems,
+    contentItemUid: outItems.find((c) => c.uid === contentItemUid)?.uid,
   };
 }
 
 export const createFunction = (
-  fn: (...args: ValueSignal[]) => ValueSignal
-): FunctionValue => ({ kind: "function", fn });
+  fn: (...args: ContentSignal[]) => ContentSignal
+): FunctionContent => ({ kind: "function", fn });
 
-function flowComputed(
-  owner: CellValueSignal,
+function derivedComputed(
+  owner: ItemContentSignal,
   code: string,
   params?: ScopeParams
-): ReadSignal<Value> {
-  return createComputed<Value>(() => {
+): ReadSignal<Content> {
+  return createComputed<Content>(() => {
     try {
       return evalCode(code, (name: string) =>
         lookupInScope(name, owner, params)
@@ -422,35 +434,38 @@ function flowComputed(
   });
 }
 
-export function createFlow(owner: CellValueSignal, code: string): FlowValue {
-  return { kind: "flow", code, result: flowComputed(owner, code) };
+export function createDerived(
+  owner: ItemContentSignal,
+  code: string
+): DerivedContent {
+  return { kind: "derived", code, result: derivedComputed(owner, code) };
 }
 
-export function createLink(
-  owner: CellValueSignal,
+export function createLens(
+  owner: ItemContentSignal,
   source: string,
   filter: string
-): LinkValue {
-  const result = createComputed<Value>(() => {
+): LensContent {
+  const result = createComputed<Content>(() => {
     try {
       if (!source.trim()) return createBlank();
 
       const target = lookupInScope(source, owner).get();
-      if (!isList(target)) throw new TypeError(ERR.list);
+      if (!isGroup(target)) throw new TypeError(ERR.group);
 
       const code = filter.trim();
-      if (!code) return createList(target.cells, target.valueCellUid);
+      if (!code) return createGroup(target.items, target.contentItemUid);
 
       const pred = evalCode(code, (n: string) => lookupInScope(n, owner));
       if (!isFunction(pred)) throw new TypeError(ERR.function);
 
-      return listFilter(target, pred.fn);
+      return groupFilter(target, pred.fn);
     } catch (err) {
       return createError(err instanceof Error ? err.message : String(err));
     }
   });
 
-  return { kind: "link", source, filter, result };
+  return { kind: "lens", source, filter, result };
 }
 
 function patternToText(p: MatchPattern): string {
@@ -465,29 +480,33 @@ function textToPattern(text: string): MatchPattern {
   }
 }
 
-function matchPattern(value: Value, pat: MatchPattern, params?: ScopeParams) {
-  if (isError(value)) return false;
+function matchPattern(
+  content: Content,
+  pat: MatchPattern,
+  params?: ScopeParams
+) {
+  if (isError(content)) return false;
 
   switch (pat.kind) {
     case "pany":
       return true;
 
     case "plit":
-      return isScalar(value) && value.value === pat.value;
+      return isScalar(content) && content.value === pat.value;
 
-    case "plist": {
-      if (!isList(value)) return false;
+    case "pgroup": {
+      if (!isGroup(content)) return false;
 
-      for (let i = 0; i < pat.cells.length; i++) {
-        const { name, pat: sub } = pat.cells[i]!;
-        let cell: Cell | undefined;
+      for (let i = 0; i < pat.items.length; i++) {
+        const { name, pat: sub } = pat.items[i]!;
+        let item: Item | undefined;
 
-        if (name) cell = value.cells.find((c) => c.name.get() === name);
-        else cell = value.cells[i];
+        if (name) item = content.items.find((c) => c.name.get() === name);
+        else item = content.items[i];
 
-        if (!cell) return false;
+        if (!item) return false;
 
-        const v = evalValue(cell.value, params);
+        const v = evalContent(item.content, params);
         if (!matchPattern(v, sub, params)) return false;
       }
       return true;
@@ -500,10 +519,10 @@ export function createMatchSignal(
   matches: {
     uid?: number;
     pattern: MatchPattern;
-    body: CellValueSignal;
+    body: ItemContentSignal;
   }[] = []
-): WriteSignal<MatchValue> {
-  const sig = createSignal<MatchValue>(null as any);
+): WriteSignal<MatchContent> {
+  const sig = createSignal<MatchContent>(null as any);
 
   batch(() => {
     const norm = matches.map((m) => ({
@@ -538,7 +557,7 @@ export function createMatchSignal(
         const arm = norm.find((m) => m.uid === uid);
         if (!arm) return createBlank();
 
-        return evalValue(arm.body);
+        return evalContent(arm.body);
       } catch (err) {
         return createError(err instanceof Error ? err.message : String(err));
       }
@@ -550,10 +569,9 @@ export function createMatchSignal(
   return sig;
 }
 
-export function createTemplate<Body extends DataValue | FlowValue | LinkValue>(
-  params: string[],
-  body: Body
-): TemplateValue<Body> {
+export function createTemplate<
+  Body extends DataContent | DerivedContent | LensContent
+>(params: string[], body: Body): TemplateContent<Body> {
   return { kind: "template", params, body };
 }
 
@@ -574,44 +592,44 @@ export function createSignal<T>(initial: T): WriteSignal<T> {
   };
 }
 
-export function createListSignal(
-  cells: {
+export function createGroupSignal(
+  items: {
     uid?: number;
     name?: string | Signal<string>;
     view?: string | Signal<string>;
-    value: CellValueSignal;
+    content: ItemContentSignal;
   }[] = [],
-  valueCellUid?: number
-): WriteSignal<ListValue> {
-  const sig = createSignal<ListValue>(null as any);
+  contentItemUid?: number
+): WriteSignal<GroupContent> {
+  const sig = createSignal<GroupContent>(null as any);
 
   batch(() => {
-    for (const c of cells) {
-      getParentSignal(c.value).value = sig;
+    for (const c of items) {
+      getParentSignal(c.content).value = sig;
     }
-    sig.set(createList(cells, valueCellUid));
+    sig.set(createGroup(items, contentItemUid));
   });
 
   return sig;
 }
 
-export function createTemplateListSignal(
+export function createTemplateGroupSignal(
   params: string[],
-  cells: {
+  items: {
     uid?: number;
     name?: string | Signal<string>;
     view?: string | Signal<string>;
-    value: CellValueSignal;
+    content: ItemContentSignal;
   }[] = [],
-  valueCellUid?: number
-): WriteSignal<TemplateValue<ListValue>> {
-  const sig = createSignal<TemplateValue<ListValue>>(null as any);
+  contentItemUid?: number
+): WriteSignal<TemplateContent<GroupContent>> {
+  const sig = createSignal<TemplateContent<GroupContent>>(null as any);
 
   batch(() => {
-    for (const c of cells) {
-      getParentSignal(c.value).value = sig;
+    for (const c of items) {
+      getParentSignal(c.content).value = sig;
     }
-    sig.set(createTemplate(params, createList(cells, valueCellUid)));
+    sig.set(createTemplate(params, createGroup(items, contentItemUid)));
   });
 
   return sig;
@@ -621,32 +639,32 @@ function asReadOnlySignal<T>(sig: Signal<T>): ReadSignal<T> {
   return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
 }
 
-function readonlyValue(v: Value, params?: ScopeParams): Value {
+function readonlyContent(v: Content, params?: ScopeParams): Content {
   if (isError(v) || isBlank(v) || isScalar(v) || isFunction(v)) return v;
-  return createList(
-    v.cells.map((c) => ({
+  return createGroup(
+    v.items.map((c) => ({
       uid: newUid(),
       name: asReadOnlySignal(c.name),
       view: asReadOnlySignal(c.view),
-      value: createComputed(() =>
-        readonlyValue(evalValue(c.value, params), params)
+      content: createComputed(() =>
+        readonlyContent(evalContent(c.content, params), params)
       ),
     })),
-    v.valueCellUid
+    v.contentItemUid
   );
 }
 
 /* Conversions */
 
-export function isTruthy(value: Value): boolean {
-  if (isError(value) || isBlank(value)) return false;
+export function isTruthy(content: Content): boolean {
+  if (isError(content) || isBlank(content)) return false;
   return true;
 }
 
-export function toNumber(value: Value): number | null {
-  if (isBlank(value)) return null;
-  if (isScalar(value)) {
-    const v = value.value;
+export function toNumber(content: Content): number | null {
+  if (isBlank(content)) return null;
+  if (isScalar(content)) {
+    const v = content.value;
     if (typeof v === "number") return v;
     if (v === true) return 1;
     if (typeof v === "string") {
@@ -657,72 +675,75 @@ export function toNumber(value: Value): number | null {
   return null;
 }
 
-export function toText(value: Value): string | null {
-  if (isError(value)) return value.message;
-  if (isBlank(value)) return null;
-  if (isScalar(value)) return String(value.value);
+export function toText(content: Content): string | null {
+  if (isError(content)) return content.message;
+  if (isBlank(content)) return null;
+  if (isScalar(content)) return String(content.value);
   return null;
 }
 
-export function numOpt(value: Value): number | null {
-  if (isBlank(value)) return null;
-  if (isScalar(value) && typeof value.value === "number") return value.value;
+export function numOpt(content: Content): number | null {
+  if (isBlank(content)) return null;
+  if (isScalar(content) && typeof content.value === "number")
+    return content.value;
   throw new TypeError(ERR.numOrBlank);
 }
 
-export function textOpt(value: Value): string | null {
-  if (isBlank(value)) return null;
-  if (isScalar(value) && typeof value.value === "string") return value.value;
+export function textOpt(content: Content): string | null {
+  if (isBlank(content)) return null;
+  if (isScalar(content) && typeof content.value === "string")
+    return content.value;
   throw new TypeError(ERR.textOrBlank);
 }
 
-export function listOpt(value: Value): ListValue | null {
-  if (isBlank(value)) return null;
-  if (isList(value)) return value;
-  throw new TypeError(ERR.list);
+export function groupOpt(content: Content): GroupContent | null {
+  if (isBlank(content)) return null;
+  if (isGroup(content)) return content;
+  throw new TypeError(ERR.group);
 }
 
-export function fnOpt(value: Value): FunctionValue | null {
-  if (isBlank(value)) return null;
-  if (isFunction(value)) return value as FunctionValue;
+export function fnOpt(content: Content): FunctionContent | null {
+  if (isBlank(content)) return null;
+  if (isFunction(content)) return content as FunctionContent;
   throw new TypeError(ERR.function);
 }
 
-export function flagExpect(value: Value): boolean {
-  if (isBlank(value)) return false;
-  if (isScalar(value) && value.value === true) return true;
+export function flagExpect(content: Content): boolean {
+  if (isBlank(content)) return false;
+  if (isScalar(content) && content.value === true) return true;
   throw new TypeError(ERR.flag);
 }
 
-export function primExpect(value: Value): ScalarPrimitive {
-  if (isScalar(value)) return value.value;
+export function primExpect(content: Content): ScalarPrimitive {
+  if (isScalar(content)) return content.value;
   throw new TypeError(ERR.literal);
 }
 
-export function numExpect(value: Value): number {
-  if (isScalar(value) && typeof value.value === "number") return value.value;
+export function numExpect(content: Content): number {
+  if (isScalar(content) && typeof content.value === "number")
+    return content.value;
   throw new TypeError(ERR.number);
 }
 
-export function primitiveToValue(
+export function primitiveToContent(
   v: boolean | number | string | null
-): BlankValue | ScalarValue {
+): BlankContent | ScalarContent {
   if (v === null || v === false) return createBlank();
   return createScalar(v);
 }
 
-export function size(value: Value): number | null {
-  if (isError(value)) return null;
-  if (isBlank(value)) return null;
-  if (isScalar(value) && typeof value.value === "string")
-    return value.value.length;
-  if (isList(value)) return value.cells.length;
-  throw new TypeError(ERR.textOrList);
+export function size(content: Content): number | null {
+  if (isError(content)) return null;
+  if (isBlank(content)) return null;
+  if (isScalar(content) && typeof content.value === "string")
+    return content.value.length;
+  if (isGroup(content)) return content.items.length;
+  throw new TypeError(ERR.textOrGroup);
 }
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-export function parseScalarInput(text: string): DataValue {
+export function parseScalarInput(text: string): DataContent {
   const trimmed = text.trim();
   if (NUM_RE.test(trimmed)) {
     const n = Number(trimmed);
@@ -776,33 +797,35 @@ export function sliceText(
   return indices.map((i) => text.charAt(i - 1)).join("");
 }
 
-export function sliceList(
-  list: ListValue,
+export function sliceGroup(
+  group: GroupContent,
   start: number | null,
   end: number | null,
   step: number | null
-): ListValue {
-  const indices = computeSliceIndices(start, end, step, list.cells.length);
-  const cells = indices.map((oneBased) => list.cells[oneBased - 1]!);
-  return createList(cells, list.valueCellUid);
+): GroupContent {
+  const indices = computeSliceIndices(start, end, step, group.items.length);
+  const items = indices.map((oneBased) => group.items[oneBased - 1]!);
+  return createGroup(items, group.contentItemUid);
 }
 
-export function createRangeList(
+export function createRangeGroup(
   start: number | null,
   end: number | null,
   step: number | null = null
-): ListValue {
+): GroupContent {
   const indices = computeSliceIndices(start, end, step, null);
-  const cells = indices.map((n) => ({
-    value: createSignal(createScalar(n)),
+  const items = indices.map((n) => ({
+    content: createSignal(createScalar(n)),
   }));
-  return createList(cells);
+  return createGroup(items);
 }
 
 /* Evaluation */
 
-const evalCode: (code: string, scope: (name: string) => ValueSignal) => Value =
-  require("./code").evalCode;
+const evalCode: (
+  code: string,
+  scope: (name: string) => ContentSignal
+) => Content = require("./code").evalCode;
 
 function toStaticError(err: unknown): StaticError {
   return {
@@ -811,33 +834,33 @@ function toStaticError(err: unknown): StaticError {
   };
 }
 
-let __globalLib: Map<string, ValueSignal> | null = null;
-export function setGlobalLibrary(entries: Record<string, ValueSignal>) {
+let __globalLib: Map<string, ContentSignal> | null = null;
+export function setGlobalLibrary(entries: Record<string, ContentSignal>) {
   __globalLib = new Map(
     Object.entries(entries).map(([k, v]) => [k.toLowerCase(), v])
   );
 }
 
-type ScopeParams = Map<CellValueSignal, Record<string, ValueSignal>>;
+type ScopeParams = Map<ItemContentSignal, Record<string, ContentSignal>>;
 
 function lookupInScope(
   name: string,
-  start: CellValueSignal,
+  start: ItemContentSignal,
   params?: ScopeParams
-): ValueSignal {
+): ContentSignal {
   let scope = getParentSignal(start).value;
   while (scope) {
     const outer = scope.get();
     const inner = isTemplate(outer) ? outer.body : outer;
 
-    if (isList(inner)) {
-      const found = inner.cells.find((c) => c.name.get() === name);
-      if (found) return createSignal(evalValue(found.value, params));
+    if (isGroup(inner)) {
+      const found = inner.items.find((c) => c.name.get() === name);
+      if (found) return createSignal(evalContent(found.content, params));
     }
 
     if (isTemplate(outer) && outer.params.includes(name)) {
       const found = params?.get(scope)?.[name];
-      if (found) return createSignal(evalValue(found, params));
+      if (found) return createSignal(evalContent(found, params));
       throw new Error(ERR.templateParameter(name));
     }
 
@@ -851,30 +874,29 @@ function lookupInScope(
 }
 
 export function evalStructural(
-  sig: CellValueSignal,
+  sig: ItemContentSignal,
   params?: ScopeParams
-): Value {
+): Content {
   const v = sig.get();
 
-  if (isFlow(v)) {
+  if (isDerived(v)) {
     const out = params
-      ? flowComputed(sig, v.code, params).get()
+      ? derivedComputed(sig, v.code, params).get()
       : v.result.get();
-
-    return readonlyValue(out, params);
+    return readonlyContent(out, params);
   }
 
-  if (isLink(v)) {
+  if (isLens(v)) {
     return v.result.get();
   }
 
   if (isMatch(v)) {
-    return createList(
+    return createGroup(
       v.matches.map((m) => ({
         uid: m.uid,
         name: createSignal(""),
         view: createSignal(""),
-        value: m.body,
+        content: m.body,
       }))
     );
   }
@@ -886,7 +908,10 @@ export function evalStructural(
   return v;
 }
 
-export function evalValue(sig: CellValueSignal, params?: ScopeParams): Value {
+export function evalContent(
+  sig: ItemContentSignal,
+  params?: ScopeParams
+): Content {
   const v = sig.get();
 
   if (isMatch(v)) {
@@ -903,37 +928,39 @@ export function evalValue(sig: CellValueSignal, params?: ScopeParams): Value {
             v.params.map((p, i) => [p, args[i] ?? createSignal(createBlank())])
           )
         );
-        return readonlyValue(
-          evalValue(createSignal(v.body), nextParams),
+        return readonlyContent(
+          evalContent(createSignal(v.body), nextParams),
           nextParams
         );
       })
     );
   }
 
-  const value = evalStructural(sig, params);
-  if (!isList(value) || value.valueCellUid === undefined) return value;
+  const content = evalStructural(sig, params);
+  if (!isGroup(content) || content.contentItemUid === undefined) return content;
 
-  return evalValue(
-    value.cells.find((c) => c.uid === value.valueCellUid)!.value,
+  return evalContent(
+    content.items.find((c) => c.uid === content.contentItemUid)!.content,
     params
   );
 }
 
-export function resolveValue(value: Value): StaticValue {
-  if (value.kind === "error") return value;
+export function resolveContent(content: Content): StaticContent {
+  if (content.kind === "error") return content;
 
-  if (value.kind === "blank") return { kind: "blank" };
-  if (value.kind === "scalar") return value.value;
+  if (content.kind === "blank") return { kind: "blank" };
+  if (content.kind === "scalar") return content.value;
 
-  if (value.kind === "list") {
-    if (value.valueCellUid !== undefined) {
-      return resolveValue(
-        evalValue(value.cells.find((c) => c.uid === value.valueCellUid)!.value)
+  if (content.kind === "group") {
+    if (content.contentItemUid !== undefined) {
+      return resolveContent(
+        evalContent(
+          content.items.find((c) => c.uid === content.contentItemUid)!.content
+        )
       );
     }
 
-    const cells: StaticCell[] = value.cells.map((c) => {
+    const items: StaticItem[] = content.items.map((c) => {
       const nm = c.name.get();
       const vw = c.view.get();
       const outName = nm === "" ? undefined : nm;
@@ -942,28 +969,28 @@ export function resolveValue(value: Value): StaticValue {
         return {
           name: outName,
           view: outView,
-          value: resolveValue(evalValue(c.value)),
+          content: resolveContent(evalContent(c.content)),
         };
       } catch (err) {
         return {
           name: outName,
           view: outView,
-          value: toStaticError(err),
+          content: toStaticError(err),
         };
       }
     });
-    return { kind: "list", cells };
+    return { kind: "group", items };
   }
 
   return {
     kind: "error",
-    message: ERR.cannotResolveFunctionValue,
+    message: ERR.cannotResolveFunctionContent,
   };
 }
 
 /* Getters */
 
-function softWrap<T>(required: boolean, fn: () => T): T | BlankValue {
+function softWrap<T>(required: boolean, fn: () => T): T | BlankContent {
   if (required) return fn();
   try {
     return fn();
@@ -979,43 +1006,47 @@ function softWrap<T>(required: boolean, fn: () => T): T | BlankValue {
   }
 }
 
-export function getByName(list: Value, name: string, required = false): Value {
+export function getByName(
+  group: Content,
+  name: string,
+  required = false
+): Content {
   return softWrap(required, () => {
-    if (!isList(list)) throw new TypeError(ERR.nameOnNonList(name));
-    const cell = list.cells.find((v) => v.name.get() === name);
-    if (!cell) throw new ReferenceError(ERR.unknownName(name));
-    return evalValue(cell.value);
+    if (!isGroup(group)) throw new TypeError(ERR.nameOnNonGroup(name));
+    const item = group.items.find((v) => v.name.get() === name);
+    if (!item) throw new ReferenceError(ERR.unknownName(name));
+    return evalContent(item.content);
   });
 }
 
 export function getByIndex(
-  list: Value,
+  group: Content,
   index1: number,
   required = false
-): Value {
+): Content {
   return softWrap(required, () => {
     if (!Number.isFinite(index1)) throw new TypeError(ERR.indexFinite);
     const idx0 = Math.trunc(index1) - 1;
     if (idx0 < 0) throw new RangeError(ERR.indexOneBased);
-    if (!isList(list)) throw new TypeError(ERR.indexNonList);
-    const cell = list.cells[idx0];
-    if (!cell)
-      throw new RangeError(ERR.indexOutOfRange(index1, list.cells.length));
-    return evalValue(cell.value);
+    if (!isGroup(group)) throw new TypeError(ERR.indexNonGroup);
+    const item = group.items[idx0];
+    if (!item)
+      throw new RangeError(ERR.indexOutOfRange(index1, group.items.length));
+    return evalContent(item.content);
   });
 }
 
 export function getByIndexOrName(
-  list: Value,
-  value: Value,
+  group: Content,
+  content: Content,
   required = false
-): Value {
+): Content {
   return softWrap(required, () => {
-    if (!isList(list)) throw new TypeError(ERR.indexNonList);
-    if (isScalar(value)) {
-      const lit = value.value;
-      if (typeof lit === "number") return getByIndex(list, lit, required);
-      if (typeof lit === "string") return getByName(list, lit, required);
+    if (!isGroup(group)) throw new TypeError(ERR.indexNonGroup);
+    if (isScalar(content)) {
+      const lit = content.value;
+      if (typeof lit === "number") return getByIndex(group, lit, required);
+      if (typeof lit === "string") return getByName(group, lit, required);
     }
     throw new TypeError(ERR.indexNameMustBeTextOrNumber);
   });
@@ -1026,11 +1057,11 @@ export function getByIndexOrName(
 export type NavLayoutContext = "default" | "table-cell" | "bar-child";
 
 export function getLayoutContext(
-  parentCell?: Cell,
-  grandparentCell?: Cell
+  parentItem?: Item,
+  grandparentItem?: Item
 ): NavLayoutContext {
-  const parentView = parentCell?.view.peek() ?? "";
-  const grandparentView = grandparentCell?.view.peek() ?? "";
+  const parentView = parentItem?.view.peek() ?? "";
+  const grandparentView = grandparentItem?.view.peek() ?? "";
 
   return grandparentView === "table"
     ? "table-cell"
@@ -1047,21 +1078,21 @@ export type RenderScalar = {
   editable: boolean;
 };
 
-export type RenderModel = RenderScalar | ListValue;
+export type RenderModel = RenderScalar | GroupContent;
 
 export function getRenderModel(
-  sig: CellValueSignal,
+  sig: ItemContentSignal,
   params?: ScopeParams
 ): RenderModel {
   const v = evalStructural(sig, params);
 
-  if (isList(v)) return v;
+  if (isGroup(v)) return v;
 
   const stored = sig.get();
   const bodyEditable =
     isWritableSignal(sig) &&
-    !isFlow(stored) &&
-    !isLink(stored) &&
+    !isDerived(stored) &&
+    !isLens(stored) &&
     !isMatch(stored) &&
     !isTemplate(stored);
 
@@ -1111,11 +1142,11 @@ export function getRenderModel(
 }
 
 export function getRenderChildren(
-  sig: CellValueSignal,
+  sig: ItemContentSignal,
   params?: ScopeParams
-): Cell[] {
+): Item[] {
   const v = evalStructural(sig, params);
-  return isList(v) ? v.cells : [];
+  return isGroup(v) ? v.items : [];
 }
 
 export type EditorFieldMode =
@@ -1132,23 +1163,23 @@ export type EditorField = {
   set?: (next: string) => void;
 };
 
-export function getRenderEditors(cell: Cell): EditorField[] {
-  const childSig = cell.value;
+export function getRenderEditors(item: Item): EditorField[] {
+  const childSig = item.content;
   const fields: EditorField[] = [];
 
-  if (isFlow(childSig.get())) {
+  if (isDerived(childSig.get())) {
     fields.push({
       mode: "header-multi",
       label: "=",
       get: computed(() => {
         const v = childSig.get();
-        return isFlow(v) ? v.code : null;
+        return isDerived(v) ? v.code : null;
       }),
       set: isWritableSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
-            if (isFlow(cur) && cur.code !== next) {
-              childSig.set(createFlow(childSig, next));
+            if (isDerived(cur) && cur.code !== next) {
+              childSig.set(createDerived(childSig, next));
             }
           }
         : undefined,
@@ -1156,19 +1187,19 @@ export function getRenderEditors(cell: Cell): EditorField[] {
     return fields;
   }
 
-  if (isLink(childSig.get())) {
+  if (isLens(childSig.get())) {
     fields.push({
       mode: "header",
       label: "~",
       get: computed(() => {
         const v = childSig.get();
-        return isLink(v) ? v.source : null;
+        return isLens(v) ? v.source : null;
       }),
       set: isWritableSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
-            if (isLink(cur) && cur.source !== next) {
-              childSig.set(createLink(childSig, next, cur.filter));
+            if (isLens(cur) && cur.source !== next) {
+              childSig.set(createLens(childSig, next, cur.filter));
             }
           }
         : undefined,
@@ -1179,13 +1210,13 @@ export function getRenderEditors(cell: Cell): EditorField[] {
       label: "filter:",
       get: computed(() => {
         const v = childSig.get();
-        return isLink(v) ? v.filter : null;
+        return isLens(v) ? v.filter : null;
       }),
       set: isWritableSignal(childSig)
         ? (next) => {
             const cur = childSig.peek();
-            if (isLink(cur) && cur.filter !== next) {
-              childSig.set(createLink(childSig, cur.source, next));
+            if (isLens(cur) && cur.filter !== next) {
+              childSig.set(createLens(childSig, cur.source, next));
             }
           }
         : undefined,
@@ -1244,10 +1275,10 @@ export function getRenderEditors(cell: Cell): EditorField[] {
     return fields;
   }
 
-  const parent = getParent(cell.value);
+  const parent = getParent(item.content);
   const pv = parent?.get();
   if (pv && isMatch(pv)) {
-    const arm = pv.matches.find((m) => m.uid === cell.uid);
+    const arm = pv.matches.find((m) => m.uid === item.uid);
     if (arm) {
       const pattern = arm.pattern;
       fields.push({
@@ -1275,21 +1306,21 @@ type RenderProps = {
 };
 
 export function getRenderProps(
-  sig: CellValueSignal,
+  sig: ItemContentSignal,
   params?: ScopeParams
 ): RenderProps | null {
   const v = evalStructural(sig, params);
-  if (!isList(v)) return null;
+  if (!isGroup(v)) return null;
 
-  const byName = new Map<string, Cell>();
-  for (const c of v.cells) {
+  const byName = new Map<string, Item>();
+  for (const c of v.items) {
     const n = c.name.get();
     if (n) byName.set(n, c);
   }
 
-  const read = (name: string): Value => {
+  const read = (name: string): Content => {
     const c = byName.get(name);
-    return c ? evalStructural(c.value, params) : createBlank();
+    return c ? evalStructural(c.content, params) : createBlank();
   };
 
   return {
@@ -1301,44 +1332,46 @@ export function getRenderProps(
 
     setFlag(name: string, value: boolean): boolean {
       const c = byName.get(name);
-      if (!c || !isWritableSignal(c.value)) return false;
-      c.value.set(primitiveToValue(value));
+      if (!c || !isWritableSignal(c.content)) return false;
+      c.content.set(primitiveToContent(value));
       return true;
     },
   };
 }
 
 type ParentEditContext = {
-  parent: WriteSignal<ListValue | TemplateValue<ListValue>>;
-  before: Cell[];
+  parent: WriteSignal<GroupContent | TemplateContent<GroupContent>>;
+  before: Item[];
   index: number;
-  valueCellUid?: number;
+  contentItemUid?: number;
   params?: string[];
 };
 
 type ParentEditResult = {
-  after: Cell[];
-  valueCellUid?: number;
+  after: Item[];
+  contentItemUid?: number;
 };
 
-export function editParentList(
-  value: CellValueSignal,
+export function editParentGroup(
+  content: ItemContentSignal,
   childUid: number,
   fn: (ctx: ParentEditContext) => ParentEditResult
 ): ParentEditResult | null {
-  const parentAny = getParent(value);
+  const parentAny = getParent(content);
   if (!parentAny) return null;
 
   const pv = parentAny.peek?.();
   if (!pv) return null;
 
   const isTpl = isTemplate(pv);
-  const list = isTpl ? pv.body : pv;
-  if (!isList(list)) return null;
+  const group = isTpl ? pv.body : pv;
+  if (!isGroup(group)) return null;
 
-  const parent = parentAny as WriteSignal<ListValue | TemplateValue<ListValue>>;
+  const parent = parentAny as WriteSignal<
+    GroupContent | TemplateContent<GroupContent>
+  >;
 
-  const before = list.cells;
+  const before = group.items;
   const index = before.findIndex((c) => c.uid === childUid);
   if (index < 0) return null;
 
@@ -1349,15 +1382,15 @@ export function editParentList(
       parent,
       before,
       index,
-      valueCellUid: list.valueCellUid,
+      contentItemUid: group.contentItemUid,
       params: isTpl ? pv.params : undefined,
     });
 
-    const valueCellUid = edit.valueCellUid ?? list.valueCellUid;
-    const nextList = createList(edit.after, valueCellUid);
+    const contentItemUid = edit.contentItemUid ?? group.contentItemUid;
+    const nextGroup = createGroup(edit.after, contentItemUid);
 
-    parent.set(isTpl ? createTemplate(pv.params, nextList) : nextList);
-    result = { after: edit.after, valueCellUid: edit.valueCellUid };
+    parent.set(isTpl ? createTemplate(pv.params, nextGroup) : nextGroup);
+    result = { after: edit.after, contentItemUid: edit.contentItemUid };
   });
 
   return result;

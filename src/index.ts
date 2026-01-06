@@ -2,21 +2,21 @@ import { effect } from "@preact/signals-core";
 
 import {
   type ScalarPrimitive,
-  type ListValue,
-  type DataValue,
-  type EvalValue,
-  type ValueSignal,
-  type CellValueSignal,
+  type GroupContent,
+  type DataContent,
+  type EvalContent,
+  type ContentSignal,
+  type ItemContentSignal,
   createBlank,
   createScalar,
-  createList,
-  createFlow,
+  createGroup,
+  createDerived,
   createSignal,
-  createListSignal,
-  createLink,
+  createGroupSignal,
+  createLens,
   setGlobalLibrary,
-  resolveValue,
-  createTemplateListSignal,
+  resolveContent,
+  createTemplateGroupSignal,
 } from "./data";
 import { setDataRoot } from "./tree";
 import { library } from "./library";
@@ -24,7 +24,7 @@ import { onRootKeyDown, focusFirstRootCell } from "./input";
 import renderRoot from "./render";
 
 export function render(
-  rootSignal: ValueSignal<ListValue>,
+  rootSignal: ContentSignal<GroupContent>,
   rootElement: HTMLElement
 ) {
   setGlobalLibrary(library);
@@ -51,55 +51,55 @@ export function render(
 
 const literalSig = (v: ScalarPrimitive) => createSignal(createScalar(v));
 
-const flowSig = (code: string) => {
-  const s: CellValueSignal = createSignal<DataValue | EvalValue>(
+const derivedSig = (code: string) => {
+  const s: ItemContentSignal = createSignal<DataContent | EvalContent>(
     createScalar("")
   );
-  s.set(createFlow(s, code));
+  s.set(createDerived(s, code));
   return s;
 };
 
-const linkSig = (source: string, filter: string = "") => {
-  const s: CellValueSignal = createSignal<DataValue | EvalValue>(
+const lensSig = (source: string, filter: string = "") => {
+  const s: ItemContentSignal = createSignal<DataContent | EvalContent>(
     createScalar("")
   );
-  s.set(createLink(s, source, filter));
+  s.set(createLens(s, source, filter));
   return s;
 };
 
-function resultListSig(
-  cells: Parameters<typeof createList>[0],
+function resultGroupSig(
+  items: Parameters<typeof createGroup>[0],
   resultIndex1: number
 ) {
-  const base = createList(cells);
-  return createListSignal(base.cells, base.cells[resultIndex1]!.uid);
+  const base = createGroup(items);
+  return createGroupSignal(base.items, base.items[resultIndex1]!.uid);
 }
 
-const root = createListSignal([
-  { value: literalSig(10) },
-  { value: literalSig(20) },
-  { value: literalSig(30) },
-  // { value: createSignal(createBlank()) },
+const root = createGroupSignal([
+  { content: literalSig(10) },
+  { content: literalSig(20) },
+  { content: literalSig(30) },
+  // { content: createSignal(createBlank()) },
   // {
   //   name: "f",
-  //   value: createTemplateListSignal(
+  //   content: createTemplateGroupSignal(
   //     ["arg1", "arg2"],
   //     [
-  //       { value: literalSig(10) },
-  //       { value: literalSig(20) },
-  //       { value: flowSig("arg1 * arg2 * 3") },
+  //       { content: literalSig(10) },
+  //       { content: literalSig(20) },
+  //       { content: derivedSig("arg1 * arg2 * 3") },
   //     ]
   //   ),
   // },
-  // { value: createSignal(createBlank()) },
-  // { value: flowSig("f(10, 20)") },
-  // { value: createSignal(createBlank()) },
+  // { content: createSignal(createBlank()) },
+  // { content: derivedSig("f(10, 20)") },
+  // { content: createSignal(createBlank()) },
   // {
-  //   value: resultListSig(
+  //   content: resultGroupSig(
   //     [
-  //       { name: "a", value: literalSig(10) },
-  //       { name: "b", value: literalSig(20) },
-  //       { value: flowSig("a * b") },
+  //       { name: "a", content: literalSig(10) },
+  //       { name: "b", content: literalSig(20) },
+  //       { content: derivedSig("a * b") },
   //     ],
   //     2
   //   ),
@@ -107,62 +107,62 @@ const root = createListSignal([
   // {
   //   name: "x",
   //   view: "bar",
-  //   value: createListSignal([
-  //     { value: literalSig(10) },
-  //     { value: literalSig(20) },
-  //     { value: literalSig(30) },
+  //   content: createGroupSignal([
+  //     { content: literalSig(10) },
+  //     { content: literalSig(20) },
+  //     { content: literalSig(30) },
   //   ]),
   // },
   // {
-  //   value: linkSig("x", "a => a > 15"),
+  //   content: lensSig("x", "a => a > 15"),
   // },
   // {
-  //   value: createListSignal([
-  //     { value: literalSig(10) },
-  //     { value: literalSig(20) },
+  //   content: createGroupSignal([
+  //     { content: literalSig(10) },
+  //     { content: literalSig(20) },
   //   ]),
   // },
-  // { value: literalSig(10) },
+  // { content: literalSig(10) },
   // {
   //   name: "data",
   //   view: "table",
-  //   value: createListSignal([
+  //   content: createGroupSignal([
   //     {
-  //       value: createListSignal([
-  //         { name: "Name", value: literalSig("Steve") },
-  //         { name: "Age", value: literalSig(25) },
+  //       content: createGroupSignal([
+  //         { name: "Name", content: literalSig("Steve") },
+  //         { name: "Age", content: literalSig(25) },
   //       ]),
   //     },
   //     {
-  //       value: createListSignal([
-  //         { name: "Name", value: literalSig("Lucy") },
-  //         { name: "Age", value: literalSig(32) },
+  //       content: createGroupSignal([
+  //         { name: "Name", content: literalSig("Lucy") },
+  //         { name: "Age", content: literalSig(32) },
   //       ]),
   //     },
   //     {
-  //       value: createListSignal([
-  //         { name: "Name", value: literalSig("James") },
-  //         { name: "Age", value: literalSig(18) },
+  //       content: createGroupSignal([
+  //         { name: "Name", content: literalSig("James") },
+  //         { name: "Age", content: literalSig(18) },
   //       ]),
   //     },
   //   ]),
   // },
-  // { value: createSignal(createBlank()) },
-  // { value: flowSig("data:map(d -> d.Age):avg()") },
-  // { name: "y", view: "slider", value: literalSig(50) },
-  // { name: "z", value: flowSig("x") },
-  // { value: literalSig(10) },
+  // { content: createSignal(createBlank()) },
+  // { content: derivedSig("data:map(d -> d.Age):avg()") },
+  // { name: "y", view: "slider", content: literalSig(50) },
+  // { name: "z", content: derivedSig("x") },
+  // { content: literalSig(10) },
   // {
-  //   value: createListSignal([
-  //     { value: literalSig("Hello") },
-  //     { value: literalSig("World!") },
+  //   content: createGroupSignal([
+  //     { content: literalSig("Hello") },
+  //     { content: literalSig("World!") },
   //   ]),
   // },
-  // { value: literalSig(30) },
+  // { content: literalSig(30) },
 ]);
 
 const unmount = render(root, document.getElementById("root")!);
 
 effect(() => {
-  console.log(JSON.stringify(resolveValue(root.get()), null, 2));
+  console.log(JSON.stringify(resolveContent(root.get()), null, 2));
 });

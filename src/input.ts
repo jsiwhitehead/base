@@ -2,28 +2,28 @@ import { signal } from "@preact/signals-core";
 
 import { type EditorFieldMode } from "./data";
 import {
-  type CellPath,
+  type ItemPath,
   firstChildPath,
-  getCellNavContext,
+  getItemNavContext,
   standardMove,
-  setCellText,
-  setCellAsFlow,
-  insertCellBefore,
-  insertCellAfter,
-  wrapCellInList,
-  unwrapSingleCellList,
-  removeCellBackward,
-  removeCellForward,
-  splitCell,
-  mergeCellWithPrev,
-  mergeCellWithNext,
+  setItemText,
+  setItemAsDerived,
+  insertItemBefore,
+  insertItemAfter,
+  wrapItemInGroup,
+  unwrapSingleItemGroup,
+  removeItemBackward,
+  removeItemForward,
+  splitItem,
+  mergeItemWithPrev,
+  mergeItemWithNext,
 } from "./tree";
 
 export type FocusTarget = { kind: "body" } | { kind: "header"; index: number };
 
 export type FocusState =
   | { kind: "idle" }
-  | { kind: "focused"; path: CellPath; target: FocusTarget };
+  | { kind: "focused"; path: ItemPath; target: FocusTarget };
 
 export const focusSignal = signal<FocusState>({ kind: "idle" });
 
@@ -33,13 +33,13 @@ type MachineState =
   | { kind: "Idle"; goalColumn?: number }
   | {
       kind: "Focused";
-      path: CellPath;
+      path: ItemPath;
       target: FocusTarget;
       goalColumn?: number;
     };
 
 type EditorEvent =
-  | { type: "FOCUS"; path: CellPath; target: FocusTarget; caret?: number }
+  | { type: "FOCUS"; path: ItemPath; target: FocusTarget; caret?: number }
   | { type: "CLEAR_FOCUS" }
   | {
       type: "MOVE";
@@ -52,15 +52,15 @@ type EditorEvent =
   | { type: "CLEAR_GOAL_COLUMN" };
 
 const TRANSFORMS = {
-  insertCellBefore,
-  insertCellAfter,
-  wrapCellInList,
-  unwrapSingleCellList,
-  setCellAsFlow,
-  removeCellBackward,
-  removeCellForward,
-  mergeCellWithPrev,
-  mergeCellWithNext,
+  insertItemBefore,
+  insertItemAfter,
+  wrapItemInGroup,
+  unwrapSingleItemGroup,
+  setItemAsDerived,
+  removeItemBackward,
+  removeItemForward,
+  mergeItemWithPrev,
+  mergeItemWithNext,
 };
 
 type HeaderSlot = {
@@ -70,8 +70,8 @@ type HeaderSlot = {
 };
 
 type PathBinding = {
-  path: CellPath;
-  cell: HTMLElement;
+  path: ItemPath;
+  item: HTMLElement;
   body: HTMLElement;
   header: HeaderSlot[];
   teardowns: (() => void)[];
@@ -80,7 +80,7 @@ type PathBinding = {
 const bindings = new Map<string, PathBinding>();
 let state: MachineState = { kind: "Idle", goalColumn: undefined };
 
-function keyOf(p: CellPath) {
+function keyOf(p: ItemPath) {
   return p.join(".");
 }
 
@@ -107,8 +107,8 @@ function isTextInput(
   );
 }
 
-function defaultTargetForPath(path: CellPath): FocusTarget {
-  const { hasExtraHeaderEditors } = getCellNavContext(path);
+function defaultTargetForPath(path: ItemPath): FocusTarget {
+  const { hasExtraHeaderEditors } = getItemNavContext(path);
   return hasExtraHeaderEditors
     ? { kind: "header", index: 1 }
     : { kind: "body" };
@@ -116,7 +116,7 @@ function defaultTargetForPath(path: CellPath): FocusTarget {
 
 function bindEditor(
   binding: PathBinding,
-  path: CellPath,
+  path: ItemPath,
   el: HTMLInputElement | HTMLTextAreaElement,
   mode: EditorFieldMode,
   commit: (text: string) => void
@@ -261,14 +261,14 @@ function bindEditor(
           if (mode === "body") {
             stop(e);
 
-            const { kind } = getCellNavContext(path);
+            const { kind } = getItemNavContext(path);
 
             if (kind === "text") {
               dispatch({ type: "SPLIT", caret: selStart, selEnd });
               break;
             }
 
-            const res = insertCellAfter(path);
+            const res = insertItemAfter(path);
             if (res) {
               dispatch({
                 type: "FOCUS",
@@ -289,7 +289,7 @@ function bindEditor(
             stop(e);
             dispatch({
               type: "TRANSFORM",
-              op: len === 0 ? "removeCellBackward" : "mergeCellWithPrev",
+              op: len === 0 ? "removeItemBackward" : "mergeItemWithPrev",
             });
           }
           break;
@@ -300,7 +300,7 @@ function bindEditor(
             stop(e);
             dispatch({
               type: "TRANSFORM",
-              op: len === 0 ? "removeCellForward" : "mergeCellWithNext",
+              op: len === 0 ? "removeItemForward" : "mergeItemWithNext",
             });
           }
           break;
@@ -309,7 +309,7 @@ function bindEditor(
         case "=": {
           if (mode === "body" && !el.value) {
             stop(e);
-            dispatch({ type: "TRANSFORM", op: "setCellAsFlow" });
+            dispatch({ type: "TRANSFORM", op: "setItemAsDerived" });
           }
           break;
         }
@@ -318,7 +318,7 @@ function bindEditor(
           stop(e);
           dispatch({
             type: "TRANSFORM",
-            op: e.shiftKey ? "unwrapSingleCellList" : "wrapCellInList",
+            op: e.shiftKey ? "unwrapSingleItemGroup" : "wrapItemInGroup",
             caret: selStart,
           });
           break;
@@ -380,7 +380,7 @@ function dispatch(ev: EditorEvent): void {
 
     case "SPLIT": {
       if (state.kind !== "Focused") break;
-      const np = splitCell(state.path, ev.caret, ev.selEnd ?? ev.caret);
+      const np = splitItem(state.path, ev.caret, ev.selEnd ?? ev.caret);
       state = {
         kind: "Focused",
         path: np,
@@ -479,9 +479,9 @@ function updateDOMFocus(
 }
 
 export function registerBinding(
-  path: CellPath,
+  path: ItemPath,
   slots: {
-    cell: HTMLElement;
+    item: HTMLElement;
     body: HTMLElement;
     header: HeaderSlot[];
   }
@@ -491,7 +491,7 @@ export function registerBinding(
 
   if (
     prior &&
-    prior.cell === slots.cell &&
+    prior.item === slots.item &&
     prior.body === slots.body &&
     prior.header.length === slots.header.length &&
     prior.header.every(
@@ -509,7 +509,7 @@ export function registerBinding(
 
   const binding: PathBinding = {
     path: path.slice(),
-    cell: slots.cell,
+    item: slots.item,
     body: slots.body,
     header: slots.header,
     teardowns: [],
@@ -519,7 +519,7 @@ export function registerBinding(
   binding.body.tabIndex = 0;
 
   binding.teardowns.push(
-    on(binding.cell, "mousedown", (e) => {
+    on(binding.item, "mousedown", (e) => {
       dispatch({ type: "FOCUS", path, target: { kind: "body" } });
       stop(e);
     })
@@ -555,14 +555,14 @@ export function registerBinding(
 
   if (isTextInput(binding.body)) {
     bindEditor(binding, path, binding.body, "body", (text) =>
-      setCellText(path, text)
+      setItemText(path, text)
     );
   }
 
   updateDOMFocus(state);
 }
 
-export function unregisterBinding(path: CellPath) {
+export function unregisterBinding(path: ItemPath) {
   const k = keyOf(path);
   const binding = bindings.get(k);
   if (binding) {
@@ -577,8 +577,8 @@ export function unregisterBinding(path: CellPath) {
 export function onRootKeyDown(e: KeyboardEvent) {
   if (state.kind !== "Focused" || state.target.kind === "header") return;
 
-  const { kind } = getCellNavContext(state.path);
-  if (kind !== "list") return;
+  const { kind } = getItemNavContext(state.path);
+  if (kind !== "group") return;
 
   const mod = e.metaKey || e.ctrlKey;
 
@@ -612,8 +612,8 @@ export function onRootKeyDown(e: KeyboardEvent) {
       }
 
       const res = e.shiftKey
-        ? insertCellBefore(state.path)
-        : insertCellAfter(state.path);
+        ? insertItemBefore(state.path)
+        : insertItemAfter(state.path);
       if (res) {
         dispatch({ type: "FOCUS", path: res.path, target: { kind: "body" } });
       }
@@ -622,13 +622,13 @@ export function onRootKeyDown(e: KeyboardEvent) {
 
     case "Backspace": {
       stop(e);
-      dispatch({ type: "TRANSFORM", op: "removeCellBackward" });
+      dispatch({ type: "TRANSFORM", op: "removeItemBackward" });
       break;
     }
 
     case "Delete": {
       stop(e);
-      dispatch({ type: "TRANSFORM", op: "removeCellForward" });
+      dispatch({ type: "TRANSFORM", op: "removeItemForward" });
       break;
     }
 
@@ -636,7 +636,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
       stop(e);
       dispatch({
         type: "TRANSFORM",
-        op: e.shiftKey ? "unwrapSingleCellList" : "wrapCellInList",
+        op: e.shiftKey ? "unwrapSingleItemGroup" : "wrapItemInGroup",
       });
       break;
     }

@@ -34,7 +34,7 @@
   font: inherit;
 }
 .autosize > span {
-  /* visibility: hidden; */
+  visibility: hidden;
   white-space: pre-wrap;
   font: inherit;
   color: transparent;
@@ -56,7 +56,7 @@
   color: inherit;
 }
 
-.list > .cell {
+.group > .item {
   position: relative;
   padding-left: calc(var(--rule) + var(--indent));
   padding-top: 1px;
@@ -82,7 +82,7 @@
     border-bottom-right-radius: var(--round);
   }
 
-  > .list {
+  > .group {
     margin-top: -1px;
     margin-bottom: -1px;
   }
@@ -93,7 +93,7 @@
   }
 }
 
-.list > .cell.result {
+.group > .item.result {
   &::after {
     content: "";
     position: absolute;
@@ -111,23 +111,23 @@
   }
 }
 
-.cell.error > .value {
+.item.error > .content {
   color: oklch(64.5% 0.246 16.439);
 }
 
-.cell {
+.item {
   cursor: pointer;
 }
 
-.cell:has(> .value) {
+.item:has(> .content) {
   cursor: text;
 }
 
-.cell.flow {
+.item.derived {
   cursor: text;
 }
 
-.value {
+.content {
   min-height: 21px;
 }
 
@@ -187,7 +187,7 @@
   }
 }
 
-.cell.focused {
+.item.focused {
   &::before {
     background: var(--blue-normal) !important;
   }
@@ -199,12 +199,12 @@
   }
 }
 
-.cell.focused > .list > .cell,
-.cell.focused > .list > .cell > .list > .cell.result,
-.list:has(.focused) > .cell,
-.list:has(.focused) > .cell > .list > .cell.result,
-.cell.focused > .bar > .cell,
-.bar:has(.focused) > .cell {
+.item.focused > .group > .item,
+.item.focused > .group > .item > .group > .item.result,
+.group:has(.focused) > .item,
+.group:has(.focused) > .item > .group > .item.result,
+.item.focused > .bar > .item,
+.bar:has(.focused) > .item {
   &::before {
     background: var(--blue-light);
   }
@@ -249,7 +249,7 @@
     display: table-cell;
   }
 
-  .cell {
+  .item {
     display: table-cell;
     padding-left: calc(var(--indent) + 2px);
     padding-right: calc(var(--indent) * 4);
@@ -304,7 +304,7 @@
       border-bottom-left-radius: var(--round);
     }
 
-    .cell {
+    .item {
       position: relative;
       padding-top: calc(var(--rule) + 2px);
 
@@ -334,13 +334,13 @@
       color: oklch(42.4% 0.199 265.638) !important;
     }
 
-    .cell::before {
+    .item::before {
       background: var(--blue-light);
     }
   }
 }
 
-.cell.focused > .table .row .label,
+.item.focused > .table .row .label,
 .row:has(.focused) > .label {
   color: oklch(54.6% 0.245 262.881);
   &::before {
@@ -348,7 +348,7 @@
   }
 }
 
-.row:has(.focused) > .cell {
+.row:has(.focused) > .item {
   &::before {
     background: var(--blue-light);
   }
@@ -359,7 +359,7 @@
   flex-direction: row;
   align-items: flex-start;
 
-  > .cell {
+  > .item {
     position: relative;
     padding-top: calc(var(--rule) + 1px);
     padding-left: var(--indent);

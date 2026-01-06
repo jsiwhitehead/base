@@ -7,10 +7,10 @@ import {
 } from "@preact/signals-core";
 
 import {
-  type ListValue,
-  type ValueSignal,
-  type CellValueSignal,
-  type Cell,
+  type GroupContent,
+  type ContentSignal,
+  type ItemContentSignal,
+  type Item,
   type EditorFieldMode,
   type Signal,
   getRenderEditors,
@@ -19,7 +19,7 @@ import {
   getRenderModel,
   getRenderProps,
 } from "./data";
-import { type CellPath } from "./tree";
+import { type ItemPath } from "./tree";
 import { focusSignal, registerBinding, unregisterBinding } from "./input";
 
 type CreateOptions = {
@@ -119,7 +119,7 @@ function reconcileDomChildren(
   }
 }
 
-type ChildItem = Cell | { uid: number | string; create: () => HTMLElement };
+type ChildItem = Item | { uid: number | string; create: () => HTMLElement };
 
 class ChildViewManager {
   cache = new Map<
@@ -129,8 +129,8 @@ class ChildViewManager {
 
   constructor(
     readonly container: HTMLElement,
-    readonly parentPath: CellPath,
-    readonly create: (cell: Cell, path: CellPath) => View
+    readonly parentPath: ItemPath,
+    readonly create: (item: Item, path: ItemPath) => View
   ) {}
 
   update(nextItems: ChildItem[]) {
@@ -145,7 +145,7 @@ class ChildViewManager {
     const desired = nextItems.map((item) => {
       let rec = this.cache.get(item.uid);
       if (!rec) {
-        if ("value" in item) {
+        if ("content" in item) {
           rec = this.create(item, [...this.parentPath, item.uid]);
         } else {
           rec = { element: item.create() };
@@ -190,15 +190,15 @@ abstract class View {
 
   initChildren(
     container: HTMLElement,
-    parentPath: CellPath,
-    create: (cell: Cell, path: CellPath) => View
+    parentPath: ItemPath,
+    create: (item: Item, path: ItemPath) => View
   ) {
     this.childList = new ChildViewManager(container, parentPath, create);
     this.cleanups.push(() => this.childList!.dispose());
   }
 
-  updateChildren(cells: Cell[]) {
-    this.childList?.update(cells);
+  updateChildren(items: Item[]) {
+    this.childList?.update(items);
   }
 
   onCleanup(fn: () => void) {
@@ -214,12 +214,12 @@ abstract class View {
 class StyledView extends View {
   element = createEl("div", { className: "styled" });
 
-  constructor(valueSig: CellValueSignal, path: CellPath) {
+  constructor(contentSig: ItemContentSignal, path: ItemPath) {
     super();
 
     const setHover = (toTrue: boolean) => {
       untracked(() => {
-        const p = getRenderProps(valueSig);
+        const p = getRenderProps(contentSig);
         p?.setFlag("hover", toTrue);
       });
     };
@@ -230,15 +230,15 @@ class StyledView extends View {
     this.initChildren(
       this.element,
       path,
-      (cell, childPath) => new StyledView(cell.value, childPath)
+      (item, childPath) => new StyledView(item.content, childPath)
     );
 
     this.effect(() => {
-      const m = getRenderModel(valueSig);
+      const m = getRenderModel(contentSig);
 
       this.element.style.setProperty("--lh", "1.5");
 
-      if (m.kind !== "list") {
+      if (m.kind !== "group") {
         this.updateChildren([]);
         this.element.classList.add("trim-half-leading");
 
@@ -251,9 +251,9 @@ class StyledView extends View {
 
       this.element.classList.remove("trim-half-leading");
 
-      this.updateChildren(m.cells);
+      this.updateChildren(m.items);
 
-      const p = getRenderProps(valueSig);
+      const p = getRenderProps(contentSig);
 
       const dir = (p?.text("direction") ?? "column").toLowerCase();
       const hor = (p?.text("horizontal") ?? "").toLowerCase();
@@ -313,7 +313,7 @@ class StyledView extends View {
 class SliderView extends View {
   element: HTMLInputElement;
 
-  constructor(valueSig: CellValueSignal, path: CellPath) {
+  constructor(contentSig: ItemContentSignal, path: ItemPath) {
     super();
 
     const input = document.createElement("input");
@@ -326,14 +326,14 @@ class SliderView extends View {
     this.element = input;
 
     input.addEventListener("input", () => {
-      if (isWritableSignal(valueSig)) {
+      if (isWritableSignal(contentSig)) {
         const n = Number(input.value);
-        if (Number.isFinite(n)) valueSig.set(createScalar(n));
+        if (Number.isFinite(n)) contentSig.set(createScalar(n));
       }
     });
 
     this.effect(() => {
-      const m = getRenderModel(valueSig);
+      const m = getRenderModel(contentSig);
       const n = m.kind === "scalar" && m.number !== undefined ? m.number : 0;
 
       if (this.element.value !== String(n)) {
@@ -399,27 +399,27 @@ class RowView extends View {
   element = createEl("div", { className: "row" });
   header: RowHeaderView;
 
-  constructor(rowCell: Cell, path: CellPath, columnsJsonSig: PSignal<string>) {
+  constructor(rowItem: Item, path: ItemPath, columnsJsonSig: PSignal<string>) {
     super();
 
     const pathKey = path.join(".");
-    this.header = new RowHeaderView(rowCell.name, pathKey);
+    this.header = new RowHeaderView(rowItem.name, pathKey);
 
     this.initChildren(
       this.element,
       path,
-      (cell, p) => new CellView(cell, p, false)
+      (item, p) => new ItemView(item, p, false)
     );
 
     this.effect(() => {
       const cols: string[] = JSON.parse(columnsJsonSig.value);
 
-      const rm = getRenderModel(rowCell.value);
-      const rowList = rm.kind === "list" ? rm : null;
+      const rm = getRenderModel(rowItem.content);
+      const rowGroup = rm.kind === "group" ? rm : null;
 
-      const byName = new Map<string, Cell>();
-      if (rowList) {
-        for (const c of rowList.cells) {
+      const byName = new Map<string, Item>();
+      if (rowGroup) {
+        for (const c of rowGroup.items) {
           const n = c.name.get();
           if (n) byName.set(n, c);
         }
@@ -435,7 +435,7 @@ class RowView extends View {
         } else {
           items.push({
             uid: name,
-            create: () => createEl("div", { className: "cell" }),
+            create: () => createEl("div", { className: "item" }),
           });
         }
       }
@@ -444,7 +444,7 @@ class RowView extends View {
     });
 
     registerBinding(path, {
-      cell: this.element,
+      item: this.element,
       body: this.element,
       header: this.header.getHeaderSlots(),
     });
@@ -453,8 +453,8 @@ class RowView extends View {
       const focus = focusSignal.value;
       const focused =
         focus.kind === "focused" && focus.path.join(".") === pathKey;
-      const valueFocused = focused && focus.target.kind === "body";
-      this.element.classList.toggle("focused", valueFocused);
+      const contentFocused = focused && focus.target.kind === "body";
+      this.element.classList.toggle("focused", contentFocused);
     });
 
     this.onCleanup(() => {
@@ -470,7 +470,7 @@ class TableView extends View {
   body = createEl("div", { className: "table-body" });
   columnsJsonSig = signal("[]");
 
-  constructor(valueSig: CellValueSignal, path: CellPath) {
+  constructor(contentSig: ItemContentSignal, path: ItemPath) {
     super();
 
     this.element.append(this.headerRow, this.body);
@@ -479,30 +479,30 @@ class TableView extends View {
     this.initChildren(
       this.body,
       path,
-      (cell, p) => new RowView(cell, p, this.columnsJsonSig)
+      (item, p) => new RowView(item, p, this.columnsJsonSig)
     );
 
     this.effect(
       () => {
-        const m = getRenderModel(valueSig);
-        if (m.kind !== "list") return [];
+        const m = getRenderModel(contentSig);
+        if (m.kind !== "group") return [];
 
-        const first = m.cells[0]?.value;
+        const first = m.items[0]?.content;
         if (!first) return [];
 
         const rm = getRenderModel(first);
-        if (rm.kind !== "list") return [];
+        if (rm.kind !== "group") return [];
 
         return [
           ...new Set(
-            rm.cells.map((c) => c.name.get()).filter((x): x is string => !!x)
+            rm.items.map((c) => c.name.get()).filter((x): x is string => !!x)
           ),
         ];
       },
       (cols) => {
         const cells: HTMLElement[] = [createEl("div", { className: "label" })];
         for (const name of cols) {
-          cells.push(createEl("div", { className: "cell", value: name }));
+          cells.push(createEl("div", { className: "item", value: name }));
         }
         reconcileDomChildren(this.headerRow, cells);
         this.columnsJsonSig.value = JSON.stringify(cols);
@@ -510,8 +510,8 @@ class TableView extends View {
     );
 
     this.effect(() => {
-      const m = getRenderModel(valueSig);
-      this.updateChildren(m.kind === "list" ? m.cells : []);
+      const m = getRenderModel(contentSig);
+      this.updateChildren(m.kind === "group" ? m.items : []);
     });
 
     this.effect(() => {
@@ -550,29 +550,29 @@ class StandardView extends View {
   element!: HTMLElement;
   scalarInput?: AutosizeInput;
   scalarEl: HTMLElement;
-  listEl: HTMLElement;
+  groupEl: HTMLElement;
 
-  constructor(valueSig: CellValueSignal, path: CellPath) {
+  constructor(contentSig: ItemContentSignal, path: ItemPath) {
     super();
 
-    if (isWritableSignal(valueSig)) {
-      this.scalarInput = new AutosizeInput(true, { className: "value" });
+    if (isWritableSignal(contentSig)) {
+      this.scalarInput = new AutosizeInput(true, { className: "content" });
       this.scalarEl = this.scalarInput.element;
     } else {
-      this.scalarEl = createEl("div", { className: "value" });
+      this.scalarEl = createEl("div", { className: "content" });
     }
 
-    this.listEl = createEl("div", { className: "list" });
+    this.groupEl = createEl("div", { className: "group" });
     this.initChildren(
-      this.listEl,
+      this.groupEl,
       path,
-      (cell, childPath) => new CellView(cell, childPath)
+      (item, childPath) => new ItemView(item, childPath)
     );
 
     this.effect(
-      () => getRenderModel(valueSig).kind === "list",
-      (shouldBeList) => {
-        const next = shouldBeList ? this.listEl : this.scalarEl;
+      () => getRenderModel(contentSig).kind === "group",
+      (shouldBeGroup) => {
+        const next = shouldBeGroup ? this.groupEl : this.scalarEl;
         if (this.element !== next) {
           this.element?.replaceWith?.(next);
           this.element = next;
@@ -581,22 +581,22 @@ class StandardView extends View {
     );
 
     this.effect(() => {
-      const m = getRenderModel(valueSig);
+      const m = getRenderModel(contentSig);
 
-      if (m.kind === "list") {
-        this.updateChildren(m.cells);
+      if (m.kind === "group") {
+        this.updateChildren(m.items);
 
-        const kids = this.listEl.children;
+        const kids = this.groupEl.children;
         for (const el of kids) el.classList.remove("result");
 
-        if (m.valueCellUid !== undefined) {
-          const idx = m.cells.findIndex((c) => c.uid === m.valueCellUid);
+        if (m.contentItemUid !== undefined) {
+          const idx = m.items.findIndex((c) => c.uid === m.contentItemUid);
           kids[idx]?.classList.add("result");
         }
         return;
       }
 
-      for (const el of this.listEl.children) el.classList.remove("result");
+      for (const el of this.groupEl.children) el.classList.remove("result");
 
       if (this.scalarInput) {
         this.scalarInput.update(m.text);
@@ -611,21 +611,21 @@ class StandardView extends View {
 }
 
 class BarView extends StandardView {
-  constructor(valueSig: CellValueSignal, path: CellPath) {
-    super(valueSig, path);
-    this.listEl.classList.remove("list");
-    this.listEl.classList.add("bar");
+  constructor(contentSig: ItemContentSignal, path: ItemPath) {
+    super(contentSig, path);
+    this.groupEl.classList.remove("group");
+    this.groupEl.classList.add("bar");
   }
 }
 
-const views: Record<string, new (c: CellValueSignal, p: CellPath) => View> = {
+const views: Record<string, new (c: ItemContentSignal, p: ItemPath) => View> = {
   styled: StyledView,
   slider: SliderView,
   table: TableView,
   bar: BarView,
 };
 
-class CellHeaderView extends View {
+class ItemHeaderView extends View {
   element = createEl("div", { className: "header" });
 
   nameInput = new AutosizeInput(false, { className: "name" });
@@ -648,12 +648,12 @@ class CellHeaderView extends View {
 
   slots: HeaderSlot[] = [this.nameSlot];
 
-  constructor(cell: Cell) {
+  constructor(item: Item) {
     super();
 
     this.effect(
       () =>
-        getRenderEditors(cell).map((f) => ({
+        getRenderEditors(item).map((f) => ({
           mode: f.mode,
           label: f.label ?? "",
         })),
@@ -703,18 +703,18 @@ class CellHeaderView extends View {
     );
 
     this.effect(() => {
-      const text = cell.name.get() || "";
+      const text = item.name.get() || "";
       this.nameInput.update(text);
 
-      this.nameInput.input.readOnly = !isWritableSignal(cell.name);
+      this.nameInput.input.readOnly = !isWritableSignal(item.name);
       this.nameInput.input.disabled = false;
-      this.nameSlot.commit = isWritableSignal(cell.name)
-        ? cell.name.set
+      this.nameSlot.commit = isWritableSignal(item.name)
+        ? item.name.set
         : () => {};
     });
 
     this.effect(() => {
-      const eds = getRenderEditors(cell);
+      const eds = getRenderEditors(item);
       for (let i = 0; i < eds.length; i++) {
         const rec = this.cache[i];
         if (!rec) continue;
@@ -735,18 +735,18 @@ class CellHeaderView extends View {
   }
 }
 
-class CellView extends View {
-  element = createEl("div", { className: "cell" });
-  header: CellHeaderView;
+class ItemView extends View {
+  element = createEl("div", { className: "item" });
+  header: ItemHeaderView;
   view!: View;
   stdView?: StandardView;
 
-  constructor(cell: Cell, path: CellPath, showHeader: boolean = true) {
+  constructor(item: Item, path: ItemPath, showHeader: boolean = true) {
     super();
 
     const pathKey = path.join(".");
 
-    this.header = new CellHeaderView(cell);
+    this.header = new ItemHeaderView(item);
 
     this.effect(
       () => {
@@ -759,14 +759,14 @@ class CellView extends View {
           focus.target.kind === "header" &&
           focus.target.index === 0;
 
-        const nameIsBlank = (cell.name.get() || "").trim() === "";
+        const nameIsBlank = (item.name.get() || "").trim() === "";
         const hasName = !nameIsBlank;
 
-        const hasOtherEditors = getRenderEditors(cell).length > 0;
+        const hasOtherEditors = getRenderEditors(item).length > 0;
 
         return {
           needHeader: showHeader && (hasOtherEditors || hasName || nameFocused),
-          viewId: cell.view.get(),
+          viewId: item.view.get(),
         };
       },
       ({ needHeader, viewId }) => {
@@ -779,11 +779,12 @@ class CellView extends View {
 
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
-          this.view = new ViewCtor(cell.value, path);
+          this.view = new ViewCtor(item.content, path);
         }
 
         if (!simpleView) {
-          if (!this.stdView) this.stdView = new StandardView(cell.value, path);
+          if (!this.stdView)
+            this.stdView = new StandardView(item.content, path);
         } else if (this.stdView) {
           this.stdView.dispose();
           this.stdView = undefined;
@@ -801,7 +802,7 @@ class CellView extends View {
         const bodyEl = (rawBodyEl as any).__textInputTarget || rawBodyEl;
 
         registerBinding(path, {
-          cell: this.element,
+          item: this.element,
           body: bodyEl,
           header: this.header.getHeaderSlots(),
         });
@@ -819,17 +820,17 @@ class CellView extends View {
           focus.target.kind === "header" &&
           focus.target.index === 0;
 
-        const nameIsBlank = (cell.name.get() || "").trim() === "";
+        const nameIsBlank = (item.name.get() || "").trim() === "";
 
         return {
           focused: focusMatches,
-          valueFocused: focusMatches && focus.target.kind === "body",
+          contentFocused: focusMatches && focus.target.kind === "body",
           hideName: nameIsBlank && !nameFocused,
         };
       },
-      ({ focused, valueFocused, hideName }) => {
+      ({ focused, contentFocused, hideName }) => {
         this.element.classList.toggle("focused", focused);
-        this.view.element.classList.toggle("focused", valueFocused);
+        this.view.element.classList.toggle("focused", contentFocused);
         this.header.nameInput.element.classList.toggle("hidden", hideName);
       }
     );
@@ -844,8 +845,8 @@ class CellView extends View {
 }
 
 export default function renderRoot(
-  rootSignal: ValueSignal<ListValue>,
-  rootPath: CellPath
+  rootSignal: ContentSignal<GroupContent>,
+  rootPath: ItemPath
 ) {
   return new StandardView(rootSignal, rootPath);
 }

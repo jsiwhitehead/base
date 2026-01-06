@@ -1,154 +1,153 @@
 import { batch } from "@preact/signals-core";
 
 import {
-  type ListValue,
-  type TemplateValue,
+  type GroupContent,
+  type TemplateContent,
   type WriteSignal,
-  type CellValueSignal,
-  type Cell,
+  type ItemContentSignal,
+  type Item,
   type NavLayoutContext,
   isWritableSignal,
   getParentSignal,
   getParent,
   newUid,
   createBlank,
-  createList,
-  createFlow,
+  createGroup,
+  createDerived,
   createSignal,
   getRenderModel,
   getRenderChildren,
   getRenderEditors,
-  editParentList,
+  editParentGroup,
   parseScalarInput,
   getLayoutContext,
 } from "./data";
 
 /* Root */
 
-let __dataRoot: CellValueSignal | null = null;
+let __dataRoot: ItemContentSignal | null = null;
 
-export function setDataRoot(root: CellValueSignal) {
+export function setDataRoot(root: ItemContentSignal) {
   __dataRoot = root;
 }
 
-export function getDataRoot(): CellValueSignal {
+export function getDataRoot(): ItemContentSignal {
   if (!__dataRoot) throw new Error("Data root not set");
   return __dataRoot;
 }
 
 /* Navigation */
 
-export type CellPath = number[];
+export type ItemPath = number[];
 
-function cellsAlongPath(path: CellPath): Cell[] {
-  const cells: Cell[] = [];
-  let value: CellValueSignal = getDataRoot();
+function itemsAlongPath(path: ItemPath): Item[] {
+  const items: Item[] = [];
+  let content: ItemContentSignal = getDataRoot();
 
   for (const uid of path) {
-    const cs = getRenderChildren(value);
-    const cell = cs.find((c) => c.uid === uid);
-    if (!cell) return [];
-    cells.push(cell);
-    value = cell.value;
+    const kids = getRenderChildren(content);
+    const item = kids.find((c) => c.uid === uid);
+    if (!item) return [];
+    items.push(item);
+    content = item.content;
   }
 
-  return cells;
+  return items;
 }
 
-function childSignalAtPath(path: CellPath): CellValueSignal | null {
+function childSignalAtPath(path: ItemPath): ItemContentSignal | null {
   if (path.length === 0) return getDataRoot();
-  const cells = cellsAlongPath(path);
-  const last = cells[cells.length - 1];
-  return last ? last.value : null;
+  const items = itemsAlongPath(path);
+  const last = items[items.length - 1];
+  return last ? last.content : null;
 }
 
-function childrenAtPath(path: CellPath): Cell[] | null {
-  const value = childSignalAtPath(path);
-  if (!value) return null;
-  return getRenderChildren(value);
+function childrenAtPath(path: ItemPath): Item[] | null {
+  const content = childSignalAtPath(path);
+  if (!content) return null;
+  return getRenderChildren(content);
 }
 
-export function parentPath(path: CellPath): CellPath | null {
+export function parentPath(path: ItemPath): ItemPath | null {
   return path.length ? path.slice(0, -1) : null;
 }
 
-export function firstChildPath(path: CellPath): CellPath | null {
-  const cs = childrenAtPath(path);
-  const first = cs?.[0];
+export function firstChildPath(path: ItemPath): ItemPath | null {
+  const kids = childrenAtPath(path);
+  const first = kids?.[0];
   return first ? [...path, first.uid] : null;
 }
 
-export function siblingPath(path: CellPath, dir: -1 | 1): CellPath | null {
+export function siblingPath(path: ItemPath, dir: -1 | 1): ItemPath | null {
   if (path.length === 0) return null;
 
   const pp = parentPath(path);
   if (!pp) return null;
 
-  const cs = childrenAtPath(pp);
-  if (!cs) return null;
+  const kids = childrenAtPath(pp);
+  if (!kids) return null;
 
   const uid = path[path.length - 1]!;
-  const i = cs.findIndex((e) => e.uid === uid);
+  const i = kids.findIndex((e) => e.uid === uid);
   const j = i + dir;
-  if (i < 0 || j < 0 || j >= cs.length) return null;
+  if (i < 0 || j < 0 || j >= kids.length) return null;
 
-  return [...pp, cs[j]!.uid];
+  return [...pp, kids[j]!.uid];
 }
 
-type CellEditKind = "text" | "text-readonly" | "list";
+type ItemEditKind = "text" | "text-readonly" | "group";
 
-type CellNavContext = {
-  kind: CellEditKind | null;
+type ItemNavContext = {
+  kind: ItemEditKind | null;
   viewContext: NavLayoutContext;
   hasExtraHeaderEditors: boolean;
 };
 
-export function getCellNavContext(path: CellPath): CellNavContext {
-  const cells = cellsAlongPath(path);
+export function getItemNavContext(path: ItemPath): ItemNavContext {
+  const items = itemsAlongPath(path);
 
-  const cell = cells[cells.length - 1];
-  const parentCell = cells[cells.length - 2];
-  const grandparentCell = cells[cells.length - 3];
+  const item = items[items.length - 1];
+  const parentItem = items[items.length - 2];
+  const grandparentItem = items[items.length - 3];
 
-  let kind: CellEditKind | null = null;
+  let kind: ItemEditKind | null = null;
   let hasExtraHeaderEditors = false;
 
-  if (cell) {
-    const m = getRenderModel(cell.value);
-    if (m.kind === "list") kind = "list";
+  if (item) {
+    const m = getRenderModel(item.content);
+    if (m.kind === "group") kind = "group";
     else kind = m.editable ? "text" : "text-readonly";
 
-    hasExtraHeaderEditors = getRenderEditors(cell).some(
+    hasExtraHeaderEditors = getRenderEditors(item).some(
       (f) => f.get.value !== null
     );
   }
 
-  const viewContext = getLayoutContext(parentCell, grandparentCell);
-
+  const viewContext = getLayoutContext(parentItem, grandparentItem);
   return { kind, viewContext, hasExtraHeaderEditors };
 }
 
-function isNavStop(cell: Cell | null, value: CellValueSignal): boolean {
-  const kids = getRenderChildren(value);
+function isNavStop(item: Item | null, content: ItemContentSignal): boolean {
+  const kids = getRenderChildren(content);
   if (kids.length === 0) return true;
-  if (!cell) return false;
-  return getRenderEditors(cell).some((f) => f.get.value !== null);
+  if (!item) return false;
+  return getRenderEditors(item).some((f) => f.get.value !== null);
 }
 
-function collectNavStops(): CellPath[] {
-  const result: CellPath[] = [];
+function collectNavStops(): ItemPath[] {
+  const result: ItemPath[] = [];
 
   function walk(
-    path: CellPath,
-    value: CellValueSignal,
-    cell: Cell | null
+    path: ItemPath,
+    content: ItemContentSignal,
+    item: Item | null
   ): void {
-    if (isNavStop(cell, value)) {
+    if (isNavStop(item, content)) {
       result.push(path);
     }
 
-    for (const c of getRenderChildren(value)) {
-      walk([...path, c.uid], c.value, c);
+    for (const c of getRenderChildren(content)) {
+      walk([...path, c.uid], c.content, c);
     }
   }
 
@@ -157,10 +156,10 @@ function collectNavStops(): CellPath[] {
 }
 
 function neighborNavStop(
-  from: CellPath,
+  from: ItemPath,
   dir: -1 | 1,
-  blockPrefix?: CellPath
-): CellPath | null {
+  blockPrefix?: ItemPath
+): ItemPath | null {
   const leaves = collectNavStops();
   const fromKey = from.join(".");
   const blockKey = blockPrefix?.length ? blockPrefix.join(".") : null;
@@ -179,34 +178,34 @@ function neighborNavStop(
   return null;
 }
 
-function tableVerticalMove(from: CellPath, dir: -1 | 1): CellPath | null {
+function tableVerticalMove(from: ItemPath, dir: -1 | 1): ItemPath | null {
   if (from.length < 2) return null;
 
   const rowPath = parentPath(from);
   const nextRowPath = rowPath && siblingPath(rowPath, dir);
   if (!rowPath || !nextRowPath) return null;
 
-  const rowCells = childrenAtPath(rowPath);
-  const nextRowCells = childrenAtPath(nextRowPath);
-  if (!rowCells || !nextRowCells) return null;
+  const rowItems = childrenAtPath(rowPath);
+  const nextRowItems = childrenAtPath(nextRowPath);
+  if (!rowItems || !nextRowItems) return null;
 
   const uid = from[from.length - 1]!;
-  const colIndex = rowCells.findIndex((c) => c.uid === uid);
+  const colIndex = rowItems.findIndex((c) => c.uid === uid);
   if (colIndex === -1) return null;
 
-  const colName = rowCells[colIndex]!.name.peek();
+  const colName = rowItems[colIndex]!.name.peek();
   if (!colName) return null;
 
-  const target = nextRowCells.find((c) => c.name.peek() === colName);
+  const target = nextRowItems.find((c) => c.name.peek() === colName);
   return target ? [...nextRowPath, target.uid] : null;
 }
 
 export function standardMove(
-  path: CellPath,
+  path: ItemPath,
   dir: "left" | "right" | "up" | "down",
   mod: boolean
-): CellPath | null {
-  const { kind, viewContext } = getCellNavContext(path);
+): ItemPath | null {
+  const { kind, viewContext } = getItemNavContext(path);
 
   if (dir === "left" || dir === "right") {
     const sign: -1 | 1 = dir === "left" ? -1 : 1;
@@ -219,7 +218,7 @@ export function standardMove(
       return siblingPath(path, 1);
     }
 
-    if (sign === -1 && (kind === "list" || mod)) {
+    if (sign === -1 && (kind === "group" || mod)) {
       const p = parentPath(path);
       if (p && p.length) return p;
     }
@@ -249,18 +248,18 @@ export function standardMove(
     return mod ? null : neighborNavStop(path, sign, path.slice(0, -1));
   }
 
-  if (mod || kind === "list") {
+  if (mod || kind === "group") {
     return siblingPath(path, sign);
   }
 
   const target = neighborNavStop(path, sign);
   if (!target) return null;
 
-  const { viewContext: targetView } = getCellNavContext(target);
+  const { viewContext: targetView } = getItemNavContext(target);
   if (targetView === "table-cell" || targetView === "bar-child") {
     const rowPath = parentPath(target);
-    const rowCells = rowPath && childrenAtPath(rowPath);
-    const first = rowCells?.[0];
+    const rowItems = rowPath && childrenAtPath(rowPath);
+    const first = rowItems?.[0];
     if (!rowPath || !first) return target;
     return [...rowPath, first.uid];
   }
@@ -270,9 +269,9 @@ export function standardMove(
 
 /* Mutations */
 
-export type TransformResult = { path: CellPath; caret?: number } | null;
+export type TransformResult = { path: ItemPath; caret?: number } | null;
 
-export function setCellText(path: CellPath, raw: string): CellPath {
+export function setItemText(path: ItemPath, raw: string): ItemPath {
   const sig = childSignalAtPath(path);
   if (!sig || !isWritableSignal(sig)) return path;
 
@@ -280,27 +279,27 @@ export function setCellText(path: CellPath, raw: string): CellPath {
   return path;
 }
 
-export function setCellAsFlow(path: CellPath): TransformResult {
+export function setItemAsDerived(path: ItemPath): TransformResult {
   const sig = childSignalAtPath(path);
   if (!sig || !isWritableSignal(sig)) return null;
 
-  sig.set(createFlow(sig, ""));
+  sig.set(createDerived(sig, ""));
   return { path, caret: 0 };
 }
 
 function editParentAtPath(
-  path: CellPath,
+  path: ItemPath,
   fn: (ctx: {
-    parent: WriteSignal<ListValue | TemplateValue<ListValue>>;
-    parentPath: CellPath;
-    before: Cell[];
+    parent: WriteSignal<GroupContent | TemplateContent<GroupContent>>;
+    parentPath: ItemPath;
+    before: Item[];
     index: number;
-    valueCellUid?: number;
+    contentItemUid?: number;
     params?: string[];
-    child: CellValueSignal;
+    child: ItemContentSignal;
     uid: number;
-  }) => { after: Cell[]; valueCellUid?: number; path: CellPath }
-): CellPath {
+  }) => { after: Item[]; contentItemUid?: number; path: ItemPath }
+): ItemPath {
   if (path.length === 0) return path;
 
   const child = childSignalAtPath(path);
@@ -311,99 +310,99 @@ function editParentAtPath(
 
   let nextPath = path;
 
-  const out = editParentList(
+  const out = editParentGroup(
     child,
     uid,
-    ({ parent, before, index, valueCellUid, params }) => {
+    ({ parent, before, index, contentItemUid, params }) => {
       const r = fn({
         parent,
         parentPath,
         before,
         index,
-        valueCellUid,
+        contentItemUid,
         params,
         child,
         uid,
       });
       nextPath = r.path;
-      return { after: r.after, valueCellUid: r.valueCellUid };
+      return { after: r.after, contentItemUid: r.contentItemUid };
     }
   );
 
   return out ? nextPath : path;
 }
 
-function makeBlankCell(value: CellValueSignal): Cell {
+function makeBlankItem(content: ItemContentSignal): Item {
   return {
     uid: newUid(),
     name: createSignal(""),
     view: createSignal(""),
-    value,
+    content,
   };
 }
 
-function insertAt(cs: Cell[], i: number, cell: Cell): Cell[] {
-  return [...cs.slice(0, i), cell, ...cs.slice(i)];
+function insertAt(items: Item[], i: number, item: Item): Item[] {
+  return [...items.slice(0, i), item, ...items.slice(i)];
 }
 
-function replaceAt(cs: Cell[], i: number, cell: Cell): Cell[] {
-  return [...cs.slice(0, i), cell, ...cs.slice(i + 1)];
+function replaceAt(items: Item[], i: number, item: Item): Item[] {
+  return [...items.slice(0, i), item, ...items.slice(i + 1)];
 }
 
-function removeAt(cs: Cell[], i: number): Cell[] {
-  return [...cs.slice(0, i), ...cs.slice(i + 1)];
+function removeAt(items: Item[], i: number): Item[] {
+  return [...items.slice(0, i), ...items.slice(i + 1)];
 }
 
-export function insertCellBefore(path: CellPath): TransformResult {
+export function insertItemBefore(path: ItemPath): TransformResult {
   const np = editParentAtPath(path, ({ parent, parentPath, before, index }) => {
-    const value = createSignal(createBlank());
-    getParentSignal(value).value = parent;
+    const content = createSignal(createBlank());
+    getParentSignal(content).value = parent;
 
-    const cell = makeBlankCell(value);
-    const after = insertAt(before, index, cell);
-    return { after, path: [...parentPath, cell.uid] };
+    const item = makeBlankItem(content);
+    const after = insertAt(before, index, item);
+    return { after, path: [...parentPath, item.uid] };
   });
 
   return { path: np };
 }
 
-export function insertCellAfter(path: CellPath): TransformResult {
+export function insertItemAfter(path: ItemPath): TransformResult {
   const np = editParentAtPath(path, ({ parent, parentPath, before, index }) => {
-    const value = createSignal(createBlank());
-    getParentSignal(value).value = parent;
+    const content = createSignal(createBlank());
+    getParentSignal(content).value = parent;
 
-    const cell = makeBlankCell(value);
-    const after = insertAt(before, index + 1, cell);
-    return { after, path: [...parentPath, cell.uid] };
+    const item = makeBlankItem(content);
+    const after = insertAt(before, index + 1, item);
+    return { after, path: [...parentPath, item.uid] };
   });
 
   return { path: np };
 }
 
-export function wrapCellInList(path: CellPath): TransformResult {
+export function wrapItemInGroup(path: ItemPath): TransformResult {
   const np = editParentAtPath(
     path,
     ({ parent, parentPath, before, index, child }) => {
-      const oldCell = before[index]!;
+      const oldItem = before[index]!;
       const wrapperUid = newUid();
 
-      const outerNameSig = oldCell.name;
-      oldCell.name = createSignal("");
+      const outerNameSig = oldItem.name;
+      oldItem.name = createSignal("");
 
-      const wrapperSig = createSignal(createList([oldCell]));
+      const wrapperSig = createSignal(createGroup([oldItem]));
       getParentSignal(wrapperSig).value = parent;
       getParentSignal(child).value = wrapperSig;
 
-      const wrapperCell: Cell = {
+      const wrapperItem: Item = {
         uid: wrapperUid,
         name: outerNameSig,
         view: createSignal(""),
-        value: wrapperSig,
+        content: wrapperSig,
       };
 
       return {
-        after: replaceAt(before, index, wrapperCell),
-        path: [...parentPath, wrapperUid, oldCell.uid],
+        after: replaceAt(before, index, wrapperItem),
+        path: [...parentPath, wrapperUid, oldItem.uid],
       };
     }
   );
@@ -411,15 +410,15 @@ export function wrapCellInList(path: CellPath): TransformResult {
   return { path: np };
 }
 
-export function unwrapSingleCellList(path: CellPath): TransformResult {
+export function unwrapSingleItemGroup(path: ItemPath): TransformResult {
   const innerChild = childSignalAtPath(path);
   if (!innerChild) return null;
 
   const wrapperSig = getParent(innerChild);
   if (!wrapperSig) return null;
 
-  const cells = getRenderChildren(wrapperSig);
-  if (cells.length !== 1) return null;
+  const items = getRenderChildren(wrapperSig);
+  if (items.length !== 1) return null;
 
   const pPath = parentPath(path);
   if (!pPath) return null;
@@ -427,15 +426,15 @@ export function unwrapSingleCellList(path: CellPath): TransformResult {
   const np = editParentAtPath(
     pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
-      const innerCell = cells[0]!;
-      innerCell.name = before[index]!.name;
+      const innerItem = items[0]!;
+      innerItem.name = before[index]!.name;
 
       getParentSignal(innerChild).value = grandparent;
       getParentSignal(wrapperSig).value = undefined;
 
       return {
-        after: replaceAt(before, index, innerCell),
-        path: [...gpPath, innerCell.uid],
+        after: replaceAt(before, index, innerItem),
+        path: [...gpPath, innerItem.uid],
       };
     }
   );
@@ -443,19 +442,19 @@ export function unwrapSingleCellList(path: CellPath): TransformResult {
   return { path: np };
 }
 
-function removeCellWithFocus(
-  path: CellPath,
+function removeItemWithFocus(
+  path: ItemPath,
   prefer: "prev" | "next"
 ): TransformResult {
   const np = editParentAtPath(
     path,
-    ({ parentPath, before, index, valueCellUid }) => {
+    ({ parentPath, before, index, contentItemUid }) => {
       const removed = before[index]!;
       const after = removeAt(before, index);
-      getParentSignal(removed.value).value = undefined;
+      getParentSignal(removed.content).value = undefined;
 
       if (after.length === 0) {
-        return { after, valueCellUid, path: parentPath };
+        return { after, contentItemUid, path: parentPath };
       }
 
       const prev = before[index - 1]?.uid;
@@ -468,7 +467,7 @@ function removeCellWithFocus(
 
       return {
         after,
-        valueCellUid,
+        contentItemUid,
         path: [...parentPath, focusUid],
       };
     }
@@ -477,19 +476,19 @@ function removeCellWithFocus(
   return { path: np };
 }
 
-export function removeCellBackward(path: CellPath): TransformResult {
-  return removeCellWithFocus(path, "prev");
+export function removeItemBackward(path: ItemPath): TransformResult {
+  return removeItemWithFocus(path, "prev");
 }
 
-export function removeCellForward(path: CellPath): TransformResult {
-  return removeCellWithFocus(path, "next");
+export function removeItemForward(path: ItemPath): TransformResult {
+  return removeItemWithFocus(path, "next");
 }
 
-export function splitCell(
-  path: CellPath,
+export function splitItem(
+  path: ItemPath,
   caretStart: number,
   caretEnd: number = caretStart
-): CellPath {
+): ItemPath {
   const sig = childSignalAtPath(path);
   if (!sig || !isWritableSignal(sig)) return path;
 
@@ -504,21 +503,21 @@ export function splitCell(
   const right = text.slice(end);
 
   batch(() => {
-    setCellText(path, left);
-    const next = insertCellAfter(path)!.path;
-    setCellText(next, right);
+    setItemText(path, left);
+    const next = insertItemAfter(path)!.path;
+    setItemText(next, right);
     path = next;
   });
 
   return path;
 }
 
-export function mergeCellWithPrev(path: CellPath): TransformResult {
+export function mergeItemWithPrev(path: ItemPath): TransformResult {
   const prev = siblingPath(path, -1);
   if (!prev) return null;
 
-  if (getCellNavContext(prev).kind !== "text") return null;
-  if (getCellNavContext(path).kind !== "text") return null;
+  if (getItemNavContext(prev).kind !== "text") return null;
+  if (getItemNavContext(path).kind !== "text") return null;
 
   const prevSig = childSignalAtPath(prev);
   const curSig = childSignalAtPath(path);
@@ -534,19 +533,19 @@ export function mergeCellWithPrev(path: CellPath): TransformResult {
 
   let nextPath = prev;
   batch(() => {
-    setCellText(prev, prevText + curText);
-    nextPath = removeCellBackward(path)?.path ?? prev;
+    setItemText(prev, prevText + curText);
+    nextPath = removeItemBackward(path)?.path ?? prev;
   });
 
   return { path: nextPath, caret };
 }
 
-export function mergeCellWithNext(path: CellPath): TransformResult {
+export function mergeItemWithNext(path: ItemPath): TransformResult {
   const next = siblingPath(path, 1);
   if (!next) return null;
 
-  if (getCellNavContext(next).kind !== "text") return null;
-  if (getCellNavContext(path).kind !== "text") return null;
+  if (getItemNavContext(next).kind !== "text") return null;
+  if (getItemNavContext(path).kind !== "text") return null;
 
   const curSig = childSignalAtPath(path);
   const nextSig = childSignalAtPath(next);
@@ -560,8 +559,8 @@ export function mergeCellWithNext(path: CellPath): TransformResult {
 
   let nextPathOut = path;
   batch(() => {
-    setCellText(path, curText + nextText);
-    nextPathOut = removeCellBackward(next)?.path ?? path;
+    setItemText(path, curText + nextText);
+    nextPathOut = removeItemBackward(next)?.path ?? path;
   });
 
   return { path: nextPathOut, caret: curText.length };
