@@ -25,7 +25,7 @@ import {
   groupOpt,
   fnOpt,
   primitiveToContent,
-  resolveStructural,
+  resolveContent,
 } from "./model";
 
 function contentFn(op: (...contents: Content[]) => Content): ContentSignal {
@@ -89,7 +89,7 @@ function typedFn<A extends any[]>(
 function groupNumbersOpt(group: GroupContent): number[] {
   const out: number[] = [];
   for (const { content } of group.items) {
-    const v = resolveStructural(content);
+    const v = resolveContent(content);
     if (isBlank(v)) continue;
     if (isScalar(v) && typeof v.value === "number") out.push(v.value);
     else throw new TypeError(ISSUE.numOrBlank);
@@ -100,7 +100,7 @@ function groupNumbersOpt(group: GroupContent): number[] {
 function groupTextsOpt(group: GroupContent): string[] {
   const out: string[] = [];
   for (const { content } of group.items) {
-    const v = resolveStructural(content);
+    const v = resolveContent(content);
     if (isBlank(v)) continue;
     if (isScalar(v) && typeof v.value === "string") out.push(v.value);
     else throw new TypeError(ISSUE.textOrBlank);
@@ -256,13 +256,13 @@ export const library = {
 
   count: typedFn([reqGroup], (source) =>
     createScalar(
-      source.items.filter((c) => !isBlank(resolveStructural(c.content))).length
+      source.items.filter((c) => !isBlank(resolveContent(c.content))).length
     )
   ),
 
   count_blank: typedFn([reqGroup], (source) =>
     createScalar(
-      source.items.filter((c) => isBlank(resolveStructural(c.content))).length
+      source.items.filter((c) => isBlank(resolveContent(c.content))).length
     )
   ),
 
