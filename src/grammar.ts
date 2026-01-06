@@ -23,7 +23,7 @@ import {
   createRangeGroup,
   getByName,
   getByIndexOrName,
-} from "./data";
+} from "./model";
 
 /* Grammar */
 

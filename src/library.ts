@@ -26,7 +26,7 @@ import {
   fnOpt,
   primitiveToContent,
   evalStructural,
-} from "./data";
+} from "./model";
 
 function contentFn(op: (...contents: Content[]) => Content): ContentSignal {
   return createSignal(

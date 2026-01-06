@@ -18,9 +18,9 @@ import {
   createScalar,
   getRenderModel,
   getRenderProps,
-} from "./data";
-import { type ItemPath } from "./tree";
-import { focusSignal, registerBinding, unregisterBinding } from "./input";
+} from "./model";
+import { type ItemPath } from "./interact";
+import { focusSignal, registerBinding, unregisterBinding } from "./inputs";
 
 type CreateOptions = {
   className?: string;

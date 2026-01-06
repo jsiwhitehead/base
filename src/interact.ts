@@ -21,7 +21,7 @@ import {
   editParentGroup,
   parseScalarInput,
   getLayoutContext,
-} from "./data";
+} from "./model";
 
 /* Root */
 

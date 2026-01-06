@@ -825,7 +825,7 @@ export function createRangeGroup(
 const evalCode: (
   code: string,
   scope: (name: string) => ContentSignal
-) => Content = require("./code").evalCode;
+) => Content = require("./grammar").evalCode;
 
 function toStaticError(err: unknown): StaticError {
   return {

@@ -1,6 +1,6 @@
 import { signal } from "@preact/signals-core";
 
-import { type EditorFieldMode } from "./data";
+import { type EditorFieldMode } from "./model";
 import {
   type ItemPath,
   firstChildPath,
@@ -17,7 +17,7 @@ import {
   splitItem,
   mergeItemWithPrev,
   mergeItemWithNext,
-} from "./tree";
+} from "./interact";
 
 export type FocusTarget = { kind: "body" } | { kind: "header"; index: number };
 

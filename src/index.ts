@@ -17,11 +17,11 @@ import {
   setGlobalLibrary,
   resolveContent,
   createTemplateGroupSignal,
-} from "./data";
-import { setDataRoot } from "./tree";
+} from "./model";
+import { setDataRoot } from "./interact";
 import { library } from "./library";
-import { onRootKeyDown, focusFirstRootCell } from "./input";
-import renderRoot from "./render";
+import { onRootKeyDown, focusFirstRootCell } from "./inputs";
+import renderRoot from "./views";
 
 export function render(
   rootSignal: ContentSignal<GroupContent>,
