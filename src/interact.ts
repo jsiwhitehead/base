@@ -15,9 +15,9 @@ import {
   createGroup,
   createDerived,
   createSignal,
-  getRenderModel,
-  getRenderChildren,
-  getRenderEditors,
+  getViewModel,
+  getViewChildren,
+  getViewEditors,
   editParentGroup,
   parseScalarInput,
   getLayoutContext,
@@ -25,15 +25,15 @@ import {
 
 /* Root */
 
-let __dataRoot: ItemContentSignal | null = null;
+let __modelRoot: ItemContentSignal | null = null;
 
-export function setDataRoot(root: ItemContentSignal) {
-  __dataRoot = root;
+export function setModelRoot(root: ItemContentSignal) {
+  __modelRoot = root;
 }
 
-export function getDataRoot(): ItemContentSignal {
-  if (!__dataRoot) throw new Error("Data root not set");
-  return __dataRoot;
+export function getModelRoot(): ItemContentSignal {
+  if (!__modelRoot) throw new Error("Model root not set");
+  return __modelRoot;
 }
 
 /* Navigation */
@@ -42,10 +42,10 @@ export type ItemPath = number[];
 
 function itemsAlongPath(path: ItemPath): Item[] {
   const items: Item[] = [];
-  let content: ItemContentSignal = getDataRoot();
+  let content: ItemContentSignal = getModelRoot();
 
   for (const uid of path) {
-    const kids = getRenderChildren(content);
+    const kids = getViewChildren(content);
     const item = kids.find((c) => c.uid === uid);
     if (!item) return [];
     items.push(item);
@@ -56,7 +56,7 @@ function itemsAlongPath(path: ItemPath): Item[] {
 }
 
 function childSignalAtPath(path: ItemPath): ItemContentSignal | null {
-  if (path.length === 0) return getDataRoot();
+  if (path.length === 0) return getModelRoot();
   const items = itemsAlongPath(path);
   const last = items[items.length - 1];
   return last ? last.content : null;
@@ -65,7 +65,7 @@ function childSignalAtPath(path: ItemPath): ItemContentSignal | null {
 function childrenAtPath(path: ItemPath): Item[] | null {
   const content = childSignalAtPath(path);
   if (!content) return null;
-  return getRenderChildren(content);
+  return getViewChildren(content);
 }
 
 export function parentPath(path: ItemPath): ItemPath | null {
@@ -114,11 +114,11 @@ export function getItemNavContext(path: ItemPath): ItemNavContext {
   let hasExtraHeaderEditors = false;
 
   if (item) {
-    const m = getRenderModel(item.content);
+    const m = getViewModel(item.content);
     if (m.kind === "group") kind = "group";
     else kind = m.editable ? "text" : "text-readonly";
 
-    hasExtraHeaderEditors = getRenderEditors(item).some(
+    hasExtraHeaderEditors = getViewEditors(item).some(
       (f) => f.get.value !== null
     );
   }
@@ -128,10 +128,10 @@ export function getItemNavContext(path: ItemPath): ItemNavContext {
 }
 
 function isNavStop(item: Item | null, content: ItemContentSignal): boolean {
-  const kids = getRenderChildren(content);
+  const kids = getViewChildren(content);
   if (kids.length === 0) return true;
   if (!item) return false;
-  return getRenderEditors(item).some((f) => f.get.value !== null);
+  return getViewEditors(item).some((f) => f.get.value !== null);
 }
 
 function collectNavStops(): ItemPath[] {
@@ -146,12 +146,12 @@ function collectNavStops(): ItemPath[] {
       result.push(path);
     }
 
-    for (const c of getRenderChildren(content)) {
+    for (const c of getViewChildren(content)) {
       walk([...path, c.uid], c.content, c);
     }
   }
 
-  walk([], getDataRoot(), null);
+  walk([], getModelRoot(), null);
   return result;
 }
 
@@ -224,8 +224,8 @@ export function standardMove(
     }
 
     if (sign === 1) {
-      const node = childSignalAtPath(path) ?? getDataRoot();
-      if (getRenderChildren(node).length) {
+      const node = childSignalAtPath(path) ?? getModelRoot();
+      if (getViewChildren(node).length) {
         return firstChildPath(path);
       }
       if (mod) return null;
@@ -417,7 +417,7 @@ export function unwrapSingleItemGroup(path: ItemPath): TransformResult {
   const wrapperSig = getParent(innerChild);
   if (!wrapperSig) return null;
 
-  const items = getRenderChildren(wrapperSig);
+  const items = getViewChildren(wrapperSig);
   if (items.length !== 1) return null;
 
   const pPath = parentPath(path);
@@ -492,7 +492,7 @@ export function splitItem(
   const sig = childSignalAtPath(path);
   if (!sig || !isWritableSignal(sig)) return path;
 
-  const m = getRenderModel(sig);
+  const m = getViewModel(sig);
   const text = m.kind === "scalar" ? m.text : "";
 
   const len = text.length;
@@ -523,8 +523,8 @@ export function mergeItemWithPrev(path: ItemPath): TransformResult {
   const curSig = childSignalAtPath(path);
   if (!prevSig || !curSig) return null;
 
-  const pv = getRenderModel(prevSig);
-  const cv = getRenderModel(curSig);
+  const pv = getViewModel(prevSig);
+  const cv = getViewModel(curSig);
 
   const prevText = pv.kind === "scalar" ? pv.text : "";
   const curText = cv.kind === "scalar" ? cv.text : "";
@@ -551,8 +551,8 @@ export function mergeItemWithNext(path: ItemPath): TransformResult {
   const nextSig = childSignalAtPath(next);
   if (!curSig || !nextSig) return null;
 
-  const cv = getRenderModel(curSig);
-  const nv = getRenderModel(nextSig);
+  const cv = getViewModel(curSig);
+  const nv = getViewModel(nextSig);
 
   const curText = cv.kind === "scalar" ? cv.text : "";
   const nextText = nv.kind === "scalar" ? nv.text : "";

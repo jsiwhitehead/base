@@ -1,5 +1,5 @@
 import {
-  ERR,
+  ISSUE,
   type GroupContent,
   type FunctionContent,
   type Content,
@@ -25,7 +25,7 @@ import {
   groupOpt,
   fnOpt,
   primitiveToContent,
-  evalStructural,
+  resolveStructural,
 } from "./model";
 
 function contentFn(op: (...contents: Content[]) => Content): ContentSignal {
@@ -89,10 +89,10 @@ function typedFn<A extends any[]>(
 function groupNumbersOpt(group: GroupContent): number[] {
   const out: number[] = [];
   for (const { content } of group.items) {
-    const v = evalStructural(content);
+    const v = resolveStructural(content);
     if (isBlank(v)) continue;
     if (isScalar(v) && typeof v.value === "number") out.push(v.value);
-    else throw new TypeError(ERR.numOrBlank);
+    else throw new TypeError(ISSUE.numOrBlank);
   }
   return out;
 }
@@ -100,10 +100,10 @@ function groupNumbersOpt(group: GroupContent): number[] {
 function groupTextsOpt(group: GroupContent): string[] {
   const out: string[] = [];
   for (const { content } of group.items) {
-    const v = evalStructural(content);
+    const v = resolveStructural(content);
     if (isBlank(v)) continue;
     if (isScalar(v) && typeof v.value === "string") out.push(v.value);
-    else throw new TypeError(ERR.textOrBlank);
+    else throw new TypeError(ISSUE.textOrBlank);
   }
   return out;
 }
@@ -222,9 +222,10 @@ export const library = {
     createScalar(t.replaceAll(s, r))
   ),
 
-  index_of: typedFn([reqText, optText(""), optNum(0)], (t, s, from) =>
-    createScalar(t.indexOf(s, from))
-  ),
+  position_of: typedFn([reqText, optText(""), optNum(0)], (t, s, from) => {
+    const index = t.indexOf(s, from);
+    return index === -1 ? createBlank() : createScalar(index + 1);
+  }),
 
   pad_start: typedFn(
     [reqText, optNum(0), optText(" ")],
@@ -255,23 +256,25 @@ export const library = {
 
   count: typedFn([reqGroup], (source) =>
     createScalar(
-      source.items.filter((c) => !isBlank(evalStructural(c.content))).length
+      source.items.filter((c) => !isBlank(resolveStructural(c.content))).length
     )
   ),
 
   count_blank: typedFn([reqGroup], (source) =>
     createScalar(
-      source.items.filter((c) => isBlank(evalStructural(c.content))).length
+      source.items.filter((c) => isBlank(resolveStructural(c.content))).length
     )
   ),
 
   map: typedFn([reqGroup, reqFn], (source, fnValue) =>
-    groupMap(source, (content, index, name) => fnValue.fn(content, index, name))
+    groupMap(source, (content, position, name) =>
+      fnValue.fn(content, position, name)
+    )
   ),
 
   filter: typedFn([reqGroup, reqFn], (source, predValue) =>
-    groupFilter(source, (content, index, name) =>
-      predValue.fn(content, index, name)
+    groupFilter(source, (content, position, name) =>
+      predValue.fn(content, position, name)
     )
   ),
 
@@ -279,7 +282,7 @@ export const library = {
     groupSort(
       source,
       keyValue
-        ? (content, index, name) => keyValue.fn(content, index, name)
+        ? (content, position, name) => keyValue.fn(content, position, name)
         : null
     )
   ),
@@ -292,12 +295,12 @@ export const library = {
         initSig = createSignal(createBlank())
       ) => {
         const src = sourceSig.get();
-        if (!isGroup(src)) throw new TypeError(ERR.group);
+        if (!isGroup(src)) throw new TypeError(ISSUE.group);
         const rf = fnSig.get();
-        if (!isFunction(rf)) throw new TypeError(ERR.function);
+        if (!isFunction(rf)) throw new TypeError(ISSUE.function);
         return groupReduce(
           src,
-          (acc, content, index, name) => rf.fn(acc, content, index, name),
+          (acc, content, position, name) => rf.fn(acc, content, position, name),
           initSig
         );
       }

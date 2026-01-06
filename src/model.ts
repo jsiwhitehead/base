@@ -6,9 +6,9 @@ import {
   batch,
 } from "@preact/signals-core";
 
-/* Errors */
+/* Issues */
 
-export const ERR = {
+export const ISSUE = {
   flag: "Expected flag (true or blank)",
   literal: "Expected literal value",
   number: "Expected number",
@@ -22,12 +22,12 @@ export const ERR = {
 
   sliceStepZero: "Slice step cannot be 0",
 
-  indexFinite: "Index must be a finite number",
-  indexOneBased: "Index must be 1 or greater",
-  indexNonGroup: "Cannot index into a non-group content",
-  indexOutOfRange: (index: number, len: number) =>
-    `Index ${index} is out of range (length ${len})`,
-  indexNameMustBeTextOrNumber: "Index/name must evaluate to text or number",
+  positionFinite: "Position must be a finite number",
+  positionOneBased: "Position must be 1 or greater",
+  positionNonGroup: "Cannot select a position from non-group content",
+  positionOutOfRange: (position: number, len: number) =>
+    `Position ${position} is out of range (length ${len})`,
+  posNameMustBeTextOrNumber: "Name/position must be text or number",
   nameOnNonGroup: (name: string) =>
     `Cannot access name '${name}' of non-group content`,
   unknownName: (name: string) => `Unknown name '${name}'`,
@@ -41,8 +41,8 @@ export const ERR = {
 
 export type ScalarPrimitive = true | number | string;
 
-export type ErrorContent = {
-  kind: "error";
+export type IssueContent = {
+  kind: "issue";
   message: string;
 };
 
@@ -66,9 +66,9 @@ export type FunctionContent = {
   fn: (...args: ContentSignal[]) => ContentSignal;
 };
 
-export type DataContent = StructuralContent | FunctionContent;
+export type DirectContent = StructuralContent | FunctionContent;
 
-export type Content = DataContent | ErrorContent;
+export type Content = DirectContent | IssueContent;
 
 export type DerivedContent = {
   kind: "derived";
@@ -91,7 +91,7 @@ export type MatchPattern =
 export type MatchContent = {
   kind: "match";
   arg: string;
-  matches: {
+  cases: {
     uid: number;
     pattern: Signal<MatchPattern>;
     body: ItemContentSignal;
@@ -101,8 +101,8 @@ export type MatchContent = {
 };
 
 export type TemplateContent<
-  Body extends DataContent | DerivedContent | LensContent =
-    | DataContent
+  Body extends DirectContent | DerivedContent | LensContent =
+    | DirectContent
     | DerivedContent
     | LensContent
 > = {
@@ -111,7 +111,7 @@ export type TemplateContent<
   body: Body;
 };
 
-export type EvalContent =
+export type RelationalContent =
   | DerivedContent
   | LensContent
   | MatchContent
@@ -133,7 +133,7 @@ export type ContentSignal<T extends Content = Content> = Signal<T>;
 
 export type ItemContentSignal =
   | ReadSignal<Content>
-  | WriteSignal<DataContent | EvalContent>;
+  | WriteSignal<DirectContent | RelationalContent>;
 
 export type Item = {
   uid: number;
@@ -142,7 +142,7 @@ export type Item = {
   content: ItemContentSignal;
 };
 
-export type StaticError = { kind: "error"; message: string };
+export type StaticIssue = { kind: "issue"; message: string };
 
 export type StaticItem = {
   name?: string;
@@ -156,7 +156,7 @@ export type StaticGroupContent = {
 };
 
 export type StaticContent =
-  | StaticError
+  | StaticIssue
   | BlankContent
   | ScalarPrimitive
   | StaticGroupContent;
@@ -167,7 +167,7 @@ function hasKind(v: unknown, k: string): boolean {
   return typeof v === "object" && v !== null && (v as any).kind === k;
 }
 
-export const isError = (v: unknown): v is ErrorContent => hasKind(v, "error");
+export const isIssue = (v: unknown): v is IssueContent => hasKind(v, "issue");
 export const isBlank = (v: unknown): v is BlankContent => hasKind(v, "blank");
 export const isScalar = (v: unknown): v is ScalarContent =>
   hasKind(v, "scalar");
@@ -175,7 +175,7 @@ export const isGroup = (v: unknown): v is GroupContent => hasKind(v, "group");
 export const isFunction = (v: unknown): v is FunctionContent =>
   hasKind(v, "function");
 export const isContent = (v: unknown): v is Content =>
-  isError(v) || isBlank(v) || isScalar(v) || isGroup(v) || isFunction(v);
+  isIssue(v) || isBlank(v) || isScalar(v) || isGroup(v) || isFunction(v);
 export const isDerived = (v: unknown): v is DerivedContent =>
   hasKind(v, "derived");
 export const isLens = (v: unknown): v is LensContent => hasKind(v, "lens");
@@ -187,8 +187,8 @@ export const isSignal = (
 ): v is ReadSignal<unknown> | WriteSignal<unknown> => hasKind(v, "signal");
 export const isWritableSignal = (v: unknown): v is WriteSignal<unknown> =>
   isSignal(v) && typeof (v as any).set === "function";
-export const isStaticError = (v: unknown): v is StaticError =>
-  hasKind(v, "error");
+export const isStaticIssue = (v: unknown): v is StaticIssue =>
+  hasKind(v, "issue");
 export const isStaticGroup = (v: unknown): v is StaticGroupContent =>
   hasKind(v, "group");
 
@@ -219,18 +219,18 @@ export function getParent(
 
 function groupItemSignals(src: GroupContent): {
   item: Item;
-  indexSig: ContentSignal;
+  positionSig: ContentSignal;
   nameSig: ContentSignal;
   contentSig: ContentSignal;
 }[] {
   return src.items.map((c, i) => {
-    const indexSig = createSignal(createScalar(i + 1));
+    const positionSig = createSignal(createScalar(i + 1));
     const nameSig = createComputed(() => {
       const n = c.name.get();
       return n ? createScalar(n) : createBlank();
     });
-    const contentSig = createComputed(() => evalContent(c.content));
-    return { item: c, indexSig, nameSig, contentSig };
+    const contentSig = createComputed(() => resolveContent(c.content));
+    return { item: c, positionSig, nameSig, contentSig };
   });
 }
 
@@ -238,19 +238,19 @@ export function groupMap(
   src: GroupContent,
   f: (
     content: ContentSignal,
-    index: ContentSignal,
+    position: ContentSignal,
     name: ContentSignal
   ) => ContentSignal
 ): GroupContent {
   return createGroup(
-    groupItemSignals(src).map(({ item, indexSig, nameSig, contentSig }) => ({
+    groupItemSignals(src).map(({ item, positionSig, nameSig, contentSig }) => ({
       uid: newUid(),
       name: item.name,
       content: createComputed(() => {
         try {
-          return f(contentSig, indexSig, nameSig).get();
+          return f(contentSig, positionSig, nameSig).get();
         } catch (err) {
-          return createError(err instanceof Error ? err.message : String(err));
+          return createIssue(err instanceof Error ? err.message : String(err));
         }
       }),
     }))
@@ -261,14 +261,14 @@ export function groupFilter(
   src: GroupContent,
   pred: (
     content: ContentSignal,
-    index: ContentSignal,
+    position: ContentSignal,
     name: ContentSignal
   ) => ContentSignal
 ): GroupContent {
   return createGroup(
     groupItemSignals(src)
-      .filter(({ contentSig, indexSig, nameSig }) =>
-        isTruthy(pred(contentSig, indexSig, nameSig).get())
+      .filter(({ contentSig, positionSig, nameSig }) =>
+        isTruthy(pred(contentSig, positionSig, nameSig).get())
       )
       .map(({ item }) => item),
     src.contentItemUid
@@ -280,7 +280,7 @@ export function groupReduce(
   rf: (
     acc: ContentSignal,
     content: ContentSignal,
-    index: ContentSignal,
+    position: ContentSignal,
     name: ContentSignal
   ) => ContentSignal,
   init: ContentSignal
@@ -289,13 +289,13 @@ export function groupReduce(
   if (seq.length === 0) return init;
 
   const step = (acc: ContentSignal, e: (typeof seq)[number]) =>
-    rf(acc, e.contentSig, e.indexSig, e.nameSig);
+    rf(acc, e.contentSig, e.positionSig, e.nameSig);
 
   if (!isBlank(init.get())) {
     return seq.reduce(step, init);
   }
 
-  const first = createSignal(evalContent(src.items[0]!.content));
+  const first = createSignal(resolveContent(src.items[0]!.content));
   return seq.slice(1).reduce(step, first);
 }
 
@@ -336,20 +336,20 @@ export function groupSort(
     | null
     | ((
         content: ContentSignal,
-        index: ContentSignal,
+        position: ContentSignal,
         name: ContentSignal
       ) => ContentSignal)
 ): GroupContent {
   const rows = groupItemSignals(src).map(
-    ({ item, indexSig, nameSig, contentSig }, i) => ({
+    ({ item, positionSig, nameSig, contentSig }, i) => ({
       uid: item.uid,
       name: item.name,
       view: item.view,
       content: item.content,
       index: i,
       sortKey: keySelector
-        ? keySelector(contentSig, indexSig, nameSig).get()
-        : evalContent(item.content),
+        ? keySelector(contentSig, positionSig, nameSig).get()
+        : resolveContent(item.content),
     })
   );
 
@@ -364,8 +364,8 @@ export function newUid() {
   return nextItemUid++;
 }
 
-export const createError = (message: string): ErrorContent => ({
-  kind: "error",
+export const createIssue = (message: string): IssueContent => ({
+  kind: "issue",
   message,
 });
 
@@ -421,15 +421,15 @@ export const createFunction = (
 function derivedComputed(
   owner: ItemContentSignal,
   code: string,
-  params?: ScopeParams
+  params?: ContextParams
 ): ReadSignal<Content> {
   return createComputed<Content>(() => {
     try {
-      return evalCode(code, (name: string) =>
-        lookupInScope(name, owner, params)
+      return interpretExpr(code, (name: string) =>
+        lookupInContext(name, owner, params)
       );
     } catch (err) {
-      return createError(err instanceof Error ? err.message : String(err));
+      return createIssue(err instanceof Error ? err.message : String(err));
     }
   });
 }
@@ -450,18 +450,20 @@ export function createLens(
     try {
       if (!source.trim()) return createBlank();
 
-      const target = lookupInScope(source, owner).get();
-      if (!isGroup(target)) throw new TypeError(ERR.group);
+      const target = lookupInContext(source, owner).get();
+      if (!isGroup(target)) throw new TypeError(ISSUE.group);
 
       const code = filter.trim();
       if (!code) return createGroup(target.items, target.contentItemUid);
 
-      const pred = evalCode(code, (n: string) => lookupInScope(n, owner));
-      if (!isFunction(pred)) throw new TypeError(ERR.function);
+      const pred = interpretExpr(code, (n: string) =>
+        lookupInContext(n, owner)
+      );
+      if (!isFunction(pred)) throw new TypeError(ISSUE.function);
 
       return groupFilter(target, pred.fn);
     } catch (err) {
-      return createError(err instanceof Error ? err.message : String(err));
+      return createIssue(err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -483,9 +485,9 @@ function textToPattern(text: string): MatchPattern {
 function matchPattern(
   content: Content,
   pat: MatchPattern,
-  params?: ScopeParams
+  params?: ContextParams
 ) {
-  if (isError(content)) return false;
+  if (isIssue(content)) return false;
 
   switch (pat.kind) {
     case "pany":
@@ -506,7 +508,7 @@ function matchPattern(
 
         if (!item) return false;
 
-        const v = evalContent(item.content, params);
+        const v = resolveContent(item.content, params);
         if (!matchPattern(v, sub, params)) return false;
       }
       return true;
@@ -516,7 +518,7 @@ function matchPattern(
 
 export function createMatchSignal(
   arg: string,
-  matches: {
+  cases: {
     uid?: number;
     pattern: MatchPattern;
     body: ItemContentSignal;
@@ -525,7 +527,7 @@ export function createMatchSignal(
   const sig = createSignal<MatchContent>(null as any);
 
   batch(() => {
-    const norm = matches.map((m) => ({
+    const norm = cases.map((m) => ({
       uid: m.uid ?? newUid(),
       pattern: createSignal<MatchPattern>(m.pattern),
       body: m.body,
@@ -538,7 +540,7 @@ export function createMatchSignal(
         const name = arg.trim();
         if (!name) return null;
 
-        const v = lookupInScope(name, sig).get();
+        const v = lookupInContext(name, sig).get();
 
         for (const arm of norm) {
           if (matchPattern(v, arm.pattern.get())) return arm.uid;
@@ -557,20 +559,20 @@ export function createMatchSignal(
         const arm = norm.find((m) => m.uid === uid);
         if (!arm) return createBlank();
 
-        return evalContent(arm.body);
+        return resolveContent(arm.body);
       } catch (err) {
-        return createError(err instanceof Error ? err.message : String(err));
+        return createIssue(err instanceof Error ? err.message : String(err));
       }
     });
 
-    sig.set({ kind: "match", arg, matches: norm, match, result });
+    sig.set({ kind: "match", arg, cases: norm, match, result });
   });
 
   return sig;
 }
 
 export function createTemplate<
-  Body extends DataContent | DerivedContent | LensContent
+  Body extends DirectContent | DerivedContent | LensContent
 >(params: string[], body: Body): TemplateContent<Body> {
   return { kind: "template", params, body };
 }
@@ -639,15 +641,15 @@ function asReadOnlySignal<T>(sig: Signal<T>): ReadSignal<T> {
   return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
 }
 
-function readonlyContent(v: Content, params?: ScopeParams): Content {
-  if (isError(v) || isBlank(v) || isScalar(v) || isFunction(v)) return v;
+function readonlyContent(v: Content, params?: ContextParams): Content {
+  if (isIssue(v) || isBlank(v) || isScalar(v) || isFunction(v)) return v;
   return createGroup(
     v.items.map((c) => ({
       uid: newUid(),
       name: asReadOnlySignal(c.name),
       view: asReadOnlySignal(c.view),
       content: createComputed(() =>
-        readonlyContent(evalContent(c.content, params), params)
+        readonlyContent(resolveContent(c.content, params), params)
       ),
     })),
     v.contentItemUid
@@ -657,7 +659,7 @@ function readonlyContent(v: Content, params?: ScopeParams): Content {
 /* Conversions */
 
 export function isTruthy(content: Content): boolean {
-  if (isError(content) || isBlank(content)) return false;
+  if (isIssue(content) || isBlank(content)) return false;
   return true;
 }
 
@@ -676,7 +678,7 @@ export function toNumber(content: Content): number | null {
 }
 
 export function toText(content: Content): string | null {
-  if (isError(content)) return content.message;
+  if (isIssue(content)) return content.message;
   if (isBlank(content)) return null;
   if (isScalar(content)) return String(content.value);
   return null;
@@ -686,43 +688,43 @@ export function numOpt(content: Content): number | null {
   if (isBlank(content)) return null;
   if (isScalar(content) && typeof content.value === "number")
     return content.value;
-  throw new TypeError(ERR.numOrBlank);
+  throw new TypeError(ISSUE.numOrBlank);
 }
 
 export function textOpt(content: Content): string | null {
   if (isBlank(content)) return null;
   if (isScalar(content) && typeof content.value === "string")
     return content.value;
-  throw new TypeError(ERR.textOrBlank);
+  throw new TypeError(ISSUE.textOrBlank);
 }
 
 export function groupOpt(content: Content): GroupContent | null {
   if (isBlank(content)) return null;
   if (isGroup(content)) return content;
-  throw new TypeError(ERR.group);
+  throw new TypeError(ISSUE.group);
 }
 
 export function fnOpt(content: Content): FunctionContent | null {
   if (isBlank(content)) return null;
   if (isFunction(content)) return content as FunctionContent;
-  throw new TypeError(ERR.function);
+  throw new TypeError(ISSUE.function);
 }
 
 export function flagExpect(content: Content): boolean {
   if (isBlank(content)) return false;
   if (isScalar(content) && content.value === true) return true;
-  throw new TypeError(ERR.flag);
+  throw new TypeError(ISSUE.flag);
 }
 
 export function primExpect(content: Content): ScalarPrimitive {
   if (isScalar(content)) return content.value;
-  throw new TypeError(ERR.literal);
+  throw new TypeError(ISSUE.literal);
 }
 
 export function numExpect(content: Content): number {
   if (isScalar(content) && typeof content.value === "number")
     return content.value;
-  throw new TypeError(ERR.number);
+  throw new TypeError(ISSUE.number);
 }
 
 export function primitiveToContent(
@@ -733,17 +735,17 @@ export function primitiveToContent(
 }
 
 export function size(content: Content): number | null {
-  if (isError(content)) return null;
+  if (isIssue(content)) return null;
   if (isBlank(content)) return null;
   if (isScalar(content) && typeof content.value === "string")
     return content.value.length;
   if (isGroup(content)) return content.items.length;
-  throw new TypeError(ERR.textOrGroup);
+  throw new TypeError(ISSUE.textOrGroup);
 }
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-export function parseScalarInput(text: string): DataContent {
+export function parseScalarInput(text: string): DirectContent {
   const trimmed = text.trim();
   if (NUM_RE.test(trimmed)) {
     const n = Number(trimmed);
@@ -757,15 +759,15 @@ export function parseScalarInput(text: string): DataContent {
 function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
 }
-function rangeIndices(start: number, end: number, step: number): number[] {
-  if (step === 0) throw new RangeError(ERR.sliceStepZero);
+function rangePositions(start: number, end: number, step: number): number[] {
+  if (step === 0) throw new RangeError(ISSUE.sliceStepZero);
   const delta = end - start;
   if (delta === 0) return [start];
   if (Math.sign(delta) !== Math.sign(step)) return [];
   const n = Math.floor(Math.abs(delta) / Math.abs(step)) + 1;
   return Array.from({ length: n }, (_, i) => start + i * step);
 }
-function computeSliceIndices(
+function computeSlicePositions(
   start: number | null,
   end: number | null,
   step: number | null,
@@ -776,7 +778,7 @@ function computeSliceIndices(
     if (end == null) return [];
     const e = Math.trunc(end);
     const st = step != null ? Math.trunc(step) : e >= s ? 1 : -1;
-    return rangeIndices(s, e, st);
+    return rangePositions(s, e, st);
   }
   const st =
     step != null ? Math.trunc(step) : (end ?? len) >= (start ?? 1) ? 1 : -1;
@@ -784,7 +786,7 @@ function computeSliceIndices(
   const eDefault = st > 0 ? len : 1;
   const s = clamp(Math.trunc(start ?? sDefault), 1, len);
   const e = clamp(Math.trunc(end ?? eDefault), 1, len);
-  return rangeIndices(s, e, st);
+  return rangePositions(s, e, st);
 }
 
 export function sliceText(
@@ -793,8 +795,8 @@ export function sliceText(
   end: number | null,
   step: number | null
 ): string {
-  const indices = computeSliceIndices(start, end, step, text.length);
-  return indices.map((i) => text.charAt(i - 1)).join("");
+  const positions = computeSlicePositions(start, end, step, text.length);
+  return positions.map((n) => text.charAt(n - 1)).join("");
 }
 
 export function sliceGroup(
@@ -803,8 +805,8 @@ export function sliceGroup(
   end: number | null,
   step: number | null
 ): GroupContent {
-  const indices = computeSliceIndices(start, end, step, group.items.length);
-  const items = indices.map((oneBased) => group.items[oneBased - 1]!);
+  const positions = computeSlicePositions(start, end, step, group.items.length);
+  const items = positions.map((n) => group.items[n - 1]!);
   return createGroup(items, group.contentItemUid);
 }
 
@@ -813,26 +815,19 @@ export function createRangeGroup(
   end: number | null,
   step: number | null = null
 ): GroupContent {
-  const indices = computeSliceIndices(start, end, step, null);
-  const items = indices.map((n) => ({
+  const positions = computeSlicePositions(start, end, step, null);
+  const items = positions.map((n) => ({
     content: createSignal(createScalar(n)),
   }));
   return createGroup(items);
 }
 
-/* Evaluation */
+/* Resolve */
 
-const evalCode: (
+const interpretExpr: (
   code: string,
-  scope: (name: string) => ContentSignal
-) => Content = require("./grammar").evalCode;
-
-function toStaticError(err: unknown): StaticError {
-  return {
-    kind: "error",
-    message: err instanceof Error ? err.message : String(err),
-  };
-}
+  context: (name: string) => ContentSignal
+) => Content = require("./grammar").interpretExpr;
 
 let __globalLib: Map<string, ContentSignal> | null = null;
 export function setGlobalLibrary(entries: Record<string, ContentSignal>) {
@@ -841,41 +836,41 @@ export function setGlobalLibrary(entries: Record<string, ContentSignal>) {
   );
 }
 
-type ScopeParams = Map<ItemContentSignal, Record<string, ContentSignal>>;
+type ContextParams = Map<ItemContentSignal, Record<string, ContentSignal>>;
 
-function lookupInScope(
+function lookupInContext(
   name: string,
   start: ItemContentSignal,
-  params?: ScopeParams
+  params?: ContextParams
 ): ContentSignal {
-  let scope = getParentSignal(start).value;
-  while (scope) {
-    const outer = scope.get();
+  let context = getParentSignal(start).value;
+  while (context) {
+    const outer = context.get();
     const inner = isTemplate(outer) ? outer.body : outer;
 
     if (isGroup(inner)) {
       const found = inner.items.find((c) => c.name.get() === name);
-      if (found) return createSignal(evalContent(found.content, params));
+      if (found) return createSignal(resolveContent(found.content, params));
     }
 
     if (isTemplate(outer) && outer.params.includes(name)) {
-      const found = params?.get(scope)?.[name];
-      if (found) return createSignal(evalContent(found, params));
-      throw new Error(ERR.templateParameter(name));
+      const found = params?.get(context)?.[name];
+      if (found) return createSignal(resolveContent(found, params));
+      throw new Error(ISSUE.templateParameter(name));
     }
 
-    scope = getParentSignal(scope).value;
+    context = getParentSignal(context).value;
   }
 
   const libSig = __globalLib?.get(name.toLowerCase());
   if (libSig) return createSignal(libSig.get());
 
-  throw new Error(ERR.unboundIdentifier(name));
+  throw new Error(ISSUE.unboundIdentifier(name));
 }
 
-export function evalStructural(
+export function resolveStructural(
   sig: ItemContentSignal,
-  params?: ScopeParams
+  params?: ContextParams
 ): Content {
   const v = sig.get();
 
@@ -892,7 +887,7 @@ export function evalStructural(
 
   if (isMatch(v)) {
     return createGroup(
-      v.matches.map((m) => ({
+      v.cases.map((m) => ({
         uid: m.uid,
         name: createSignal(""),
         view: createSignal(""),
@@ -902,15 +897,15 @@ export function evalStructural(
   }
 
   if (isTemplate(v)) {
-    return evalStructural(createSignal(v.body), params);
+    return resolveStructural(createSignal(v.body), params);
   }
 
   return v;
 }
 
-export function evalContent(
+export function resolveContent(
   sig: ItemContentSignal,
-  params?: ScopeParams
+  params?: ContextParams
 ): Content {
   const v = sig.get();
 
@@ -929,32 +924,32 @@ export function evalContent(
           )
         );
         return readonlyContent(
-          evalContent(createSignal(v.body), nextParams),
+          resolveContent(createSignal(v.body), nextParams),
           nextParams
         );
       })
     );
   }
 
-  const content = evalStructural(sig, params);
+  const content = resolveStructural(sig, params);
   if (!isGroup(content) || content.contentItemUid === undefined) return content;
 
-  return evalContent(
+  return resolveContent(
     content.items.find((c) => c.uid === content.contentItemUid)!.content,
     params
   );
 }
 
-export function resolveContent(content: Content): StaticContent {
-  if (content.kind === "error") return content;
+export function toStatic(content: Content): StaticContent {
+  if (content.kind === "issue") return content;
 
   if (content.kind === "blank") return { kind: "blank" };
   if (content.kind === "scalar") return content.value;
 
   if (content.kind === "group") {
     if (content.contentItemUid !== undefined) {
-      return resolveContent(
-        evalContent(
+      return toStatic(
+        resolveContent(
           content.items.find((c) => c.uid === content.contentItemUid)!.content
         )
       );
@@ -969,13 +964,16 @@ export function resolveContent(content: Content): StaticContent {
         return {
           name: outName,
           view: outView,
-          content: resolveContent(evalContent(c.content)),
+          content: toStatic(resolveContent(c.content)),
         };
       } catch (err) {
         return {
           name: outName,
           view: outView,
-          content: toStaticError(err),
+          content: {
+            kind: "issue",
+            message: err instanceof Error ? err.message : String(err),
+          },
         };
       }
     });
@@ -983,8 +981,8 @@ export function resolveContent(content: Content): StaticContent {
   }
 
   return {
-    kind: "error",
-    message: ERR.cannotResolveFunctionContent,
+    kind: "issue",
+    message: ISSUE.cannotResolveFunctionContent,
   };
 }
 
@@ -1012,43 +1010,45 @@ export function getByName(
   required = false
 ): Content {
   return softWrap(required, () => {
-    if (!isGroup(group)) throw new TypeError(ERR.nameOnNonGroup(name));
+    if (!isGroup(group)) throw new TypeError(ISSUE.nameOnNonGroup(name));
     const item = group.items.find((v) => v.name.get() === name);
-    if (!item) throw new ReferenceError(ERR.unknownName(name));
-    return evalContent(item.content);
+    if (!item) throw new ReferenceError(ISSUE.unknownName(name));
+    return resolveContent(item.content);
   });
 }
 
-export function getByIndex(
+export function getByPosition(
   group: Content,
-  index1: number,
+  position: number,
   required = false
 ): Content {
   return softWrap(required, () => {
-    if (!Number.isFinite(index1)) throw new TypeError(ERR.indexFinite);
-    const idx0 = Math.trunc(index1) - 1;
-    if (idx0 < 0) throw new RangeError(ERR.indexOneBased);
-    if (!isGroup(group)) throw new TypeError(ERR.indexNonGroup);
-    const item = group.items[idx0];
+    if (!Number.isFinite(position)) throw new TypeError(ISSUE.positionFinite);
+    const index = Math.trunc(position) - 1;
+    if (index < 0) throw new RangeError(ISSUE.positionOneBased);
+    if (!isGroup(group)) throw new TypeError(ISSUE.positionNonGroup);
+    const item = group.items[index];
     if (!item)
-      throw new RangeError(ERR.indexOutOfRange(index1, group.items.length));
-    return evalContent(item.content);
+      throw new RangeError(
+        ISSUE.positionOutOfRange(position, group.items.length)
+      );
+    return resolveContent(item.content);
   });
 }
 
-export function getByIndexOrName(
+export function getByPositionOrName(
   group: Content,
   content: Content,
   required = false
 ): Content {
   return softWrap(required, () => {
-    if (!isGroup(group)) throw new TypeError(ERR.indexNonGroup);
+    if (!isGroup(group)) throw new TypeError(ISSUE.positionNonGroup);
     if (isScalar(content)) {
       const lit = content.value;
-      if (typeof lit === "number") return getByIndex(group, lit, required);
+      if (typeof lit === "number") return getByPosition(group, lit, required);
       if (typeof lit === "string") return getByName(group, lit, required);
     }
-    throw new TypeError(ERR.indexNameMustBeTextOrNumber);
+    throw new TypeError(ISSUE.posNameMustBeTextOrNumber);
   });
 }
 
@@ -1070,21 +1070,21 @@ export function getLayoutContext(
     : "default";
 }
 
-export type RenderScalar = {
+export type ViewScalar = {
   kind: "scalar";
   text: string;
   number?: number;
-  isError: boolean;
+  isIssue: boolean;
   editable: boolean;
 };
 
-export type RenderModel = RenderScalar | GroupContent;
+export type ViewModel = ViewScalar | GroupContent;
 
-export function getRenderModel(
+export function getViewModel(
   sig: ItemContentSignal,
-  params?: ScopeParams
-): RenderModel {
-  const v = evalStructural(sig, params);
+  params?: ContextParams
+): ViewModel {
+  const v = resolveStructural(sig, params);
 
   if (isGroup(v)) return v;
 
@@ -1096,11 +1096,11 @@ export function getRenderModel(
     !isMatch(stored) &&
     !isTemplate(stored);
 
-  if (isError(v)) {
+  if (isIssue(v)) {
     return {
       kind: "scalar",
       text: v.message,
-      isError: true,
+      isIssue: true,
       editable: bodyEditable,
     };
   }
@@ -1109,7 +1109,7 @@ export function getRenderModel(
     return {
       kind: "scalar",
       text: "",
-      isError: false,
+      isIssue: false,
       editable: bodyEditable,
     };
   }
@@ -1118,7 +1118,7 @@ export function getRenderModel(
     return {
       kind: "scalar",
       text: String(v.value),
-      isError: false,
+      isIssue: false,
       editable: bodyEditable,
       number: typeof v.value === "number" ? v.value : undefined,
     };
@@ -1128,7 +1128,7 @@ export function getRenderModel(
     return {
       kind: "scalar",
       text: "[function]",
-      isError: false,
+      isIssue: false,
       editable: false,
     };
   }
@@ -1136,16 +1136,16 @@ export function getRenderModel(
   return {
     kind: "scalar",
     text: "[unknown]",
-    isError: false,
+    isIssue: false,
     editable: false,
   };
 }
 
-export function getRenderChildren(
+export function getViewChildren(
   sig: ItemContentSignal,
-  params?: ScopeParams
+  params?: ContextParams
 ): Item[] {
-  const v = evalStructural(sig, params);
+  const v = resolveStructural(sig, params);
   return isGroup(v) ? v.items : [];
 }
 
@@ -1163,7 +1163,7 @@ export type EditorField = {
   set?: (next: string) => void;
 };
 
-export function getRenderEditors(item: Item): EditorField[] {
+export function getViewEditors(item: Item): EditorField[] {
   const childSig = item.content;
   const fields: EditorField[] = [];
 
@@ -1278,7 +1278,7 @@ export function getRenderEditors(item: Item): EditorField[] {
   const parent = getParent(item.content);
   const pv = parent?.get();
   if (pv && isMatch(pv)) {
-    const arm = pv.matches.find((m) => m.uid === item.uid);
+    const arm = pv.cases.find((m) => m.uid === item.uid);
     if (arm) {
       const pattern = arm.pattern;
       fields.push({
@@ -1298,18 +1298,18 @@ export function getRenderEditors(item: Item): EditorField[] {
   return fields;
 }
 
-type RenderProps = {
+type ViewProps = {
   truthy(name: string): boolean;
   text(name: string): string | null;
   num(name: string): number | null;
   setFlag(name: string, on: boolean): boolean;
 };
 
-export function getRenderProps(
+export function getViewProps(
   sig: ItemContentSignal,
-  params?: ScopeParams
-): RenderProps | null {
-  const v = evalStructural(sig, params);
+  params?: ContextParams
+): ViewProps | null {
+  const v = resolveStructural(sig, params);
   if (!isGroup(v)) return null;
 
   const byName = new Map<string, Item>();
@@ -1320,7 +1320,7 @@ export function getRenderProps(
 
   const read = (name: string): Content => {
     const c = byName.get(name);
-    return c ? evalStructural(c.content, params) : createBlank();
+    return c ? resolveStructural(c.content, params) : createBlank();
   };
 
   return {

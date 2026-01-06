@@ -1,7 +1,7 @@
 import * as ohm from "ohm-js";
 
 import {
-  ERR,
+  ISSUE,
   type Content,
   type ContentSignal,
   isScalar,
@@ -22,7 +22,7 @@ import {
   sliceGroup,
   createRangeGroup,
   getByName,
-  getByIndexOrName,
+  getByPositionOrName,
 } from "./model";
 
 /* Grammar */
@@ -53,13 +53,13 @@ Script {
 
   Path          = Prim PathPart*
   PathPart      = Call
-                | Index
+                | Select
                 | Member
                 | Pipe
 
   Call          = "(" ListOf<Expr, ","> ")"
 
-  Index         = "[" Slice "]"                                    -- slice
+  Select        = "[" Slice "]"                                    -- slice
                 | "[" Expr "]" "!"?                                -- expr
 
   Member        = "." ident "!"?
@@ -71,7 +71,7 @@ Script {
   Prim          = Literal                                          -- lit
                 | ident                                            -- ident
                 | "(" Expr ")"                                     -- paren
-                | "." "[" Expr "]" "!"?                            -- dotindex
+                | "." "[" Expr "]" "!"?                            -- dotsel
                 | "." ident "!"?                                   -- dot
 
   Literal       = "blank"                                          -- blank
@@ -115,7 +115,7 @@ export type Expr =
   | Binary
   | Unary
   | Call
-  | Index
+  | Select
   | Member
   | Slice
   | Lit
@@ -148,10 +148,10 @@ export interface Call {
   args: Expr[];
 }
 
-export interface Index {
-  type: "Index";
+export interface Select {
+  type: "Select";
   group: Expr;
-  index: Expr;
+  select: Expr;
   required: boolean;
 }
 
@@ -275,19 +275,19 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       args: list.asIteration().children.map((n) => n.ast),
     });
   },
-  Index_slice(_open, expr, _close) {
-    return (receiver: Expr): Index => ({
-      type: "Index",
+  Select_slice(_open, expr, _close) {
+    return (receiver: Expr): Select => ({
+      type: "Select",
       group: receiver,
-      index: expr.ast,
+      select: expr.ast,
       required: false,
     });
   },
-  Index_expr(_open, expr, _close, maybeBang) {
-    return (receiver: Expr): Index => ({
-      type: "Index",
+  Select_expr(_open, expr, _close, maybeBang) {
+    return (receiver: Expr): Select => ({
+      type: "Select",
       group: receiver,
-      index: expr.ast,
+      select: expr.ast,
       required: !!maybeBang.sourceString,
     });
   },
@@ -322,13 +322,13 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   Prim_paren(_open, expr, _close) {
     return expr.ast;
   },
-  Prim_dotindex(_dot, _open, expr, _close, maybeBang) {
+  Prim_dotsel(_dot, _open, expr, _close, maybeBang) {
     return {
-      type: "Index",
+      type: "Select",
       group: IMPLICIT_PARAM,
-      index: expr.ast,
+      select: expr.ast,
       required: !!maybeBang.sourceString,
-    } as Index;
+    } as Select;
   },
   Prim_dot(_dot, nameTok, maybeBang) {
     return {
@@ -411,30 +411,30 @@ const UNARY_OPS: Record<Unary["op"], (v: Content) => boolean | number | null> =
     "#": (v) => size(v),
   };
 
-/* Evaluation */
+/* Interpret */
 
-function evalNumberOpt(
+function interpretNumberOpt(
   e: Expr | undefined,
-  scope: (name: string) => ContentSignal
+  context: (name: string) => ContentSignal
 ): number | null {
   if (!e) return null;
-  const sig = evalExpr(e, scope);
+  const sig = interpretAst(e, context);
   return numOpt(sig.get());
 }
 
-function evalExpr(
+function interpretAst(
   e: Expr,
-  scope: (name: string) => ContentSignal
+  context: (name: string) => ContentSignal
 ): ContentSignal {
   switch (e.type) {
     case "Lambda": {
       const params = e.params.map((p) => p.name);
       return createSignal(
         createFunction((...args: ContentSignal[]) =>
-          evalExpr(e.body, (name: string) => {
+          interpretAst(e.body, (name: string) => {
             const i = params.indexOf(name);
             if (i !== -1) return args[i] ?? createSignal(createBlank());
-            return scope(name);
+            return context(name);
           })
         )
       );
@@ -445,7 +445,10 @@ function evalExpr(
       const f = BINARY_OPS[op]!;
       return createSignal(
         primitiveToContent(
-          f(evalExpr(left, scope).get(), evalExpr(right, scope).get())
+          f(
+            interpretAst(left, context).get(),
+            interpretAst(right, context).get()
+          )
         )
       );
     }
@@ -453,26 +456,26 @@ function evalExpr(
     case "Unary": {
       const f = UNARY_OPS[e.op]!;
       return createSignal(
-        primitiveToContent(f(evalExpr(e.argument, scope).get()))
+        primitiveToContent(f(interpretAst(e.argument, context).get()))
       );
     }
 
     case "Call": {
-      const callee = evalExpr(e.callee, scope).get();
+      const callee = interpretAst(e.callee, context).get();
       if (!isFunction(callee)) {
-        throw new TypeError(ERR.function);
+        throw new TypeError(ISSUE.function);
       }
-      return callee.fn(...e.args.map((a) => evalExpr(a, scope)));
+      return callee.fn(...e.args.map((a) => interpretAst(a, context)));
     }
 
-    case "Index": {
-      if (e.index.type === "Slice") {
-        const targetSig = evalExpr(e.group, scope);
+    case "Select": {
+      if (e.select.type === "Slice") {
+        const targetSig = interpretAst(e.group, context);
         const target = targetSig.get();
 
-        const startN = evalNumberOpt(e.index.start, scope);
-        const endN = evalNumberOpt(e.index.end, scope);
-        const stepN = evalNumberOpt(e.index.step, scope);
+        const startN = interpretNumberOpt(e.select.start, context);
+        const endN = interpretNumberOpt(e.select.end, context);
+        const stepN = interpretNumberOpt(e.select.step, context);
 
         if (isScalar(target) && typeof target.value === "string") {
           return createSignal(
@@ -487,20 +490,22 @@ function evalExpr(
         return createSignal(createBlank());
       }
 
-      const target = evalExpr(e.group, scope).get();
-      const indexOrName = evalExpr(e.index, scope).get();
-      return createSignal(getByIndexOrName(target, indexOrName, e.required));
+      const target = interpretAst(e.group, context).get();
+      const positionOrName = interpretAst(e.select, context).get();
+      return createSignal(
+        getByPositionOrName(target, positionOrName, e.required)
+      );
     }
 
     case "Member": {
-      const target = evalExpr(e.group, scope).get();
+      const target = interpretAst(e.group, context).get();
       return createSignal(getByName(target, e.name.name, e.required));
     }
 
     case "Slice": {
-      const startN = evalNumberOpt(e.start, scope);
-      const endN = evalNumberOpt(e.end, scope);
-      const stepN = evalNumberOpt(e.step, scope);
+      const startN = interpretNumberOpt(e.start, context);
+      const endN = interpretNumberOpt(e.end, context);
+      const stepN = interpretNumberOpt(e.step, context);
       return createSignal(createRangeGroup(startN, endN, stepN));
     }
 
@@ -513,7 +518,7 @@ function evalExpr(
         if (typeof p === "string") {
           out += p;
         } else {
-          const v = evalExpr(p, scope);
+          const v = interpretAst(p, context);
           out += textOpt(v.get()) ?? "";
         }
       }
@@ -524,16 +529,16 @@ function evalExpr(
       return createSignal(createBlank());
 
     case "Ident":
-      return scope(e.name);
+      return context(e.name);
   }
 }
 
-export function evalCode(
+export function interpretExpr(
   code: string,
-  scope: (name: string) => ContentSignal
+  context: (name: string) => ContentSignal
 ): Content {
   if (!code.trim()) return createBlank();
   const match = grammar.match(code, "Start");
   if (match.failed()) throw new SyntaxError(match.message);
-  return evalExpr(semantics(match).ast, scope).get();
+  return interpretAst(semantics(match).ast, context).get();
 }

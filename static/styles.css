@@ -111,7 +111,7 @@
   }
 }
 
-.item.error > .content {
+.item.issue > .content {
   color: oklch(64.5% 0.246 16.439);
 }
 

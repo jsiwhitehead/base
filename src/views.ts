@@ -13,11 +13,11 @@ import {
   type Item,
   type EditorFieldMode,
   type Signal,
-  getRenderEditors,
+  getViewEditors,
   isWritableSignal,
   createScalar,
-  getRenderModel,
-  getRenderProps,
+  getViewModel,
+  getViewProps,
 } from "./model";
 import { type ItemPath } from "./interact";
 import { focusSignal, registerBinding, unregisterBinding } from "./inputs";
@@ -219,7 +219,7 @@ class StyledView extends View {
 
     const setHover = (toTrue: boolean) => {
       untracked(() => {
-        const p = getRenderProps(contentSig);
+        const p = getViewProps(contentSig);
         p?.setFlag("hover", toTrue);
       });
     };
@@ -234,7 +234,7 @@ class StyledView extends View {
     );
 
     this.effect(() => {
-      const m = getRenderModel(contentSig);
+      const m = getViewModel(contentSig);
 
       this.element.style.setProperty("--lh", "1.5");
 
@@ -253,7 +253,7 @@ class StyledView extends View {
 
       this.updateChildren(m.items);
 
-      const p = getRenderProps(contentSig);
+      const p = getViewProps(contentSig);
 
       const dir = (p?.text("direction") ?? "column").toLowerCase();
       const hor = (p?.text("horizontal") ?? "").toLowerCase();
@@ -333,7 +333,7 @@ class SliderView extends View {
     });
 
     this.effect(() => {
-      const m = getRenderModel(contentSig);
+      const m = getViewModel(contentSig);
       const n = m.kind === "scalar" && m.number !== undefined ? m.number : 0;
 
       if (this.element.value !== String(n)) {
@@ -414,7 +414,7 @@ class RowView extends View {
     this.effect(() => {
       const cols: string[] = JSON.parse(columnsJsonSig.value);
 
-      const rm = getRenderModel(rowItem.content);
+      const rm = getViewModel(rowItem.content);
       const rowGroup = rm.kind === "group" ? rm : null;
 
       const byName = new Map<string, Item>();
@@ -484,13 +484,13 @@ class TableView extends View {
 
     this.effect(
       () => {
-        const m = getRenderModel(contentSig);
+        const m = getViewModel(contentSig);
         if (m.kind !== "group") return [];
 
         const first = m.items[0]?.content;
         if (!first) return [];
 
-        const rm = getRenderModel(first);
+        const rm = getViewModel(first);
         if (rm.kind !== "group") return [];
 
         return [
@@ -510,7 +510,7 @@ class TableView extends View {
     );
 
     this.effect(() => {
-      const m = getRenderModel(contentSig);
+      const m = getViewModel(contentSig);
       this.updateChildren(m.kind === "group" ? m.items : []);
     });
 
@@ -529,11 +529,11 @@ class TableView extends View {
 
         for (const row of Array.from(this.body.children) as HTMLElement[]) {
           const kids = Array.from(row.children) as HTMLElement[];
-          const idx = kids.findIndex(
+          const index = kids.findIndex(
             (el, i) => i > 0 && el.classList.contains("focused")
           );
-          if (idx !== -1) {
-            col = idx - 1;
+          if (index !== -1) {
+            col = index - 1;
             break;
           }
         }
@@ -570,7 +570,7 @@ class StandardView extends View {
     );
 
     this.effect(
-      () => getRenderModel(contentSig).kind === "group",
+      () => getViewModel(contentSig).kind === "group",
       (shouldBeGroup) => {
         const next = shouldBeGroup ? this.groupEl : this.scalarEl;
         if (this.element !== next) {
@@ -581,7 +581,7 @@ class StandardView extends View {
     );
 
     this.effect(() => {
-      const m = getRenderModel(contentSig);
+      const m = getViewModel(contentSig);
 
       if (m.kind === "group") {
         this.updateChildren(m.items);
@@ -590,8 +590,8 @@ class StandardView extends View {
         for (const el of kids) el.classList.remove("result");
 
         if (m.contentItemUid !== undefined) {
-          const idx = m.items.findIndex((c) => c.uid === m.contentItemUid);
-          kids[idx]?.classList.add("result");
+          const index = m.items.findIndex((c) => c.uid === m.contentItemUid);
+          kids[index]?.classList.add("result");
         }
         return;
       }
@@ -605,7 +605,7 @@ class StandardView extends View {
         this.scalarEl.textContent = m.text;
       }
 
-      this.scalarEl.classList.toggle("error", m.isError);
+      this.scalarEl.classList.toggle("issue", m.isIssue);
     });
   }
 }
@@ -653,7 +653,7 @@ class ItemHeaderView extends View {
 
     this.effect(
       () =>
-        getRenderEditors(item).map((f) => ({
+        getViewEditors(item).map((f) => ({
           mode: f.mode,
           label: f.label ?? "",
         })),
@@ -714,7 +714,7 @@ class ItemHeaderView extends View {
     });
 
     this.effect(() => {
-      const eds = getRenderEditors(item);
+      const eds = getViewEditors(item);
       for (let i = 0; i < eds.length; i++) {
         const rec = this.cache[i];
         if (!rec) continue;
@@ -762,7 +762,7 @@ class ItemView extends View {
         const nameIsBlank = (item.name.get() || "").trim() === "";
         const hasName = !nameIsBlank;
 
-        const hasOtherEditors = getRenderEditors(item).length > 0;
+        const hasOtherEditors = getViewEditors(item).length > 0;
 
         return {
           needHeader: showHeader && (hasOtherEditors || hasName || nameFocused),
@@ -844,7 +844,7 @@ class ItemView extends View {
   }
 }
 
-export default function renderRoot(
+export default function mountRoot(
   rootSignal: ContentSignal<GroupContent>,
   rootPath: ItemPath
 ) {

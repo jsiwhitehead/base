@@ -3,8 +3,8 @@ import { effect } from "@preact/signals-core";
 import {
   type ScalarPrimitive,
   type GroupContent,
-  type DataContent,
-  type EvalContent,
+  type DirectContent,
+  type RelationalContent,
   type ContentSignal,
   type ItemContentSignal,
   createBlank,
@@ -15,22 +15,22 @@ import {
   createGroupSignal,
   createLens,
   setGlobalLibrary,
-  resolveContent,
+  toStatic,
   createTemplateGroupSignal,
 } from "./model";
-import { setDataRoot } from "./interact";
+import { setModelRoot } from "./interact";
 import { library } from "./library";
 import { onRootKeyDown, focusFirstRootCell } from "./inputs";
-import renderRoot from "./views";
+import mountRoot from "./views";
 
-export function render(
+export function mount(
   rootSignal: ContentSignal<GroupContent>,
   rootElement: HTMLElement
 ) {
   setGlobalLibrary(library);
-  setDataRoot(rootSignal);
+  setModelRoot(rootSignal);
 
-  const { element, dispose } = renderRoot(rootSignal, []);
+  const { element, dispose } = mountRoot(rootSignal, []);
 
   rootElement.replaceChildren(element);
 
@@ -52,7 +52,7 @@ export function render(
 const literalSig = (v: ScalarPrimitive) => createSignal(createScalar(v));
 
 const derivedSig = (code: string) => {
-  const s: ItemContentSignal = createSignal<DataContent | EvalContent>(
+  const s: ItemContentSignal = createSignal<DirectContent | RelationalContent>(
     createScalar("")
   );
   s.set(createDerived(s, code));
@@ -60,7 +60,7 @@ const derivedSig = (code: string) => {
 };
 
 const lensSig = (source: string, filter: string = "") => {
-  const s: ItemContentSignal = createSignal<DataContent | EvalContent>(
+  const s: ItemContentSignal = createSignal<DirectContent | RelationalContent>(
     createScalar("")
   );
   s.set(createLens(s, source, filter));
@@ -69,10 +69,10 @@ const lensSig = (source: string, filter: string = "") => {
 
 function resultGroupSig(
   items: Parameters<typeof createGroup>[0],
-  resultIndex1: number
+  resultIndex: number
 ) {
   const base = createGroup(items);
-  return createGroupSignal(base.items, base.items[resultIndex1]!.uid);
+  return createGroupSignal(base.items, base.items[resultIndex]!.uid);
 }
 
 const root = createGroupSignal([
@@ -124,7 +124,7 @@ const root = createGroupSignal([
   // },
   // { content: literalSig(10) },
   // {
-  //   name: "data",
+  //   name: "people",
   //   view: "table",
   //   content: createGroupSignal([
   //     {
@@ -148,7 +148,7 @@ const root = createGroupSignal([
   //   ]),
   // },
   // { content: createSignal(createBlank()) },
-  // { content: derivedSig("data:map(d -> d.Age):avg()") },
+  // { content: derivedSig("people:map(d -> d.Age):avg()") },
   // { name: "y", view: "slider", content: literalSig(50) },
   // { name: "z", content: derivedSig("x") },
   // { content: literalSig(10) },
@@ -161,8 +161,8 @@ const root = createGroupSignal([
   // { content: literalSig(30) },
 ]);
 
-const unmount = render(root, document.getElementById("root")!);
+const unmount = mount(root, document.getElementById("root")!);
 
 effect(() => {
-  console.log(JSON.stringify(resolveContent(root.get()), null, 2));
+  console.log(JSON.stringify(toStatic(root.get()), null, 2));
 });
