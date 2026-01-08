@@ -267,14 +267,14 @@ export const library = {
   ),
 
   map: typedFn([reqGroup, reqFn], (source, fnValue) =>
-    groupMap(source, (content, position, name) =>
-      fnValue.fn(content, position, name)
+    groupMap(source, (content, position, label) =>
+      fnValue.fn(content, position, label)
     )
   ),
 
   filter: typedFn([reqGroup, reqFn], (source, predValue) =>
-    groupFilter(source, (content, position, name) =>
-      predValue.fn(content, position, name)
+    groupFilter(source, (content, position, label) =>
+      predValue.fn(content, position, label)
     )
   ),
 
@@ -282,7 +282,7 @@ export const library = {
     groupSort(
       source,
       keyValue
-        ? (content, position, name) => keyValue.fn(content, position, name)
+        ? (content, position, label) => keyValue.fn(content, position, label)
         : null
     )
   ),
@@ -300,7 +300,8 @@ export const library = {
         if (!isFunction(rf)) throw new TypeError(ISSUE.function);
         return groupReduce(
           src,
-          (acc, content, position, name) => rf.fn(acc, content, position, name),
+          (acc, content, position, label) =>
+            rf.fn(acc, content, position, label),
           initSig
         );
       }

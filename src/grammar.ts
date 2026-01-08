@@ -21,8 +21,8 @@ import {
   sliceText,
   sliceGroup,
   createRangeGroup,
-  getByName,
-  getByPositionOrName,
+  getByLabel,
+  getByPositionOrLabel,
 } from "./model";
 
 /* Grammar */
@@ -158,7 +158,7 @@ export interface Select {
 export interface Member {
   type: "Member";
   group: Expr;
-  name: Ident;
+  label: Ident;
   required: boolean;
 }
 
@@ -185,12 +185,12 @@ export interface Blank {
 
 export interface Ident {
   type: "Ident";
-  name: string;
+  label: string;
 }
 
 /* Semantics */
 
-const IMPLICIT_PARAM = { type: "Ident", name: "_" } as Ident;
+const IMPLICIT_PARAM = { type: "Ident", label: "_" } as Ident;
 
 function buildBinaryChain(
   first: ohm.Node,
@@ -222,14 +222,14 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       type: "Lambda",
       params: list
         .asIteration()
-        .children.map((n) => ({ type: "Ident", name: n.sourceString })),
+        .children.map((n) => ({ type: "Ident", label: n.sourceString })),
       body: body.ast,
     } as Lambda;
   },
-  Lambda_single(nameTok, _arrow, body) {
+  Lambda_single(labelTok, _arrow, body) {
     return {
       type: "Lambda",
-      params: [{ type: "Ident", name: nameTok.sourceString }],
+      params: [{ type: "Ident", label: labelTok.sourceString }],
       body: body.ast,
     } as Lambda;
   },
@@ -291,18 +291,18 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       required: !!maybeBang.sourceString,
     });
   },
-  Member(_dot, nameTok, maybeBang) {
+  Member(_dot, labelTok, maybeBang) {
     return (receiver: Expr): Member => ({
       type: "Member",
       group: receiver,
-      name: { type: "Ident", name: nameTok.sourceString },
+      label: { type: "Ident", label: labelTok.sourceString },
       required: !!maybeBang.sourceString,
     });
   },
-  Pipe(_colon, nameTok, _open, list, _close) {
+  Pipe(_colon, labelTok, _open, list, _close) {
     return (receiver: Expr): Call => ({
       type: "Call",
-      callee: { type: "Ident", name: nameTok.sourceString },
+      callee: { type: "Ident", label: labelTok.sourceString },
       args: [receiver, ...list.asIteration().children.map((n) => n.ast)],
     });
   },
@@ -316,8 +316,8 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     } as Slice;
   },
 
-  Prim_ident(nameTok) {
-    return { type: "Ident", name: nameTok.sourceString };
+  Prim_ident(labelTok) {
+    return { type: "Ident", label: labelTok.sourceString };
   },
   Prim_paren(_open, expr, _close) {
     return expr.ast;
@@ -330,11 +330,11 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       required: !!maybeBang.sourceString,
     } as Select;
   },
-  Prim_dot(_dot, nameTok, maybeBang) {
+  Prim_dot(_dot, labelTok, maybeBang) {
     return {
       type: "Member",
       group: IMPLICIT_PARAM,
-      name: { type: "Ident", name: nameTok.sourceString },
+      label: { type: "Ident", label: labelTok.sourceString },
       required: !!maybeBang.sourceString,
     } as Member;
   },
@@ -415,7 +415,7 @@ const UNARY_OPS: Record<Unary["op"], (v: Content) => boolean | number | null> =
 
 function interpretNumberOpt(
   e: Expr | undefined,
-  context: (name: string) => ContentSignal
+  context: (label: string) => ContentSignal
 ): number | null {
   if (!e) return null;
   const sig = interpretAst(e, context);
@@ -424,17 +424,17 @@ function interpretNumberOpt(
 
 function interpretAst(
   e: Expr,
-  context: (name: string) => ContentSignal
+  context: (label: string) => ContentSignal
 ): ContentSignal {
   switch (e.type) {
     case "Lambda": {
-      const params = e.params.map((p) => p.name);
+      const params = e.params.map((p) => p.label);
       return createSignal(
         createFunction((...args: ContentSignal[]) =>
-          interpretAst(e.body, (name: string) => {
-            const i = params.indexOf(name);
+          interpretAst(e.body, (label: string) => {
+            const i = params.indexOf(label);
             if (i !== -1) return args[i] ?? createSignal(createBlank());
-            return context(name);
+            return context(label);
           })
         )
       );
@@ -491,15 +491,15 @@ function interpretAst(
       }
 
       const target = interpretAst(e.group, context).get();
-      const positionOrName = interpretAst(e.select, context).get();
+      const positionOrLabel = interpretAst(e.select, context).get();
       return createSignal(
-        getByPositionOrName(target, positionOrName, e.required)
+        getByPositionOrLabel(target, positionOrLabel, e.required)
       );
     }
 
     case "Member": {
       const target = interpretAst(e.group, context).get();
-      return createSignal(getByName(target, e.name.name, e.required));
+      return createSignal(getByLabel(target, e.label.label, e.required));
     }
 
     case "Slice": {
@@ -529,13 +529,13 @@ function interpretAst(
       return createSignal(createBlank());
 
     case "Ident":
-      return context(e.name);
+      return context(e.label);
   }
 }
 
 export function interpretExpr(
   code: string,
-  context: (name: string) => ContentSignal
+  context: (label: string) => ContentSignal
 ): Content {
   if (!code.trim()) return createBlank();
   const match = grammar.match(code, "Start");

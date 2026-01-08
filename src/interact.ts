@@ -193,10 +193,10 @@ function tableVerticalMove(from: ItemPath, dir: -1 | 1): ItemPath | null {
   const colIndex = rowItems.findIndex((c) => c.uid === uid);
   if (colIndex === -1) return null;
 
-  const colName = rowItems[colIndex]!.name.peek();
-  if (!colName) return null;
+  const colLabel = rowItems[colIndex]!.label.peek();
+  if (!colLabel) return null;
 
-  const target = nextRowItems.find((c) => c.name.peek() === colName);
+  const target = nextRowItems.find((c) => c.label.peek() === colLabel);
   return target ? [...nextRowPath, target.uid] : null;
 }
 
@@ -335,7 +335,7 @@ function updateParentAtPath(
 function makeBlankItem(content: ItemContentSignal): Item {
   return {
     uid: newUid(),
-    name: createSignal(""),
+    label: createSignal(""),
     view: createSignal(""),
     content,
   };
@@ -392,8 +392,8 @@ export function groupItem(path: ItemPath): UpdateResult {
       const oldItem = before[index]!;
       const wrapperUid = newUid();
 
-      const outerNameSig = oldItem.name;
-      oldItem.name = createSignal("");
+      const outerLabelSig = oldItem.label;
+      oldItem.label = createSignal("");
 
       const wrapperSig = createSignal(createGroup([oldItem]));
       getParentSignal(wrapperSig).value = parent;
@@ -401,7 +401,7 @@ export function groupItem(path: ItemPath): UpdateResult {
 
       const wrapperItem: Item = {
         uid: wrapperUid,
-        name: outerNameSig,
+        label: outerLabelSig,
         view: createSignal(""),
         content: wrapperSig,
       };
@@ -433,7 +433,7 @@ export function ungroupItem(path: ItemPath): UpdateResult {
     pPath,
     ({ parent: grandparent, parentPath: gpPath, before, index }) => {
       const innerItem = items[0]!;
-      innerItem.name = before[index]!.name;
+      innerItem.label = before[index]!.label;
 
       getParentSignal(innerChild).value = grandparent;
       getParentSignal(wrapperSig).value = undefined;

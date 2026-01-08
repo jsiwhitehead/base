@@ -157,7 +157,7 @@
   margin: 2.5px 0;
 }
 
-.header .name {
+.header .label {
   font-size: 12px;
   font-weight: bold;
   color: oklch(44.6% 0.043 257.281);
@@ -193,7 +193,7 @@
   }
   > .header {
     background: var(--blue-normal) !important;
-    .name {
+    .label {
       color: oklch(42.4% 0.199 265.638) !important;
     }
   }
@@ -213,7 +213,7 @@
   }
   > .header {
     background: var(--blue-light);
-    .name {
+    .label {
       color: oklch(54.6% 0.245 262.881);
     }
   }
@@ -272,7 +272,7 @@
     .label {
       position: relative;
 
-      .name:empty::after {
+      .label:empty::after {
         content: counter(rowIndex);
       }
 

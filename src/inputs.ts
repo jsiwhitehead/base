@@ -139,7 +139,7 @@ function bindInput(
       const selEnd = el.selectionEnd ?? selStart;
       const hasSelection = selStart !== selEnd;
 
-      if (mode === "name") {
+      if (mode === "label") {
         if (e.key === " ") {
           e.preventDefault();
           return;

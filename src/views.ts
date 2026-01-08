@@ -352,19 +352,19 @@ type HeaderSlot = {
 
 class RowHeaderView extends View {
   element = createEl("div", { className: "label" });
-  nameDisplayEl = createEl("div", { className: "name" });
-  nameInput = new AutosizeInput(false, { className: "name" });
+  labelDisplayEl = createEl("div", { className: "label" });
+  labelInput = new AutosizeInput(false, { className: "label" });
 
   slot: HeaderSlot = {
-    el: this.nameInput.input,
-    mode: "name",
+    el: this.labelInput.input,
+    mode: "label",
     commit: () => {},
   };
 
-  constructor(nameSig: Signal<string>, pathKey: string) {
+  constructor(labelSig: Signal<string>, pathKey: string) {
     super();
 
-    this.slot.commit = isSetSignal(nameSig) ? nameSig.set : () => {};
+    this.slot.commit = isSetSignal(labelSig) ? labelSig.set : () => {};
 
     this.effect(
       () => {
@@ -376,17 +376,17 @@ class RowHeaderView extends View {
           focus.target.index === 0
         );
       },
-      (showNameInput) => {
+      (showLabelInput) => {
         reconcileDomChildren(this.element, [
-          showNameInput ? this.nameInput.element : this.nameDisplayEl,
+          showLabelInput ? this.labelInput.element : this.labelDisplayEl,
         ]);
       }
     );
 
     this.effect(() => {
-      const name = nameSig.get() || "";
-      this.nameDisplayEl.textContent = name;
-      this.nameInput.update(name);
+      const label = labelSig.get() || "";
+      this.labelDisplayEl.textContent = label;
+      this.labelInput.update(label);
     });
   }
 
@@ -403,7 +403,7 @@ class RowView extends View {
     super();
 
     const pathKey = path.join(".");
-    this.header = new RowHeaderView(rowItem.name, pathKey);
+    this.header = new RowHeaderView(rowItem.label, pathKey);
 
     this.initChildren(
       this.element,
@@ -417,24 +417,24 @@ class RowView extends View {
       const rm = getViewModel(rowItem.content);
       const rowGroup = rm.kind === "group" ? rm : null;
 
-      const byName = new Map<string, Item>();
+      const byLabel = new Map<string, Item>();
       if (rowGroup) {
         for (const c of rowGroup.items) {
-          const n = c.name.get();
-          if (n) byName.set(n, c);
+          const n = c.label.get();
+          if (n) byLabel.set(n, c);
         }
       }
 
       const items: ChildItem[] = [];
       items.push({ uid: "label", create: () => this.header.element });
 
-      for (const name of cols) {
-        const real = byName.get(name);
+      for (const label of cols) {
+        const real = byLabel.get(label);
         if (real) {
           items.push(real);
         } else {
           items.push({
-            uid: name,
+            uid: label,
             create: () => createEl("div", { className: "item" }),
           });
         }
@@ -495,14 +495,14 @@ class TableView extends View {
 
         return [
           ...new Set(
-            rm.items.map((c) => c.name.get()).filter((x): x is string => !!x)
+            rm.items.map((c) => c.label.get()).filter((x): x is string => !!x)
           ),
         ];
       },
       (cols) => {
         const cells: HTMLElement[] = [createEl("div", { className: "label" })];
-        for (const name of cols) {
-          cells.push(createEl("div", { className: "item", value: name }));
+        for (const label of cols) {
+          cells.push(createEl("div", { className: "item", value: label }));
         }
         reconcileDomChildren(this.headerRow, cells);
         this.columnsJsonSig.value = JSON.stringify(cols);
@@ -628,10 +628,10 @@ const views: Record<string, new (c: ItemContentSignal, p: ItemPath) => View> = {
 class ItemHeaderView extends View {
   element = createEl("div", { className: "header" });
 
-  nameInput = new AutosizeInput(false, { className: "name" });
-  nameSlot: HeaderSlot = {
-    el: this.nameInput.input,
-    mode: "name",
+  labelInput = new AutosizeInput(false, { className: "label" });
+  labelSlot: HeaderSlot = {
+    el: this.labelInput.input,
+    mode: "label",
     commit: () => {},
   };
 
@@ -646,7 +646,7 @@ class ItemHeaderView extends View {
     | undefined
   )[] = [];
 
-  slots: HeaderSlot[] = [this.nameSlot];
+  slots: HeaderSlot[] = [this.labelSlot];
 
   constructor(item: Item) {
     super();
@@ -658,8 +658,8 @@ class ItemHeaderView extends View {
           label: f.label ?? "",
         })),
       (defs) => {
-        const nodes: HTMLElement[] = [this.nameInput.element];
-        const slots: HeaderSlot[] = [this.nameSlot];
+        const nodes: HTMLElement[] = [this.labelInput.element];
+        const slots: HeaderSlot[] = [this.labelSlot];
 
         for (let i = 0; i < defs.length; i++) {
           const d = defs[i]!;
@@ -703,12 +703,14 @@ class ItemHeaderView extends View {
     );
 
     this.effect(() => {
-      const text = item.name.get() || "";
-      this.nameInput.update(text);
+      const text = item.label.get() || "";
+      this.labelInput.update(text);
 
-      this.nameInput.input.readOnly = !isSetSignal(item.name);
-      this.nameInput.input.disabled = false;
-      this.nameSlot.commit = isSetSignal(item.name) ? item.name.set : () => {};
+      this.labelInput.input.readOnly = !isSetSignal(item.label);
+      this.labelInput.input.disabled = false;
+      this.labelSlot.commit = isSetSignal(item.label)
+        ? item.label.set
+        : () => {};
     });
 
     this.effect(() => {
@@ -752,18 +754,19 @@ class ItemView extends View {
         const focusMatches =
           focus.kind === "focused" && focus.path.join(".") === pathKey;
 
-        const nameFocused =
+        const labelFocused =
           focusMatches &&
           focus.target.kind === "header" &&
           focus.target.index === 0;
 
-        const nameIsBlank = (item.name.get() || "").trim() === "";
-        const hasName = !nameIsBlank;
+        const labelIsBlank = (item.label.get() || "").trim() === "";
+        const hasLabel = !labelIsBlank;
 
         const hasOtherInputs = getViewInputs(item).length > 0;
 
         return {
-          needHeader: showHeader && (hasOtherInputs || hasName || nameFocused),
+          needHeader:
+            showHeader && (hasOtherInputs || hasLabel || labelFocused),
           viewId: item.view.get(),
         };
       },
@@ -813,23 +816,23 @@ class ItemView extends View {
         const focusMatches =
           focus.kind === "focused" && focus.path.join(".") === pathKey;
 
-        const nameFocused =
+        const labelFocused =
           focusMatches &&
           focus.target.kind === "header" &&
           focus.target.index === 0;
 
-        const nameIsBlank = (item.name.get() || "").trim() === "";
+        const labelIsBlank = (item.label.get() || "").trim() === "";
 
         return {
           focused: focusMatches,
           contentFocused: focusMatches && focus.target.kind === "body",
-          hideName: nameIsBlank && !nameFocused,
+          hideLabel: labelIsBlank && !labelFocused,
         };
       },
-      ({ focused, contentFocused, hideName }) => {
+      ({ focused, contentFocused, hideLabel }) => {
         this.element.classList.toggle("focused", focused);
         this.view.element.classList.toggle("focused", contentFocused);
-        this.header.nameInput.element.classList.toggle("hidden", hideName);
+        this.header.labelInput.element.classList.toggle("hidden", hideLabel);
       }
     );
 

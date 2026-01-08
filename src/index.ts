@@ -81,7 +81,7 @@ const root = createGroupSignal([
   { content: literalSig(30) },
   // { content: createSignal(createBlank()) },
   // {
-  //   name: "f",
+  //   label: "f",
   //   content: createTemplateGroupSignal(
   //     ["arg1", "arg2"],
   //     [
@@ -97,15 +97,15 @@ const root = createGroupSignal([
   // {
   //   content: resultGroupSig(
   //     [
-  //       { name: "a", content: literalSig(10) },
-  //       { name: "b", content: literalSig(20) },
+  //       { label: "a", content: literalSig(10) },
+  //       { label: "b", content: literalSig(20) },
   //       { content: derivedSig("a * b") },
   //     ],
   //     2
   //   ),
   // },
   // {
-  //   name: "x",
+  //   label: "x",
   //   view: "bar",
   //   content: createGroupSignal([
   //     { content: literalSig(10) },
@@ -124,33 +124,33 @@ const root = createGroupSignal([
   // },
   // { content: literalSig(10) },
   // {
-  //   name: "people",
+  //   label: "people",
   //   view: "table",
   //   content: createGroupSignal([
   //     {
   //       content: createGroupSignal([
-  //         { name: "Name", content: literalSig("Steve") },
-  //         { name: "Age", content: literalSig(25) },
+  //         { label: "Name", content: literalSig("Steve") },
+  //         { label: "Age", content: literalSig(25) },
   //       ]),
   //     },
   //     {
   //       content: createGroupSignal([
-  //         { name: "Name", content: literalSig("Lucy") },
-  //         { name: "Age", content: literalSig(32) },
+  //         { label: "Name", content: literalSig("Lucy") },
+  //         { label: "Age", content: literalSig(32) },
   //       ]),
   //     },
   //     {
   //       content: createGroupSignal([
-  //         { name: "Name", content: literalSig("James") },
-  //         { name: "Age", content: literalSig(18) },
+  //         { label: "Name", content: literalSig("James") },
+  //         { label: "Age", content: literalSig(18) },
   //       ]),
   //     },
   //   ]),
   // },
   // { content: createSignal(createBlank()) },
   // { content: derivedSig("people:map(d -> d.Age):avg()") },
-  // { name: "y", view: "slider", content: literalSig(50) },
-  // { name: "z", content: derivedSig("x") },
+  // { label: "y", view: "slider", content: literalSig(50) },
+  // { label: "z", content: derivedSig("x") },
   // { content: literalSig(10) },
   // {
   //   content: createGroupSignal([

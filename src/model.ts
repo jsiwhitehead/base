@@ -27,13 +27,13 @@ export const ISSUE = {
   positionNonGroup: "Cannot select a position from non-group content",
   positionOutOfRange: (position: number, len: number) =>
     `Position ${position} is out of range (length ${len})`,
-  posNameMustBeTextOrNumber: "Name/position must be text or number",
-  nameOnNonGroup: (name: string) =>
-    `Cannot access name '${name}' of non-group content`,
-  unknownName: (name: string) => `Unknown name '${name}'`,
+  posLabelMustBeTextOrNumber: "Label/position must be text or number",
+  labelOnNonGroup: (label: string) =>
+    `Cannot access label '${label}' of non-group content`,
+  unknownLabel: (label: string) => `Unknown label '${label}'`,
 
-  unboundIdentifier: (name: string) => `Unbound identifier: ${name}`,
-  templateParameter: (name: string) => `Template parameter: ${name}`,
+  unboundIdentifier: (label: string) => `Unbound identifier: ${label}`,
+  templateParameter: (label: string) => `Template parameter: ${label}`,
   cannotResolveFunctionContent: "Cannot statically resolve a function content",
 } as const;
 
@@ -86,7 +86,7 @@ export type LensContent = {
 export type MatchPattern =
   | { kind: "pany" }
   | { kind: "plit"; value: ScalarPrimitive }
-  | { kind: "pgroup"; items: { name?: string; pat: MatchPattern }[] };
+  | { kind: "pgroup"; items: { label?: string; pat: MatchPattern }[] };
 
 export type MatchContent = {
   kind: "match";
@@ -137,7 +137,7 @@ export type ItemContentSignal =
 
 export type Item = {
   uid: number;
-  name: Signal<string>;
+  label: Signal<string>;
   view: Signal<string>;
   content: ItemContentSignal;
 };
@@ -145,7 +145,7 @@ export type Item = {
 export type StaticIssue = { kind: "issue"; message: string };
 
 export type StaticItem = {
-  name?: string;
+  label?: string;
   view?: string;
   content: StaticContent;
 };
@@ -220,17 +220,17 @@ export function getParent(
 function groupItemSignals(src: GroupContent): {
   item: Item;
   positionSig: ContentSignal;
-  nameSig: ContentSignal;
+  labelSig: ContentSignal;
   contentSig: ContentSignal;
 }[] {
   return src.items.map((c, i) => {
     const positionSig = createSignal(createScalar(i + 1));
-    const nameSig = createComputed(() => {
-      const n = c.name.get();
+    const labelSig = createComputed(() => {
+      const n = c.label.get();
       return n ? createScalar(n) : createBlank();
     });
     const contentSig = createComputed(() => resolveContent(c.content));
-    return { item: c, positionSig, nameSig, contentSig };
+    return { item: c, positionSig, labelSig, contentSig };
   });
 }
 
@@ -239,21 +239,25 @@ export function groupMap(
   f: (
     content: ContentSignal,
     position: ContentSignal,
-    name: ContentSignal
+    label: ContentSignal
   ) => ContentSignal
 ): GroupContent {
   return createGroup(
-    groupItemSignals(src).map(({ item, positionSig, nameSig, contentSig }) => ({
-      uid: newUid(),
-      name: item.name,
-      content: createComputed(() => {
-        try {
-          return f(contentSig, positionSig, nameSig).get();
-        } catch (err) {
-          return createIssue(err instanceof Error ? err.message : String(err));
-        }
-      }),
-    }))
+    groupItemSignals(src).map(
+      ({ item, positionSig, labelSig, contentSig }) => ({
+        uid: newUid(),
+        label: item.label,
+        content: createComputed(() => {
+          try {
+            return f(contentSig, positionSig, labelSig).get();
+          } catch (err) {
+            return createIssue(
+              err instanceof Error ? err.message : String(err)
+            );
+          }
+        }),
+      })
+    )
   );
 }
 
@@ -262,13 +266,13 @@ export function groupFilter(
   pred: (
     content: ContentSignal,
     position: ContentSignal,
-    name: ContentSignal
+    label: ContentSignal
   ) => ContentSignal
 ): GroupContent {
   return createGroup(
     groupItemSignals(src)
-      .filter(({ contentSig, positionSig, nameSig }) =>
-        isTruthy(pred(contentSig, positionSig, nameSig).get())
+      .filter(({ contentSig, positionSig, labelSig }) =>
+        isTruthy(pred(contentSig, positionSig, labelSig).get())
       )
       .map(({ item }) => item),
     src.contentItemUid
@@ -281,7 +285,7 @@ export function groupReduce(
     acc: ContentSignal,
     content: ContentSignal,
     position: ContentSignal,
-    name: ContentSignal
+    label: ContentSignal
   ) => ContentSignal,
   init: ContentSignal
 ): ContentSignal {
@@ -289,7 +293,7 @@ export function groupReduce(
   if (seq.length === 0) return init;
 
   const step = (acc: ContentSignal, e: (typeof seq)[number]) =>
-    rf(acc, e.contentSig, e.positionSig, e.nameSig);
+    rf(acc, e.contentSig, e.positionSig, e.labelSig);
 
   if (!isBlank(init.get())) {
     return seq.reduce(step, init);
@@ -337,18 +341,18 @@ export function groupSort(
     | ((
         content: ContentSignal,
         position: ContentSignal,
-        name: ContentSignal
+        label: ContentSignal
       ) => ContentSignal)
 ): GroupContent {
   const rows = groupItemSignals(src).map(
-    ({ item, positionSig, nameSig, contentSig }, i) => ({
+    ({ item, positionSig, labelSig, contentSig }, i) => ({
       uid: item.uid,
-      name: item.name,
+      label: item.label,
       view: item.view,
       content: item.content,
       index: i,
       sortKey: keySelector
-        ? keySelector(contentSig, positionSig, nameSig).get()
+        ? keySelector(contentSig, positionSig, labelSig).get()
         : resolveContent(item.content),
     })
   );
@@ -379,18 +383,18 @@ export const createScalar = (value: ScalarPrimitive): ScalarContent => ({
 export function createGroup(
   items: {
     uid?: number;
-    name?: string | Signal<string>;
+    label?: string | Signal<string>;
     view?: string | Signal<string>;
     content: ItemContentSignal;
   }[] = [],
   contentItemUid?: number
 ): GroupContent {
   const outItems = items.map((c) => {
-    let nameSig: Signal<string>;
-    if (isSignal(c.name)) {
-      nameSig = c.name;
+    let labelSig: Signal<string>;
+    if (isSignal(c.label)) {
+      labelSig = c.label;
     } else {
-      nameSig = createSignal<string>(c.name ?? "");
+      labelSig = createSignal<string>(c.label ?? "");
     }
 
     let viewSig: Signal<string>;
@@ -402,7 +406,7 @@ export function createGroup(
 
     return {
       uid: c.uid ?? newUid(),
-      name: nameSig,
+      label: labelSig,
       view: viewSig,
       content: c.content,
     };
@@ -425,8 +429,8 @@ function derivedComputed(
 ): GetSignal<Content> {
   return createComputed<Content>(() => {
     try {
-      return interpretExpr(code, (name: string) =>
-        lookupInContext(name, owner, params)
+      return interpretExpr(code, (label: string) =>
+        lookupInContext(label, owner, params)
       );
     } catch (err) {
       return createIssue(err instanceof Error ? err.message : String(err));
@@ -500,10 +504,10 @@ function matchPattern(
       if (!isGroup(content)) return false;
 
       for (let i = 0; i < pat.items.length; i++) {
-        const { name, pat: sub } = pat.items[i]!;
+        const { label, pat: sub } = pat.items[i]!;
         let item: Item | undefined;
 
-        if (name) item = content.items.find((c) => c.name.get() === name);
+        if (label) item = content.items.find((c) => c.label.get() === label);
         else item = content.items[i];
 
         if (!item) return false;
@@ -537,10 +541,10 @@ export function createMatchSignal(
 
     const match = createComputed(() => {
       try {
-        const name = arg.trim();
-        if (!name) return null;
+        const label = arg.trim();
+        if (!label) return null;
 
-        const v = lookupInContext(name, sig).get();
+        const v = lookupInContext(label, sig).get();
 
         for (const arm of norm) {
           if (matchPattern(v, arm.pattern.get())) return arm.uid;
@@ -597,7 +601,7 @@ export function createSignal<T>(initial: T): SetSignal<T> {
 export function createGroupSignal(
   items: {
     uid?: number;
-    name?: string | Signal<string>;
+    label?: string | Signal<string>;
     view?: string | Signal<string>;
     content: ItemContentSignal;
   }[] = [],
@@ -619,7 +623,7 @@ export function createTemplateGroupSignal(
   params: string[],
   items: {
     uid?: number;
-    name?: string | Signal<string>;
+    label?: string | Signal<string>;
     view?: string | Signal<string>;
     content: ItemContentSignal;
   }[] = [],
@@ -646,7 +650,7 @@ function notSettableContent(v: Content, params?: ContextParams): Content {
   return createGroup(
     v.items.map((c) => ({
       uid: newUid(),
-      name: asGetSignal(c.name),
+      label: asGetSignal(c.label),
       view: asGetSignal(c.view),
       content: createComputed(() =>
         notSettableContent(resolveContent(c.content, params), params)
@@ -826,7 +830,7 @@ export function createRangeGroup(
 
 const interpretExpr: (
   code: string,
-  context: (name: string) => ContentSignal
+  context: (label: string) => ContentSignal
 ) => Content = require("./grammar").interpretExpr;
 
 let __globalLib: Map<string, ContentSignal> | null = null;
@@ -839,7 +843,7 @@ export function setGlobalLibrary(entries: Record<string, ContentSignal>) {
 type ContextParams = Map<ItemContentSignal, Record<string, ContentSignal>>;
 
 function lookupInContext(
-  name: string,
+  label: string,
   start: ItemContentSignal,
   params?: ContextParams
 ): ContentSignal {
@@ -849,23 +853,23 @@ function lookupInContext(
     const inner = isTemplate(outer) ? outer.body : outer;
 
     if (isGroup(inner)) {
-      const found = inner.items.find((c) => c.name.get() === name);
+      const found = inner.items.find((c) => c.label.get() === label);
       if (found) return createSignal(resolveContent(found.content, params));
     }
 
-    if (isTemplate(outer) && outer.params.includes(name)) {
-      const found = params?.get(context)?.[name];
+    if (isTemplate(outer) && outer.params.includes(label)) {
+      const found = params?.get(context)?.[label];
       if (found) return createSignal(resolveContent(found, params));
-      throw new Error(ISSUE.templateParameter(name));
+      throw new Error(ISSUE.templateParameter(label));
     }
 
     context = getParentSignal(context).value;
   }
 
-  const libSig = __globalLib?.get(name.toLowerCase());
+  const libSig = __globalLib?.get(label.toLowerCase());
   if (libSig) return createSignal(libSig.get());
 
-  throw new Error(ISSUE.unboundIdentifier(name));
+  throw new Error(ISSUE.unboundIdentifier(label));
 }
 
 export function resolveStructural(
@@ -889,7 +893,7 @@ export function resolveStructural(
     return createGroup(
       v.cases.map((m) => ({
         uid: m.uid,
-        name: createSignal(""),
+        label: createSignal(""),
         view: createSignal(""),
         content: m.body,
       }))
@@ -956,19 +960,19 @@ export function toStatic(content: Content): StaticContent {
     }
 
     const items: StaticItem[] = content.items.map((c) => {
-      const nm = c.name.get();
+      const nm = c.label.get();
       const vw = c.view.get();
-      const outName = nm === "" ? undefined : nm;
+      const outLabel = nm === "" ? undefined : nm;
       const outView = vw === "" ? undefined : vw;
       try {
         return {
-          name: outName,
+          label: outLabel,
           view: outView,
           content: toStatic(resolveContent(c.content)),
         };
       } catch (err) {
         return {
-          name: outName,
+          label: outLabel,
           view: outView,
           content: {
             kind: "issue",
@@ -1004,15 +1008,15 @@ function softWrap<T>(required: boolean, fn: () => T): T | BlankContent {
   }
 }
 
-export function getByName(
+export function getByLabel(
   group: Content,
-  name: string,
+  label: string,
   required = false
 ): Content {
   return softWrap(required, () => {
-    if (!isGroup(group)) throw new TypeError(ISSUE.nameOnNonGroup(name));
-    const item = group.items.find((v) => v.name.get() === name);
-    if (!item) throw new ReferenceError(ISSUE.unknownName(name));
+    if (!isGroup(group)) throw new TypeError(ISSUE.labelOnNonGroup(label));
+    const item = group.items.find((v) => v.label.get() === label);
+    if (!item) throw new ReferenceError(ISSUE.unknownLabel(label));
     return resolveContent(item.content);
   });
 }
@@ -1036,7 +1040,7 @@ export function getByPosition(
   });
 }
 
-export function getByPositionOrName(
+export function getByPositionOrLabel(
   group: Content,
   content: Content,
   required = false
@@ -1046,9 +1050,9 @@ export function getByPositionOrName(
     if (isScalar(content)) {
       const lit = content.value;
       if (typeof lit === "number") return getByPosition(group, lit, required);
-      if (typeof lit === "string") return getByName(group, lit, required);
+      if (typeof lit === "string") return getByLabel(group, lit, required);
     }
-    throw new TypeError(ISSUE.posNameMustBeTextOrNumber);
+    throw new TypeError(ISSUE.posLabelMustBeTextOrNumber);
   });
 }
 
@@ -1151,7 +1155,7 @@ export function getViewChildren(
 
 export type InputFieldMode =
   | "body"
-  | "name"
+  | "label"
   | "header"
   | "header-multi"
   | "pattern";
@@ -1299,10 +1303,10 @@ export function getViewInputs(item: Item): InputField[] {
 }
 
 type ViewProps = {
-  truthy(name: string): boolean;
-  text(name: string): string | null;
-  num(name: string): number | null;
-  setFlag(name: string, on: boolean): boolean;
+  truthy(label: string): boolean;
+  text(label: string): string | null;
+  num(label: string): number | null;
+  setFlag(label: string, on: boolean): boolean;
 };
 
 export function getViewProps(
@@ -1312,26 +1316,26 @@ export function getViewProps(
   const v = resolveStructural(sig, params);
   if (!isGroup(v)) return null;
 
-  const byName = new Map<string, Item>();
+  const byLabel = new Map<string, Item>();
   for (const c of v.items) {
-    const n = c.name.get();
-    if (n) byName.set(n, c);
+    const n = c.label.get();
+    if (n) byLabel.set(n, c);
   }
 
-  const get = (name: string): Content => {
-    const c = byName.get(name);
+  const get = (label: string): Content => {
+    const c = byLabel.get(label);
     return c ? resolveStructural(c.content, params) : createBlank();
   };
 
   return {
-    truthy: (name) => isTruthy(get(name)),
+    truthy: (label) => isTruthy(get(label)),
 
-    text: (name) => toText(get(name)),
+    text: (label) => toText(get(label)),
 
-    num: (name) => toNumber(get(name)),
+    num: (label) => toNumber(get(label)),
 
-    setFlag(name: string, value: boolean): boolean {
-      const c = byName.get(name);
+    setFlag(label: string, value: boolean): boolean {
+      const c = byLabel.get(label);
       if (!c || !isSetSignal(c.content)) return false;
       c.content.set(primitiveToContent(value));
       return true;
