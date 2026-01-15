@@ -3,21 +3,16 @@ import {
   signal,
   effect,
   computed,
-  untracked,
 } from "@preact/signals-core";
 
 import {
-  type GroupContent,
-  type ContentSignal,
   type ItemContentSignal,
   type Item,
   type InputFieldMode,
   type Signal,
   getViewInputs,
   isSetSignal,
-  createScalar,
   getViewModel,
-  getViewProps,
 } from "./model";
 import { type ItemPath } from "./interact";
 import { focusSignal, registerBinding, unregisterBinding } from "./inputs";
@@ -208,139 +203,6 @@ abstract class View {
   dispose() {
     this.cleanups.toReversed().forEach((fn) => fn());
     this.cleanups = [];
-  }
-}
-
-class StyledView extends View {
-  element = createEl("div", { className: "styled" });
-
-  constructor(contentSig: ItemContentSignal, path: ItemPath) {
-    super();
-
-    const setHover = (toTrue: boolean) => {
-      untracked(() => {
-        const p = getViewProps(contentSig);
-        p?.setFlag("hover", toTrue);
-      });
-    };
-
-    this.element.addEventListener("mouseenter", () => setHover(true));
-    this.element.addEventListener("mouseleave", () => setHover(false));
-
-    this.initChildren(
-      this.element,
-      path,
-      (item, childPath) => new StyledView(item.content, childPath)
-    );
-
-    this.effect(() => {
-      const m = getViewModel(contentSig);
-
-      this.element.style.setProperty("--lh", "1.5");
-
-      if (m.kind !== "group") {
-        this.updateChildren([]);
-        this.element.classList.add("trim-half-leading");
-
-        const text = m.text;
-        if (this.element.textContent !== text) {
-          this.element.textContent = text;
-        }
-        return;
-      }
-
-      this.element.classList.remove("trim-half-leading");
-
-      this.updateChildren(m.items);
-
-      const p = getViewProps(contentSig);
-
-      const dir = (p?.text("direction") ?? "column").toLowerCase();
-      const hor = (p?.text("horizontal") ?? "").toLowerCase();
-      const ver = (p?.text("vertical") ?? "").toLowerCase();
-      const align = (p?.text("align") ?? "").toLowerCase();
-
-      const gap = p?.num("gap") ?? null;
-      const fill = p?.text("fill") ?? null;
-      const pad = p?.num("pad") ?? null;
-      const round = p?.num("round") ?? null;
-      const color = p?.text("color") ?? null;
-      const size = p?.num("size") ?? null;
-
-      const spacing = p?.num("spacing") ?? null;
-      if (spacing != null) {
-        this.element.style.setProperty("--lh", String(spacing));
-      }
-
-      const [main, cross] = dir === "row" ? [hor, ver] : [ver, hor];
-      const map: Record<string, string> = {
-        left: "flex-start",
-        top: "flex-start",
-        right: "flex-end",
-        bottom: "flex-end",
-        center: "center",
-        middle: "center",
-        spread: "space-between",
-      };
-
-      const s = this.element.style;
-      s.display = "flex";
-      s.flexDirection = dir === "row" ? "row" : "column";
-      if (gap != null) s.gap = `${gap}px`;
-      else s.removeProperty("gap");
-      if (map[main]) s.justifyContent = map[main];
-      else s.removeProperty("justify-content");
-      if (map[cross]) s.alignItems = map[cross];
-      else s.removeProperty("align-items");
-      if (align) s.textAlign = align;
-      else s.removeProperty("text-align");
-      if (fill) s.backgroundColor = fill;
-      else s.removeProperty("background-color");
-      if (pad != null) s.padding = `${pad}px`;
-      else s.removeProperty("padding");
-      if (round != null) s.borderRadius = `${round}px`;
-      else s.removeProperty("border-radius");
-      if (color) s.color = color;
-      else s.removeProperty("color");
-      if (size != null) s.fontSize = `${size}px`;
-      else s.removeProperty("font-size");
-
-      this.element.classList.toggle("fill-main", main === "fill");
-    });
-  }
-}
-
-class SliderView extends View {
-  element: HTMLInputElement;
-
-  constructor(contentSig: ItemContentSignal, path: ItemPath) {
-    super();
-
-    const input = document.createElement("input");
-    input.classList.add("slider");
-    input.type = "range";
-    input.min = "0";
-    input.max = "100";
-    input.step = "1";
-
-    this.element = input;
-
-    input.addEventListener("input", () => {
-      if (isSetSignal(contentSig)) {
-        const n = Number(input.value);
-        if (Number.isFinite(n)) contentSig.set(createScalar(n));
-      }
-    });
-
-    this.effect(() => {
-      const m = getViewModel(contentSig);
-      const n = m.kind === "scalar" && m.number !== undefined ? m.number : 0;
-
-      if (this.element.value !== String(n)) {
-        this.element.value = String(n);
-      }
-      this.element.disabled = !(m.kind === "scalar" && m.settable);
-    });
   }
 }
 
@@ -585,18 +447,8 @@ class StandardView extends View {
 
       if (m.kind === "group") {
         this.updateChildren(m.items);
-
-        const kids = this.groupEl.children;
-        for (const el of kids) el.classList.remove("result");
-
-        if (m.contentItemUid !== undefined) {
-          const index = m.items.findIndex((c) => c.uid === m.contentItemUid);
-          kids[index]?.classList.add("result");
-        }
         return;
       }
-
-      for (const el of this.groupEl.children) el.classList.remove("result");
 
       if (this.scalarInput) {
         this.scalarInput.update(m.text);
@@ -610,19 +462,8 @@ class StandardView extends View {
   }
 }
 
-class BarView extends StandardView {
-  constructor(contentSig: ItemContentSignal, path: ItemPath) {
-    super(contentSig, path);
-    this.groupEl.classList.remove("group");
-    this.groupEl.classList.add("bar");
-  }
-}
-
 const views: Record<string, new (c: ItemContentSignal, p: ItemPath) => View> = {
-  styled: StyledView,
-  slider: SliderView,
   table: TableView,
-  bar: BarView,
 };
 
 class ItemHeaderView extends View {
@@ -739,7 +580,6 @@ class ItemView extends View {
   element = createEl("div", { className: "item" });
   header: ItemHeaderView;
   view!: View;
-  stdView?: StandardView;
 
   constructor(item: Item, path: ItemPath, showHeader: boolean = true) {
     super();
@@ -772,34 +612,18 @@ class ItemView extends View {
       },
       ({ needHeader, viewId }) => {
         const ViewCtor = views[viewId] || StandardView;
-        const simpleView =
-          ViewCtor === StandardView ||
-          ViewCtor === TableView ||
-          ViewCtor === BarView ||
-          ViewCtor === SliderView;
 
         if (!this.view || this.view.constructor !== ViewCtor) {
           this.view?.dispose();
           this.view = new ViewCtor(item.content, path);
         }
 
-        if (!simpleView) {
-          if (!this.stdView)
-            this.stdView = new StandardView(item.content, path);
-        } else if (this.stdView) {
-          this.stdView.dispose();
-          this.stdView = undefined;
-        }
-
         reconcileDomChildren(this.element, [
           needHeader ? this.header.element : null,
           this.view.element,
-          !simpleView ? this.stdView!.element : null,
         ]);
 
-        const rawBodyEl = simpleView
-          ? this.view.element
-          : this.stdView!.element;
+        const rawBodyEl = this.view.element;
         const bodyEl = (rawBodyEl as any).__textInputTarget || rawBodyEl;
 
         registerBinding(path, {
@@ -840,13 +664,12 @@ class ItemView extends View {
       unregisterBinding(path);
       this.header.dispose();
       this.view.dispose();
-      this.stdView?.dispose();
     });
   }
 }
 
 export default function mountRoot(
-  rootSignal: ContentSignal<GroupContent>,
+  rootSignal: ItemContentSignal,
   rootPath: ItemPath
 ) {
   return new StandardView(rootSignal, rootPath);

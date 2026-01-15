@@ -2,11 +2,11 @@ import { batch } from "@preact/signals-core";
 
 import {
   type GroupContent,
-  type TemplateContent,
   type SetSignal,
   type ItemContentSignal,
   type Item,
   type NavLayoutContext,
+  type Uid,
   isSetSignal,
   getParentSignal,
   getParent,
@@ -38,7 +38,15 @@ export function getModelRoot(): ItemContentSignal {
 
 /* Navigation */
 
-export type ItemPath = number[];
+export type ItemPath = Uid[];
+
+function isStoredUid(uid: Uid): uid is number {
+  return typeof uid === "number";
+}
+
+function isStoredPath(path: ItemPath): path is number[] {
+  return path.every(isStoredUid);
+}
 
 function itemsAlongPath(path: ItemPath): Item[] {
   const items: Item[] = [];
@@ -137,14 +145,8 @@ function isNavStop(item: Item | null, content: ItemContentSignal): boolean {
 function collectNavStops(): ItemPath[] {
   const result: ItemPath[] = [];
 
-  function walk(
-    path: ItemPath,
-    content: ItemContentSignal,
-    item: Item | null
-  ): void {
-    if (isNavStop(item, content)) {
-      result.push(path);
-    }
+  function walk(path: ItemPath, content: ItemContentSignal, item: Item | null) {
+    if (isNavStop(item, content)) result.push(path);
 
     for (const c of getViewChildren(content)) {
       walk([...path, c.uid], c.content, c);
@@ -269,19 +271,23 @@ export function standardMove(
 
 /* Updates */
 
-export type UpdateResult = { path: ItemPath; caret?: number } | null;
+export type UpdateResult = { path: ItemPath; caret?: number };
 
-export function updateItemText(path: ItemPath, raw: string): ItemPath {
+export function updateItemText(path: ItemPath, raw: string): UpdateResult {
+  if (!isStoredPath(path)) return { path };
+
   const sig = childSignalAtPath(path);
-  if (!sig || !isSetSignal(sig)) return path;
+  if (!sig || !isSetSignal(sig)) return { path };
 
   sig.set(parseScalarInput(raw));
-  return path;
+  return { path };
 }
 
 export function setItemAsDerived(path: ItemPath): UpdateResult {
+  if (!isStoredPath(path)) return { path };
+
   const sig = childSignalAtPath(path);
-  if (!sig || !isSetSignal(sig)) return null;
+  if (!sig || !isSetSignal(sig)) return { path };
 
   sig.set(createDerived(sig, ""));
   return { path, caret: 0 };
@@ -290,44 +296,33 @@ export function setItemAsDerived(path: ItemPath): UpdateResult {
 function updateParentAtPath(
   path: ItemPath,
   fn: (ctx: {
-    parent: SetSignal<GroupContent | TemplateContent<GroupContent>>;
+    parent: SetSignal<GroupContent>;
     parentPath: ItemPath;
     before: Item[];
     index: number;
-    contentItemUid?: number;
-    params?: string[];
     child: ItemContentSignal;
     uid: number;
-  }) => { after: Item[]; contentItemUid?: number; path: ItemPath }
+  }) => { after: Item[]; path: ItemPath }
 ): ItemPath {
+  if (!isStoredPath(path)) return path;
   if (path.length === 0) return path;
 
   const child = childSignalAtPath(path);
   if (!child) return path;
 
-  const uid = path[path.length - 1]!;
+  const uidAny = path[path.length - 1]!;
+  if (!isStoredUid(uidAny)) return path;
+  const uid = uidAny;
+
   const parentPath = path.slice(0, -1);
 
-  let nextPath = path;
+  let nextPath: ItemPath = path;
 
-  const out = updateParentGroup(
-    child,
-    uid,
-    ({ parent, before, index, contentItemUid, params }) => {
-      const r = fn({
-        parent,
-        parentPath,
-        before,
-        index,
-        contentItemUid,
-        params,
-        child,
-        uid,
-      });
-      nextPath = r.path;
-      return { after: r.after, contentItemUid: r.contentItemUid };
-    }
-  );
+  const out = updateParentGroup(child, uid, ({ parent, before, index }) => {
+    const r = fn({ parent, parentPath, before, index, child, uid });
+    nextPath = r.path;
+    return { after: r.after };
+  });
 
   return out ? nextPath : path;
 }
@@ -417,17 +412,19 @@ export function groupItem(path: ItemPath): UpdateResult {
 }
 
 export function ungroupItem(path: ItemPath): UpdateResult {
+  if (!isStoredPath(path)) return { path };
+
   const innerChild = childSignalAtPath(path);
-  if (!innerChild) return null;
+  if (!innerChild) return { path };
 
   const wrapperSig = getParent(innerChild);
-  if (!wrapperSig) return null;
+  if (!wrapperSig) return { path };
 
   const items = getViewChildren(wrapperSig);
-  if (items.length !== 1) return null;
+  if (items.length !== 1) return { path };
 
   const pPath = parentPath(path);
-  if (!pPath) return null;
+  if (!pPath) return { path };
 
   const np = updateParentAtPath(
     pPath,
@@ -449,32 +446,28 @@ export function ungroupItem(path: ItemPath): UpdateResult {
 }
 
 function removeItemDir(path: ItemPath, prefer: "prev" | "next"): UpdateResult {
-  const np = updateParentAtPath(
-    path,
-    ({ parentPath, before, index, contentItemUid }) => {
-      const removed = before[index]!;
-      const after = removeAt(before, index);
-      getParentSignal(removed.content).value = undefined;
+  const np = updateParentAtPath(path, ({ parentPath, before, index }) => {
+    const removed = before[index]!;
+    const after = removeAt(before, index);
+    getParentSignal(removed.content).value = undefined;
 
-      if (after.length === 0) {
-        return { after, contentItemUid, path: parentPath };
-      }
-
-      const prev = before[index - 1]?.uid;
-      const next = before[index + 1]?.uid;
-
-      const focusUid =
-        prefer === "prev"
-          ? prev ?? next ?? after[0]!.uid
-          : next ?? prev ?? after[0]!.uid;
-
-      return {
-        after,
-        contentItemUid,
-        path: [...parentPath, focusUid],
-      };
+    if (after.length === 0) {
+      return { after, path: parentPath };
     }
-  );
+
+    const prev = before[index - 1]?.uid;
+    const next = before[index + 1]?.uid;
+
+    const focusUid =
+      prefer === "prev"
+        ? prev ?? next ?? after[0]!.uid
+        : next ?? prev ?? after[0]!.uid;
+
+    return {
+      after,
+      path: [...parentPath, focusUid],
+    };
+  });
 
   return { path: np };
 }
@@ -491,9 +484,11 @@ export function splitItemAt(
   path: ItemPath,
   caretStart: number,
   caretEnd: number = caretStart
-): ItemPath {
+): UpdateResult {
+  if (!isStoredPath(path)) return { path };
+
   const sig = childSignalAtPath(path);
-  if (!sig || !isSetSignal(sig)) return path;
+  if (!sig || !isSetSignal(sig)) return { path };
 
   const m = getViewModel(sig);
   const text = m.kind === "scalar" ? m.text : "";
@@ -505,26 +500,33 @@ export function splitItemAt(
   const left = text.slice(0, start);
   const right = text.slice(end);
 
+  let outPath: ItemPath = path;
+
   batch(() => {
     updateItemText(path, left);
-    const next = addItemAfter(path)!.path;
+
+    const next = addItemAfter(path).path;
     updateItemText(next, right);
-    path = next;
+
+    outPath = next;
   });
 
-  return path;
+  return { path: outPath, caret: 0 };
 }
 
 export function joinWithBefore(path: ItemPath): UpdateResult {
-  const prev = siblingPath(path, -1);
-  if (!prev) return null;
+  if (!isStoredPath(path)) return { path };
 
-  if (getItemNavContext(prev).kind !== "text") return null;
-  if (getItemNavContext(path).kind !== "text") return null;
+  const prev = siblingPath(path, -1);
+  if (!prev) return { path };
+  if (!isStoredPath(prev)) return { path };
+
+  if (getItemNavContext(prev).kind !== "text") return { path };
+  if (getItemNavContext(path).kind !== "text") return { path };
 
   const prevSig = childSignalAtPath(prev);
   const curSig = childSignalAtPath(path);
-  if (!prevSig || !curSig) return null;
+  if (!prevSig || !curSig) return { path };
 
   const pv = getViewModel(prevSig);
   const cv = getViewModel(curSig);
@@ -534,25 +536,28 @@ export function joinWithBefore(path: ItemPath): UpdateResult {
 
   const caret = prevText.length;
 
-  let nextPath = prev;
+  let nextPath: ItemPath = prev;
   batch(() => {
     updateItemText(prev, prevText + curText);
-    nextPath = removeItemBackward(path)?.path ?? prev;
+    nextPath = removeItemBackward(path).path;
   });
 
   return { path: nextPath, caret };
 }
 
 export function joinWithAfter(path: ItemPath): UpdateResult {
-  const next = siblingPath(path, 1);
-  if (!next) return null;
+  if (!isStoredPath(path)) return { path };
 
-  if (getItemNavContext(next).kind !== "text") return null;
-  if (getItemNavContext(path).kind !== "text") return null;
+  const next = siblingPath(path, 1);
+  if (!next) return { path };
+  if (!isStoredPath(next)) return { path };
+
+  if (getItemNavContext(next).kind !== "text") return { path };
+  if (getItemNavContext(path).kind !== "text") return { path };
 
   const curSig = childSignalAtPath(path);
   const nextSig = childSignalAtPath(next);
-  if (!curSig || !nextSig) return null;
+  if (!curSig || !nextSig) return { path };
 
   const cv = getViewModel(curSig);
   const nv = getViewModel(nextSig);
@@ -560,10 +565,10 @@ export function joinWithAfter(path: ItemPath): UpdateResult {
   const curText = cv.kind === "scalar" ? cv.text : "";
   const nextText = nv.kind === "scalar" ? nv.text : "";
 
-  let nextPathOut = path;
+  let nextPathOut: ItemPath = path;
   batch(() => {
     updateItemText(path, curText + nextText);
-    nextPathOut = removeItemBackward(next)?.path ?? path;
+    nextPathOut = removeItemBackward(next).path;
   });
 
   return { path: nextPathOut, caret: curText.length };

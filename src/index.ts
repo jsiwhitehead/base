@@ -3,8 +3,7 @@ import { effect } from "@preact/signals-core";
 import {
   type ScalarPrimitive,
   type GroupContent,
-  type DirectContent,
-  type RelationalContent,
+  type StoredContent,
   type ContentSignal,
   type ItemContentSignal,
   createBlank,
@@ -14,12 +13,11 @@ import {
   createSignal,
   createGroupSignal,
   createLens,
-  setGlobalLibrary,
   toStatic,
-  createTemplateGroupSignal,
+  setInterpreter,
 } from "./model";
+import { interpretExpr } from "./interpret";
 import { setModelRoot } from "./interact";
-import { library } from "./library";
 import { onRootKeyDown, focusFirstRootCell } from "./inputs";
 import mountRoot from "./views";
 
@@ -27,7 +25,7 @@ export function mount(
   rootSignal: ContentSignal<GroupContent>,
   rootElement: HTMLElement
 ) {
-  setGlobalLibrary(library);
+  setInterpreter(interpretExpr);
   setModelRoot(rootSignal);
 
   const { element, dispose } = mountRoot(rootSignal, []);
@@ -52,77 +50,36 @@ export function mount(
 const literalSig = (v: ScalarPrimitive) => createSignal(createScalar(v));
 
 const derivedSig = (code: string) => {
-  const s: ItemContentSignal = createSignal<DirectContent | RelationalContent>(
-    createScalar("")
-  );
+  const s: ItemContentSignal = createSignal<StoredContent>(createScalar(""));
   s.set(createDerived(s, code));
   return s;
 };
 
-const lensSig = (source: string, filter: string = "") => {
-  const s: ItemContentSignal = createSignal<DirectContent | RelationalContent>(
-    createScalar("")
-  );
-  s.set(createLens(s, source, filter));
+const lensSig = (source: string, filter: string = "", sort: string = "") => {
+  const s: ItemContentSignal = createSignal<StoredContent>(createScalar(""));
+  s.set(createLens(s, source, filter, sort));
   return s;
 };
-
-function resultGroupSig(
-  items: Parameters<typeof createGroup>[0],
-  resultIndex: number
-) {
-  const base = createGroup(items);
-  return createGroupSignal(base.items, base.items[resultIndex]!.uid);
-}
 
 const root = createGroupSignal([
   { content: literalSig(10) },
   { content: literalSig(20) },
   { content: literalSig(30) },
-  // { content: createSignal(createBlank()) },
-  // {
-  //   label: "f",
-  //   content: createTemplateGroupSignal(
-  //     ["arg1", "arg2"],
-  //     [
-  //       { content: literalSig(10) },
-  //       { content: literalSig(20) },
-  //       { content: derivedSig("arg1 * arg2 * 3") },
-  //     ]
-  //   ),
-  // },
-  // { content: createSignal(createBlank()) },
-  // { content: derivedSig("f(10, 20)") },
-  // { content: createSignal(createBlank()) },
-  // {
-  //   content: resultGroupSig(
-  //     [
-  //       { label: "a", content: literalSig(10) },
-  //       { label: "b", content: literalSig(20) },
-  //       { content: derivedSig("a * b") },
-  //     ],
-  //     2
-  //   ),
-  // },
+
+  // Example group
   // {
   //   label: "x",
-  //   view: "bar",
   //   content: createGroupSignal([
   //     { content: literalSig(10) },
   //     { content: literalSig(20) },
   //     { content: literalSig(30) },
   //   ]),
   // },
-  // {
-  //   content: lensSig("x", "a => a > 15"),
-  // },
-  // {
-  //   content: createGroupSignal([
-  //     { content: literalSig(10) },
-  //     { content: literalSig(20) },
-  //   ]),
-  // },
-  // { content: literalSig(10) },
+
+  // Example lens filtering + sorting over x
+  // { content: lensSig("x", "_.[1] > 15", "_.[1]") },
+
+  // Example table
   // {
   //   label: "people",
   //   view: "table",
@@ -147,18 +104,9 @@ const root = createGroupSignal([
   //     },
   //   ]),
   // },
-  // { content: createSignal(createBlank()) },
-  // { content: derivedSig("people:map(d -> d.Age):avg()") },
-  // { label: "y", view: "slider", content: literalSig(50) },
-  // { label: "z", content: derivedSig("x") },
-  // { content: literalSig(10) },
-  // {
-  //   content: createGroupSignal([
-  //     { content: literalSig("Hello") },
-  //     { content: literalSig("World!") },
-  //   ]),
-  // },
-  // { content: literalSig(30) },
+
+  // Example derived call to builtins (min/max/etc)
+  // { content: derivedSig("min(10, 20, 5)") },
 ]);
 
 const unmount = mount(root, document.getElementById("root")!);

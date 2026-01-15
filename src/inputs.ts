@@ -172,7 +172,7 @@ function bindInput(
         return;
       }
 
-      const isSingleHeader = mode === "header" || mode === "pattern";
+      const isSingleHeader = mode === "header";
       const isMultiHeader = mode === "header-multi";
 
       switch (e.key) {
@@ -267,13 +267,11 @@ function bindInput(
             }
 
             const res = addItemAfter(path);
-            if (res) {
-              dispatch({
-                type: "FOCUS",
-                path: res.path,
-                target: { kind: "body" },
-              });
-            }
+            dispatch({
+              type: "FOCUS",
+              path: res.path,
+              target: { kind: "body" },
+            });
             break;
           }
 
@@ -378,29 +376,29 @@ function dispatch(ev: InputEvent): void {
 
     case "SPLIT": {
       if (state.kind !== "Focused") break;
-      const np = splitItemAt(state.path, ev.caret, ev.selEnd ?? ev.caret);
+
+      const res = splitItemAt(state.path, ev.caret, ev.selEnd ?? ev.caret);
       state = {
         kind: "Focused",
-        path: np,
+        path: res.path,
         target: { kind: "body" },
         goalColumn: undefined,
       };
-      caretPos = 0;
+      caretPos = res.caret ?? 0;
       break;
     }
 
     case "TRANSFORM": {
       if (state.kind !== "Focused") break;
+
       const res = TRANSFORMS[ev.op]?.(state.path);
-      if (res) {
-        state = {
-          kind: "Focused",
-          path: res.path,
-          target: defaultTargetForPath(res.path),
-          goalColumn: undefined,
-        };
-        caretPos = res.caret ?? ev.caret;
-      }
+      state = {
+        kind: "Focused",
+        path: res.path,
+        target: defaultTargetForPath(res.path),
+        goalColumn: undefined,
+      };
+      caretPos = res.caret ?? ev.caret;
       break;
     }
 
@@ -478,11 +476,7 @@ function updateDOMFocus(
 
 export function registerBinding(
   path: ItemPath,
-  slots: {
-    item: HTMLElement;
-    body: HTMLElement;
-    header: HeaderSlot[];
-  }
+  slots: { item: HTMLElement; body: HTMLElement; header: HeaderSlot[] }
 ) {
   const k = keyOf(path);
   const prior = bindings.get(k);
@@ -539,11 +533,7 @@ export function registerBinding(
     const slot = binding.header[i]!;
     binding.teardowns.push(
       on(slot.el, "mousedown", (e) => {
-        dispatch({
-          type: "FOCUS",
-          path,
-          target: { kind: "header", index: i },
-        });
+        dispatch({ type: "FOCUS", path, target: { kind: "header", index: i } });
         e.stopPropagation();
       })
     );
@@ -552,8 +542,12 @@ export function registerBinding(
   }
 
   if (isTextInput(binding.body)) {
-    bindInput(binding, path, binding.body, "body", (text) =>
-      updateItemText(path, text)
+    bindInput(
+      binding,
+      path,
+      binding.body,
+      "body",
+      (text) => updateItemText(path, text).path
     );
   }
 
@@ -612,9 +606,8 @@ export function onRootKeyDown(e: KeyboardEvent) {
       const res = e.shiftKey
         ? addItemBefore(state.path)
         : addItemAfter(state.path);
-      if (res) {
-        dispatch({ type: "FOCUS", path: res.path, target: { kind: "body" } });
-      }
+
+      dispatch({ type: "FOCUS", path: res.path, target: { kind: "body" } });
       break;
     }
 
