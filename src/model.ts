@@ -1,221 +1,275 @@
 import {
-  type Signal as PSignal,
-  type ReadonlySignal as PGetSignal,
   signal,
   computed,
   batch,
+  type ReadonlySignal,
 } from "@preact/signals-core";
 
-/* Issues */
+export type ItemId = number | string;
+export type Scalar = true | number | string;
+export type ViewId = string;
 
-export const ISSUE = {
-  flag: "Expected flag (true or blank)",
-  literal: "Expected literal value",
-  number: "Expected number",
-  numOrBlank: "Expected number or blank",
-  text: "Expected text",
-  textOrBlank: "Expected text or blank",
-  textOrGroup: "Expected text or group",
-  group: "Expected group",
+export type StoredContent =
+  | Readonly<{ kind: "blank" }>
+  | Readonly<{ kind: "scalar"; value: Scalar }>
+  | Readonly<{ kind: "group"; items: readonly ItemId[] }>
+  | Readonly<{ kind: "derived"; expr: string }>
+  | Readonly<{ kind: "lens"; from: string; where: string; orderBy: string }>;
 
-  sliceStepZero: "Slice step cannot be 0",
+export type Item = Readonly<{
+  id: ItemId;
+  ownerId: ItemId | null;
 
-  positionFinite: "Position must be a finite number",
-  positionOneBased: "Position must be 1 or greater",
-  positionNonGroup: "Cannot select a position from non-group content",
-  positionOutOfRange: (position: number, len: number) =>
-    `Position ${position} is out of range (length ${len})`,
-  posLabelMustBeTextOrNumber: "Label/position must be text or number",
-  labelOnNonGroup: (label: string) =>
-    `Cannot access label '${label}' of non-group content`,
-  unknownLabel: (label: string) => `Unknown label '${label}'`,
+  label: string;
+  view: ViewId;
 
-  unboundIdentifier: (label: string) => `Unbound identifier: ${label}`,
-} as const;
+  content: StoredContent;
+}>;
 
-/* Types */
+export type LabeledValue = { label?: string; value: Value };
 
-export type ScalarPrimitive = true | number | string;
+export type Value =
+  | { kind: "blank" }
+  | { kind: "issue"; message: string }
+  | { kind: "scalar"; value: Scalar }
+  | { kind: "item-group"; items: ItemId[] }
+  | { kind: "value-group"; items: LabeledValue[] };
 
-export type Uid = number | string;
+type GetSignal<T> = { kind: "signal"; get(): T; peek(): T };
+type SetSignal<T> = GetSignal<T> & { set(next: T): void };
 
-export type IssueContent = {
-  kind: "issue";
-  message: string;
-};
-
-export type BlankContent = { kind: "blank" };
-
-export type ScalarContent = {
-  kind: "scalar";
-  value: ScalarPrimitive;
-};
-
-export type GroupContent = {
-  kind: "group";
-  items: Item[];
-};
-
-export type PrimitiveContent = BlankContent | ScalarContent | GroupContent;
-
-export type BodyContent = PrimitiveContent | IssueContent;
-
-export type DerivedContent = {
-  kind: "derived";
-  code: string;
-  result: GetSignal<BodyContent>;
-};
-
-export type LensContent = {
-  kind: "lens";
-  source: string;
-  filter: string;
-  sort: string;
-  result: GetSignal<BodyContent>;
-};
-
-export type RelationalContent = DerivedContent | LensContent;
-
-export type StoredContent = PrimitiveContent | RelationalContent;
-
-type GetSignal<T> = {
-  kind: "signal";
-  get(): T;
-  peek(): T;
-};
-
-export type SetSignal<T> = GetSignal<T> & {
-  set(next: T): void;
-};
-
-export type Signal<T> = GetSignal<T> | SetSignal<T>;
-
-export type ContentSignal<T extends BodyContent = BodyContent> = Signal<T>;
-
-export type ItemContentSignal =
-  | GetSignal<BodyContent>
-  | SetSignal<StoredContent>;
-
-export type Item = {
-  uid: Uid;
-  label: Signal<string>;
-  view: Signal<string>;
-  content: ItemContentSignal;
-};
-
-export type StaticIssue = { kind: "issue"; message: string };
-
-export type StaticItem = {
-  label?: string;
-  view?: string;
-  content: StaticContent;
-};
-
-export type StaticGroupContent = {
-  kind: "group";
-  items: StaticItem[];
-};
-
-export type StaticContent =
-  | StaticIssue
-  | BlankContent
-  | ScalarPrimitive
-  | StaticGroupContent;
-
-/* Guards */
-
-function hasKind(v: unknown, k: string): boolean {
-  return typeof v === "object" && v !== null && (v as any).kind === k;
+function createAtom<T>(initial: T): SetSignal<T> {
+  const s = signal(initial);
+  return {
+    kind: "signal",
+    get: () => s.value,
+    peek: () => s.peek(),
+    set: (next) => {
+      s.value = next;
+    },
+  };
 }
 
-export const isIssue = (v: unknown): v is IssueContent => hasKind(v, "issue");
-export const isBlank = (v: unknown): v is BlankContent => hasKind(v, "blank");
-export const isScalar = (v: unknown): v is ScalarContent =>
-  hasKind(v, "scalar");
-export const isGroup = (v: unknown): v is GroupContent => hasKind(v, "group");
-export const isContent = (v: unknown): v is BodyContent =>
-  isIssue(v) || isBlank(v) || isScalar(v) || isGroup(v);
-export const isDerived = (v: unknown): v is DerivedContent =>
-  hasKind(v, "derived");
-export const isLens = (v: unknown): v is LensContent => hasKind(v, "lens");
-export const isSignal = (
-  v: unknown
-): v is GetSignal<unknown> | SetSignal<unknown> => hasKind(v, "signal");
-export const isSetSignal = (v: unknown): v is SetSignal<unknown> =>
-  isSignal(v) && typeof (v as any).set === "function";
-export const isStaticIssue = (v: unknown): v is StaticIssue =>
-  hasKind(v, "issue");
-export const isStaticGroup = (v: unknown): v is StaticGroupContent =>
-  hasKind(v, "group");
+function createComputed<T>(fn: () => T): GetSignal<T> {
+  const s: ReadonlySignal<T> = computed(fn);
+  return { kind: "signal", get: () => s.value, peek: () => s.peek() };
+}
 
-/* Parents */
+type ItemRec = {
+  atom: SetSignal<Item>;
+  valueSig?: GetSignal<Value>;
+  labelIndexSig?: GetSignal<Map<string, ItemId>>;
+};
 
-type ParentOwnerSig = SetSignal<GroupContent>;
-type ParentSig = PSignal<ParentOwnerSig | undefined>;
-const parentMap = new WeakMap<ItemContentSignal, ParentSig>();
+const items = new Map<ItemId, ItemRec>();
 
-export function getParentSignal(sig: ItemContentSignal): ParentSig {
-  let p = parentMap.get(sig);
-  if (!p) {
-    p = signal(undefined);
-    parentMap.set(sig, p);
+let __rootId: ItemId | null = null;
+
+export function setRoot(id: ItemId) {
+  __rootId = id;
+}
+
+export function getRoot(): ItemId {
+  if (__rootId == null) throw new Error("Root not set");
+  return __rootId;
+}
+
+function itemRec(id: ItemId): ItemRec {
+  const rec = items.get(id);
+  if (!rec) throw new Error(`Unknown item id: ${String(id)}`);
+  return rec;
+}
+
+function itemAtom(id: ItemId): SetSignal<Item> {
+  return itemRec(id).atom;
+}
+
+function createItem(initial: Item): void {
+  if (items.has(initial.id))
+    throw new Error(`Duplicate item id: ${String(initial.id)}`);
+  items.set(initial.id, { atom: createAtom(initial) });
+}
+
+let __nextId: number = 1;
+export function allocId(): number {
+  return __nextId++;
+}
+export function setNextId(next: number): void {
+  __nextId = next;
+}
+
+export const V = {
+  blank(): Value {
+    return { kind: "blank" };
+  },
+  issue(message: string): Value {
+    return { kind: "issue", message };
+  },
+  scalar(value: Scalar): Value {
+    return { kind: "scalar", value };
+  },
+  itemGroup(items: ItemId[]): Value {
+    return { kind: "item-group", items };
+  },
+  valueGroup(items: LabeledValue[]): Value {
+    return { kind: "value-group", items };
+  },
+};
+
+export function isPresent(v: Value): boolean {
+  return v.kind !== "blank" && v.kind !== "issue";
+}
+
+export function isTrue(v: Value): boolean {
+  return v.kind === "scalar" && v.value === true;
+}
+
+function isIssue(v: Value): v is { kind: "issue"; message: string } {
+  return v.kind === "issue";
+}
+
+type EvalCtx = { visiting: Set<ItemId> };
+const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<ItemId>() });
+
+function evaluateValueRoot(id: ItemId): Value {
+  return evaluateValue(id, makeEvalCtx());
+}
+
+function valueSig(id: ItemId): GetSignal<Value> {
+  const rec = itemRec(id);
+  if (!rec.valueSig) rec.valueSig = createComputed(() => evaluateValueRoot(id));
+  return rec.valueSig;
+}
+
+function materializeReadonly(v: Value, ctx: EvalCtx): Value {
+  if (v.kind === "item-group") {
+    return V.valueGroup(
+      v.items.map((id) => ({
+        label: itemAtom(id).get().label || undefined,
+        value: materializeReadonly(evaluateValue(id, ctx), ctx),
+      }))
+    );
   }
-  return p;
+
+  if (v.kind === "value-group") {
+    return V.valueGroup(
+      v.items.map((it) => ({
+        label: it.label,
+        value: materializeReadonly(it.value, ctx),
+      }))
+    );
+  }
+
+  return v;
 }
 
-export function getParent(
-  content: ItemContentSignal
-): ParentOwnerSig | undefined {
-  return getParentSignal(content).value;
+export type EvalEnv = {
+  lookup(name: string): Value;
+  resolve(id: ItemId): Value;
+  getLabel(id: ItemId): string;
+};
+
+export type Interpreter = (expr: string, env: EvalEnv) => Value;
+
+let interpretExpr: Interpreter = () =>
+  V.issue("Interpreter not set (call setInterpreter)");
+
+export function setInterpreter(fn: Interpreter) {
+  interpretExpr = fn;
 }
 
-function getOwnerUidFromParent(content: ItemContentSignal): Uid | null {
-  const parent = getParent(content);
-  if (!parent) return null;
+function ownerLabelIndexSig(ownerId: ItemId): GetSignal<Map<string, ItemId>> {
+  const rec = itemRec(ownerId);
+  if (!rec.labelIndexSig) {
+    rec.labelIndexSig = createComputed(() => {
+      const owner = itemAtom(ownerId).get();
+      if (owner.content.kind !== "group") return new Map<string, ItemId>();
 
-  return parent.peek().items.find((it) => it.content === content)?.uid ?? null;
+      const m = new Map<string, ItemId>();
+      for (const childId of owner.content.items) {
+        const child = itemAtom(childId).get();
+        if (child.label) m.set(child.label, childId);
+      }
+      return m;
+    });
+  }
+  return rec.labelIndexSig;
 }
 
-/* Groups */
+export function lookupValue(name: string, fromId: ItemId, ctx: EvalCtx): Value {
+  let cur: ItemId | null = fromId;
 
-function groupItemValues(src: GroupContent): {
-  item: Item;
-  position: BodyContent;
-  label: BodyContent;
-  content: BodyContent;
-}[] {
-  return src.items.map((item, i) => {
-    const labelText = item.label.get();
-    return {
-      item,
-      position: createScalar(i + 1),
-      label: labelText ? createScalar(labelText) : createBlank(),
-      content: resolveBody(item.content),
-    };
-  });
+  while (cur != null) {
+    const curItem = itemAtom(cur).get();
+    const ownerId = curItem.ownerId;
+    if (ownerId == null) break;
+
+    const idx = ownerLabelIndexSig(ownerId).get();
+    const hit = idx.get(name);
+    if (hit != null) return evaluateValue(hit, ctx);
+
+    cur = ownerId;
+  }
+
+  return V.issue(`Unbound identifier: ${name}`);
 }
 
-export function groupFilter(
-  src: GroupContent,
-  pred: (
-    content: BodyContent,
-    position: BodyContent,
-    label: BodyContent
-  ) => BodyContent
-): GroupContent {
-  return createGroup(
-    groupItemValues(src)
-      .filter(({ content, position, label }) =>
-        isPresent(pred(content, position, label))
-      )
-      .map(({ item }) => item)
-  );
+function evaluateValue(id: ItemId, ctx: EvalCtx): Value {
+  if (ctx.visiting.has(id)) return V.issue("Cyclic dependency");
+  ctx.visiting.add(id);
+
+  try {
+    const it = itemAtom(id).get();
+
+    switch (it.content.kind) {
+      case "blank":
+        return V.blank();
+
+      case "scalar":
+        return V.scalar(it.content.value);
+
+      case "group":
+        return V.itemGroup([...it.content.items]);
+
+      case "derived": {
+        const expr = it.content.expr.trim();
+        if (!expr) return V.blank();
+
+        const out = interpretExpr(expr, {
+          lookup: (name) => lookupValue(name, id, ctx),
+          resolve: (childId) => evaluateValue(childId, ctx),
+          getLabel: (childId) => itemAtom(childId).get().label,
+        });
+        return materializeReadonly(out, ctx);
+      }
+
+      case "lens":
+        return evaluateLens(id, it.content, ctx);
+    }
+  } catch (err) {
+    return V.issue(err instanceof Error ? err.message : String(err));
+  } finally {
+    ctx.visiting.delete(id);
+  }
 }
 
-function sortRank(v: BodyContent): [number, any] {
-  // numbers < text < true < other < blank
-  if (isBlank(v)) return [4, null];
-  if (isScalar(v)) {
+function unwrapItemGroup(
+  v: Value,
+  typeMessage: string
+):
+  | { kind: "blank" }
+  | { kind: "issue"; value: Value }
+  | { kind: "ok"; items: ItemId[] } {
+  if (v.kind === "blank") return { kind: "blank" };
+  if (v.kind === "issue") return { kind: "issue", value: v };
+  if (v.kind === "item-group") return { kind: "ok", items: v.items };
+  return { kind: "issue", value: V.issue(typeMessage) };
+}
+
+function sortRank(v: Value): [number, any] {
+  // Sorting: numbers < text < true < other < blank/issue
+  if (v.kind === "blank" || v.kind === "issue") return [4, null];
+  if (v.kind === "scalar") {
     const lit = v.value;
     if (typeof lit === "number") return [0, lit];
     if (typeof lit === "string") return [1, lit];
@@ -226,642 +280,740 @@ function sortRank(v: BodyContent): [number, any] {
 
 const collator = new Intl.Collator(undefined, { sensitivity: "base" });
 
-function sortCmp<T extends { sortKey: BodyContent; index: number }>(
-  a: T,
-  b: T
-): number {
-  const [ra, va] = sortRank(a.sortKey);
-  const [rb, vb] = sortRank(b.sortKey);
+function compareSortKey(a: Value, b: Value): number {
+  const [ra, va] = sortRank(a);
+  const [rb, vb] = sortRank(b);
   if (ra !== rb) return ra - rb;
+
   if (ra === 0) {
-    const d = va - vb;
+    const d = (va as number) - (vb as number);
     if (d) return d;
   } else if (ra === 1) {
-    const d = collator.compare(va, vb);
+    const d = collator.compare(String(va), String(vb));
     if (d) return d;
   }
-  return a.index - b.index;
+  return 0;
 }
 
-export function groupSort(
-  src: GroupContent,
-  keySelector:
-    | null
-    | ((
-        content: BodyContent,
-        position: BodyContent,
-        label: BodyContent
-      ) => BodyContent)
-): GroupContent {
-  const rows = groupItemValues(src).map(
-    ({ item, position, label, content }, i) => ({
-      uid: item.uid,
-      label: item.label,
-      view: item.view,
-      content: item.content,
-      index: i,
-      sortKey: keySelector ? keySelector(content, position, label) : content,
-    })
+function evaluateLens(
+  ownerId: ItemId,
+  spec: Extract<StoredContent, { kind: "lens" }>,
+  ctx: EvalCtx
+): Value {
+  const from = spec.from.trim();
+  if (!from) return V.blank();
+
+  const forkCtx = (base: EvalCtx): EvalCtx => ({
+    visiting: new Set(base.visiting),
+  });
+
+  const sourceVal = interpretExpr(from, {
+    lookup: (name) => lookupValue(name, ownerId, ctx),
+    resolve: (childId) => evaluateValue(childId, ctx),
+    getLabel: (childId) => itemAtom(childId).get().label,
+  });
+
+  const unwrapped = unwrapItemGroup(
+    sourceVal,
+    "Lens 'from' must evaluate to an item-group"
   );
 
-  rows.sort(sortCmp);
-  return createGroup(rows);
-}
+  if (unwrapped.kind === "blank") return V.blank();
+  if (unwrapped.kind === "issue") return unwrapped.value;
 
-/* Constructors */
+  let ids: ItemId[] = [...unwrapped.items];
 
-let nextItemUid = 1;
-export function newUid() {
-  return nextItemUid++;
-}
+  const where = spec.where.trim();
+  if (where) {
+    const next: ItemId[] = [];
 
-export const createIssue = (message: string): IssueContent => ({
-  kind: "issue",
-  message,
-});
+    for (let i = 0; i < ids.length; i++) {
+      const rowId = ids[i]!;
+      const rowCtx = forkCtx(ctx);
 
-export const createBlank = (): BlankContent => ({ kind: "blank" });
+      const row = evaluateValue(rowId, rowCtx);
+      if (isIssue(row)) return row;
 
-export const createScalar = (value: ScalarPrimitive): ScalarContent => ({
-  kind: "scalar",
-  value,
-});
+      const position = V.scalar(i + 1);
+      const label = V.scalar(itemAtom(rowId).get().label || "");
 
-export function createGroup(
-  items: {
-    uid?: Uid;
-    label?: string | Signal<string>;
-    view?: string | Signal<string>;
-    content: ItemContentSignal;
-  }[] = []
-): GroupContent {
-  const outItems = items.map((c) => {
-    let labelSig: Signal<string>;
-    if (isSignal(c.label)) {
-      labelSig = c.label;
-    } else {
-      labelSig = createSignal<string>(c.label ?? "");
+      const pred = interpretExpr(where, {
+        lookup: (name) => {
+          if (name === "_") return row;
+          if (name === "position") return position;
+          if (name === "label") return label;
+          return lookupValue(name, ownerId, rowCtx);
+        },
+        resolve: (childId) => evaluateValue(childId, rowCtx),
+        getLabel: (childId) => itemAtom(childId).get().label,
+      });
+
+      if (isIssue(pred)) return pred;
+
+      if (isTrue(pred)) next.push(rowId);
     }
 
-    let viewSig: Signal<string>;
-    if (isSignal(c.view)) {
-      viewSig = c.view;
-    } else {
-      viewSig = createSignal<string>(c.view ?? "");
-    }
-
-    return {
-      uid: c.uid ?? newUid(),
-      label: labelSig,
-      view: viewSig,
-      content: c.content,
-    };
-  });
-  return { kind: "group", items: outItems };
-}
-
-function derivedComputed(
-  owner: ItemContentSignal,
-  code: string
-): GetSignal<BodyContent> {
-  return createComputed<BodyContent>(() => {
-    try {
-      return interpretExpr(code, (label: string) =>
-        lookupInContext(label, owner)
-      );
-    } catch (err) {
-      return createIssue(err instanceof Error ? err.message : String(err));
-    }
-  });
-}
-
-export function createDerived(
-  owner: ItemContentSignal,
-  code: string
-): DerivedContent {
-  return { kind: "derived", code, result: derivedComputed(owner, code) };
-}
-
-export function createLens(
-  owner: ItemContentSignal,
-  source: string,
-  filter: string,
-  sort: string
-): LensContent {
-  const result = createComputed<BodyContent>(() => {
-    try {
-      if (!source.trim()) return createBlank();
-
-      const target = lookupInContext(source, owner);
-      if (!isGroup(target)) throw new TypeError(ISSUE.group);
-
-      const filterCode = filter.trim();
-      const sortCode = sort.trim();
-
-      const evalRow = (
-        code: string,
-        row: BodyContent,
-        position: BodyContent,
-        label: BodyContent
-      ): BodyContent => {
-        try {
-          return interpretExpr(code, (name: string) => {
-            if (name === "_") return row;
-            if (name === "position") return position;
-            if (name === "label") return label;
-            return lookupInContext(name, owner);
-          });
-        } catch (err) {
-          return createIssue(err instanceof Error ? err.message : String(err));
-        }
-      };
-
-      let out: GroupContent = target;
-
-      if (filterCode) {
-        out = groupFilter(out, (row, position, label) =>
-          evalRow(filterCode, row, position, label)
-        );
-      }
-
-      if (sortCode) {
-        out = groupSort(out, (row, position, label) =>
-          evalRow(sortCode, row, position, label)
-        );
-      }
-
-      return out;
-    } catch (err) {
-      return createIssue(err instanceof Error ? err.message : String(err));
-    }
-  });
-
-  return { kind: "lens", source, filter, sort, result };
-}
-
-export function createComputed<T>(fn: () => T): GetSignal<T> {
-  const rsig: PGetSignal<T> = computed(fn);
-  return { kind: "signal", get: () => rsig.value, peek: () => rsig.peek() };
-}
-
-export function createSignal<T>(initial: T): SetSignal<T> {
-  const sig = signal(initial);
-  return {
-    kind: "signal",
-    get: () => sig.value,
-    peek: () => sig.peek(),
-    set: (next: T) => {
-      sig.value = next;
-    },
-  };
-}
-
-export function createGroupSignal(
-  items: {
-    uid?: Uid;
-    label?: string | Signal<string>;
-    view?: string | Signal<string>;
-    content: ItemContentSignal;
-  }[] = []
-): SetSignal<GroupContent> {
-  const sig = createSignal<GroupContent>(null as any);
-
-  batch(() => {
-    for (const c of items) {
-      getParentSignal(c.content).value = sig;
-    }
-    sig.set(createGroup(items));
-  });
-
-  return sig;
-}
-
-function asGetSignal<T>(sig: Signal<T>): GetSignal<T> {
-  return { kind: "signal", get: () => sig.get(), peek: () => sig.peek() };
-}
-
-function notSettableContent(path: string, v: BodyContent): BodyContent {
-  if (isIssue(v) || isBlank(v) || isScalar(v)) return v;
-
-  return createGroup(
-    v.items.map((c, i) => {
-      const childPath = `${path}.${i}`;
-      return {
-        uid: childPath,
-        label: asGetSignal(c.label),
-        view: asGetSignal(c.view),
-        content: createComputed(() =>
-          notSettableContent(childPath, resolveBody(c.content))
-        ),
-      };
-    })
-  );
-}
-
-/* Conversions */
-
-export function isPresent(content: BodyContent): boolean {
-  if (isIssue(content) || isBlank(content)) return false;
-  return true;
-}
-
-export function toNumber(content: BodyContent): number | null {
-  if (isBlank(content)) return null;
-  if (isScalar(content)) {
-    const v = content.value;
-    if (typeof v === "number") return v;
-    if (v === true) return 1;
-    if (typeof v === "string") {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : null;
-    }
+    ids = next;
   }
-  return null;
-}
 
-export function toText(content: BodyContent): string | null {
-  if (isBlank(content)) return null;
-  if (isScalar(content)) return String(content.value);
-  return null;
-}
+  const orderBy = spec.orderBy.trim();
+  if (orderBy) {
+    const rows: { rowId: ItemId; i: number; key: Value }[] = [];
 
-export function numOpt(content: BodyContent): number | null {
-  if (isBlank(content)) return null;
-  if (isScalar(content) && typeof content.value === "number")
-    return content.value;
-  throw new TypeError(ISSUE.numOrBlank);
-}
+    for (let i = 0; i < ids.length; i++) {
+      const rowId = ids[i]!;
+      const rowCtx = forkCtx(ctx);
 
-export function textOpt(content: BodyContent): string | null {
-  if (isBlank(content)) return null;
-  if (isScalar(content) && typeof content.value === "string")
-    return content.value;
-  throw new TypeError(ISSUE.textOrBlank);
-}
+      const row = evaluateValue(rowId, rowCtx);
+      if (isIssue(row)) return row;
 
-export function groupOpt(content: BodyContent): GroupContent | null {
-  if (isBlank(content)) return null;
-  if (isGroup(content)) return content;
-  throw new TypeError(ISSUE.group);
-}
+      const position = V.scalar(i + 1);
+      const label = V.scalar(itemAtom(rowId).get().label || "");
 
-export function flagExpect(content: BodyContent): boolean {
-  if (isBlank(content)) return false;
-  if (isScalar(content) && content.value === true) return true;
-  throw new TypeError(ISSUE.flag);
-}
+      const key = interpretExpr(orderBy, {
+        lookup: (name) => {
+          if (name === "_") return row;
+          if (name === "position") return position;
+          if (name === "label") return label;
+          return lookupValue(name, ownerId, rowCtx);
+        },
+        resolve: (childId) => evaluateValue(childId, rowCtx),
+        getLabel: (childId) => itemAtom(childId).get().label,
+      });
 
-export function primExpect(content: BodyContent): ScalarPrimitive {
-  if (isScalar(content)) return content.value;
-  throw new TypeError(ISSUE.literal);
-}
+      if (isIssue(key)) return key;
 
-export function numExpect(content: BodyContent): number {
-  if (isScalar(content) && typeof content.value === "number")
-    return content.value;
-  throw new TypeError(ISSUE.number);
-}
+      rows.push({ rowId, i, key });
+    }
 
-export function primitiveToContent(
-  v: boolean | number | string | null
-): BlankContent | ScalarContent {
-  if (v === null || v === false) return createBlank();
-  return createScalar(v);
-}
+    rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);
+    ids = rows.map((r) => r.rowId);
+  }
 
-export function size(content: BodyContent): number | null {
-  if (isIssue(content)) return null;
-  if (isBlank(content)) return null;
-  if (isScalar(content) && typeof content.value === "string")
-    return content.value.length;
-  if (isGroup(content)) return content.items.length;
-  throw new TypeError(ISSUE.textOrGroup);
+  return V.itemGroup(ids);
 }
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-export function parseScalarInput(text: string): PrimitiveContent {
-  const trimmed = text.trim();
-  if (NUM_RE.test(trimmed)) {
-    const n = Number(trimmed);
-    if (Number.isFinite(n)) return createScalar(n);
+function parseScalar(text: string): Scalar {
+  const t = text.trim();
+  if (NUM_RE.test(t)) {
+    const n = Number(t);
+    if (Number.isFinite(n)) return n;
   }
-  return createScalar(text);
+  if (t === "true") return true;
+  return text;
 }
 
-/* Resolve */
+export type ItemInfo = {
+  id: ItemId;
+  ownerId: ItemId | null;
+  label: string;
+  view: ViewId;
+  content: StoredContent;
 
-export type Interpreter = (
-  code: string,
-  context: (label: string) => BodyContent
-) => BodyContent;
+  contentKind: StoredContent["kind"];
+  contentSettable: boolean;
 
-let interpretExpr: Interpreter = () =>
-  createIssue("Interpreter not set (call setInterpreter)");
+  derivedExpr?: string;
+  lensSpec?: { from: string; where: string; orderBy: string };
+};
 
-export function setInterpreter(fn: Interpreter) {
-  interpretExpr = fn;
+function isContentSettableKind(kind: StoredContent["kind"]): boolean {
+  return kind !== "derived" && kind !== "lens";
 }
 
-function lookupInContext(label: string, start: ItemContentSignal): BodyContent {
-  let context = getParentSignal(start).value;
-  while (context) {
-    const outer = context.get();
-    if (isGroup(outer)) {
-      const found = outer.items.find((c) => c.label.get() === label);
-      if (found) return resolveBody(found.content);
-    }
-    context = getParentSignal(context).value;
+export const sel = {
+  item(id: ItemId): ItemInfo {
+    const it = itemAtom(id).get();
+
+    const kind = it.content.kind;
+    const base: ItemInfo = {
+      id: it.id,
+      ownerId: it.ownerId,
+      label: it.label,
+      view: it.view,
+      content: it.content,
+      contentKind: kind,
+      contentSettable: isContentSettableKind(kind),
+    };
+
+    if (kind === "derived") return { ...base, derivedExpr: it.content.expr };
+    if (kind === "lens")
+      return {
+        ...base,
+        lensSpec: {
+          from: it.content.from,
+          where: it.content.where,
+          orderBy: it.content.orderBy,
+        },
+      };
+
+    return base;
+  },
+
+  value(id: ItemId): Value {
+    return valueSig(id).get();
+  },
+
+  groupItems(id: ItemId): ItemId[] {
+    const v = valueSig(id).get();
+    return v.kind === "item-group" ? v.items : [];
+  },
+} as const;
+
+export type OpResult = { focus?: ItemId; caret?: number };
+
+function expectGroupOwner(ownerId: ItemId): {
+  ownerAtom: SetSignal<Item>;
+  owner: Item;
+} {
+  const ownerAtom = itemAtom(ownerId);
+  const owner = ownerAtom.peek();
+  if (owner.content.kind !== "group") throw new Error("Owner is not a group");
+  return { ownerAtom, owner };
+}
+
+function clampIndex(i: number, len: number) {
+  return Math.max(0, Math.min(i, len));
+}
+
+type GroupOwnerLoc = {
+  childId: ItemId;
+  childAtom: SetSignal<Item>;
+  child: Item;
+
+  ownerId: ItemId;
+  ownerAtom: SetSignal<Item>;
+  owner: Item;
+
+  index: number;
+  items: readonly ItemId[];
+};
+
+function locateInGroupOwner(childId: ItemId): GroupOwnerLoc | null {
+  const childAtom = itemAtom(childId);
+  const child = childAtom.peek();
+  const ownerId = child.ownerId;
+  if (ownerId == null) return null;
+
+  const ownerAtom = itemAtom(ownerId);
+  const owner = ownerAtom.peek();
+  if (owner.content.kind !== "group") throw new Error("Owner is not a group");
+
+  const items = owner.content.items;
+  const index = items.indexOf(childId);
+  if (index < 0) return null;
+
+  return {
+    childId,
+    childAtom,
+    child,
+    ownerId,
+    ownerAtom,
+    owner,
+    index,
+    items,
+  };
+}
+
+export type MoveSpec = {
+  childId: ItemId;
+  toOwnerId: ItemId | null;
+  toIndex?: number;
+};
+
+export type MoveResult = {
+  fromOwnerId: ItemId | null;
+  toOwnerId: ItemId | null;
+  fromIndex: number | null;
+  toIndex: number | null;
+};
+
+export function move(spec: MoveSpec): MoveResult {
+  const { childId, toOwnerId } = spec;
+
+  const childAtom = itemAtom(childId);
+  const child = childAtom.peek();
+  const fromOwnerId = child.ownerId;
+
+  let fromIndex: number | null = null;
+  let toIndex: number | null = null;
+
+  const fromOwner =
+    fromOwnerId != null && items.has(fromOwnerId)
+      ? (() => {
+          const o = itemAtom(fromOwnerId).peek();
+          return o.content.kind === "group" ? o : null;
+        })()
+      : null;
+
+  const toOwner =
+    toOwnerId != null && items.has(toOwnerId)
+      ? (() => {
+          const o = itemAtom(toOwnerId).peek();
+          return o.content.kind === "group" ? o : null;
+        })()
+      : null;
+
+  if (fromOwnerId != null) {
+    if (!fromOwner) throw new Error("Owner is not a group");
+    const i = fromOwner.content.items.indexOf(childId);
+    fromIndex = i >= 0 ? i : null;
   }
-  throw new Error(ISSUE.unboundIdentifier(label));
-}
 
-export function resolveBody(sig: ItemContentSignal): BodyContent {
-  const v = sig.get();
+  if (toOwnerId != null) {
+    if (!toOwner) throw new Error("Owner is not a group");
+    const len = toOwner.content.items.length;
+    const rawAt = spec.toIndex == null ? len : clampIndex(spec.toIndex, len);
 
-  if (isDerived(v)) {
-    const ownerUid = getOwnerUidFromParent(sig);
-    const seed = ownerUid == null ? "root" : String(ownerUid);
-    return notSettableContent(seed, v.result.get());
+    const adjusted =
+      toOwnerId === fromOwnerId && fromIndex != null && rawAt > fromIndex
+        ? rawAt - 1
+        : rawAt;
+
+    toIndex = adjusted;
   }
 
-  if (isLens(v)) return v.result.get();
+  if (
+    fromOwnerId != null &&
+    toOwnerId === fromOwnerId &&
+    fromIndex != null &&
+    toIndex != null &&
+    toIndex === fromIndex
+  ) {
+    return { fromOwnerId, toOwnerId, fromIndex, toIndex };
+  }
 
-  return v;
-}
-
-export function toStatic(content: BodyContent): StaticContent {
-  if (content.kind === "issue") return content;
-  if (content.kind === "blank") return { kind: "blank" };
-  if (content.kind === "scalar") return content.value;
-
-  if (content.kind === "group") {
-    const items: StaticItem[] = content.items.map((c) => {
-      const nm = c.label.get();
-      const vw = c.view.get();
-      const outLabel = nm === "" ? undefined : nm;
-      const outView = vw === "" ? undefined : vw;
-      try {
-        return {
-          label: outLabel,
-          view: outView,
-          content: toStatic(resolveBody(c.content)),
-        };
-      } catch (err) {
-        return {
-          label: outLabel,
-          view: outView,
-          content: {
-            kind: "issue",
-            message: err instanceof Error ? err.message : String(err),
-          },
-        };
+  batch(() => {
+    if (fromOwnerId != null) {
+      const { ownerAtom, owner } = expectGroupOwner(fromOwnerId);
+      const before = owner.content.items;
+      if (before.includes(childId)) {
+        const after = before.filter((x) => x !== childId);
+        ownerAtom.set({ ...owner, content: { kind: "group", items: after } });
       }
-    });
-    return { kind: "group", items };
+    }
+
+    if (toOwnerId != null) {
+      const { ownerAtom, owner } = expectGroupOwner(toOwnerId);
+      const before = owner.content.items;
+
+      const at =
+        toIndex == null ? before.length : clampIndex(toIndex, before.length);
+
+      const nextItems = [...before.slice(0, at), childId, ...before.slice(at)];
+
+      ownerAtom.set({ ...owner, content: { kind: "group", items: nextItems } });
+      childAtom.set({ ...child, ownerId: toOwnerId });
+    } else {
+      childAtom.set({ ...child, ownerId: null });
+    }
+  });
+
+  return { fromOwnerId, toOwnerId, fromIndex, toIndex };
+}
+
+function makeBlankItem(id: ItemId): Item {
+  return { id, ownerId: null, label: "", view: "", content: { kind: "blank" } };
+}
+
+function collectReachableFrom(rootId: ItemId): Set<ItemId> {
+  const seen = new Set<ItemId>();
+  const stack: ItemId[] = [rootId];
+
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const it = itemAtom(id).peek();
+    if (it.content.kind === "group") {
+      for (const cid of it.content.items) stack.push(cid);
+    }
   }
 
-  return { kind: "issue", message: "[unknown]" };
+  return seen;
 }
 
-/* Getters */
+export function compactUnreachable(): { removed: number } {
+  const root = getRoot();
+  const keep = collectReachableFrom(root);
 
-export function getByLabel(group: BodyContent, label: string): BodyContent {
-  if (!isGroup(group)) return createIssue(ISSUE.labelOnNonGroup(label));
-
-  const item = group.items.find((v) => v.label.get() === label);
-  if (!item) return createIssue(ISSUE.unknownLabel(label));
-
-  return resolveBody(item.content);
-}
-
-export function getByPosition(
-  group: BodyContent,
-  position: number
-): BodyContent {
-  if (!Number.isFinite(position)) return createIssue(ISSUE.positionFinite);
-
-  const index = Math.trunc(position) - 1;
-  if (index < 0) return createIssue(ISSUE.positionOneBased);
-
-  if (!isGroup(group)) return createIssue(ISSUE.positionNonGroup);
-
-  const item = group.items[index];
-  if (!item)
-    return createIssue(ISSUE.positionOutOfRange(position, group.items.length));
-
-  return resolveBody(item.content);
-}
-
-export function getByPositionOrLabel(
-  group: BodyContent,
-  content: BodyContent
-): BodyContent {
-  if (!isGroup(group)) return createIssue(ISSUE.positionNonGroup);
-
-  if (isScalar(content)) {
-    const lit = content.value;
-    if (typeof lit === "number") return getByPosition(group, lit);
-    if (typeof lit === "string") return getByLabel(group, lit);
+  let removed = 0;
+  for (const [id] of items) {
+    if (keep.has(id)) continue;
+    items.delete(id);
+    removed++;
   }
 
-  return createIssue(ISSUE.posLabelMustBeTextOrNumber);
+  return { removed };
 }
 
-/* Projections */
-
-export type NavLayoutContext = "default" | "table-cell" | "bar-child";
-
-export function getLayoutContext(
-  parentItem?: Item,
-  grandparentItem?: Item
-): NavLayoutContext {
-  const parentView = parentItem?.view.peek() ?? "";
-  const grandparentView = grandparentItem?.view.peek() ?? "";
-
-  return grandparentView === "table"
-    ? "table-cell"
-    : parentView === "bar"
-    ? "bar-child"
-    : "default";
-}
-
-export type ViewScalar = {
-  kind: "scalar";
-  text: string;
-  number?: number;
-  isIssue: boolean;
-  settable: boolean;
-};
-
-export type ViewModel = ViewScalar | GroupContent;
-
-export function getViewModel(sig: ItemContentSignal): ViewModel {
-  const v = resolveBody(sig);
-
-  if (isGroup(v)) return v;
-
-  const stored = sig.get();
-  const bodySettable =
-    isSetSignal(sig) && !isDerived(stored) && !isLens(stored);
-
-  if (isIssue(v)) {
-    return {
-      kind: "scalar",
-      text: v.message,
-      isIssue: true,
-      settable: bodySettable,
-    };
-  }
-
-  if (isBlank(v)) {
-    return { kind: "scalar", text: "", isIssue: false, settable: bodySettable };
-  }
-
-  if (isScalar(v)) {
-    return {
-      kind: "scalar",
-      text: String(v.value),
-      isIssue: false,
-      settable: bodySettable,
-      number: typeof v.value === "number" ? v.value : undefined,
-    };
-  }
-
-  return { kind: "scalar", text: "[unknown]", isIssue: false, settable: false };
-}
-
-export function getViewChildren(sig: ItemContentSignal): Item[] {
-  const v = resolveBody(sig);
-  return isGroup(v) ? v.items : [];
-}
-
-export type InputFieldMode = "body" | "label" | "header" | "header-multi";
-
-export type InputField = {
-  mode: InputFieldMode;
-  label?: string;
-  get: PGetSignal<string | null>;
-  set?: (next: string) => void;
-};
-
-export function getViewInputs(item: Item): InputField[] {
-  const childSig = item.content;
-  const fields: InputField[] = [];
-
-  if (isDerived(childSig.get())) {
-    fields.push({
-      mode: "header-multi",
-      label: "=",
-      get: computed(() => {
-        const v = childSig.get();
-        return isDerived(v) ? v.code : null;
-      }),
-      set: isSetSignal(childSig)
-        ? (next) => {
-            const cur = childSig.peek();
-            if (isDerived(cur) && cur.code !== next) {
-              childSig.set(createDerived(childSig, next));
-            }
-          }
-        : undefined,
-    });
-    return fields;
-  }
-
-  if (isLens(childSig.get())) {
-    fields.push({
-      mode: "header",
-      label: "~",
-      get: computed(() => {
-        const v = childSig.get();
-        return isLens(v) ? v.source : null;
-      }),
-      set: isSetSignal(childSig)
-        ? (next) => {
-            const cur = childSig.peek();
-            if (isLens(cur) && cur.source !== next) {
-              childSig.set(createLens(childSig, next, cur.filter, cur.sort));
-            }
-          }
-        : undefined,
-    });
-
-    fields.push({
-      mode: "header-multi",
-      label: "filter:",
-      get: computed(() => {
-        const v = childSig.get();
-        return isLens(v) ? v.filter : null;
-      }),
-      set: isSetSignal(childSig)
-        ? (next) => {
-            const cur = childSig.peek();
-            if (isLens(cur) && cur.filter !== next) {
-              childSig.set(createLens(childSig, cur.source, next, cur.sort));
-            }
-          }
-        : undefined,
-    });
-
-    fields.push({
-      mode: "header-multi",
-      label: "sort:",
-      get: computed(() => {
-        const v = childSig.get();
-        return isLens(v) ? v.sort : null;
-      }),
-      set: isSetSignal(childSig)
-        ? (next) => {
-            const cur = childSig.peek();
-            if (isLens(cur) && cur.sort !== next) {
-              childSig.set(createLens(childSig, cur.source, cur.filter, next));
-            }
-          }
-        : undefined,
-    });
-
-    return fields;
-  }
-
-  return fields;
-}
-
-type ParentUpdateContext = {
-  parent: SetSignal<GroupContent>;
-  before: Item[];
+export type InsertAtResult = {
+  ownerId: ItemId;
+  id: ItemId;
   index: number;
 };
 
-type ParentUpdateResult = {
-  after: Item[];
+export type RemoveFromOwnerResult = {
+  ownerId: ItemId;
+  id: ItemId;
+  index: number;
+  prevId: ItemId | null;
+  nextId: ItemId | null;
 };
 
-export function updateParentGroup(
-  content: ItemContentSignal,
-  childUid: Uid,
-  fn: (ctx: ParentUpdateContext) => ParentUpdateResult
-): ParentUpdateResult | null {
-  const parentAny = getParent(content);
-  if (!parentAny) return null;
+export type WrapInGroupResult = {
+  ownerId: ItemId;
+  childId: ItemId;
+  wrapperId: ItemId;
+  wrapperIndex: number;
+};
 
-  const pv = parentAny.peek?.();
-  if (!pv || !isGroup(pv)) return null;
+export type UnwrapSingleChildResult = {
+  ownerId: ItemId;
+  childId: ItemId;
+  wrapperId: ItemId;
+  index: number;
+};
 
-  const parent = parentAny as SetSignal<GroupContent>;
+export type SplitTextResult = {
+  leftId: ItemId;
+  rightId: ItemId;
+  ownerId: ItemId;
+  rightIndex: number;
+  caretInRight: number;
+};
 
-  const before = pv.items;
-  const index = before.findIndex((c) => c.uid === childUid);
-  if (index < 0) return null;
+export type JoinTextResult = {
+  keptId: ItemId;
+  removedId: ItemId;
+  ownerId: ItemId;
+  keptIndex: number;
+  caret: number;
+};
 
-  let result: ParentUpdateResult | null = null;
+function isTextEditable(id: ItemId): boolean {
+  const it = itemAtom(id).peek();
+  if (!isContentSettableKind(it.content.kind)) return false;
 
-  batch(() => {
-    const update = fn({ parent, before, index });
-    const nextGroup = createGroup(update.after);
-    parent.set(nextGroup);
-    result = { after: update.after };
-  });
+  if (it.content.kind === "blank") return true;
+  if (it.content.kind === "scalar") return true;
+  return false;
+}
 
-  return result;
+function getScalarTextForEdit(id: ItemId): string {
+  const it = itemAtom(id).peek();
+  if (it.content.kind === "blank") return "";
+  if (it.content.kind === "scalar") return String(it.content.value);
+  const v = sel.value(id);
+  return v.kind === "scalar" ? String(v.value) : v.kind === "blank" ? "" : "";
+}
+
+function setScalarTextDirect(id: ItemId, raw: string): void {
+  const a = itemAtom(id);
+  const cur = a.peek();
+  a.set({ ...cur, content: { kind: "scalar", value: parseScalar(raw) } });
+}
+
+export const ops = {
+  /* Content patches */
+
+  setLabel(id: ItemId, label: string): void {
+    const a = itemAtom(id);
+    const cur = a.peek();
+    if (cur.label === label) return;
+    a.set({ ...cur, label });
+  },
+
+  setView(id: ItemId, view: ViewId): void {
+    const a = itemAtom(id);
+    const cur = a.peek();
+    if (cur.view === view) return;
+    a.set({ ...cur, view });
+  },
+
+  setScalarText(id: ItemId, raw: string): void {
+    setScalarTextDirect(id, raw);
+  },
+
+  setBlank(id: ItemId): void {
+    const a = itemAtom(id);
+    const cur = a.peek();
+    a.set({ ...cur, content: { kind: "blank" } });
+  },
+
+  setDerivedExpr(id: ItemId, expr: string): void {
+    const a = itemAtom(id);
+    const cur = a.peek();
+    a.set({ ...cur, content: { kind: "derived", expr } });
+  },
+
+  setLensSpec(
+    id: ItemId,
+    next: { from: string; where: string; orderBy: string }
+  ): void {
+    const a = itemAtom(id);
+    const cur = a.peek();
+    a.set({ ...cur, content: { kind: "lens", ...next } });
+  },
+
+  /* Structural edits */
+
+  insertBlankAt(ownerId: ItemId, index: number): InsertAtResult {
+    const { owner } = expectGroupOwner(ownerId);
+    const at = clampIndex(index, owner.content.items.length);
+
+    const id = allocId();
+    if (items.has(id)) throw new Error("Duplicate new id");
+
+    batch(() => {
+      createItem(makeBlankItem(id));
+      move({ childId: id, toOwnerId: ownerId, toIndex: at });
+    });
+
+    return { ownerId, id, index: at };
+  },
+
+  insertBlankAfter(anchorId: ItemId): InsertAtResult | null {
+    const loc = locateInGroupOwner(anchorId);
+    if (!loc) return null;
+    return this.insertBlankAt(loc.ownerId, loc.index + 1);
+  },
+
+  insertBlankBefore(anchorId: ItemId): InsertAtResult | null {
+    const loc = locateInGroupOwner(anchorId);
+    if (!loc) return null;
+    return this.insertBlankAt(loc.ownerId, loc.index);
+  },
+
+  removeFromOwner(id: ItemId): RemoveFromOwnerResult | null {
+    const loc = locateInGroupOwner(id);
+    if (!loc) return null;
+
+    const { ownerId, owner, items, index } = loc;
+    const prevId = items[index - 1] ?? null;
+    const nextId = items[index + 1] ?? null;
+
+    move({ childId: id, toOwnerId: null });
+
+    return { ownerId, id, index, prevId, nextId };
+  },
+
+  wrapChildInNewGroup(childId: ItemId): WrapInGroupResult | null {
+    const loc = locateInGroupOwner(childId);
+    if (!loc) return null;
+
+    const { ownerId, index, childAtom, child } = loc;
+
+    const wrapperId = allocId();
+    if (items.has(wrapperId)) throw new Error("Duplicate wrapperId");
+
+    batch(() => {
+      createItem({
+        id: wrapperId,
+        ownerId: null,
+        label: child.label,
+        view: "",
+        content: { kind: "group", items: [] },
+      });
+
+      move({ childId: wrapperId, toOwnerId: ownerId, toIndex: index });
+
+      childAtom.set({ ...child, label: "" });
+
+      move({ childId, toOwnerId: wrapperId, toIndex: 0 });
+    });
+
+    return { ownerId, childId, wrapperId, wrapperIndex: index };
+  },
+
+  unwrapIfSingleChild(childId: ItemId): UnwrapSingleChildResult | null {
+    const childAtom = itemAtom(childId);
+    const child = childAtom.peek();
+    const wrapperId = child.ownerId;
+    if (wrapperId == null) return null;
+
+    const wrapperAtom = itemAtom(wrapperId);
+    const wrapper = wrapperAtom.peek();
+    if (wrapper.content.kind !== "group") return null;
+    if (
+      wrapper.content.items.length !== 1 ||
+      wrapper.content.items[0] !== childId
+    )
+      return null;
+
+    const ownerId = wrapper.ownerId;
+    if (ownerId == null) return null;
+
+    const ownerLoc = locateInGroupOwner(wrapperId);
+    if (!ownerLoc) return null;
+
+    const idx = ownerLoc.index;
+
+    batch(() => {
+      move({ childId, toOwnerId: ownerId, toIndex: idx });
+
+      move({ childId: wrapperId, toOwnerId: null });
+
+      const nextChild = childAtom.peek();
+      childAtom.set({ ...nextChild, label: wrapper.label });
+
+      wrapperAtom.set({
+        ...wrapper,
+        ownerId: null,
+        label: "",
+        content: { kind: "blank" },
+      });
+    });
+
+    return { ownerId, childId, wrapperId, index: idx };
+  },
+
+  splitTextItem(
+    id: ItemId,
+    caretStart: number,
+    caretEnd: number = caretStart
+  ): SplitTextResult | null {
+    const loc = locateInGroupOwner(id);
+    if (!loc) return null;
+    if (!isTextEditable(id)) return null;
+
+    const text = getScalarTextForEdit(id);
+    const len = text.length;
+    const start = Math.min(Math.max(caretStart, 0), len);
+    const end = Math.min(Math.max(caretEnd, 0), len);
+
+    const left = text.slice(0, start);
+    const right = text.slice(end);
+
+    const rightId = allocId();
+    if (items.has(rightId)) throw new Error("Duplicate new id");
+
+    batch(() => {
+      setScalarTextDirect(id, left);
+
+      createItem(makeBlankItem(rightId));
+      move({
+        childId: rightId,
+        toOwnerId: loc.ownerId,
+        toIndex: loc.index + 1,
+      });
+
+      setScalarTextDirect(rightId, right);
+    });
+
+    return {
+      leftId: id,
+      rightId,
+      ownerId: loc.ownerId,
+      rightIndex: loc.index + 1,
+      caretInRight: 0,
+    };
+  },
+
+  joinWithPrevious(id: ItemId): JoinTextResult | null {
+    const loc = locateInGroupOwner(id);
+    if (!loc) return null;
+    if (!isTextEditable(id)) return null;
+
+    const { ownerId, index, items: ownerItems } = loc;
+    if (index <= 0) return null;
+
+    const prevId = ownerItems[index - 1]!;
+    if (!isTextEditable(prevId)) return null;
+
+    const prevText = getScalarTextForEdit(prevId);
+    const curText = getScalarTextForEdit(id);
+    const caret = prevText.length;
+
+    batch(() => {
+      setScalarTextDirect(prevId, prevText + curText);
+      move({ childId: id, toOwnerId: null });
+    });
+
+    return {
+      keptId: prevId,
+      removedId: id,
+      ownerId,
+      keptIndex: index - 1,
+      caret,
+    };
+  },
+
+  joinWithNext(id: ItemId): JoinTextResult | null {
+    const loc = locateInGroupOwner(id);
+    if (!loc) return null;
+    if (!isTextEditable(id)) return null;
+
+    const { ownerId, index, items: ownerItems } = loc;
+    const nextId = ownerItems[index + 1];
+    if (nextId == null) return null;
+    if (!isTextEditable(nextId)) return null;
+
+    const curText = getScalarTextForEdit(id);
+    const nextText = getScalarTextForEdit(nextId);
+    const caret = curText.length;
+
+    batch(() => {
+      setScalarTextDirect(id, curText + nextText);
+      move({ childId: nextId, toOwnerId: null });
+    });
+
+    return { keptId: id, removedId: nextId, ownerId, keptIndex: index, caret };
+  },
+} as const;
+
+export type StaticContent =
+  | { kind: "blank" }
+  | Scalar
+  | { kind: "group"; items: StaticItem[] }
+  | { kind: "derived"; expr: string }
+  | { kind: "lens"; from: string; where: string; orderBy: string };
+
+export type StaticItem = {
+  label?: string;
+  view?: string;
+  content: StaticContent;
+};
+
+export function snapshotStored(id: ItemId): StaticItem {
+  const it = itemAtom(id).get();
+
+  const label = it.label.trim() ? it.label : undefined;
+  const view = it.view.trim() ? it.view : undefined;
+
+  return {
+    label,
+    view,
+    content: snapshotStoredContent(it.content),
+  };
+}
+
+function snapshotStoredContent(content: StoredContent): StaticContent {
+  switch (content.kind) {
+    case "blank":
+      return { kind: "blank" };
+
+    case "scalar":
+      return content.value;
+
+    case "derived":
+      return { kind: "derived", expr: content.expr };
+
+    case "lens":
+      return {
+        kind: "lens",
+        from: content.from,
+        where: content.where,
+        orderBy: content.orderBy,
+      };
+
+    case "group":
+      return {
+        kind: "group",
+        items: content.items.map((childId) => snapshotStored(childId)),
+      };
+  }
 }

@@ -1,30 +1,31 @@
 import * as ohm from "ohm-js";
-
 import {
-  type GroupContent,
-  type BodyContent,
-  isBlank,
-  isScalar,
-  createBlank,
-  createScalar,
-  createGroup,
-  createSignal,
-  primitiveToContent,
+  type ItemId,
+  type Scalar,
+  type LabeledValue,
+  type Value,
+  type EvalEnv,
+  V,
   isPresent,
-  toNumber,
-  toText,
-  primExpect,
-  numExpect,
-  numOpt,
-  textOpt,
-  groupOpt,
-  getByLabel,
-  getByPositionOrLabel,
-  resolveBody,
-  ISSUE,
+  isTrue,
 } from "./model";
 
-/* Grammar */
+const ISSUE = {
+  literal: "Expected literal value",
+  number: "Expected number",
+  numOrBlank: "Expected number or blank",
+  text: "Expected text",
+  textOrBlank: "Expected text or blank",
+  group: "Expected group",
+  posLabelMustBeTextOrNumber: "Label/position must be text or number",
+  unknownLabel: (label: string) => `Unknown label '${label}'`,
+  labelOnNonItemGroup: (label: string) =>
+    `Cannot access label '${label}' of non-item-group content`,
+  positionFinite: "Position must be a finite number",
+  positionOneBased: "Position must be 1 or greater",
+  positionOutOfRange: (position: number, len: number) =>
+    `Position ${position} is out of range (length ${len})`,
+} as const;
 
 const grammar = ohm.grammar(String.raw`
 Script {
@@ -85,8 +86,6 @@ Script {
 }
 `);
 
-/* AST types */
-
 export type Expr =
   | Binary
   | Unary
@@ -142,8 +141,6 @@ export interface Ident {
   label: string;
 }
 
-/* Semantics */
-
 const IMPLICIT_PARAM = { type: "Ident", label: "_" } as Ident;
 
 function buildBinaryChain(
@@ -156,9 +153,9 @@ function buildBinaryChain(
       type: "Binary",
       op: opNode.sourceString,
       left: node,
-      right: rights.children[i]!.ast,
+      right: (rights.children[i] as any).ast,
     }),
-    first.ast
+    (first as any).ast
   );
 }
 
@@ -186,26 +183,33 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
 
   Unary(ops, operand) {
     return ops.children.reduceRight(
-      (node, tok) => ({ type: "Unary", op: tok.sourceString, argument: node }),
-      operand.ast
+      (node: Expr, tok: any) => ({
+        type: "Unary",
+        op: tok.sourceString,
+        argument: node,
+      }),
+      (operand as any).ast
     ) as Expr;
   },
 
   Path(prim, parts) {
-    return parts.children.reduce((node, p) => p.ast(node), prim.ast) as Expr;
+    return parts.children.reduce(
+      (node: Expr, p: any) => p.ast(node),
+      (prim as any).ast
+    ) as Expr;
   },
   Call(_open, list, _close) {
     return (callee: Expr): Call => ({
       type: "Call",
       callee,
-      args: list.asIteration().children.map((n) => n.ast),
+      args: (list as any).asIteration().children.map((n: any) => n.ast),
     });
   },
   Select_expr(_open, expr, _close) {
     return (receiver: Expr): Select => ({
       type: "Select",
       group: receiver,
-      select: expr.ast,
+      select: (expr as any).ast,
     });
   },
   Member(_dot, labelTok) {
@@ -219,7 +223,10 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     return (receiver: Expr): Call => ({
       type: "Call",
       callee: { type: "Ident", label: labelTok.sourceString },
-      args: [receiver, ...list.asIteration().children.map((n) => n.ast)],
+      args: [
+        receiver,
+        ...(list as any).asIteration().children.map((n: any) => n.ast),
+      ],
     });
   },
 
@@ -227,13 +234,13 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
     return { type: "Ident", label: labelTok.sourceString };
   },
   Prim_paren(_open, expr, _close) {
-    return expr.ast;
+    return (expr as any).ast;
   },
   Prim_dotsel(_dot, _open, expr, _close) {
     return {
       type: "Select",
       group: IMPLICIT_PARAM,
-      select: expr.ast,
+      select: (expr as any).ast,
     } as Select;
   },
   Prim_dot(_dot, labelTok) {
@@ -261,22 +268,181 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
 });
 
-/* Operators */
+function isBlank(v: Value): boolean {
+  return v.kind === "blank";
+}
+
+function isIssue(v: Value): v is { kind: "issue"; message: string } {
+  return v.kind === "issue";
+}
+
+function isScalar(v: Value): v is { kind: "scalar"; value: Scalar } {
+  return v.kind === "scalar";
+}
+
+function isItemGroup(v: Value): v is { kind: "item-group"; items: ItemId[] } {
+  return v.kind === "item-group";
+}
+
+function isValueGroup(
+  v: Value
+): v is { kind: "value-group"; items: LabeledValue[] } {
+  return v.kind === "value-group";
+}
+
+function firstIssue(...vs: Value[]): Value | null {
+  for (const v of vs) if (v.kind === "issue") return v;
+  return null;
+}
+
+function primExpect(v: Value): Scalar {
+  if (isScalar(v)) return v.value;
+  throw new TypeError(ISSUE.literal);
+}
+
+function numOpt(v: Value): number | null {
+  if (v.kind === "blank") return null;
+  if (v.kind === "issue") throw new TypeError(v.message);
+
+  if (v.kind === "scalar") {
+    const x = v.value;
+    if (typeof x === "number") return x;
+    if (x === true) return 1;
+    if (typeof x === "string") {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+
+  throw new TypeError(ISSUE.numOrBlank);
+}
+
+function textOpt(v: Value): string | null {
+  if (v.kind === "blank") return null;
+  if (v.kind === "issue") throw new TypeError(v.message);
+
+  if (v.kind === "scalar" && typeof v.value === "string") return v.value;
+  throw new TypeError(ISSUE.textOrBlank);
+}
+
+function numExpect(v: Value): number {
+  if (v.kind === "issue") throw new TypeError(v.message);
+  if (isScalar(v) && typeof v.value === "number") return v.value;
+  throw new TypeError(ISSUE.number);
+}
+
+function toNumber(v: Value): number | null {
+  if (v.kind === "blank") return null;
+  if (v.kind === "issue") throw new TypeError(v.message);
+
+  if (v.kind === "scalar") {
+    const x = v.value;
+    if (typeof x === "number") return x;
+    if (x === true) return 1;
+    if (typeof x === "string") {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+  return null;
+}
+
+function toText(v: Value): string | null {
+  if (v.kind === "blank") return null;
+  if (v.kind === "issue") throw new TypeError(v.message);
+
+  if (v.kind === "scalar") return String(v.value);
+  return null;
+}
+
+function primitiveToValue(x: boolean | number | string | null): Value {
+  if (x === null || x === false) return V.blank();
+  if (x === true) return V.scalar(true);
+  if (typeof x === "number") return V.scalar(x);
+  return V.scalar(x);
+}
 
 function numericOp(
-  map: (...numbers: number[]) => number,
-  ...args: BodyContent[]
+  map: (...nums: number[]) => number,
+  ...args: Value[]
 ): number | null {
+  const issue = firstIssue(...args);
+  if (issue) throw new TypeError(issue.message);
+
   const nums = args.map((a) => numOpt(a));
   if (nums.some((n) => n === null)) return null;
   return map(...(nums as number[]));
 }
 
+function getItemGroupByLabel(group: Value, label: string, env: EvalEnv): Value {
+  if (group.kind === "issue") return group;
+  if (!isItemGroup(group)) return V.issue(ISSUE.labelOnNonItemGroup(label));
+
+  const id = group.items.find((cid) => env.getLabel(cid) === label);
+  if (id == null) return V.issue(ISSUE.unknownLabel(label));
+
+  return env.resolve(id);
+}
+
+function getItemGroupByPosition(
+  group: Value,
+  position: number,
+  env: EvalEnv
+): Value {
+  if (group.kind === "issue") return group;
+
+  if (!Number.isFinite(position)) return V.issue(ISSUE.positionFinite);
+
+  const index = Math.trunc(position) - 1;
+  if (index < 0) return V.issue(ISSUE.positionOneBased);
+
+  if (!isItemGroup(group))
+    return V.issue("Cannot select a position from non-item-group content");
+
+  const id = group.items[index];
+  if (id == null)
+    return V.issue(ISSUE.positionOutOfRange(position, group.items.length));
+
+  return env.resolve(id);
+}
+
+function getValueGroupByPosition(group: Value, position: number): Value {
+  if (group.kind === "issue") return group;
+
+  if (!Number.isFinite(position)) return V.issue(ISSUE.positionFinite);
+
+  const index = Math.trunc(position) - 1;
+  if (index < 0) return V.issue(ISSUE.positionOneBased);
+
+  if (!isValueGroup(group))
+    return V.issue("Cannot select a position from non-value-group content");
+
+  const it = group.items[index];
+  if (it == null)
+    return V.issue(ISSUE.positionOutOfRange(position, group.items.length));
+  return it.value;
+}
+
+function getByPositionOrLabel(group: Value, selV: Value, env: EvalEnv): Value {
+  if (group.kind === "issue") return group;
+  if (selV.kind === "issue") return selV;
+
+  if (isScalar(selV)) {
+    const lit = selV.value;
+    if (typeof lit === "number") {
+      if (isItemGroup(group)) return getItemGroupByPosition(group, lit, env);
+      if (isValueGroup(group)) return getValueGroupByPosition(group, lit);
+      return V.issue("Cannot select a position from non-group content");
+    }
+    if (typeof lit === "string") {
+      return getItemGroupByLabel(group, lit, env);
+    }
+  }
+  return V.issue(ISSUE.posLabelMustBeTextOrNumber);
+}
+
 const BINARY_OPS: Partial<
-  Record<
-    Binary["op"],
-    (a: BodyContent, b: BodyContent) => boolean | number | null
-  >
+  Record<Binary["op"], (a: Value, b: Value) => boolean | number | null>
 > = {
   "!=": (a, b) => primExpect(a) !== primExpect(b),
   "=": (a, b) => primExpect(a) === primExpect(b),
@@ -292,31 +458,30 @@ const BINARY_OPS: Partial<
   "/": (a, b) => numericOp((x, y) => x / y, a, b),
 };
 
-const UNARY_OPS: Record<
-  Unary["op"],
-  (v: BodyContent) => boolean | number | null
-> = {
-  "!": (v) => !isPresent(v),
+const UNARY_OPS: Record<Unary["op"], (v: Value) => boolean | number | null> = {
+  "!": (v) => {
+    if (v.kind === "issue") throw new TypeError(v.message);
+    return !isTrue(v);
+  },
   "-": (v) => numericOp((x) => -x, v),
   "+": (v) => numericOp((x) => +x, v),
 };
 
-/* Library */
+type Builtin = (env: EvalEnv, ...args: Value[]) => Value;
 
-function contentFn(
-  op: (...contents: BodyContent[]) => BodyContent
-): (...args: BodyContent[]) => BodyContent {
-  return (...args: BodyContent[]) => {
-    const contents = Array.from({ length: op.length }, (_, i) =>
-      i < args.length ? args[i]! : createBlank()
+function contentFn(op: (env: EvalEnv, ...args: Value[]) => Value): Builtin {
+  return (env, ...args: Value[]) => {
+    const want = Math.max(0, op.length - 1);
+    const filled = Array.from({ length: want }, (_, i) =>
+      i < args.length ? args[i]! : V.blank()
     );
-    return op(...contents);
+    return op(env, ...filled);
   };
 }
 
 type ArgSpec<T> =
-  | { kind: "req"; convert: (content: BodyContent) => T | null }
-  | { kind: "opt"; convert: (content: BodyContent) => T | null; fallback: T };
+  | { kind: "req"; convert: (v: Value) => T | null }
+  | { kind: "opt"; convert: (v: Value) => T | null; fallback: T };
 
 const reqNum = { kind: "req", convert: numOpt } as const;
 const optNum = (d: number) =>
@@ -326,17 +491,15 @@ const reqText = { kind: "req", convert: textOpt } as const;
 const optText = (d: string) =>
   ({ kind: "opt", convert: textOpt, fallback: d } as const);
 
-const reqGroup = { kind: "req", convert: groupOpt } as const;
-const optGroup = (d: GroupContent) =>
-  ({ kind: "opt", convert: groupOpt, fallback: d } as const);
-
 function typedFn<A extends any[]>(
   specs: { [K in keyof A]: ArgSpec<A[K]> },
-  impl: (...args: A) => BodyContent
-): (...args: BodyContent[]) => BodyContent {
-  return (...args: BodyContent[]) => {
-    const inputs: BodyContent[] = Array.from({ length: specs.length }, (_, i) =>
-      i < args.length ? args[i]! : createBlank()
+  impl: (env: EvalEnv, ...args: A) => Value
+): Builtin {
+  return (env: EvalEnv, ...args: Value[]) => {
+    for (const v of args) if (v.kind === "issue") return v;
+
+    const inputs: Value[] = Array.from({ length: specs.length }, (_, i) =>
+      i < args.length ? args[i]! : V.blank()
     );
 
     const resolved: unknown[] = [];
@@ -344,101 +507,142 @@ function typedFn<A extends any[]>(
       const spec = specs[i]!;
       const v = spec.convert(inputs[i]!);
       if (spec.kind === "req") {
-        if (v === null) return createBlank();
+        if (v === null) return V.blank();
         resolved.push(v);
       } else {
         resolved.push(v === null ? spec.fallback : v);
       }
     }
-
-    return impl(...(resolved as A));
+    return impl(env, ...(resolved as A));
   };
 }
 
-function groupNumbersOpt(group: GroupContent): number[] {
+function iterGroupValues(g: Value, env: EvalEnv): Value[] {
+  if (g.kind === "issue") throw new TypeError(g.message);
+  if (isItemGroup(g)) return g.items.map((id) => env.resolve(id));
+  if (isValueGroup(g)) return g.items.map((it) => it.value);
+  throw new TypeError(ISSUE.group);
+}
+
+function groupNumbersOpt(g: Value, env: EvalEnv): number[] {
   const out: number[] = [];
-  for (const { content } of group.items) {
-    const v = resolveBody(content);
-    if (isBlank(v)) continue;
-    if (isScalar(v) && typeof v.value === "number") out.push(v.value);
+  for (const v of iterGroupValues(g, env)) {
+    if (v.kind === "issue") throw new TypeError(v.message);
+    if (v.kind === "blank") continue;
+    if (v.kind === "scalar" && typeof v.value === "number") out.push(v.value);
     else throw new TypeError(ISSUE.numOrBlank);
   }
   return out;
 }
 
-function groupTextsOpt(group: GroupContent): string[] {
+function groupTextsOpt(g: Value, env: EvalEnv): string[] {
   const out: string[] = [];
-  for (const { content } of group.items) {
-    const v = resolveBody(content);
-    if (isBlank(v)) continue;
-    if (isScalar(v) && typeof v.value === "string") out.push(v.value);
+  for (const v of iterGroupValues(g, env)) {
+    if (v.kind === "issue") throw new TypeError(v.message);
+    if (v.kind === "blank") continue;
+    if (v.kind === "scalar" && typeof v.value === "string") out.push(v.value);
     else throw new TypeError(ISSUE.textOrBlank);
   }
   return out;
 }
 
 function reduceNumbers(
-  source: GroupContent,
-  op: (nums: number[]) => number | null
+  g: Value,
+  env: EvalEnv,
+  op: (ns: number[]) => number | null
 ): number | null {
-  const nums = groupNumbersOpt(source);
-  return nums.length ? op(nums) : null;
+  const ns = groupNumbersOpt(g, env);
+  return ns.length ? op(ns) : null;
 }
 
-const library: Record<string, (...args: BodyContent[]) => BodyContent> = {
+const library: Record<string, Builtin> = {
   /* Converters */
 
-  to_flag: contentFn((v) => primitiveToContent(isPresent(v))),
+  is_blank: contentFn((_env, v) => primitiveToValue(isBlank(v))),
 
-  to_number: contentFn((v) => primitiveToContent(toNumber(v))),
+  is_present: contentFn((_env, v) => primitiveToValue(isPresent(v))),
 
-  to_text: contentFn((v) => primitiveToContent(toText(v))),
+  is_true: contentFn((_env, v) => primitiveToValue(isTrue(v))),
 
-  number_or: contentFn((content, fallback) => {
+  to_number: contentFn((_env, v) => primitiveToValue(toNumber(v))),
+
+  to_text: contentFn((_env, v) => primitiveToValue(toText(v))),
+
+  number_or: contentFn((_env, content, fallback) => {
+    if (content.kind === "issue") return content;
+
     const n = numOpt(content);
-    return createScalar(n === null ? numOpt(fallback) ?? 0 : n);
+    if (n !== null) return V.scalar(n);
+
+    if (fallback.kind === "issue") return fallback;
+    const fb = numOpt(fallback);
+    return fb !== null ? V.scalar(fb) : V.blank();
   }),
 
-  text_or: contentFn((content, fallback) => {
+  text_or: contentFn((_env, content, fallback) => {
+    if (content.kind === "issue") return content;
+
     const t = textOpt(content);
-    return t === null ? createScalar(textOpt(fallback) ?? "") : createScalar(t);
+    if (t !== null) return V.scalar(t);
+
+    if (fallback.kind === "issue") return fallback;
+    const fb = textOpt(fallback);
+    return fb !== null ? V.scalar(fb) : V.blank();
   }),
 
-  if_blank: contentFn((content, fallback) =>
-    isBlank(content) ? fallback ?? createBlank() : content
+  if_blank: contentFn((_env, content, fallback) => {
+    if (content.kind === "issue") return content;
+    return isBlank(content) ? fallback ?? V.blank() : content;
+  }),
+
+  if_issue: contentFn((_env, content, fallback) =>
+    content.kind === "issue" ? fallback ?? V.blank() : content
   ),
 
-  first_present: (...contents) => {
-    for (const v of contents) if (!isBlank(v)) return v;
-    return createBlank();
+  first_present: (_env, ...contents) => {
+    for (const v of contents) {
+      if (v.kind === "issue") return v;
+      if (isPresent(v)) return v;
+    }
+    return V.blank();
   },
 
   /* Logic */
 
-  not: contentFn((v) => (isPresent(v) ? createBlank() : createScalar(true))),
+  not: contentFn((_env, v) => {
+    if (v.kind === "issue") return v;
+    return isTrue(v) ? V.blank() : V.scalar(true);
+  }),
 
-  and: contentFn((l, r) =>
-    isPresent(l) && isPresent(r) ? createScalar(true) : createBlank()
-  ),
+  and: contentFn((_env, l, r) => {
+    if (l.kind === "issue") return l;
+    if (r.kind === "issue") return r;
+    return isTrue(l) && isTrue(r) ? V.scalar(true) : V.blank();
+  }),
 
-  or: contentFn((l, r) =>
-    isPresent(l) || isPresent(r) ? createScalar(true) : createBlank()
-  ),
+  or: contentFn((_env, l, r) => {
+    if (l.kind === "issue") return l;
+    if (r.kind === "issue") return r;
+    return isTrue(l) || isTrue(r) ? V.scalar(true) : V.blank();
+  }),
 
-  if: contentFn((cond, thenV, elseV) => (isPresent(cond) ? thenV : elseV)),
+  if: contentFn((_env, cond, thenV, elseV) => {
+    if (cond.kind === "issue") return cond;
+    return isTrue(cond) ? thenV : elseV;
+  }),
 
   /* Number */
 
-  abs: typedFn([reqNum], (n) => createScalar(Math.abs(n))),
+  abs: typedFn([reqNum], (_env, n) => V.scalar(Math.abs(n))),
 
-  round: typedFn([reqNum, optNum(0)], (n, p) => {
+  round: typedFn([reqNum, optNum(0)], (_env, n, p) => {
     const f = 10 ** p;
-    return createScalar(Math.round(n * f) / f);
+    return V.scalar(Math.round(n * f) / f);
   }),
 
-  ceil: typedFn([reqNum], (n) => createScalar(Math.ceil(n))),
+  ceil: typedFn([reqNum], (_env, n) => V.scalar(Math.ceil(n))),
 
-  floor: typedFn([reqNum], (n) => createScalar(Math.floor(n))),
+  floor: typedFn([reqNum], (_env, n) => V.scalar(Math.floor(n))),
 
   clamp: typedFn(
     [
@@ -446,145 +650,208 @@ const library: Record<string, (...args: BodyContent[]) => BodyContent> = {
       optNum(Number.NEGATIVE_INFINITY),
       optNum(Number.POSITIVE_INFINITY),
     ],
-    (n, lo, hi) => createScalar(Math.min(Math.max(n, lo), hi))
+    (_env, n, lo, hi) => V.scalar(Math.min(Math.max(n, lo), hi))
   ),
 
-  mod: typedFn([reqNum, optNum(1)], (d, m) => createScalar(((d % m) + m) % m)),
+  mod: typedFn([reqNum, optNum(1)], (_env, d, m) =>
+    V.scalar(((d % m) + m) % m)
+  ),
 
   /* Text */
 
-  trim: typedFn([reqText], (t) => createScalar(t.trim())),
+  trim: typedFn([reqText], (_env, t) => V.scalar(t.trim())),
 
-  contains: typedFn([reqText, reqText], (t, s) =>
-    t.includes(s) ? createScalar(true) : createBlank()
+  contains: typedFn([reqText, reqText], (_env, t, s) =>
+    t.includes(s) ? V.scalar(true) : V.blank()
   ),
 
-  lower: typedFn([reqText], (t) => createScalar(t.toLowerCase())),
+  lower: typedFn([reqText], (_env, t) => V.scalar(t.toLowerCase())),
 
-  upper: typedFn([reqText], (t) => createScalar(t.toUpperCase())),
+  upper: typedFn([reqText], (_env, t) => V.scalar(t.toUpperCase())),
 
   pad_start: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (t, targetLen, padText) => createScalar(t.padStart(targetLen, padText))
+    (_env, t, targetLen, padText) => V.scalar(t.padStart(targetLen, padText))
   ),
 
   pad_end: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (t, targetLen, padText) => createScalar(t.padEnd(targetLen, padText))
+    (_env, t, targetLen, padText) => V.scalar(t.padEnd(targetLen, padText))
   ),
 
-  split: typedFn([reqText, optText("")], (t, sep) => {
-    return createGroup(
-      t.split(sep).map((p) => ({ content: createSignal(createScalar(p)) }))
-    );
-  }),
+  split: typedFn([reqText, optText("")], (_env, t, sep) =>
+    V.valueGroup(t.split(sep).map((p) => ({ value: V.scalar(p) })))
+  ),
 
   /* Groups */
 
-  join: typedFn([reqGroup, optText(",")], (groupV, sep) => {
-    const parts = groupTextsOpt(groupV);
-    return parts.length ? createScalar(parts.join(sep)) : createBlank();
-  }),
-
-  count: typedFn([reqGroup], (source) =>
-    createScalar(
-      source.items.filter((c) => !isBlank(resolveBody(c.content))).length
-    )
+  join: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+      optText(","),
+    ],
+    (env, groupV: Value, sep: string) => {
+      const parts = groupTextsOpt(groupV, env);
+      return parts.length ? V.scalar(parts.join(sep)) : V.blank();
+    }
   ),
 
-  count_blank: typedFn([reqGroup], (source) =>
-    createScalar(
-      source.items.filter((c) => isBlank(resolveBody(c.content))).length
-    )
+  count: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+    ],
+    (env, source: Value) => {
+      const vs = iterGroupValues(source, env);
+      return V.scalar(vs.filter((c) => c.kind !== "blank").length);
+    }
+  ),
+
+  count_blank: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+    ],
+    (env, source: Value) => {
+      const vs = iterGroupValues(source, env);
+      return V.scalar(vs.filter((c) => c.kind === "blank").length);
+    }
   ),
 
   /* Number reducers */
 
-  sum: typedFn([reqGroup], (source) =>
-    primitiveToContent(
-      reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0))
-    )
+  sum: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+    ],
+    (env, source: Value) =>
+      primitiveToValue(
+        reduceNumbers(source, env, (ns) => ns.reduce((a, b) => a + b, 0))
+      )
   ),
 
-  avg: typedFn([reqGroup], (source) =>
-    primitiveToContent(
-      reduceNumbers(source, (ns) => ns.reduce((a, b) => a + b, 0) / ns.length)
-    )
+  avg: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+    ],
+    (env, source: Value) =>
+      primitiveToValue(
+        reduceNumbers(
+          source,
+          env,
+          (ns) => ns.reduce((a, b) => a + b, 0) / ns.length
+        )
+      )
   ),
 
-  min: typedFn([reqGroup], (source) =>
-    primitiveToContent(reduceNumbers(source, (ns) => Math.min(...ns)))
+  min: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+    ],
+    (env, source: Value) =>
+      primitiveToValue(reduceNumbers(source, env, (ns) => Math.min(...ns)))
   ),
 
-  max: typedFn([reqGroup], (source) =>
-    primitiveToContent(reduceNumbers(source, (ns) => Math.max(...ns)))
+  max: typedFn(
+    [
+      {
+        kind: "req",
+        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+      } as any,
+    ],
+    (env, source: Value) =>
+      primitiveToValue(reduceNumbers(source, env, (ns) => Math.max(...ns)))
   ),
 };
 
-function callBuiltin(name: string, args: BodyContent[]): BodyContent {
+function callBuiltin(env: EvalEnv, name: string, args: Value[]): Value {
   const fn = library[name] ?? library[name.toLowerCase()];
   if (!fn) throw new TypeError(`Unknown function: ${name}`);
-  return fn(...args);
+  return fn(env, ...args);
 }
 
-/* Interpret */
+function interpretAst(e: Expr, env: EvalEnv): Value {
+  try {
+    switch (e.type) {
+      case "Binary": {
+        const { op, left, right } = e;
+        const l = interpretAst(left, env);
+        if (l.kind === "issue") return l;
 
-function interpretAst(
-  e: Expr,
-  context: (label: string) => BodyContent
-): BodyContent {
-  switch (e.type) {
-    case "Binary": {
-      const { op, left, right } = e;
-      const f = BINARY_OPS[op]!;
-      return primitiveToContent(
-        f(interpretAst(left, context), interpretAst(right, context))
-      );
-    }
+        const r = interpretAst(right, env);
+        if (r.kind === "issue") return r;
 
-    case "Unary": {
-      const f = UNARY_OPS[e.op]!;
-      return primitiveToContent(f(interpretAst(e.argument, context)));
-    }
-
-    case "Call": {
-      const callee = e.callee;
-      if (callee.type !== "Ident") {
-        throw new TypeError("Expected function name");
+        const f = BINARY_OPS[op]!;
+        return primitiveToValue(f(l, r));
       }
-      const name = callee.label;
-      const args = e.args.map((a) => interpretAst(a, context));
-      return callBuiltin(name, args);
+
+      case "Unary": {
+        const v = interpretAst(e.argument, env);
+        if (v.kind === "issue") return v;
+
+        const f = UNARY_OPS[e.op]!;
+        return primitiveToValue(f(v));
+      }
+
+      case "Call": {
+        const callee = e.callee;
+        if (callee.type !== "Ident")
+          throw new TypeError("Expected function name");
+        const args = e.args.map((a) => interpretAst(a, env));
+        const issue = firstIssue(...args);
+        if (issue) return issue;
+        return callBuiltin(env, callee.label, args);
+      }
+
+      case "Select": {
+        const target = interpretAst(e.group, env);
+        if (target.kind === "issue") return target;
+
+        const selV = interpretAst(e.select, env);
+        if (selV.kind === "issue") return selV;
+
+        return getByPositionOrLabel(target, selV, env);
+      }
+
+      case "Member": {
+        const target = interpretAst(e.group, env);
+        if (target.kind === "issue") return target;
+        return getItemGroupByLabel(target, e.label.label, env);
+      }
+
+      case "Lit":
+        return V.scalar(e.value);
+
+      case "Blank":
+        return V.blank();
+
+      case "Ident":
+        return env.lookup(e.label);
     }
-
-    case "Select": {
-      const target = interpretAst(e.group, context);
-      const positionOrLabel = interpretAst(e.select, context);
-      return getByPositionOrLabel(target, positionOrLabel);
-    }
-
-    case "Member": {
-      const target = interpretAst(e.group, context);
-      return getByLabel(target, e.label.label);
-    }
-
-    case "Lit":
-      return createScalar(e.value);
-
-    case "Blank":
-      return createBlank();
-
-    case "Ident":
-      return context(e.label);
+  } catch (err) {
+    return V.issue(err instanceof Error ? err.message : String(err));
   }
 }
 
-export function interpretExpr(
-  code: string,
-  context: (label: string) => BodyContent
-): BodyContent {
-  if (!code.trim()) return createBlank();
+export function interpretExpr(code: string, env: EvalEnv): Value {
+  if (!code.trim()) return V.blank();
   const match = grammar.match(code, "Start");
-  if (match.failed()) throw new SyntaxError(match.message);
-  return interpretAst(semantics(match).ast, context);
+  if (match.failed()) return V.issue(match.message);
+  return interpretAst((semantics(match) as any).ast, env);
 }

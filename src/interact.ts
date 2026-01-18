@@ -1,575 +1,510 @@
-import { batch } from "@preact/signals-core";
+import { type ItemId, sel, ops, getRoot } from "./model";
 
-import {
-  type GroupContent,
-  type SetSignal,
-  type ItemContentSignal,
-  type Item,
-  type NavLayoutContext,
-  type Uid,
-  isSetSignal,
-  getParentSignal,
-  getParent,
-  newUid,
-  createBlank,
-  createGroup,
-  createDerived,
-  createSignal,
-  getViewModel,
-  getViewChildren,
-  getViewInputs,
-  updateParentGroup,
-  parseScalarInput,
-  getLayoutContext,
-} from "./model";
-
-/* Root */
-
-let __modelRoot: ItemContentSignal | null = null;
-
-export function setModelRoot(root: ItemContentSignal) {
-  __modelRoot = root;
-}
-
-export function getModelRoot(): ItemContentSignal {
-  if (!__modelRoot) throw new Error("Model root not set");
-  return __modelRoot;
-}
-
-/* Navigation */
-
-export type ItemPath = Uid[];
-
-function isStoredUid(uid: Uid): uid is number {
-  return typeof uid === "number";
-}
-
-function isStoredPath(path: ItemPath): path is number[] {
-  return path.every(isStoredUid);
-}
-
-function itemsAlongPath(path: ItemPath): Item[] {
-  const items: Item[] = [];
-  let content: ItemContentSignal = getModelRoot();
-
-  for (const uid of path) {
-    const kids = getViewChildren(content);
-    const item = kids.find((c) => c.uid === uid);
-    if (!item) return [];
-    items.push(item);
-    content = item.content;
-  }
-
-  return items;
-}
-
-function childSignalAtPath(path: ItemPath): ItemContentSignal | null {
-  if (path.length === 0) return getModelRoot();
-  const items = itemsAlongPath(path);
-  const last = items[items.length - 1];
-  return last ? last.content : null;
-}
-
-function childrenAtPath(path: ItemPath): Item[] | null {
-  const content = childSignalAtPath(path);
-  if (!content) return null;
-  return getViewChildren(content);
-}
-
-export function parentPath(path: ItemPath): ItemPath | null {
-  return path.length ? path.slice(0, -1) : null;
-}
-
-export function firstChildPath(path: ItemPath): ItemPath | null {
-  const kids = childrenAtPath(path);
-  const first = kids?.[0];
-  return first ? [...path, first.uid] : null;
-}
-
-export function siblingPath(path: ItemPath, dir: -1 | 1): ItemPath | null {
-  if (path.length === 0) return null;
-
-  const pp = parentPath(path);
-  if (!pp) return null;
-
-  const kids = childrenAtPath(pp);
-  if (!kids) return null;
-
-  const uid = path[path.length - 1]!;
-  const i = kids.findIndex((e) => e.uid === uid);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= kids.length) return null;
-
-  return [...pp, kids[j]!.uid];
-}
-
-type ItemUpdateKind = "text" | "text-get-only" | "group";
-
-type ItemNavContext = {
-  kind: ItemUpdateKind | null;
-  viewContext: NavLayoutContext;
-  hasExtraHeaderInputs: boolean;
+export type Focus = {
+  containerId: ItemId;
+  id: ItemId;
 };
 
-export function getItemNavContext(path: ItemPath): ItemNavContext {
-  const items = itemsAlongPath(path);
+export function rootContainer(): ItemId {
+  return getRoot();
+}
 
-  const item = items[items.length - 1];
-  const parentItem = items[items.length - 2];
-  const grandparentItem = items[items.length - 3];
+export function firstChildOf(containerId: ItemId): Focus | null {
+  const kids = sel.groupItems(containerId);
+  const first = kids[0];
+  return first != null ? { containerId, id: first } : null;
+}
 
-  let kind: ItemUpdateKind | null = null;
-  let hasExtraHeaderInputs = false;
+export function siblingInContainer(focus: Focus, dir: -1 | 1): Focus | null {
+  const kids = sel.groupItems(focus.containerId);
+  const i = kids.indexOf(focus.id);
+  if (i < 0) return null;
 
-  if (item) {
-    const m = getViewModel(item.content);
-    if (m.kind === "group") kind = "group";
-    else kind = m.settable ? "text" : "text-get-only";
+  const j = i + dir;
+  if (j < 0 || j >= kids.length) return null;
 
-    hasExtraHeaderInputs = getViewInputs(item).some(
-      (f) => f.get.value !== null
+  return { containerId: focus.containerId, id: kids[j]! };
+}
+
+export function enter(focus: Focus): Focus | null {
+  const kids = sel.groupItems(focus.id);
+  const first = kids[0];
+  return first != null ? { containerId: focus.id, id: first } : null;
+}
+
+export function exit(focus: Focus): Focus | null {
+  const containerItem = sel.item(focus.containerId);
+  const ownerId = containerItem.ownerId;
+  if (ownerId == null) return null;
+
+  const ownerKids = sel.groupItems(ownerId);
+  if (ownerKids.includes(focus.containerId))
+    return { containerId: ownerId, id: focus.containerId };
+
+  return { containerId: ownerId, id: focus.containerId };
+}
+
+export type NavLayoutContext = "default" | "table-cell" | "bar-child";
+
+export function getLayoutContext(id: ItemId): NavLayoutContext {
+  const it = sel.item(id);
+  const parentId = it.ownerId ?? undefined;
+  const grandId =
+    parentId != null ? sel.item(parentId).ownerId ?? undefined : undefined;
+
+  const parentView = parentId != null ? sel.item(parentId).view : "";
+  const grandView = grandId != null ? sel.item(grandId).view : "";
+
+  return grandView === "table"
+    ? "table-cell"
+    : parentView === "bar"
+    ? "bar-child"
+    : "default";
+}
+
+export type FieldSlot = "label" | "content" | "header";
+
+export type EditableField = {
+  slot: FieldSlot;
+  key: string;
+  label?: string;
+  multiline?: boolean;
+  live?: boolean;
+  get(): string;
+  set?: (next: string) => void;
+};
+
+export function getEditableFields(id: ItemId): EditableField[] {
+  const info = sel.item(id);
+  const fields: EditableField[] = [];
+
+  fields.push({
+    slot: "label",
+    key: "label",
+    multiline: false,
+    live: false,
+    get: () => sel.item(id).label ?? "",
+    set: (next) => {
+      try {
+        ops.setLabel(id, next);
+      } catch (err) {
+        console.error(err);
+      }
+    },
+  });
+
+  if (info.contentKind === "derived") {
+    fields.push({
+      slot: "header",
+      key: "derived.expr",
+      label: "=",
+      multiline: true,
+      live: false,
+      get: () => sel.item(id).derivedExpr ?? "",
+      set: (next) => {
+        try {
+          ops.setDerivedExpr(id, next);
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    });
+  } else if (info.contentKind === "lens") {
+    fields.push(
+      {
+        slot: "header",
+        key: "lens.from",
+        label: "~",
+        multiline: false,
+        live: false,
+        get: () => sel.item(id).lensSpec?.from ?? "",
+        set: (next) => {
+          const cur = sel.item(id).lensSpec;
+          if (!cur) return;
+          try {
+            ops.setLensSpec(id, {
+              from: next,
+              where: cur.where,
+              orderBy: cur.orderBy,
+            });
+          } catch (err) {
+            console.error(err);
+          }
+        },
+      },
+      {
+        slot: "header",
+        key: "lens.where",
+        label: "where:",
+        multiline: true,
+        live: false,
+        get: () => sel.item(id).lensSpec?.where ?? "",
+        set: (next) => {
+          const cur = sel.item(id).lensSpec;
+          if (!cur) return;
+          try {
+            ops.setLensSpec(id, {
+              from: cur.from,
+              where: next,
+              orderBy: cur.orderBy,
+            });
+          } catch (err) {
+            console.error(err);
+          }
+        },
+      },
+      {
+        slot: "header",
+        key: "lens.orderBy",
+        label: "orderBy:",
+        multiline: true,
+        live: false,
+        get: () => sel.item(id).lensSpec?.orderBy ?? "",
+        set: (next) => {
+          const cur = sel.item(id).lensSpec;
+          if (!cur) return;
+          try {
+            ops.setLensSpec(id, {
+              from: cur.from,
+              where: cur.where,
+              orderBy: next,
+            });
+          } catch (err) {
+            console.error(err);
+          }
+        },
+      }
     );
   }
 
-  const viewContext = getLayoutContext(parentItem, grandparentItem);
-  return { kind, viewContext, hasExtraHeaderInputs };
+  if (info.contentSettable) {
+    fields.push({
+      slot: "content",
+      key: "content",
+      multiline: true,
+      live: true,
+      get: () => {
+        const v = sel.value(id);
+        if (v.kind === "blank") return "";
+        if (v.kind === "scalar") return String(v.value);
+        if (v.kind === "issue") return v.message;
+        return "";
+      },
+      set: (next) => {
+        try {
+          ops.setScalarText(id, next);
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    });
+  }
+
+  return fields;
 }
 
-function isNavStop(item: Item | null, content: ItemContentSignal): boolean {
-  const kids = getViewChildren(content);
+function getContentField(id: ItemId): EditableField | null {
+  return getEditableFields(id).find((f) => f.slot === "content") ?? null;
+}
+
+export type ItemUpdateKind = "text" | "text-get-only" | "group";
+
+export function getItemUpdateKind(id: ItemId): ItemUpdateKind {
+  const v = sel.value(id);
+  if (v.kind === "item-group") return "group";
+  return getContentField(id)?.set ? "text" : "text-get-only";
+}
+
+function isNavStop(_containerId: ItemId, id: ItemId): boolean {
+  const kids = sel.groupItems(id);
   if (kids.length === 0) return true;
-  if (!item) return false;
-  return getViewInputs(item).some((f) => f.get.value !== null);
+  return getEditableFields(id).some((f) => f.slot === "header");
 }
 
-function collectNavStops(): ItemPath[] {
-  const result: ItemPath[] = [];
+function collectNavStopsFrom(rootContainerId: ItemId): Focus[] {
+  const out: Focus[] = [];
 
-  function walk(path: ItemPath, content: ItemContentSignal, item: Item | null) {
-    if (isNavStop(item, content)) result.push(path);
-
-    for (const c of getViewChildren(content)) {
-      walk([...path, c.uid], c.content, c);
+  function walk(containerId: ItemId) {
+    const kids = sel.groupItems(containerId);
+    for (const id of kids) {
+      if (isNavStop(containerId, id)) out.push({ containerId, id });
+      walk(id);
     }
   }
 
-  walk([], getModelRoot(), null);
-  return result;
+  walk(rootContainerId);
+  return out;
 }
 
-function neighborNavStop(
-  from: ItemPath,
-  dir: -1 | 1,
-  blockPrefix?: ItemPath
-): ItemPath | null {
-  const leaves = collectNavStops();
-  const fromKey = from.join(".");
-  const blockKey = blockPrefix?.length ? blockPrefix.join(".") : null;
-
-  const i = leaves.findIndex((p) => p.join(".") === fromKey);
-  if (i === -1) return null;
-
-  let j = i + dir;
-  while (j >= 0 && j < leaves.length) {
-    const p = leaves[j]!;
-    const key = p.join(".");
-    if (!blockKey || !key.startsWith(blockKey)) return p;
-    j += dir;
-  }
-
-  return null;
+function focusKey(f: Focus): string {
+  return `${String(f.containerId)}::${String(f.id)}`;
 }
 
-function tableVerticalMove(from: ItemPath, dir: -1 | 1): ItemPath | null {
-  if (from.length < 2) return null;
+function neighborNavStop(from: Focus, dir: -1 | 1): Focus | null {
+  const stops = collectNavStopsFrom(getRoot());
+  const key = focusKey(from);
 
-  const rowPath = parentPath(from);
-  const nextRowPath = rowPath && siblingPath(rowPath, dir);
-  if (!rowPath || !nextRowPath) return null;
+  const i = stops.findIndex((s) => focusKey(s) === key);
+  if (i < 0) return null;
 
-  const rowItems = childrenAtPath(rowPath);
-  const nextRowItems = childrenAtPath(nextRowPath);
-  if (!rowItems || !nextRowItems) return null;
+  const j = i + dir;
+  return j >= 0 && j < stops.length ? stops[j]! : null;
+}
 
-  const uid = from[from.length - 1]!;
-  const colIndex = rowItems.findIndex((c) => c.uid === uid);
-  if (colIndex === -1) return null;
+function tableVerticalMove(from: Focus, dir: -1 | 1): Focus | null {
+  const cellId = from.id;
+  const cell = sel.item(cellId);
+  const rowId = cell.ownerId;
+  if (rowId == null) return null;
 
-  const colLabel = rowItems[colIndex]!.label.peek();
+  const row = sel.item(rowId);
+  const tableId = row.ownerId;
+  if (tableId == null) return null;
+
+  const colLabel = cell.label;
   if (!colLabel) return null;
 
-  const target = nextRowItems.find((c) => c.label.peek() === colLabel);
-  return target ? [...nextRowPath, target.uid] : null;
+  const rows = sel.groupItems(tableId);
+  const rowIdx = rows.indexOf(rowId);
+  if (rowIdx < 0) return null;
+
+  const nextRowId = rows[rowIdx + dir];
+  if (nextRowId == null) return null;
+
+  const nextRowKids = sel.groupItems(nextRowId);
+  const targetCell = nextRowKids.find(
+    (cid) => sel.item(cid).label === colLabel
+  );
+  if (!targetCell) return null;
+
+  return { containerId: nextRowId, id: targetCell };
 }
 
 export function standardMove(
-  path: ItemPath,
+  focus: Focus,
   dir: "left" | "right" | "up" | "down",
   mod: boolean
-): ItemPath | null {
-  const { kind, viewContext } = getItemNavContext(path);
+): Focus | null {
+  const kind = getItemUpdateKind(focus.id);
+  const viewContext = getLayoutContext(focus.id);
 
   if (dir === "left" || dir === "right") {
     const sign: -1 | 1 = dir === "left" ? -1 : 1;
 
     if (mod && (viewContext === "table-cell" || viewContext === "bar-child")) {
       if (sign === -1) {
-        const left = siblingPath(path, -1);
-        return left ?? parentPath(path);
+        return siblingInContainer(focus, -1) ?? exit(focus);
       }
-      return siblingPath(path, 1);
+      return siblingInContainer(focus, 1);
     }
 
     if (sign === -1 && (kind === "group" || mod)) {
-      const p = parentPath(path);
-      if (p && p.length) return p;
+      return exit(focus);
     }
 
     if (sign === 1) {
-      const node = childSignalAtPath(path) ?? getModelRoot();
-      if (getViewChildren(node).length) {
-        return firstChildPath(path);
-      }
+      const into = enter(focus);
+      if (into) return into;
       if (mod) return null;
     }
 
-    return neighborNavStop(path, sign);
+    return neighborNavStop(focus, sign);
   }
 
   const sign: -1 | 1 = dir === "up" ? -1 : 1;
 
   if (viewContext === "table-cell") {
-    const next = tableVerticalMove(path, sign);
+    const next = tableVerticalMove(focus, sign);
     if (mod || next) return next ?? null;
-
-    const blockPrefix = path.length > 2 ? path.slice(0, -2) : path.slice(0, 1);
-    return neighborNavStop(path, sign, blockPrefix);
+    return neighborNavStop(focus, sign);
   }
 
   if (viewContext === "bar-child") {
-    return mod ? null : neighborNavStop(path, sign, path.slice(0, -1));
+    return mod ? null : neighborNavStop(focus, sign);
   }
 
   if (mod || kind === "group") {
-    return siblingPath(path, sign);
+    return siblingInContainer(focus, sign);
   }
 
-  const target = neighborNavStop(path, sign);
-  if (!target) return null;
+  return neighborNavStop(focus, sign);
+}
 
-  const { viewContext: targetView } = getItemNavContext(target);
-  if (targetView === "table-cell" || targetView === "bar-child") {
-    const rowPath = parentPath(target);
-    const rowItems = rowPath && childrenAtPath(rowPath);
-    const first = rowItems?.[0];
-    if (!rowPath || !first) return target;
-    return [...rowPath, first.uid];
+export type UpdateResult = { focus: Focus; caret?: number };
+
+function focusInSameContainer(
+  containerId: ItemId,
+  id: ItemId | undefined
+): Focus {
+  if (id == null) {
+    const first = firstChildOf(containerId);
+    return first ?? { containerId, id: containerId };
   }
-
-  return target;
+  return { containerId, id };
 }
 
-/* Updates */
-
-export type UpdateResult = { path: ItemPath; caret?: number };
-
-export function updateItemText(path: ItemPath, raw: string): UpdateResult {
-  if (!isStoredPath(path)) return { path };
-
-  const sig = childSignalAtPath(path);
-  if (!sig || !isSetSignal(sig)) return { path };
-
-  sig.set(parseScalarInput(raw));
-  return { path };
+function safeUpdate(
+  fn: () => UpdateResult,
+  fallback: UpdateResult
+): UpdateResult {
+  try {
+    return fn();
+  } catch (err) {
+    console.error(err);
+    return fallback;
+  }
 }
 
-export function setItemAsDerived(path: ItemPath): UpdateResult {
-  if (!isStoredPath(path)) return { path };
-
-  const sig = childSignalAtPath(path);
-  if (!sig || !isSetSignal(sig)) return { path };
-
-  sig.set(createDerived(sig, ""));
-  return { path, caret: 0 };
-}
-
-function updateParentAtPath(
-  path: ItemPath,
-  fn: (ctx: {
-    parent: SetSignal<GroupContent>;
-    parentPath: ItemPath;
-    before: Item[];
-    index: number;
-    child: ItemContentSignal;
-    uid: number;
-  }) => { after: Item[]; path: ItemPath }
-): ItemPath {
-  if (!isStoredPath(path)) return path;
-  if (path.length === 0) return path;
-
-  const child = childSignalAtPath(path);
-  if (!child) return path;
-
-  const uidAny = path[path.length - 1]!;
-  if (!isStoredUid(uidAny)) return path;
-  const uid = uidAny;
-
-  const parentPath = path.slice(0, -1);
-
-  let nextPath: ItemPath = path;
-
-  const out = updateParentGroup(child, uid, ({ parent, before, index }) => {
-    const r = fn({ parent, parentPath, before, index, child, uid });
-    nextPath = r.path;
-    return { after: r.after };
-  });
-
-  return out ? nextPath : path;
-}
-
-function makeBlankItem(content: ItemContentSignal): Item {
-  return {
-    uid: newUid(),
-    label: createSignal(""),
-    view: createSignal(""),
-    content,
-  };
-}
-
-function insertAt(items: Item[], i: number, item: Item): Item[] {
-  return [...items.slice(0, i), item, ...items.slice(i)];
-}
-
-function replaceAt(items: Item[], i: number, item: Item): Item[] {
-  return [...items.slice(0, i), item, ...items.slice(i + 1)];
-}
-
-function removeAt(items: Item[], i: number): Item[] {
-  return [...items.slice(0, i), ...items.slice(i + 1)];
-}
-
-export function addItemBefore(path: ItemPath): UpdateResult {
-  const np = updateParentAtPath(
-    path,
-    ({ parent, parentPath, before, index }) => {
-      const content = createSignal(createBlank());
-      getParentSignal(content).value = parent;
-
-      const item = makeBlankItem(content);
-      const after = insertAt(before, index, item);
-      return { after, path: [...parentPath, item.uid] };
-    }
+export function updateItemText(focus: Focus, raw: string): UpdateResult {
+  return safeUpdate(
+    () => {
+      const content = getContentField(focus.id);
+      if (!content?.set) return { focus };
+      content.set(raw);
+      return { focus };
+    },
+    { focus }
   );
-
-  return { path: np };
 }
 
-export function addItemAfter(path: ItemPath): UpdateResult {
-  const np = updateParentAtPath(
-    path,
-    ({ parent, parentPath, before, index }) => {
-      const content = createSignal(createBlank());
-      getParentSignal(content).value = parent;
-
-      const item = makeBlankItem(content);
-      const after = insertAt(before, index + 1, item);
-      return { after, path: [...parentPath, item.uid] };
-    }
+export function setItemAsDerived(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      ops.setDerivedExpr(focus.id, "");
+      return { focus, caret: 0 };
+    },
+    { focus, caret: 0 }
   );
-
-  return { path: np };
 }
 
-export function groupItem(path: ItemPath): UpdateResult {
-  const np = updateParentAtPath(
-    path,
-    ({ parent, parentPath, before, index, child }) => {
-      const oldItem = before[index]!;
-      const wrapperUid = newUid();
-
-      const outerLabelSig = oldItem.label;
-      oldItem.label = createSignal("");
-
-      const wrapperSig = createSignal(createGroup([oldItem]));
-      getParentSignal(wrapperSig).value = parent;
-      getParentSignal(child).value = wrapperSig;
-
-      const wrapperItem: Item = {
-        uid: wrapperUid,
-        label: outerLabelSig,
-        view: createSignal(""),
-        content: wrapperSig,
-      };
-
-      return {
-        after: replaceAt(before, index, wrapperItem),
-        path: [...parentPath, wrapperUid, oldItem.uid],
-      };
-    }
+export function addItemBefore(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.insertBlankBefore(focus.id);
+      if (!res) return { focus };
+      return { focus: focusInSameContainer(focus.containerId, res.id) };
+    },
+    { focus }
   );
-
-  return { path: np };
 }
 
-export function ungroupItem(path: ItemPath): UpdateResult {
-  if (!isStoredPath(path)) return { path };
-
-  const innerChild = childSignalAtPath(path);
-  if (!innerChild) return { path };
-
-  const wrapperSig = getParent(innerChild);
-  if (!wrapperSig) return { path };
-
-  const items = getViewChildren(wrapperSig);
-  if (items.length !== 1) return { path };
-
-  const pPath = parentPath(path);
-  if (!pPath) return { path };
-
-  const np = updateParentAtPath(
-    pPath,
-    ({ parent: grandparent, parentPath: gpPath, before, index }) => {
-      const innerItem = items[0]!;
-      innerItem.label = before[index]!.label;
-
-      getParentSignal(innerChild).value = grandparent;
-      getParentSignal(wrapperSig).value = undefined;
-
-      return {
-        after: replaceAt(before, index, innerItem),
-        path: [...gpPath, innerItem.uid],
-      };
-    }
+export function addItemAfter(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.insertBlankAfter(focus.id);
+      if (!res) return { focus };
+      return { focus: focusInSameContainer(focus.containerId, res.id) };
+    },
+    { focus }
   );
-
-  return { path: np };
 }
 
-function removeItemDir(path: ItemPath, prefer: "prev" | "next"): UpdateResult {
-  const np = updateParentAtPath(path, ({ parentPath, before, index }) => {
-    const removed = before[index]!;
-    const after = removeAt(before, index);
-    getParentSignal(removed.content).value = undefined;
+function removeAndChooseFocus(
+  focus: Focus,
+  prefer: "prev" | "next"
+): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.removeFromOwner(focus.id);
+      if (!res) return { focus };
 
-    if (after.length === 0) {
-      return { after, path: parentPath };
-    }
+      const nextId =
+        prefer === "prev"
+          ? res.prevId ?? res.nextId ?? res.ownerId
+          : res.nextId ?? res.prevId ?? res.ownerId;
 
-    const prev = before[index - 1]?.uid;
-    const next = before[index + 1]?.uid;
+      const containerKids = sel.groupItems(focus.containerId);
+      if (containerKids.includes(nextId)) {
+        return { focus: { containerId: focus.containerId, id: nextId } };
+      }
 
-    const focusUid =
-      prefer === "prev"
-        ? prev ?? next ?? after[0]!.uid
-        : next ?? prev ?? after[0]!.uid;
-
-    return {
-      after,
-      path: [...parentPath, focusUid],
-    };
-  });
-
-  return { path: np };
+      return { focus: focusInSameContainer(res.ownerId, nextId) };
+    },
+    { focus }
+  );
 }
 
-export function removeItemBackward(path: ItemPath): UpdateResult {
-  return removeItemDir(path, "prev");
+export function removeItemBackward(focus: Focus): UpdateResult {
+  return removeAndChooseFocus(focus, "prev");
 }
 
-export function removeItemForward(path: ItemPath): UpdateResult {
-  return removeItemDir(path, "next");
+export function removeItemForward(focus: Focus): UpdateResult {
+  return removeAndChooseFocus(focus, "next");
+}
+
+export function wrapInGroup(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.wrapChildInNewGroup(focus.id);
+      if (!res) return { focus };
+
+      const next: Focus = { containerId: res.wrapperId, id: res.childId };
+      return { focus: next };
+    },
+    { focus }
+  );
+}
+
+export function unwrapGroup(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.unwrapIfSingleChild(focus.id);
+      if (!res) return { focus };
+
+      const containerKids = sel.groupItems(focus.containerId);
+      if (containerKids.includes(focus.id)) return { focus };
+
+      return { focus: { containerId: res.ownerId, id: res.childId } };
+    },
+    { focus }
+  );
 }
 
 export function splitItemAt(
-  path: ItemPath,
+  focus: Focus,
   caretStart: number,
   caretEnd: number = caretStart
 ): UpdateResult {
-  if (!isStoredPath(path)) return { path };
+  return safeUpdate(
+    () => {
+      const res = ops.splitTextItem(focus.id, caretStart, caretEnd);
+      if (!res) return { focus };
 
-  const sig = childSignalAtPath(path);
-  if (!sig || !isSetSignal(sig)) return { path };
-
-  const m = getViewModel(sig);
-  const text = m.kind === "scalar" ? m.text : "";
-
-  const len = text.length;
-  const start = Math.min(Math.max(caretStart, 0), len);
-  const end = Math.min(Math.max(caretEnd, 0), len);
-
-  const left = text.slice(0, start);
-  const right = text.slice(end);
-
-  let outPath: ItemPath = path;
-
-  batch(() => {
-    updateItemText(path, left);
-
-    const next = addItemAfter(path).path;
-    updateItemText(next, right);
-
-    outPath = next;
-  });
-
-  return { path: outPath, caret: 0 };
+      return {
+        focus: { containerId: focus.containerId, id: res.rightId },
+        caret: res.caretInRight,
+      };
+    },
+    { focus }
+  );
 }
 
-export function joinWithBefore(path: ItemPath): UpdateResult {
-  if (!isStoredPath(path)) return { path };
+export function joinWithBefore(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.joinWithPrevious(focus.id);
+      if (!res) return { focus };
 
-  const prev = siblingPath(path, -1);
-  if (!prev) return { path };
-  if (!isStoredPath(prev)) return { path };
-
-  if (getItemNavContext(prev).kind !== "text") return { path };
-  if (getItemNavContext(path).kind !== "text") return { path };
-
-  const prevSig = childSignalAtPath(prev);
-  const curSig = childSignalAtPath(path);
-  if (!prevSig || !curSig) return { path };
-
-  const pv = getViewModel(prevSig);
-  const cv = getViewModel(curSig);
-
-  const prevText = pv.kind === "scalar" ? pv.text : "";
-  const curText = cv.kind === "scalar" ? cv.text : "";
-
-  const caret = prevText.length;
-
-  let nextPath: ItemPath = prev;
-  batch(() => {
-    updateItemText(prev, prevText + curText);
-    nextPath = removeItemBackward(path).path;
-  });
-
-  return { path: nextPath, caret };
+      return {
+        focus: { containerId: focus.containerId, id: res.keptId },
+        caret: res.caret,
+      };
+    },
+    { focus }
+  );
 }
 
-export function joinWithAfter(path: ItemPath): UpdateResult {
-  if (!isStoredPath(path)) return { path };
+export function joinWithAfter(focus: Focus): UpdateResult {
+  return safeUpdate(
+    () => {
+      const res = ops.joinWithNext(focus.id);
+      if (!res) return { focus };
 
-  const next = siblingPath(path, 1);
-  if (!next) return { path };
-  if (!isStoredPath(next)) return { path };
-
-  if (getItemNavContext(next).kind !== "text") return { path };
-  if (getItemNavContext(path).kind !== "text") return { path };
-
-  const curSig = childSignalAtPath(path);
-  const nextSig = childSignalAtPath(next);
-  if (!curSig || !nextSig) return { path };
-
-  const cv = getViewModel(curSig);
-  const nv = getViewModel(nextSig);
-
-  const curText = cv.kind === "scalar" ? cv.text : "";
-  const nextText = nv.kind === "scalar" ? nv.text : "";
-
-  let nextPathOut: ItemPath = path;
-  batch(() => {
-    updateItemText(path, curText + nextText);
-    nextPathOut = removeItemBackward(next).path;
-  });
-
-  return { path: nextPathOut, caret: curText.length };
+      return {
+        focus: { containerId: focus.containerId, id: res.keptId },
+        caret: res.caret,
+      };
+    },
+    { focus }
+  );
 }

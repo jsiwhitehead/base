@@ -1,36 +1,28 @@
 import { effect } from "@preact/signals-core";
 
 import {
-  type ScalarPrimitive,
-  type GroupContent,
+  type ItemId,
+  type Item,
+  type Scalar,
   type StoredContent,
-  type ContentSignal,
-  type ItemContentSignal,
-  createBlank,
-  createScalar,
-  createGroup,
-  createDerived,
-  createSignal,
-  createGroupSignal,
-  createLens,
-  toStatic,
+  createItem,
+  setRoot,
   setInterpreter,
+  selectValue,
+  itemAtom,
 } from "./model";
+
 import { interpretExpr } from "./interpret";
-import { setModelRoot } from "./interact";
-import { onRootKeyDown, focusFirstRootCell } from "./inputs";
+import { focusFirstRootCell, onRootKeyDown } from "./inputs";
 import mountRoot from "./views";
 
-export function mount(
-  rootSignal: ContentSignal<GroupContent>,
-  rootElement: HTMLElement
-) {
+export function mount(rootId: ItemId, rootElement: HTMLElement) {
   setInterpreter(interpretExpr);
-  setModelRoot(rootSignal);
+  setRoot(rootId);
 
-  const { element, dispose } = mountRoot(rootSignal, []);
+  const view = mountRoot(rootId, []);
 
-  rootElement.replaceChildren(element);
+  rootElement.replaceChildren(view.element);
 
   queueMicrotask(() => {
     focusFirstRootCell();
@@ -39,78 +31,150 @@ export function mount(
   rootElement.addEventListener("keydown", onRootKeyDown);
 
   return () => {
-    dispose();
+    view.dispose();
     rootElement.removeEventListener("keydown", onRootKeyDown);
     rootElement.textContent = "";
   };
 }
 
-/* Test */
+let nextId = 1;
+const newId = (): number => nextId++;
 
-const literalSig = (v: ScalarPrimitive) => createSignal(createScalar(v));
+const blankItem = (ownerId: ItemId | null): Item => ({
+  id: newId(),
+  ownerId,
+  label: "",
+  view: "",
+  content: { kind: "blank" },
+});
 
-const derivedSig = (code: string) => {
-  const s: ItemContentSignal = createSignal<StoredContent>(createScalar(""));
-  s.set(createDerived(s, code));
-  return s;
+const scalarItem = (
+  ownerId: ItemId | null,
+  value: Scalar,
+  label = ""
+): Item => ({
+  id: newId(),
+  ownerId,
+  label,
+  view: "",
+  content: { kind: "scalar", value },
+});
+
+const derivedItem = (
+  ownerId: ItemId | null,
+  expr: string,
+  label = ""
+): Item => ({
+  id: newId(),
+  ownerId,
+  label,
+  view: "",
+  content: { kind: "derived", expr },
+});
+
+const lensItem = (
+  ownerId: ItemId | null,
+  from: string,
+  where = "",
+  orderBy = "",
+  label = ""
+): Item => ({
+  id: newId(),
+  ownerId,
+  label,
+  view: "",
+  content: { kind: "lens", from, where, orderBy },
+});
+
+const groupItem = (
+  ownerId: ItemId | null,
+  children: Item[],
+  label = "",
+  view = ""
+): Item => {
+  const id = newId();
+  for (const c of children) c.ownerId = id;
+
+  const group: Item = {
+    id,
+    ownerId,
+    label,
+    view,
+    content: { kind: "group", items: children.map((c) => c.id) },
+  };
+
+  createItem(group);
+  for (const c of children) createItem(c);
+
+  return group;
 };
 
-const lensSig = (source: string, filter: string = "", sort: string = "") => {
-  const s: ItemContentSignal = createSignal<StoredContent>(createScalar(""));
-  s.set(createLens(s, source, filter, sort));
-  return s;
-};
+const rootId = newId();
 
-const root = createGroupSignal([
-  { content: literalSig(10) },
-  { content: literalSig(20) },
-  { content: literalSig(30) },
+createItem({
+  id: rootId,
+  ownerId: null,
+  label: "",
+  view: "",
+  content: { kind: "group", items: [] },
+});
 
-  // Example group
-  // {
-  //   label: "x",
-  //   content: createGroupSignal([
-  //     { content: literalSig(10) },
-  //     { content: literalSig(20) },
-  //     { content: literalSig(30) },
-  //   ]),
-  // },
+const a = scalarItem(rootId, 10);
+const b = scalarItem(rootId, 20);
+const c = scalarItem(rootId, 30);
 
-  // Example lens filtering + sorting over x
-  // { content: lensSig("x", "_.[1] > 15", "_.[1]") },
+createItem(a);
+createItem(b);
+createItem(c);
 
-  // Example table
-  // {
-  //   label: "people",
-  //   view: "table",
-  //   content: createGroupSignal([
-  //     {
-  //       content: createGroupSignal([
-  //         { label: "Name", content: literalSig("Steve") },
-  //         { label: "Age", content: literalSig(25) },
-  //       ]),
-  //     },
-  //     {
-  //       content: createGroupSignal([
-  //         { label: "Name", content: literalSig("Lucy") },
-  //         { label: "Age", content: literalSig(32) },
-  //       ]),
-  //     },
-  //     {
-  //       content: createGroupSignal([
-  //         { label: "Name", content: literalSig("James") },
-  //         { label: "Age", content: literalSig(18) },
-  //       ]),
-  //     },
-  //   ]),
-  // },
+itemAtom(rootId).set({
+  ...itemAtom(rootId).peek(),
+  content: { kind: "group", items: [a.id, b.id, c.id] },
+});
 
-  // Example derived call to builtins (min/max/etc)
-  // { content: derivedSig("min(10, 20, 5)") },
-]);
+// Example group "x"
+// const x = groupItem(rootId, [
+//   scalarItem(null, 10),
+//   scalarItem(null, 20),
+//   scalarItem(null, 30),
+// ], "x");
+// itemAtom(rootId).set({
+//   ...itemAtom(rootId).peek(),
+//   content: {
+//     kind: "group",
+//     items: [...(itemAtom(rootId).peek().content as any).items, x.id],
+//   },
+// });
 
-const unmount = mount(root, document.getElementById("root")!);
+// Example lens filtering + sorting over x
+// const ln = lensItem(rootId, "x", "_.[1] > 15", "_.[1]");
+// createItem(ln);
+// itemAtom(rootId).set({
+//   ...itemAtom(rootId).peek(),
+//   content: { kind: "group", items: [...(itemAtom(rootId).peek().content as any).items, ln.id] },
+// });
+
+// Example table
+// const people = groupItem(rootId, [
+//   groupItem(null, [scalarItem(null, "Steve", "Name"), scalarItem(null, 25, "Age")]),
+//   groupItem(null, [scalarItem(null, "Lucy", "Name"), scalarItem(null, 32, "Age")]),
+//   groupItem(null, [scalarItem(null, "James", "Name"), scalarItem(null, 18, "Age")]),
+// ], "people", "table");
+// itemAtom(rootId).set({
+//   ...itemAtom(rootId).peek(),
+//   content: { kind: "group", items: [...(itemAtom(rootId).peek().content as any).items, people.id] },
+// });
+
+// Example derived call to builtins
+// const d = derivedItem(rootId, "min(10, 20, 5)");
+// createItem(d);
+// itemAtom(rootId).set({
+//   ...itemAtom(rootId).peek(),
+//   content: { kind: "group", items: [...(itemAtom(rootId).peek().content as any).items, d.id] },
+// });
+
+const unmount = mount(rootId, document.getElementById("root")!);
 
 effect(() => {
-  console.log(JSON.stringify(toStatic(root.get()), null, 2));
+  console.log(JSON.stringify(selectValue(rootId), null, 2));
 });

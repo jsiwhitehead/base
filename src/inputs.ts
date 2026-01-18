@@ -1,29 +1,33 @@
 import { signal } from "@preact/signals-core";
 
-import { type InputFieldMode } from "./model";
+import type { InputFieldMode } from "./interact";
 import {
-  type ItemPath,
-  firstChildPath,
-  getItemNavContext,
+  type Focus,
+  rootContainer,
+  firstChildOf,
   standardMove,
   updateItemText,
   setItemAsDerived,
   addItemBefore,
   addItemAfter,
-  groupItem,
-  ungroupItem,
+  wrapInGroup,
+  unwrapGroup,
   removeItemBackward,
   removeItemForward,
   splitItemAt,
   joinWithBefore,
   joinWithAfter,
+  getItemUpdateKind,
+  getEditableFields,
 } from "./interact";
 
-export type FocusTarget = { kind: "body" } | { kind: "header"; index: number };
+export type FocusTarget =
+  | { kind: "content" }
+  | { kind: "header"; index: number };
 
 export type FocusState =
   | { kind: "idle" }
-  | { kind: "focused"; path: ItemPath; target: FocusTarget };
+  | { kind: "focused"; focus: Focus; target: FocusTarget };
 
 export const focusSignal = signal<FocusState>({ kind: "idle" });
 
@@ -33,13 +37,13 @@ type MachineState =
   | { kind: "Idle"; goalColumn?: number }
   | {
       kind: "Focused";
-      path: ItemPath;
+      focus: Focus;
       target: FocusTarget;
       goalColumn?: number;
     };
 
 type InputEvent =
-  | { type: "FOCUS"; path: ItemPath; target: FocusTarget; caret?: number }
+  | { type: "FOCUS"; focus: Focus; target: FocusTarget; caret?: number }
   | { type: "CLEAR_FOCUS" }
   | {
       type: "MOVE";
@@ -54,8 +58,8 @@ type InputEvent =
 const TRANSFORMS = {
   addItemBefore,
   addItemAfter,
-  groupItem,
-  ungroupItem,
+  wrapInGroup,
+  unwrapGroup,
   setItemAsDerived,
   removeItemBackward,
   removeItemForward,
@@ -69,19 +73,19 @@ type HeaderSlot = {
   commit: (text: string) => void;
 };
 
-type PathBinding = {
-  path: ItemPath;
+type FocusBinding = {
+  focus: Focus;
   item: HTMLElement;
-  body: HTMLElement;
+  content: HTMLElement;
   header: HeaderSlot[];
   teardowns: (() => void)[];
 };
 
-const bindings = new Map<string, PathBinding>();
+const bindings = new Map<string, FocusBinding>();
 let state: MachineState = { kind: "Idle", goalColumn: undefined };
 
-function keyOf(p: ItemPath) {
-  return p.join(".");
+function keyOf(f: Focus) {
+  return `${String(f.containerId)}::${String(f.id)}`;
 }
 
 function stop(e: KeyboardEvent | MouseEvent) {
@@ -107,26 +111,31 @@ function isTextInput(
   );
 }
 
-function defaultTargetForPath(path: ItemPath): FocusTarget {
-  const { hasExtraHeaderInputs } = getItemNavContext(path);
-  return hasExtraHeaderInputs ? { kind: "header", index: 1 } : { kind: "body" };
+function hasHeaderFields(id: Focus["id"]): boolean {
+  return getEditableFields(id).some((f) => f.slot === "header");
+}
+
+function defaultTargetForFocus(focus: Focus): FocusTarget {
+  return hasHeaderFields(focus.id)
+    ? { kind: "header", index: 0 }
+    : { kind: "content" };
 }
 
 function bindInput(
-  binding: PathBinding,
-  path: ItemPath,
+  binding: FocusBinding,
+  focus: Focus,
   el: HTMLInputElement | HTMLTextAreaElement,
   mode: InputFieldMode,
   commit: (text: string) => void
 ) {
-  if (mode === "body") {
+  if (mode === "content") {
     binding.teardowns.push(on(el, "input", () => commit(el.value)));
   }
 
   binding.teardowns.push(
     on(el, "blur", () => {
       if (isTextInput(el)) el.setSelectionRange(0, 0);
-      if (mode === "body") return;
+      if (mode === "content") return;
       queueMicrotask(() => commit(el.value));
     })
   );
@@ -157,7 +166,7 @@ function bindInput(
             }
             stop(e);
             commit(el.value);
-            dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+            dispatch({ type: "FOCUS", focus, target: { kind: "content" } });
             return;
           }
 
@@ -165,7 +174,7 @@ function bindInput(
           case "Tab":
             stop(e);
             commit(el.value);
-            dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+            dispatch({ type: "FOCUS", focus, target: { kind: "content" } });
             return;
         }
 
@@ -184,7 +193,8 @@ function bindInput(
 
           if (modKey || (dir === -1 && atStart) || (dir === 1 && atEnd)) {
             stop(e);
-            if (mode !== "body") commit(el.value);
+            if (mode !== "content") commit(el.value);
+
             dispatch({
               type: "MOVE",
               dir: dir === -1 ? "left" : "right",
@@ -218,7 +228,7 @@ function bindInput(
           }
 
           stop(e);
-          if (mode !== "body") commit(text);
+          if (mode !== "content") commit(text);
 
           dispatch({
             type: "MOVE",
@@ -235,42 +245,38 @@ function bindInput(
               stop(e);
               break;
             }
-
-            if (isMultiHeader) {
-              dispatch({ type: "CLEAR_GOAL_COLUMN" });
-              break;
-            }
-
             dispatch({ type: "CLEAR_GOAL_COLUMN" });
             break;
           }
 
-          if (modKey && mode === "body") {
-            stop(e);
-            commit(el.value);
-            dispatch({
-              type: "FOCUS",
-              path,
-              target: { kind: "header", index: 0 },
-            });
+          if (modKey && mode === "content") {
+            if (hasHeaderFields(focus.id)) {
+              stop(e);
+              commit(el.value);
+              dispatch({
+                type: "FOCUS",
+                focus,
+                target: { kind: "header", index: 0 },
+              });
+            }
             break;
           }
 
-          if (mode === "body") {
+          if (mode === "content") {
             stop(e);
 
-            const { kind } = getItemNavContext(path);
+            const kind = getItemUpdateKind(focus.id);
 
             if (kind === "text") {
               dispatch({ type: "SPLIT", caret: selStart, selEnd });
               break;
             }
 
-            const res = addItemAfter(path);
+            const res = addItemAfter(focus);
             dispatch({
               type: "FOCUS",
-              path: res.path,
-              target: { kind: "body" },
+              focus: res.focus,
+              target: { kind: "content" },
             });
             break;
           }
@@ -281,7 +287,7 @@ function bindInput(
         }
 
         case "Backspace": {
-          if (mode === "body" && !hasSelection && selStart === 0) {
+          if (mode === "content" && !hasSelection && selStart === 0) {
             stop(e);
             dispatch({
               type: "TRANSFORM",
@@ -292,7 +298,7 @@ function bindInput(
         }
 
         case "Delete": {
-          if (mode === "body" && !hasSelection && selStart === len) {
+          if (mode === "content" && !hasSelection && selStart === len) {
             stop(e);
             dispatch({
               type: "TRANSFORM",
@@ -303,7 +309,7 @@ function bindInput(
         }
 
         case "=": {
-          if (mode === "body" && !el.value) {
+          if (mode === "content" && !el.value) {
             stop(e);
             dispatch({ type: "TRANSFORM", op: "setItemAsDerived" });
           }
@@ -314,7 +320,7 @@ function bindInput(
           stop(e);
           dispatch({
             type: "TRANSFORM",
-            op: e.shiftKey ? "ungroupItem" : "groupItem",
+            op: e.shiftKey ? "unwrapGroup" : "wrapInGroup",
             caret: selStart,
           });
           break;
@@ -333,7 +339,7 @@ function dispatch(ev: InputEvent): void {
     case "FOCUS": {
       state = {
         kind: "Focused",
-        path: ev.path,
+        focus: ev.focus,
         target: ev.target,
         goalColumn: prev.kind === "Focused" ? prev.goalColumn : undefined,
       };
@@ -349,25 +355,24 @@ function dispatch(ev: InputEvent): void {
     case "MOVE": {
       if (state.kind !== "Focused") break;
 
-      const { dir, mod } = ev;
-      const nextPath = standardMove(state.path, dir, mod);
-      if (!nextPath) break;
+      const nextFocus = standardMove(state.focus, ev.dir, ev.mod);
+      if (!nextFocus) break;
 
       let goalColumn = state.goalColumn;
 
-      if (dir === "left" || dir === "right") {
+      if (ev.dir === "left" || ev.dir === "right") {
         const caret = ev.caret ?? goalColumn ?? 0;
-        goalColumn = mod ? caret : undefined;
-        caretPos = mod ? caret : dir === "left" ? Infinity : 0;
+        goalColumn = ev.mod ? caret : undefined;
+        caretPos = ev.mod ? caret : ev.dir === "left" ? Infinity : 0;
       } else {
         goalColumn = goalColumn ?? ev.caret ?? 0;
-        anchor = dir === "up" ? "bottom" : "top";
+        anchor = ev.dir === "up" ? "bottom" : "top";
       }
 
       state = {
         kind: "Focused",
-        path: nextPath,
-        target: defaultTargetForPath(nextPath),
+        focus: nextFocus,
+        target: defaultTargetForFocus(nextFocus),
         goalColumn,
       };
 
@@ -377,11 +382,11 @@ function dispatch(ev: InputEvent): void {
     case "SPLIT": {
       if (state.kind !== "Focused") break;
 
-      const res = splitItemAt(state.path, ev.caret, ev.selEnd ?? ev.caret);
+      const res = splitItemAt(state.focus, ev.caret, ev.selEnd ?? ev.caret);
       state = {
         kind: "Focused",
-        path: res.path,
-        target: { kind: "body" },
+        focus: res.focus,
+        target: { kind: "content" },
         goalColumn: undefined,
       };
       caretPos = res.caret ?? 0;
@@ -391,11 +396,13 @@ function dispatch(ev: InputEvent): void {
     case "TRANSFORM": {
       if (state.kind !== "Focused") break;
 
-      const res = TRANSFORMS[ev.op]?.(state.path);
+      const fn = TRANSFORMS[ev.op];
+      const res = fn ? fn(state.focus) : { focus: state.focus };
+
       state = {
         kind: "Focused",
-        path: res.path,
-        target: defaultTargetForPath(res.path),
+        focus: res.focus,
+        target: defaultTargetForFocus(res.focus),
         goalColumn: undefined,
       };
       caretPos = res.caret ?? ev.caret;
@@ -417,7 +424,7 @@ function dispatch(ev: InputEvent): void {
 function publishFocus(next: MachineState) {
   focusSignal.value =
     next.kind === "Focused"
-      ? { kind: "focused", path: next.path, target: next.target }
+      ? { kind: "focused", focus: next.focus, target: next.target }
       : { kind: "idle" };
 }
 
@@ -431,9 +438,8 @@ function computeAnchoredPos(
   anchor: Anchor
 ): number {
   const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
-  if (nl === -1) {
-    return clamp(column, 0, text.length);
-  }
+  if (nl === -1) return clamp(column, 0, text.length);
+
   const lineStart = anchor === "top" ? 0 : nl + 1;
   const lineLen = text.length - lineStart;
   return lineStart + clamp(column, 0, lineLen);
@@ -446,13 +452,15 @@ function updateDOMFocus(
 ) {
   if (next.kind !== "Focused") return;
 
-  const binding = bindings.get(keyOf(next.path));
+  const binding = bindings.get(keyOf(next.focus));
+  if (!binding) return;
+
   const targetEl =
     next.target.kind === "header"
-      ? binding?.header[next.target.index]?.el
-      : binding?.body;
+      ? binding.header[next.target.index]?.el
+      : binding.content;
 
-  if (!binding || !targetEl) return;
+  if (!targetEl) return;
 
   const wasFocused = document.activeElement === targetEl;
   if (!wasFocused) targetEl.focus({ preventScroll: true });
@@ -469,22 +477,20 @@ function updateDOMFocus(
     pos = targetEl.value.length;
   }
 
-  if (pos != null) {
-    targetEl.setSelectionRange(pos, pos);
-  }
+  if (pos != null) targetEl.setSelectionRange(pos, pos);
 }
 
 export function registerBinding(
-  path: ItemPath,
-  slots: { item: HTMLElement; body: HTMLElement; header: HeaderSlot[] }
+  focus: Focus,
+  slots: { item: HTMLElement; content: HTMLElement; header: HeaderSlot[] }
 ) {
-  const k = keyOf(path);
+  const k = keyOf(focus);
   const prior = bindings.get(k);
 
   if (
     prior &&
     prior.item === slots.item &&
-    prior.body === slots.body &&
+    prior.content === slots.content &&
     prior.header.length === slots.header.length &&
     prior.header.every(
       (h, i) => h.el === slots.header[i]!.el && h.mode === slots.header[i]!.mode
@@ -499,30 +505,30 @@ export function registerBinding(
     bindings.delete(k);
   }
 
-  const binding: PathBinding = {
-    path: path.slice(),
+  const binding: FocusBinding = {
+    focus: { ...focus },
     item: slots.item,
-    body: slots.body,
+    content: slots.content,
     header: slots.header,
     teardowns: [],
   };
   bindings.set(k, binding);
 
-  binding.body.tabIndex = 0;
+  binding.content.tabIndex = 0;
 
   binding.teardowns.push(
     on(binding.item, "mousedown", (e) => {
-      dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+      dispatch({ type: "FOCUS", focus, target: { kind: "content" } });
       stop(e);
     })
   );
 
   binding.teardowns.push(
-    on(binding.body, "mousedown", (e) => {
-      dispatch({ type: "FOCUS", path, target: { kind: "body" } });
+    on(binding.content, "mousedown", (e) => {
+      dispatch({ type: "FOCUS", focus, target: { kind: "content" } });
       if (
-        binding.body instanceof HTMLInputElement ||
-        binding.body instanceof HTMLTextAreaElement
+        binding.content instanceof HTMLInputElement ||
+        binding.content instanceof HTMLTextAreaElement
       ) {
         e.stopPropagation();
       }
@@ -533,35 +539,37 @@ export function registerBinding(
     const slot = binding.header[i]!;
     binding.teardowns.push(
       on(slot.el, "mousedown", (e) => {
-        dispatch({ type: "FOCUS", path, target: { kind: "header", index: i } });
+        dispatch({
+          type: "FOCUS",
+          focus,
+          target: { kind: "header", index: i },
+        });
         e.stopPropagation();
       })
     );
 
-    bindInput(binding, path, slot.el, slot.mode, slot.commit);
+    bindInput(binding, focus, slot.el, slot.mode, slot.commit);
   }
 
-  if (isTextInput(binding.body)) {
-    bindInput(
-      binding,
-      path,
-      binding.body,
-      "body",
-      (text) => updateItemText(path, text).path
-    );
+  if (isTextInput(binding.content)) {
+    bindInput(binding, focus, binding.content, "content", (text) => {
+      updateItemText(focus, text);
+    });
   }
 
   updateDOMFocus(state);
 }
 
-export function unregisterBinding(path: ItemPath) {
-  const k = keyOf(path);
+export function unregisterBinding(focus: Focus) {
+  const k = keyOf(focus);
   const binding = bindings.get(k);
+
   if (binding) {
     for (const fn of binding.teardowns) fn();
     bindings.delete(k);
   }
-  if (state.kind === "Focused" && keyOf(state.path) === k) {
+
+  if (state.kind === "Focused" && keyOf(state.focus) === k) {
     dispatch({ type: "CLEAR_FOCUS" });
   }
 }
@@ -569,7 +577,7 @@ export function unregisterBinding(path: ItemPath) {
 export function onRootKeyDown(e: KeyboardEvent) {
   if (state.kind !== "Focused" || state.target.kind === "header") return;
 
-  const { kind } = getItemNavContext(state.path);
+  const kind = getItemUpdateKind(state.focus.id);
   if (kind !== "group") return;
 
   const mod = e.metaKey || e.ctrlKey;
@@ -578,16 +586,18 @@ export function onRootKeyDown(e: KeyboardEvent) {
     case "ArrowLeft":
     case "ArrowRight": {
       stop(e);
-      const dir = e.key === "ArrowLeft" ? "left" : "right";
-      dispatch({ type: "MOVE", dir, mod });
+      dispatch({
+        type: "MOVE",
+        dir: e.key === "ArrowLeft" ? "left" : "right",
+        mod,
+      });
       break;
     }
 
     case "ArrowUp":
     case "ArrowDown": {
       stop(e);
-      const dir = e.key === "ArrowUp" ? "up" : "down";
-      dispatch({ type: "MOVE", dir, mod });
+      dispatch({ type: "MOVE", dir: e.key === "ArrowUp" ? "up" : "down", mod });
       break;
     }
 
@@ -595,19 +605,24 @@ export function onRootKeyDown(e: KeyboardEvent) {
       stop(e);
 
       if (mod) {
-        dispatch({
-          type: "FOCUS",
-          path: state.path,
-          target: { kind: "header", index: 0 },
-        });
+        if (hasHeaderFields(state.focus.id)) {
+          dispatch({
+            type: "FOCUS",
+            focus: state.focus,
+            target: { kind: "header", index: 0 },
+          });
+        }
         break;
       }
 
       const res = e.shiftKey
-        ? addItemBefore(state.path)
-        : addItemAfter(state.path);
-
-      dispatch({ type: "FOCUS", path: res.path, target: { kind: "body" } });
+        ? addItemBefore(state.focus)
+        : addItemAfter(state.focus);
+      dispatch({
+        type: "FOCUS",
+        focus: res.focus,
+        target: { kind: "content" },
+      });
       break;
     }
 
@@ -627,7 +642,7 @@ export function onRootKeyDown(e: KeyboardEvent) {
       stop(e);
       dispatch({
         type: "TRANSFORM",
-        op: e.shiftKey ? "ungroupItem" : "groupItem",
+        op: e.shiftKey ? "unwrapGroup" : "wrapInGroup",
       });
       break;
     }
@@ -635,10 +650,12 @@ export function onRootKeyDown(e: KeyboardEvent) {
 }
 
 export function focusFirstRootCell(): void {
-  const p = firstChildPath([]);
+  const root = rootContainer();
+  const first = firstChildOf(root);
+
   dispatch(
-    p
-      ? { type: "FOCUS", path: p, target: defaultTargetForPath(p) }
+    first
+      ? { type: "FOCUS", focus: first, target: defaultTargetForFocus(first) }
       : { type: "CLEAR_FOCUS" }
   );
 }
