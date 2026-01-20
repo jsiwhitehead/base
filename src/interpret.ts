@@ -8,7 +8,7 @@ import {
   V,
   isPresent,
   isTrue,
-} from "./model";
+} from "./store";
 
 const ISSUE = {
   literal: "Expected literal value",
@@ -141,7 +141,7 @@ export interface Ident {
   label: string;
 }
 
-const IMPLICIT_PARAM = { type: "Ident", label: "_" } as Ident;
+const IMPLICIT_PARAM: Ident = { type: "Ident", label: "_" };
 
 function buildBinaryChain(
   first: ohm.Node,
@@ -156,7 +156,7 @@ function buildBinaryChain(
       right: (rights.children[i] as any).ast,
     }),
     (first as any).ast
-  );
+  ) as Expr;
 }
 
 function decodeEscapes(unquoted: string): string {
@@ -198,6 +198,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       (prim as any).ast
     ) as Expr;
   },
+
   Call(_open, list, _close) {
     return (callee: Expr): Call => ({
       type: "Call",
@@ -205,6 +206,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       args: (list as any).asIteration().children.map((n: any) => n.ast),
     });
   },
+
   Select_expr(_open, expr, _close) {
     return (receiver: Expr): Select => ({
       type: "Select",
@@ -212,6 +214,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       select: (expr as any).ast,
     });
   },
+
   Member(_dot, labelTok) {
     return (receiver: Expr): Member => ({
       type: "Member",
@@ -219,6 +222,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       label: { type: "Ident", label: labelTok.sourceString },
     });
   },
+
   Pipe(_colon, labelTok, _open, list, _close) {
     return (receiver: Expr): Call => ({
       type: "Call",
@@ -231,11 +235,13 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
 
   Prim_ident(labelTok) {
-    return { type: "Ident", label: labelTok.sourceString };
+    return { type: "Ident", label: labelTok.sourceString } as Ident;
   },
+
   Prim_paren(_open, expr, _close) {
     return (expr as any).ast;
   },
+
   Prim_dotsel(_dot, _open, expr, _close) {
     return {
       type: "Select",
@@ -243,6 +249,7 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
       select: (expr as any).ast,
     } as Select;
   },
+
   Prim_dot(_dot, labelTok) {
     return {
       type: "Member",
@@ -254,12 +261,15 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   Literal_blank(_) {
     return { type: "Blank" } as Blank;
   },
+
   Literal_true(_) {
     return { type: "Lit", value: true } as Lit;
   },
+
   Literal_number(n) {
     return { type: "Lit", value: Number(n.sourceString) } as Lit;
   },
+
   Literal_text(t) {
     return {
       type: "Lit",
@@ -270,10 +280,6 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
 
 function isBlank(v: Value): boolean {
   return v.kind === "blank";
-}
-
-function isIssue(v: Value): v is { kind: "issue"; message: string } {
-  return v.kind === "issue";
 }
 
 function isScalar(v: Value): v is { kind: "scalar"; value: Scalar } {
@@ -358,7 +364,6 @@ function toText(v: Value): string | null {
 function primitiveToValue(x: boolean | number | string | null): Value {
   if (x === null || x === false) return V.blank();
   if (x === true) return V.scalar(true);
-  if (typeof x === "number") return V.scalar(x);
   return V.scalar(x);
 }
 
@@ -441,8 +446,9 @@ function getByPositionOrLabel(group: Value, selV: Value, env: EvalEnv): Value {
   return V.issue(ISSUE.posLabelMustBeTextOrNumber);
 }
 
-const BINARY_OPS: Partial<
-  Record<Binary["op"], (a: Value, b: Value) => boolean | number | null>
+const BINARY_OPS: Record<
+  Binary["op"],
+  (a: Value, b: Value) => boolean | number | string | null
 > = {
   "!=": (a, b) => primExpect(a) !== primExpect(b),
   "=": (a, b) => primExpect(a) === primExpect(b),
@@ -458,7 +464,10 @@ const BINARY_OPS: Partial<
   "/": (a, b) => numericOp((x, y) => x / y, a, b),
 };
 
-const UNARY_OPS: Record<Unary["op"], (v: Value) => boolean | number | null> = {
+const UNARY_OPS: Record<
+  Unary["op"],
+  (v: Value) => boolean | number | string | null
+> = {
   "!": (v) => {
     if (v.kind === "issue") throw new TypeError(v.message);
     return !isTrue(v);
@@ -470,7 +479,7 @@ const UNARY_OPS: Record<Unary["op"], (v: Value) => boolean | number | null> = {
 type Builtin = (env: EvalEnv, ...args: Value[]) => Value;
 
 function contentFn(op: (env: EvalEnv, ...args: Value[]) => Value): Builtin {
-  return (env, ...args: Value[]) => {
+  return (env, ...args) => {
     const want = Math.max(0, op.length - 1);
     const filled = Array.from({ length: want }, (_, i) =>
       i < args.length ? args[i]! : V.blank()
@@ -491,7 +500,7 @@ const reqText = { kind: "req", convert: textOpt } as const;
 const optText = (d: string) =>
   ({ kind: "opt", convert: textOpt, fallback: d } as const);
 
-function typedFn<A extends any[]>(
+function typedFn<A extends unknown[]>(
   specs: { [K in keyof A]: ArgSpec<A[K]> },
   impl: (env: EvalEnv, ...args: A) => Value
 ): Builtin {
@@ -555,22 +564,15 @@ function reduceNumbers(
   return ns.length ? op(ns) : null;
 }
 
-const library: Record<string, Builtin> = {
-  /* Converters */
-
+export const library: Record<string, Builtin> = {
   is_blank: contentFn((_env, v) => primitiveToValue(isBlank(v))),
-
   is_present: contentFn((_env, v) => primitiveToValue(isPresent(v))),
-
   is_true: contentFn((_env, v) => primitiveToValue(isTrue(v))),
-
   to_number: contentFn((_env, v) => primitiveToValue(toNumber(v))),
-
   to_text: contentFn((_env, v) => primitiveToValue(toText(v))),
 
   number_or: contentFn((_env, content, fallback) => {
     if (content.kind === "issue") return content;
-
     const n = numOpt(content);
     if (n !== null) return V.scalar(n);
 
@@ -581,7 +583,6 @@ const library: Record<string, Builtin> = {
 
   text_or: contentFn((_env, content, fallback) => {
     if (content.kind === "issue") return content;
-
     const t = textOpt(content);
     if (t !== null) return V.scalar(t);
 
@@ -607,8 +608,6 @@ const library: Record<string, Builtin> = {
     return V.blank();
   },
 
-  /* Logic */
-
   not: contentFn((_env, v) => {
     if (v.kind === "issue") return v;
     return isTrue(v) ? V.blank() : V.scalar(true);
@@ -630,8 +629,6 @@ const library: Record<string, Builtin> = {
     if (cond.kind === "issue") return cond;
     return isTrue(cond) ? thenV : elseV;
   }),
-
-  /* Number */
 
   abs: typedFn([reqNum], (_env, n) => V.scalar(Math.abs(n))),
 
@@ -657,8 +654,6 @@ const library: Record<string, Builtin> = {
     V.scalar(((d % m) + m) % m)
   ),
 
-  /* Text */
-
   trim: typedFn([reqText], (_env, t) => V.scalar(t.trim())),
 
   contains: typedFn([reqText, reqText], (_env, t, s) =>
@@ -682,8 +677,6 @@ const library: Record<string, Builtin> = {
   split: typedFn([reqText, optText("")], (_env, t, sep) =>
     V.valueGroup(t.split(sep).map((p) => ({ value: V.scalar(p) })))
   ),
-
-  /* Groups */
 
   join: typedFn(
     [
@@ -724,8 +717,6 @@ const library: Record<string, Builtin> = {
       return V.scalar(vs.filter((c) => c.kind === "blank").length);
     }
   ),
-
-  /* Number reducers */
 
   sum: typedFn(
     [
@@ -790,32 +781,31 @@ function interpretAst(e: Expr, env: EvalEnv): Value {
   try {
     switch (e.type) {
       case "Binary": {
-        const { op, left, right } = e;
-        const l = interpretAst(left, env);
+        const l = interpretAst(e.left, env);
         if (l.kind === "issue") return l;
 
-        const r = interpretAst(right, env);
+        const r = interpretAst(e.right, env);
         if (r.kind === "issue") return r;
 
-        const f = BINARY_OPS[op]!;
-        return primitiveToValue(f(l, r));
+        return primitiveToValue(BINARY_OPS[e.op](l, r));
       }
 
       case "Unary": {
         const v = interpretAst(e.argument, env);
         if (v.kind === "issue") return v;
 
-        const f = UNARY_OPS[e.op]!;
-        return primitiveToValue(f(v));
+        return primitiveToValue(UNARY_OPS[e.op](v));
       }
 
       case "Call": {
         const callee = e.callee;
         if (callee.type !== "Ident")
           throw new TypeError("Expected function name");
+
         const args = e.args.map((a) => interpretAst(a, env));
         const issue = firstIssue(...args);
         if (issue) return issue;
+
         return callBuiltin(env, callee.label, args);
       }
 

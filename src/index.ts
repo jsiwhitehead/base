@@ -10,11 +10,11 @@ import {
   setInterpreter,
   selectValue,
   itemAtom,
-} from "./model";
+} from "./store";
 
 import { interpretExpr } from "./interpret";
-import { focusFirstRootCell, onRootKeyDown } from "./inputs";
-import mountRoot from "./views";
+import { focusFirstRootCell, onRootKeyDown } from "./editor";
+import mountRoot from "../old/views";
 
 export function mount(rootId: ItemId, rootElement: HTMLElement) {
   setInterpreter(interpretExpr);
