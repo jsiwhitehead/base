@@ -1,5 +1,11 @@
 import { computed } from "@preact/signals-core";
-import type { Store, ItemId, Txn, ViewKind, StoredContent } from "../store";
+import type {
+  Store,
+  ItemId,
+  Transaction,
+  ViewKind,
+  StoredContent,
+} from "../store";
 import type {
   Editor,
   View,
@@ -14,15 +20,15 @@ import type {
   Caret,
 } from "../editor";
 import {
-  mkFocusSelection,
+  focusSelection,
   caret0,
   caretAt,
-  proposeSelection,
+  withSelection,
   tryCmd,
   applyCmd,
   setIdle,
 } from "../editor";
-import type { Evaluator } from "../evaluator";
+import type { Evaluator } from "../eval";
 import {
   createComponent,
   el,
@@ -33,14 +39,15 @@ import {
   bindTextControlKeys,
   parseScalar,
   getEditableText,
-  valueField,
+  contentField,
   autosizeTextField,
   textField,
   defaultTextNav,
-  mountChildViewInto,
+  mountViewInto,
   type Component,
-} from "../ui";
-import { createChildViewForItem, viewWantsChildView } from "./index";
+} from "../dom";
+import type { Runtime, ViewFactoryArgs } from "./index";
+import { createView, viewWantsChildView } from "./index";
 
 type HeaderFieldKey =
   | "derived.expr"
@@ -65,7 +72,7 @@ const LENS_FIELDS: readonly HeaderFieldDef[] = [
 ] as const;
 
 function contentKindOf(store: Store, id: ItemId): StoredContent["kind"] {
-  return store.getItem(id).content.kind;
+  return store.readItem(id).content.kind;
 }
 
 function headerFieldsForItem(store: Store, id: ItemId) {
@@ -80,7 +87,7 @@ function headerFieldValueForItem(
   id: ItemId,
   key: HeaderFieldKey,
 ): string {
-  const it = store.getItem(id);
+  const it = store.readItem(id);
   const c = it.content;
 
   if (c.kind === "derived") return key === "derived.expr" ? (c.expr ?? "") : "";
@@ -151,7 +158,7 @@ function treeNavMove(
   };
 
   const parentFocus = (): Focus | null => {
-    const ownerId = store.getItem(from.scopeId).ownerId;
+    const ownerId = store.readItem(from.scopeId).ownerId;
     return ownerId == null ? null : { scopeId: ownerId, id: from.scopeId };
   };
 
@@ -178,25 +185,20 @@ function treeNavMove(
 
   if (!next) return null;
 
-  const res = mkFocusSelection(
-    next,
-    defaultTargetFor(store, next.id),
-    caret0(),
-  );
+  const res = focusSelection(next, defaultTargetFor(store, next.id), caret0());
   return { selection: res.selection, effects: res.effects };
 }
 
 function canEditScalarText(store: Store, id: ItemId): boolean {
-  const kind = store.getItem(id).content.kind;
+  const kind = store.readItem(id).content.kind;
   return kind === "blank" || kind === "scalar";
 }
 
 export const treeCommands = {
   commitLabel(editor: Editor, f: Focus, text: string): CmdResult {
     return tryCmd(() => {
-      editor.apply({
-        ops: [{ kind: "patch", id: f.id, next: { label: text } }],
-      });
+      const store = editor.store;
+      editor.commit(store.op.transaction([store.op.patchLabel(f.id, text)]));
       return { didChange: true };
     });
   },
@@ -210,15 +212,14 @@ export const treeCommands = {
     return tryCmd(() => {
       const store = editor.store;
       if (!canEditScalarText(store, id)) return { didChange: false };
-      editor.apply({
-        ops: [
-          {
-            kind: "patch",
-            id,
-            next: { content: { kind: "scalar", value: parseScalar(text) } },
-          },
-        ],
-      });
+      editor.commit(
+        store.op.transaction([
+          store.op.patchContent(id, {
+            kind: "scalar",
+            value: parseScalar(text),
+          }),
+        ]),
+      );
       void evaluator;
       return { didChange: true };
     });
@@ -226,24 +227,17 @@ export const treeCommands = {
 
   setDerived(editor: Editor, f: Focus): CmdResult {
     return tryCmd(() => {
-      const next = mkFocusSelection(f, { kind: "header", index: 1 }, caret0());
-      editor.apply(
-        {
-          ops: [
-            {
-              kind: "patch",
-              id: f.id,
-              next: { content: { kind: "derived", expr: "" } },
-            },
-          ],
-        },
-        proposeSelection(next),
+      const store = editor.store;
+      const nextSel = focusSelection(f, { kind: "header", index: 1 }, caret0());
+
+      editor.commit(
+        store.op.transaction([
+          store.op.patchContent(f.id, { kind: "derived", expr: "" }),
+        ]),
+        withSelection({ selection: nextSel.selection }),
       );
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+
+      return { didChange: true };
     });
   },
 
@@ -255,19 +249,15 @@ export const treeCommands = {
     text: string,
   ): CmdResult {
     return tryCmd(() => {
-      const it = store.getItem(f.id);
+      const it = store.readItem(f.id);
       const c = it.content;
 
       if (fieldKey === "derived.expr") {
-        editor.apply({
-          ops: [
-            {
-              kind: "patch",
-              id: f.id,
-              next: { content: { kind: "derived", expr: text } },
-            },
-          ],
-        });
+        editor.commit(
+          store.op.transaction([
+            store.op.patchContent(f.id, { kind: "derived", expr: text }),
+          ]),
+        );
         return { didChange: true };
       }
 
@@ -279,15 +269,11 @@ export const treeCommands = {
         orderBy: fieldKey === "lens.orderBy" ? text : c.orderBy,
       };
 
-      editor.apply({
-        ops: [
-          {
-            kind: "patch",
-            id: f.id,
-            next: { content: { kind: "lens", ...next } },
-          },
-        ],
-      });
+      editor.commit(
+        store.op.transaction([
+          store.op.patchContent(f.id, { kind: "lens", ...next }),
+        ]),
+      );
 
       return { didChange: true };
     });
@@ -309,28 +295,19 @@ export const treeCommands = {
       const at = side === "before" ? loc.index : loc.index + 1;
       const id = store.createId();
 
-      const txn: Txn = {
-        ops: [
-          { kind: "create", item: store.make.blank(id) },
-          {
-            kind: "reparent",
-            spec: { childId: id, toOwnerId: loc.ownerId, toIndex: at },
-          },
-        ],
-      };
+      const txn: Transaction = store.op.transaction([
+        store.op.create(store.create.blank(id)),
+        store.op.reparent({ childId: id, toOwnerId: loc.ownerId, toIndex: at }),
+      ]);
 
-      const next = mkFocusSelection(
+      const nextSel = focusSelection(
         { scopeId: f.scopeId, id },
         { kind: "content" },
         caret0(),
       );
-      editor.apply(txn, proposeSelection(next));
 
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      editor.commit(txn, withSelection({ selection: nextSel.selection }));
+      return { didChange: true };
     });
   },
 
@@ -362,42 +339,31 @@ export const treeCommands = {
 
       const rightId = store.createId();
 
-      const txn: Txn = {
-        ops: [
-          {
-            kind: "patch",
-            id: f.id,
-            next: { content: { kind: "scalar", value: parseScalar(left) } },
-          },
-          { kind: "create", item: store.make.blank(rightId) },
-          {
-            kind: "reparent",
-            spec: {
-              childId: rightId,
-              toOwnerId: loc.ownerId,
-              toIndex: loc.index + 1,
-            },
-          },
-          {
-            kind: "patch",
-            id: rightId,
-            next: { content: { kind: "scalar", value: parseScalar(right) } },
-          },
-        ],
-      };
+      const txn: Transaction = store.op.transaction([
+        store.op.patchContent(f.id, {
+          kind: "scalar",
+          value: parseScalar(left),
+        }),
+        store.op.create(store.create.blank(rightId)),
+        store.op.reparent({
+          childId: rightId,
+          toOwnerId: loc.ownerId,
+          toIndex: loc.index + 1,
+        }),
+        store.op.patchContent(rightId, {
+          kind: "scalar",
+          value: parseScalar(right),
+        }),
+      ]);
 
-      const next = mkFocusSelection(
+      const nextSel = focusSelection(
         { scopeId: f.scopeId, id: rightId },
         { kind: "content" },
         caret0(),
       );
-      editor.apply(txn, proposeSelection(next));
 
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      editor.commit(txn, withSelection({ selection: nextSel.selection }));
+      return { didChange: true };
     });
   },
 
@@ -433,29 +399,22 @@ export const treeCommands = {
       const survivorId = leftId;
       const removedId = rightId;
 
-      const txn: Txn = {
-        ops: [
-          {
-            kind: "patch",
-            id: survivorId,
-            next: { content: { kind: "scalar", value: parseScalar(a + b) } },
-          },
-          { kind: "reparent", spec: { childId: removedId, toOwnerId: null } },
-        ],
-      };
+      const txn: Transaction = store.op.transaction([
+        store.op.patchContent(survivorId, {
+          kind: "scalar",
+          value: parseScalar(a + b),
+        }),
+        store.op.detach(removedId),
+      ]);
 
-      const next = mkFocusSelection(
+      const nextSel = focusSelection(
         { scopeId: f.scopeId, id: survivorId },
         { kind: "content" },
         caretAt(a.length),
       );
-      editor.apply(txn, proposeSelection(next));
 
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      editor.commit(txn, withSelection({ selection: nextSel.selection }));
+      return { didChange: true };
     });
   },
 
@@ -486,24 +445,18 @@ export const treeCommands = {
         ? { scopeId: f.scopeId, id: chosen as ItemId }
         : { scopeId: loc.ownerId, id: chosen as ItemId };
 
-      const next = mkFocusSelection(
+      const nextSel = focusSelection(
         nextFocus,
         defaultTargetFor(store, nextFocus.id),
         caret0(),
       );
 
-      editor.apply(
-        {
-          ops: [{ kind: "reparent", spec: { childId: f.id, toOwnerId: null } }],
-        },
-        proposeSelection(next),
+      editor.commit(
+        store.op.transaction([store.op.detach(f.id)]),
+        withSelection({ selection: nextSel.selection }),
       );
 
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      return { didChange: true };
     });
   },
 
@@ -522,48 +475,40 @@ export const treeCommands = {
         const loc = store.locateInOwner(f.id);
         if (!loc) return { didChange: false };
 
-        const childInfo = store.getItem(f.id);
+        const childInfo = store.readItem(f.id);
         const wrapperId = store.createId();
-        const wrapper = store.make.group(wrapperId);
+        const wrapper = store.create.group(wrapperId);
 
-        const txn: Txn = {
-          ops: [
-            { kind: "create", item: { ...wrapper, label: childInfo.label } },
-            {
-              kind: "reparent",
-              spec: {
-                childId: wrapperId,
-                toOwnerId: loc.ownerId,
-                toIndex: loc.index,
-              },
-            },
-            { kind: "patch", id: f.id, next: { label: "" } },
-            {
-              kind: "reparent",
-              spec: { childId: f.id, toOwnerId: wrapperId, toIndex: 0 },
-            },
-          ],
-        };
+        const txn: Transaction = store.op.transaction([
+          store.op.create({ ...wrapper, label: childInfo.label }),
+          store.op.reparent({
+            childId: wrapperId,
+            toOwnerId: loc.ownerId,
+            toIndex: loc.index,
+          }),
+          store.op.patchLabel(f.id, ""),
+          store.op.reparent({
+            childId: f.id,
+            toOwnerId: wrapperId,
+            toIndex: 0,
+          }),
+        ]);
 
-        const next = mkFocusSelection(
+        const nextSel = focusSelection(
           { scopeId: wrapperId, id: f.id },
           defaultTargetFor(store, f.id),
           caret0(),
         );
 
-        editor.apply(txn, proposeSelection(next));
-        return {
-          didChange: true,
-          selection: next.selection,
-          effects: next.effects,
-        };
+        editor.commit(txn, withSelection({ selection: nextSel.selection }));
+        return { didChange: true };
       }
 
-      const child = store.getItem(f.id);
+      const child = store.readItem(f.id);
       const wrapperId = child.ownerId;
       if (wrapperId == null) return { didChange: false };
 
-      const wrapper = store.getItem(wrapperId);
+      const wrapper = store.readItem(wrapperId);
       if (wrapper.content.kind !== "group") return { didChange: false };
 
       const kids = evaluator.items(wrapperId);
@@ -575,34 +520,20 @@ export const treeCommands = {
       const idx = evaluator.items(ownerId).indexOf(wrapperId);
       if (idx < 0) return { didChange: false };
 
-      const txn: Txn = {
-        ops: [
-          {
-            kind: "reparent",
-            spec: { childId: f.id, toOwnerId: ownerId, toIndex: idx },
-          },
-          { kind: "reparent", spec: { childId: wrapperId, toOwnerId: null } },
-          { kind: "patch", id: f.id, next: { label: wrapper.label } },
-          {
-            kind: "patch",
-            id: wrapperId,
-            next: { label: "", content: { kind: "blank" } },
-          },
-        ],
-      };
+      const txn: Transaction = store.op.transaction([
+        store.op.reparent({ childId: f.id, toOwnerId: ownerId, toIndex: idx }),
+        store.op.detach(wrapperId),
+        store.op.patchLabel(f.id, wrapper.label),
+      ]);
 
-      const next = mkFocusSelection(
+      const nextSel = focusSelection(
         { scopeId: ownerId, id: f.id },
         defaultTargetFor(store, f.id),
         caret0(),
       );
 
-      editor.apply(txn, proposeSelection(next));
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      editor.commit(txn, withSelection({ selection: nextSel.selection }));
+      return { didChange: true };
     });
   },
 
@@ -612,12 +543,8 @@ export const treeCommands = {
     const f = sel.focus;
 
     if (sel.target.kind === "header") {
-      const next = mkFocusSelection(f, { kind: "content" }, caret0());
-      return {
-        didChange: false,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      const nextSel = focusSelection(f, { kind: "content" }, caret0());
+      return { didChange: false, selection: nextSel.selection };
     }
 
     return canEditScalarText(store, f.id)
@@ -649,6 +576,7 @@ export const treeCommands = {
 } as const;
 
 type TreeMountCtx = {
+  runtime: Runtime;
   editor: Editor;
   evaluator: Evaluator;
   store: Store;
@@ -691,7 +619,7 @@ function mountTreeHeader(
 
     const toContent = () => {
       editor.setSelection(
-        mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+        focusSelection(focus, { kind: "content" }, caret0()).selection,
       );
     };
 
@@ -702,7 +630,7 @@ function mountTreeHeader(
       commit: (text) =>
         applyCmd(editor, treeCommands.commitLabel(editor, focus, text)),
       getState: () => ({
-        text: store.getItem(focus.id).label ?? "",
+        text: store.readItem(focus.id).label ?? "",
         readOnly: false,
         isIssue: false,
       }),
@@ -725,7 +653,7 @@ function mountTreeHeader(
     });
 
     labelHost.replaceChildren(labelComp.el);
-    ctx.using(labelComp);
+    ctx.use(labelComp);
 
     const targets: HTMLElement[] = [];
     targets.push((labelComp.el as any).querySelector("input") ?? labelComp.el);
@@ -768,7 +696,7 @@ function mountTreeHeader(
       });
 
       host.replaceChildren(fc.el);
-      ctx.using(fc);
+      ctx.use(fc);
       targets.push(fc.el);
     }
 
@@ -780,17 +708,17 @@ function mountTreeHeader(
 }
 
 function mountTreeChildren(ctx0: TreeMountCtx, focus: Focus): Component {
-  const { editor, evaluator, store, rootId, navMove } = ctx0;
+  const { editor, evaluator } = ctx0;
 
   return createComponent((ctx) => {
     const container = el("div", "group");
     ensureTabbable(container);
 
     const mgr = ctx.list(container, (childId: ItemId) =>
-      mountTreeNode(
-        { ...ctx0, editor, evaluator, store, rootId, navMove },
-        { focus: { scopeId: focus.id, id: childId }, showHeader: true },
-      ),
+      mountTreeNode(ctx0, {
+        focus: { scopeId: focus.id, id: childId },
+        showHeader: true,
+      }),
     );
 
     ctx.watch(() => {
@@ -804,7 +732,7 @@ function mountTreeChildren(ctx0: TreeMountCtx, focus: Focus): Component {
       )
         return;
       editor.setSelection(
-        mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+        focusSelection(focus, { kind: "content" }, caret0()).selection,
       );
       e.stopPropagation();
     });
@@ -818,28 +746,23 @@ function mountTreeBody(
   focus: Focus,
   onContentTarget: (el0: HTMLElement | null) => void,
 ): Component {
-  const { editor, evaluator, store, dispatch } = ctx0;
+  const { editor, evaluator, store, dispatch, runtime } = ctx0;
 
   return createComponent((ctx) => {
     const host = el("div");
-    const viewKind = store.getItem(focus.id).view as ViewKind;
+    const viewKind = store.readItem(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
-      const childView = createChildViewForItem(
-        { editor, evaluator },
-        viewKind,
-        focus.id,
-        focus,
-      );
+      const childView = createView(runtime, viewKind, focus.id, focus);
       if (childView) {
         ensureTabbable(childView.root);
         onContentTarget(childView.root);
-        ctx.using(mountChildViewInto(editor, host, childView));
+        ctx.use(mountViewInto(editor, host, childView));
         return host;
       }
     }
 
-    const vf = valueField({
+    const vf = contentField({
       editor,
       evaluator,
       focus,
@@ -899,7 +822,7 @@ function mountTreeBody(
     });
 
     host.replaceChildren(vf.el);
-    ctx.using(vf);
+    ctx.use(vf);
 
     ensureTabbable(vf.el);
     onContentTarget(vf.el);
@@ -943,7 +866,7 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
     };
 
     ctx.watch(() => {
-      const info = store.getItem(focus.id);
+      const info = store.readItem(focus.id);
       const defs = headerFieldsForItem(store, focus.id);
       const label = info.label ?? "";
 
@@ -989,23 +912,19 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
   });
 }
 
-export function createTreeView(
-  ctx: { editor: Editor; evaluator: Evaluator },
-  rootId: ItemId,
-  _focus?: Focus,
-): View {
-  const { editor, evaluator } = ctx;
+export function createTreeView({ runtime, id: rootId }: ViewFactoryArgs): View {
+  const { editor, eval: evaluator } = runtime;
   const store = editor.store;
 
   const root = el("div", "view tree");
   const viewId = `tree:${String(rootId)}`;
 
-  const navStopsSig = computed(() =>
+  const navStopsSignal = computed(() =>
     collectNavStopsFrom(store, evaluator, store.getRoot()),
   );
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    treeNavMove(store, evaluator, navStopsSig.value, sel, dir, mode);
+    treeNavMove(store, evaluator, navStopsSignal.value, sel, dir, mode);
 
   const dispatch = (intent: TreeIntent): ViewKeyResult => {
     const sel = editor.runtime.selection.value;
@@ -1013,7 +932,7 @@ export function createTreeView(
     switch (intent.type) {
       case "NAV": {
         const res = navMove(sel, intent.dir, intent.mode);
-        if (res) editor.setSelection(res.selection, res.effects);
+        if (res) editor.setSelection(res.selection);
         return;
       }
 
@@ -1066,7 +985,7 @@ export function createTreeView(
   };
 
   const node = mountTreeNode(
-    { editor, evaluator, store, rootId, navMove, dispatch },
+    { runtime, editor, evaluator, store, rootId, navMove, dispatch },
     { focus: { scopeId: rootId, id: rootId }, showHeader: false },
   );
 
@@ -1084,7 +1003,7 @@ export function createTreeView(
       if (focus.id === rootId) return { kind: "content" };
 
       const defs = headerFieldsForItem(store, focus.id);
-      const label = (store.getItem(focus.id).label ?? "").trim();
+      const label = (store.readItem(focus.id).label ?? "").trim();
 
       if (target.index === 0) return { kind: "header", index: 0 };
 
@@ -1100,11 +1019,11 @@ export function createTreeView(
     onActivate() {
       if (editor.runtime.selection.value.kind !== "idle") return;
 
-      const first = navStopsSig.value[0];
+      const first = navStopsSignal.value[0];
       if (!first) return;
 
       editor.setSelection(
-        mkFocusSelection(first, defaultTargetFor(store, first.id), caret0())
+        focusSelection(first, defaultTargetFor(store, first.id), caret0())
           .selection,
       );
     },

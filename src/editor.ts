@@ -1,5 +1,5 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { Store, ItemId, Txn, ApplyResult } from "./store";
+import type { Store, ItemId, Transaction, ApplyResult } from "./store";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
 
@@ -26,7 +26,7 @@ export type EditorEffect =
   | { type: "DOM_FOCUS"; focus: Focus; target: FocusTarget; anchor?: Anchor }
   | { type: "CLEAR_DOM_FOCUS" };
 
-export type SelectionHints = {
+export type CommitHints = {
   propose?: (ctx: {
     store: Store;
     prevSelection: Selection;
@@ -35,14 +35,14 @@ export type SelectionHints = {
   effects?: EditorEffect[];
 };
 
-export type SelectionProposal =
+export type NextSelection =
   | { selection: Selection; effects?: EditorEffect[] }
   | ((ctx: { store: Store; prevSelection: Selection; result: ApplyResult }) => {
       selection?: Selection;
       effects?: EditorEffect[];
     });
 
-export function proposeSelection(proposal: SelectionProposal): SelectionHints {
+export function withSelection(proposal: NextSelection): CommitHints {
   return typeof proposal === "function"
     ? { propose: proposal }
     : {
@@ -58,7 +58,7 @@ export type Editor = {
   runtime: EditorRuntime;
   getSelection(): Selection;
   setSelection(next: Selection, effects?: EditorEffect[]): void;
-  apply(txn: Txn, hints?: SelectionHints): ApplyResult;
+  commit(txn: Transaction, hints?: CommitHints): ApplyResult;
 };
 
 export type ViewId = string;
@@ -226,13 +226,8 @@ export class EditorRuntime {
 
   registerBinding(binding: Binding) {
     const k = keyOf(binding.focus);
-    const prev = this.bindings.get(k);
     this.bindings.set(k, binding);
-    if (prev === binding) {
-      this.updateDOMFocus(this.selection.peek());
-    } else {
-      this.updateDOMFocus(this.selection.peek());
-    }
+    this.updateDOMFocus(this.selection.peek());
   }
 
   unregisterBinding(focus: Focus) {
@@ -317,7 +312,7 @@ export class EditorRuntime {
   }
 }
 
-export function mkFocusSelection(
+export function focusSelection(
   focus: Focus,
   target: FocusTarget,
   caret?: Caret,
@@ -337,7 +332,7 @@ export function repairSelection(editor: Editor, sel: Selection): Selection {
   if (sel.kind === "idle") return sel;
 
   try {
-    store.getItem(sel.focus.id);
+    store.peekItem(sel.focus.id);
 
     const active = editor.runtime.getActiveView();
     const normalized =
@@ -349,7 +344,7 @@ export function repairSelection(editor: Editor, sel: Selection): Selection {
   } catch {
     try {
       const root = store.getRoot();
-      store.getItem(root);
+      store.peekItem(root);
       return {
         kind: "focused",
         focus: { scopeId: root, id: root },
@@ -389,7 +384,7 @@ export function createEditor(store: Store): Editor {
     );
   };
 
-  const apply = (txn: Txn, hints: SelectionHints = {}): ApplyResult => {
+  const commit = (txn: Transaction, hints: CommitHints = {}): ApplyResult => {
     const prevSelection = getSelection();
     const result = store.apply(txn);
 
@@ -415,7 +410,7 @@ export function createEditor(store: Store): Editor {
     return result;
   };
 
-  const api: Editor = { store, runtime, getSelection, setSelection, apply };
+  const api: Editor = { store, runtime, getSelection, setSelection, commit };
   return api;
 }
 

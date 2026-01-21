@@ -12,7 +12,7 @@ import {
   itemAtom,
 } from "./store";
 
-import { interpretExpr } from "./interpret";
+import { interpretExpr } from "./expr";
 import { focusFirstRootCell, onRootKeyDown } from "./editor";
 import mountRoot from "../old/views";
 
@@ -51,7 +51,7 @@ const blankItem = (ownerId: ItemId | null): Item => ({
 const scalarItem = (
   ownerId: ItemId | null,
   value: Scalar,
-  label = ""
+  label = "",
 ): Item => ({
   id: newId(),
   ownerId,
@@ -63,7 +63,7 @@ const scalarItem = (
 const derivedItem = (
   ownerId: ItemId | null,
   expr: string,
-  label = ""
+  label = "",
 ): Item => ({
   id: newId(),
   ownerId,
@@ -77,7 +77,7 @@ const lensItem = (
   from: string,
   where = "",
   orderBy = "",
-  label = ""
+  label = "",
 ): Item => ({
   id: newId(),
   ownerId,
@@ -90,7 +90,7 @@ const groupItem = (
   ownerId: ItemId | null,
   children: Item[],
   label = "",
-  view = ""
+  view = "",
 ): Item => {
   const id = newId();
   for (const c of children) c.ownerId = id;

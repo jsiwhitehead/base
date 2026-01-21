@@ -11,8 +11,8 @@ import type {
   NavDir,
   NavMode,
 } from "./editor";
-import { mkFocusSelection, caret0 } from "./editor";
-import type { Evaluator, Value, LabeledValue } from "./evaluator";
+import { focusSelection, caret0 } from "./editor";
+import type { Evaluator, Value, LabeledValue } from "./eval";
 
 export type Component = { el: HTMLElement; dispose(): void };
 
@@ -21,7 +21,7 @@ export const defaultTextNav = {
   yieldLeftRight: "boundary",
 } as const;
 
-export class CleanupBag {
+export class Disposer {
   private fns: (() => void)[] = [];
 
   add(fn: (() => void) | null | undefined) {
@@ -262,7 +262,7 @@ export type FocusableTargetSpec = Readonly<{
 export type Ctx = {
   onCleanup(fn: (() => void) | null | undefined): void;
 
-  using(x: { dispose(): void } | (() => void) | null | undefined): void;
+  use(x: { dispose(): void } | (() => void) | null | undefined): void;
 
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
     el0: T,
@@ -291,14 +291,14 @@ export type Ctx = {
 };
 
 export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
-  const bag = new CleanupBag();
+  const bag = new Disposer();
 
   const ctx: Ctx = {
     onCleanup(fn) {
       bag.add(fn);
     },
 
-    using(x) {
+    use(x) {
       if (!x) return;
       if (typeof x === "function") bag.add(x);
       else bag.add(() => x.dispose());
@@ -383,7 +383,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
                 ? caretFromTarget(targetEl)
                 : caret0();
 
-            const out = mkFocusSelection(opts.focus, t.target, c);
+            const out = focusSelection(opts.focus, t.target, c);
             opts.editor.setSelection(out.selection);
 
             if (t.stopPropagation ?? true) e.stopPropagation();
@@ -409,7 +409,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
   };
 }
 
-export function mountChildViewInto(
+export function mountViewInto(
   editor: Editor,
   host: HTMLElement,
   view: View,
@@ -498,7 +498,7 @@ function storedScalarTextForEdit(
   store: Store,
   id: ItemId,
 ): { kind: "editable"; text: string } | null {
-  const it = store.getItem(id);
+  const it = store.readItem(id);
   const kind = it.content.kind;
 
   if (!isContentSettableKind(kind)) return null;
@@ -603,7 +603,7 @@ export function textField(opts: TextFieldOpts): Component {
     if (events.includes("input")) ctx.on(inp as any, "input", commit as any);
     if (events.includes("blur")) ctx.on(inp as any, "blur", commit as any);
 
-    if (opts.textKeys) ctx.using(opts.textKeys(inp) ?? null);
+    if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
 
     ctx.watchComputed(
       () => opts.getState(),
@@ -662,7 +662,7 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
     if (events.includes("input")) ctx.on(inp as any, "input", commit as any);
     if (events.includes("blur")) ctx.on(inp as any, "blur", commit as any);
 
-    if (opts.textKeys) ctx.using(opts.textKeys(inp) ?? null);
+    if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
 
     ctx.watchComputed(
       () => opts.getState(),
@@ -678,7 +678,7 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
   });
 }
 
-export type ValueFieldOpts = {
+export type ContentFieldOpts = {
   editor: Editor;
   evaluator: Evaluator;
   focus: Focus;
@@ -709,12 +709,12 @@ function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
 }
 
 function canEditScalarText(store: Store, id: ItemId): boolean {
-  const it = store.getItem(id);
+  const it = store.readItem(id);
   const kind = it.content.kind;
   return isContentSettableKind(kind) && (kind === "blank" || kind === "scalar");
 }
 
-export function valueField(opts: ValueFieldOpts): Component {
+export function contentField(opts: ContentFieldOpts): Component {
   return createComponent((ctx) => {
     const host = el("div");
     if (opts.className) host.className = opts.className;
@@ -772,7 +772,7 @@ export function valueField(opts: ValueFieldOpts): Component {
 
       const inner = readonlyItemText(opts.evaluator, opts.id);
       d.replaceChildren(inner.el);
-      ctx.using(inner);
+      ctx.use(inner);
 
       return {
         el: d,

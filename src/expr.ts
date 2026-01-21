@@ -7,7 +7,7 @@ import {
   V,
   isPresent,
   isTrue,
-} from "./evaluator";
+} from "./eval";
 
 const ISSUE = {
   literal: "Expected literal value",

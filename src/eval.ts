@@ -66,10 +66,10 @@ const compareSortKey = (a: Value, b: Value) => {
   return 0;
 };
 
-type CacheRec = { valueSig?: ReadonlySignal<Value> };
+type CacheRec = { valueSignal?: ReadonlySignal<Value> };
 
 export type Evaluator = {
-  valueSig(id: ItemId): ReadonlySignal<Value>;
+  valueSignal(id: ItemId): ReadonlySignal<Value>;
   value(id: ItemId): Value;
   items(id: ItemId): ItemId[];
   prune(ids: readonly ItemId[]): void;
@@ -95,15 +95,15 @@ export function createEvaluator(opts: {
   };
 
   const baseEnvFor = (ownerId: ItemId, ctx: EvalCtx): EvalEnv => ({
-    lookup: (name) => lookupValue(name, ownerId, ctx),
+    lookup: (name) => lookupInAncestors(name, ownerId, ctx),
     resolve: (id) => evaluateValue(id, ctx),
-    getLabel: (id) => store.normalizeLabel(store.getItem(id).label),
+    getLabel: (id) => store.normalizeLabel(store.readItem(id).label),
   });
 
-  const lookupValue = (name: string, fromId: ItemId, ctx: EvalCtx): Value => {
+  const lookupInAncestors = (name: string, fromId: ItemId, ctx: EvalCtx) => {
     let cur: ItemId | null = fromId;
     while (cur != null) {
-      const ownerId = store.getItem(cur).ownerId;
+      const ownerId = store.readItem(cur).ownerId;
       if (ownerId == null) break;
 
       const hit = store.findChildByLabel(ownerId, name);
@@ -114,12 +114,12 @@ export function createEvaluator(opts: {
     return V.issue(`Unbound identifier: ${name}`);
   };
 
-  const freezeItemGroups = (v: Value, ctx: EvalCtx): Value => {
+  const materializeItemGroups = (v: Value, ctx: EvalCtx): Value => {
     if (v.kind === "item-group") {
       return V.valueGroup(
         v.items.map((id) => ({
-          label: store.getItem(id).label || undefined,
-          value: freezeItemGroups(evaluateValue(id, ctx), ctx),
+          label: store.readItem(id).label || undefined,
+          value: materializeItemGroups(evaluateValue(id, ctx), ctx),
         })),
       );
     }
@@ -127,7 +127,7 @@ export function createEvaluator(opts: {
       return V.valueGroup(
         v.items.map((it) => ({
           label: it.label,
-          value: freezeItemGroups(it.value, ctx),
+          value: materializeItemGroups(it.value, ctx),
         })),
       );
     }
@@ -175,7 +175,7 @@ export function createEvaluator(opts: {
       if (isIssue(row)) return row;
 
       const position = V.scalar(i + 1);
-      const label = V.scalar(store.getItem(rowId).label || "");
+      const label = V.scalar(store.readItem(rowId).label || "");
 
       return interpretExpr(expr, {
         lookup: (name) => {
@@ -186,10 +186,10 @@ export function createEvaluator(opts: {
           const hit = store.findChildByLabel(rowId, name);
           if (hit != null) return evaluateValue(hit, rowCtx);
 
-          return lookupValue(name, rowId, rowCtx);
+          return lookupInAncestors(name, rowId, rowCtx);
         },
         resolve: (id) => evaluateValue(id, rowCtx),
-        getLabel: (id) => store.normalizeLabel(store.getItem(id).label),
+        getLabel: (id) => store.normalizeLabel(store.readItem(id).label),
       });
     };
 
@@ -228,7 +228,7 @@ export function createEvaluator(opts: {
     ctx.visiting.add(id);
 
     try {
-      const it = store.getItem(id);
+      const it = store.readItem(id);
       switch (it.content.kind) {
         case "blank":
           return V.blank();
@@ -240,7 +240,7 @@ export function createEvaluator(opts: {
           const expr = it.content.expr.trim();
           if (!expr) return V.blank();
           const out = interpretExpr(expr, baseEnvFor(id, ctx));
-          return freezeItemGroups(out, ctx);
+          return materializeItemGroups(out, ctx);
         }
         case "lens":
           return evaluateLens(id, it.content, ctx);
@@ -252,12 +252,12 @@ export function createEvaluator(opts: {
     }
   }
 
-  const valueSig = (id: ItemId): ReadonlySignal<Value> => {
+  const valueSignal = (id: ItemId): ReadonlySignal<Value> => {
     const r = rec(id);
-    return (r.valueSig ??= computed(() => evaluateValue(id, makeEvalCtx())));
+    return (r.valueSignal ??= computed(() => evaluateValue(id, makeEvalCtx())));
   };
 
-  const value = (id: ItemId): Value => valueSig(id).value;
+  const value = (id: ItemId): Value => valueSignal(id).value;
 
   const items = (id: ItemId): ItemId[] => {
     const v = value(id);
@@ -272,5 +272,5 @@ export function createEvaluator(opts: {
     cache.clear();
   };
 
-  return { valueSig, value, items, prune, dispose };
+  return { valueSignal, value, items, prune, dispose };
 }

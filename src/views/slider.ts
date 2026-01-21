@@ -1,4 +1,9 @@
-import type { ItemId, Scalar, StoredContentSettable, Txn } from "../store";
+import type {
+  ItemId,
+  Scalar,
+  StoredContentSettable,
+  Transaction,
+} from "../store";
 import type {
   Editor,
   View,
@@ -9,17 +14,17 @@ import type {
   NavMode,
 } from "../editor";
 import {
-  mkFocusSelection,
+  focusSelection,
   caret0,
-  proposeSelection,
+  withSelection,
   tryCmd,
   applyCmd,
   setIdle,
 } from "../editor";
-import type { Evaluator } from "../evaluator";
-import { createComponent, el, clamp, stopEvent, type Component } from "../ui";
+import type { Evaluator } from "../eval";
+import { createComponent, el, clamp, stopEvent, type Component } from "../dom";
+import type { ViewFactoryArgs } from "./index";
 
-export type SliderViewCtx = { editor: Editor; evaluator: Evaluator };
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
 type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
@@ -53,7 +58,7 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetContent = (editor: Editor, id: ItemId) => {
-  const kind = editor.store.getItem(id).content.kind;
+  const kind = editor.store.readItem(id).content.kind;
   return kind !== "derived" && kind !== "lens";
 };
 
@@ -69,20 +74,19 @@ const getScalarOr = (
 export const sliderCommands = {
   setNumber(editor: Editor, focus: Focus, id: ItemId, n: number): CmdResult {
     return tryCmd(() => {
+      const store = editor.store;
       if (!Number.isFinite(n) || !canSetContent(editor, id))
         return { didChange: false };
 
       const content: StoredContentSettable = { kind: "scalar", value: n };
-      const txn: Txn = { ops: [{ kind: "patch", id, next: { content } }] };
+      const txn: Transaction = store.op.transaction([
+        store.op.patchContent(id, content),
+      ]);
 
-      const next = mkFocusSelection(focus, { kind: "content" }, caret0());
-      editor.apply(txn, proposeSelection(next));
+      const next = focusSelection(focus, { kind: "content" }, caret0());
+      editor.commit(txn, withSelection({ selection: next.selection }));
 
-      return {
-        didChange: true,
-        selection: next.selection,
-        effects: next.effects,
-      };
+      return { didChange: true };
     });
   },
 
@@ -155,17 +159,6 @@ function mountSlider({
       ],
     });
 
-    const focusContent = () => {
-      editor.setSelection(
-        mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
-      );
-    };
-
-    cctx.on(root, "pointerdown", (e) => {
-      focusContent();
-      e.stopPropagation();
-    });
-
     cctx.on(input as any, "input", () => {
       const n = Number(input.value);
       if (Number.isFinite(n))
@@ -214,7 +207,7 @@ function mountSlider({
 
     cctx.watch(() => {
       const { contentSettable } = (() => {
-        const kind = editor.store.getItem(id).content.kind;
+        const kind = editor.store.readItem(id).content.kind;
         return { contentSettable: kind !== "derived" && kind !== "lens" };
       })();
 
@@ -233,18 +226,17 @@ function mountSlider({
   });
 }
 
-export function createSliderView(
-  ctx: SliderViewCtx,
-  id: ItemId,
-  focus: Focus,
-  opts: SliderOpts = {},
-): View {
-  const { editor, evaluator } = ctx;
+export function createSliderView({
+  runtime,
+  id,
+  focus,
+}: ViewFactoryArgs & { focus: Focus }): View {
+  const { editor, eval: evaluator } = runtime;
 
   const resolved: SliderResolvedOpts = {
-    min: opts.min ?? 0,
-    max: opts.max ?? 100,
-    step: opts.step ?? 1,
+    min: 0,
+    max: 100,
+    step: 1,
   };
 
   const dispatch = (intent: SliderIntent): ViewKeyResult => {
@@ -310,7 +302,7 @@ export function createSliderView(
 
       if (!focused) {
         editor.setSelection(
-          mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+          focusSelection(focus, { kind: "content" }, caret0()).selection,
         );
         return;
       }

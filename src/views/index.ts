@@ -1,14 +1,16 @@
 import type { ItemId, ViewKind } from "../store";
-import type { Editor, View, Focus, EditorRuntime, Selection } from "../editor";
-import type { Component } from "../ui";
-import { el, ensureTabbable, valueField, mountChildViewInto } from "../ui";
-import type { Evaluator } from "../evaluator";
+import type { Editor, View, Focus } from "../editor";
+import type { Component } from "../dom";
+import { el, ensureTabbable, contentField, mountViewInto } from "../dom";
+import type { Evaluator } from "../eval";
 import { createTreeView } from "./tree";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type ViewCtx = { editor: Editor; evaluator: Evaluator };
-export type ViewFactory = (ctx: ViewCtx, id: ItemId, focus?: Focus) => View;
+export type Runtime = { editor: Editor; eval: Evaluator };
+
+export type ViewFactoryArgs = { runtime: Runtime; id: ItemId; focus?: Focus };
+export type ViewFactory = (args: ViewFactoryArgs) => View;
 
 const factories = {
   tree: createTreeView,
@@ -16,13 +18,13 @@ const factories = {
   slider: createSliderView,
 } as const satisfies Record<ViewKind, ViewFactory | undefined>;
 
-export function createViewForItem(
-  ctx: ViewCtx,
+export function createView(
+  runtime: Runtime,
   viewKind: ViewKind,
   id: ItemId,
   focus?: Focus,
 ): View | null {
-  return factories[viewKind]?.(ctx, id, focus) ?? null;
+  return factories[viewKind]?.({ runtime, id, focus }) ?? null;
 }
 
 export function hasView(viewKind: ViewKind): boolean {
@@ -33,65 +35,10 @@ export function viewWantsChildView(viewKind: ViewKind): boolean {
   return viewKind === "table" || viewKind === "slider";
 }
 
-export const createChildViewForItem = createViewForItem;
-
-export type MountedView = {
-  id: string;
-  view: View;
-  unmount(): void;
-};
-
-export function mountView(
-  runtime: EditorRuntime,
-  host: HTMLElement,
-  view: View,
-): MountedView {
-  runtime.registerView(view);
-  host.replaceChildren(view.root);
-
-  let mounted = true;
-
-  const unmount = () => {
-    if (!mounted) return;
-    mounted = false;
-    runtime.unregisterView(view.id);
-    view.dispose();
-  };
-
-  return { id: view.id, view, unmount };
-}
-
-export function replaceMountedView(
-  runtime: EditorRuntime,
-  host: HTMLElement,
-  current: MountedView | null,
-  next: View | null,
-): MountedView | null {
-  if (current?.view === next) return current;
-
-  current?.unmount();
-  host.replaceChildren();
-
-  return next ? mountView(runtime, host, next) : null;
-}
-
-export function mountViewWithIdleSelection(
-  runtime: EditorRuntime,
-  host: HTMLElement,
-  view: View,
-  opts: {
-    isIdle: () => boolean;
-    setSelection: (sel: Selection) => void;
-    idleSelection: Selection;
-  },
-): MountedView {
-  const mounted = mountView(runtime, host, view);
-  if (opts.isIdle()) opts.setSelection(opts.idleSelection);
-  return mounted;
-}
-
-export function itemBody(
-  ctx: { editor: Editor; evaluator: Evaluator; focus: Focus; id: ItemId },
+export function mountItemBody(
+  runtime: Runtime,
+  focus: Focus,
+  id: ItemId,
   opts: {
     textKeys?: (
       inp: HTMLInputElement | HTMLTextAreaElement,
@@ -100,11 +47,11 @@ export function itemBody(
     commitScalarText?: (text: string) => void;
   } = {},
 ): Component {
-  const { editor, evaluator, id, focus } = ctx;
-  const viewKind = editor.store.getItem(id).view as ViewKind;
+  const { editor, eval: evaluator } = runtime;
+  const viewKind = editor.store.readItem(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
-    return valueField({
+    return contentField({
       editor,
       evaluator,
       focus,
@@ -115,9 +62,9 @@ export function itemBody(
     });
   }
 
-  const child = createViewForItem({ editor, evaluator }, viewKind, id, focus);
+  const child = createView(runtime, viewKind, id, focus);
   if (!child) {
-    return valueField({
+    return contentField({
       editor,
       evaluator,
       focus,
@@ -132,7 +79,7 @@ export function itemBody(
   ensureTabbable(host);
   ensureTabbable(child.root);
 
-  host.__unmount = mountChildViewInto(editor, host, child);
+  host.__unmount = mountViewInto(editor, host, child);
   host.replaceChildren(child.root);
 
   return {
