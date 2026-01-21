@@ -25,6 +25,11 @@ const ISSUE = {
   positionOneBased: "Position must be 1 or greater",
   positionOutOfRange: (position: number, len: number) =>
     `Position ${position} is out of range (length ${len})`,
+  selectPosNonItemGroup: "Cannot select a position from non-item-group content",
+  selectPosNonValueGroup:
+    "Cannot select a position from non-value-group content",
+  selectPosNonGroup: "Cannot select a position from non-group content",
+  fnName: "Expected function name",
 } as const;
 
 const grammar = ohm.grammar(String.raw`
@@ -143,19 +148,21 @@ export interface Ident {
 
 const IMPLICIT_PARAM: Ident = { type: "Ident", label: "_" };
 
+const asAst = (n: any) => n.ast as Expr;
+
 function buildBinaryChain(
   first: ohm.Node,
   ops: ohm.Node,
-  rights: ohm.Node
+  rights: ohm.Node,
 ): Expr {
   return ops.children.reduce(
     (node, opNode, i) => ({
       type: "Binary",
       op: opNode.sourceString,
       left: node,
-      right: (rights.children[i] as any).ast,
+      right: asAst(rights.children[i]),
     }),
-    (first as any).ast
+    asAst(first as any),
   ) as Expr;
 }
 
@@ -188,49 +195,46 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
         op: tok.sourceString,
         argument: node,
       }),
-      (operand as any).ast
+      asAst(operand as any),
     ) as Expr;
   },
 
   Path(prim, parts) {
     return parts.children.reduce(
       (node: Expr, p: any) => p.ast(node),
-      (prim as any).ast
+      asAst(prim as any),
     ) as Expr;
   },
 
   Call(_open, list, _close) {
-    return (callee: Expr): Call => ({
-      type: "Call",
-      callee,
-      args: (list as any).asIteration().children.map((n: any) => n.ast),
-    });
+    const args = (list as any).asIteration().children.map((n: any) => n.ast);
+    return (callee: Expr): Call => ({ type: "Call", callee, args });
   },
 
   Select_expr(_open, expr, _close) {
+    const select = asAst(expr as any);
     return (receiver: Expr): Select => ({
       type: "Select",
       group: receiver,
-      select: (expr as any).ast,
+      select,
     });
   },
 
   Member(_dot, labelTok) {
+    const label: Ident = { type: "Ident", label: labelTok.sourceString };
     return (receiver: Expr): Member => ({
       type: "Member",
       group: receiver,
-      label: { type: "Ident", label: labelTok.sourceString },
+      label,
     });
   },
 
   Pipe(_colon, labelTok, _open, list, _close) {
+    const extra = (list as any).asIteration().children.map((n: any) => n.ast);
     return (receiver: Expr): Call => ({
       type: "Call",
       callee: { type: "Ident", label: labelTok.sourceString },
-      args: [
-        receiver,
-        ...(list as any).asIteration().children.map((n: any) => n.ast),
-      ],
+      args: [receiver, ...extra],
     });
   },
 
@@ -239,14 +243,14 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
 
   Prim_paren(_open, expr, _close) {
-    return (expr as any).ast;
+    return asAst(expr as any);
   },
 
   Prim_dotsel(_dot, _open, expr, _close) {
     return {
       type: "Select",
       group: IMPLICIT_PARAM,
-      select: (expr as any).ast,
+      select: asAst(expr as any),
     } as Select;
   },
 
@@ -278,27 +282,24 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
 });
 
-function isBlank(v: Value): boolean {
-  return v.kind === "blank";
-}
-
-function isScalar(v: Value): v is { kind: "scalar"; value: Scalar } {
-  return v.kind === "scalar";
-}
-
-function isItemGroup(v: Value): v is { kind: "item-group"; items: ItemId[] } {
-  return v.kind === "item-group";
-}
-
-function isValueGroup(
-  v: Value
-): v is { kind: "value-group"; items: LabeledValue[] } {
-  return v.kind === "value-group";
-}
+const isBlank = (v: Value) => v.kind === "blank";
+const isScalar = (v: Value): v is { kind: "scalar"; value: Scalar } =>
+  v.kind === "scalar";
+const isItemGroup = (v: Value): v is { kind: "item-group"; items: ItemId[] } =>
+  v.kind === "item-group";
+const isValueGroup = (
+  v: Value,
+): v is { kind: "value-group"; items: LabeledValue[] } =>
+  v.kind === "value-group";
 
 function firstIssue(...vs: Value[]): Value | null {
   for (const v of vs) if (v.kind === "issue") return v;
   return null;
+}
+
+function ensureNotIssue(v: Value): Value {
+  if (v.kind === "issue") throw new TypeError(v.message);
+  return v;
 }
 
 function primExpect(v: Value): Scalar {
@@ -326,7 +327,6 @@ function numOpt(v: Value): number | null {
 function textOpt(v: Value): string | null {
   if (v.kind === "blank") return null;
   if (v.kind === "issue") throw new TypeError(v.message);
-
   if (v.kind === "scalar" && typeof v.value === "string") return v.value;
   throw new TypeError(ISSUE.textOrBlank);
 }
@@ -356,7 +356,6 @@ function toNumber(v: Value): number | null {
 function toText(v: Value): string | null {
   if (v.kind === "blank") return null;
   if (v.kind === "issue") throw new TypeError(v.message);
-
   if (v.kind === "scalar") return String(v.value);
   return null;
 }
@@ -374,7 +373,7 @@ function numericOp(
   const issue = firstIssue(...args);
   if (issue) throw new TypeError(issue.message);
 
-  const nums = args.map((a) => numOpt(a));
+  const nums = args.map(numOpt);
   if (nums.some((n) => n === null)) return null;
   return map(...(nums as number[]));
 }
@@ -385,44 +384,43 @@ function getItemGroupByLabel(group: Value, label: string, env: EvalEnv): Value {
 
   const id = group.items.find((cid) => env.getLabel(cid) === label);
   if (id == null) return V.issue(ISSUE.unknownLabel(label));
-
   return env.resolve(id);
+}
+
+function normalizePosition(position: number): { index: number } | Value {
+  if (!Number.isFinite(position)) return V.issue(ISSUE.positionFinite);
+  const index = Math.trunc(position) - 1;
+  if (index < 0) return V.issue(ISSUE.positionOneBased);
+  return { index };
 }
 
 function getItemGroupByPosition(
   group: Value,
   position: number,
-  env: EvalEnv
+  env: EvalEnv,
 ): Value {
   if (group.kind === "issue") return group;
 
-  if (!Number.isFinite(position)) return V.issue(ISSUE.positionFinite);
+  const norm = normalizePosition(position);
+  if ("kind" in norm) return norm;
 
-  const index = Math.trunc(position) - 1;
-  if (index < 0) return V.issue(ISSUE.positionOneBased);
+  if (!isItemGroup(group)) return V.issue(ISSUE.selectPosNonItemGroup);
 
-  if (!isItemGroup(group))
-    return V.issue("Cannot select a position from non-item-group content");
-
-  const id = group.items[index];
+  const id = group.items[norm.index];
   if (id == null)
     return V.issue(ISSUE.positionOutOfRange(position, group.items.length));
-
   return env.resolve(id);
 }
 
 function getValueGroupByPosition(group: Value, position: number): Value {
   if (group.kind === "issue") return group;
 
-  if (!Number.isFinite(position)) return V.issue(ISSUE.positionFinite);
+  const norm = normalizePosition(position);
+  if ("kind" in norm) return norm;
 
-  const index = Math.trunc(position) - 1;
-  if (index < 0) return V.issue(ISSUE.positionOneBased);
+  if (!isValueGroup(group)) return V.issue(ISSUE.selectPosNonValueGroup);
 
-  if (!isValueGroup(group))
-    return V.issue("Cannot select a position from non-value-group content");
-
-  const it = group.items[index];
+  const it = group.items[norm.index];
   if (it == null)
     return V.issue(ISSUE.positionOutOfRange(position, group.items.length));
   return it.value;
@@ -437,12 +435,11 @@ function getByPositionOrLabel(group: Value, selV: Value, env: EvalEnv): Value {
     if (typeof lit === "number") {
       if (isItemGroup(group)) return getItemGroupByPosition(group, lit, env);
       if (isValueGroup(group)) return getValueGroupByPosition(group, lit);
-      return V.issue("Cannot select a position from non-group content");
+      return V.issue(ISSUE.selectPosNonGroup);
     }
-    if (typeof lit === "string") {
-      return getItemGroupByLabel(group, lit, env);
-    }
+    if (typeof lit === "string") return getItemGroupByLabel(group, lit, env);
   }
+
   return V.issue(ISSUE.posLabelMustBeTextOrNumber);
 }
 
@@ -468,10 +465,7 @@ const UNARY_OPS: Record<
   Unary["op"],
   (v: Value) => boolean | number | string | null
 > = {
-  "!": (v) => {
-    if (v.kind === "issue") throw new TypeError(v.message);
-    return !isTrue(v);
-  },
+  "!": (v) => !isTrue(ensureNotIssue(v)),
   "-": (v) => numericOp((x) => -x, v),
   "+": (v) => numericOp((x) => +x, v),
 };
@@ -481,9 +475,7 @@ type Builtin = (env: EvalEnv, ...args: Value[]) => Value;
 function contentFn(op: (env: EvalEnv, ...args: Value[]) => Value): Builtin {
   return (env, ...args) => {
     const want = Math.max(0, op.length - 1);
-    const filled = Array.from({ length: want }, (_, i) =>
-      i < args.length ? args[i]! : V.blank()
-    );
+    const filled = Array.from({ length: want }, (_, i) => args[i] ?? V.blank());
     return op(env, ...filled);
   };
 }
@@ -494,21 +486,23 @@ type ArgSpec<T> =
 
 const reqNum = { kind: "req", convert: numOpt } as const;
 const optNum = (d: number) =>
-  ({ kind: "opt", convert: numOpt, fallback: d } as const);
+  ({ kind: "opt", convert: numOpt, fallback: d }) as const;
 
 const reqText = { kind: "req", convert: textOpt } as const;
 const optText = (d: string) =>
-  ({ kind: "opt", convert: textOpt, fallback: d } as const);
+  ({ kind: "opt", convert: textOpt, fallback: d }) as const;
 
 function typedFn<A extends unknown[]>(
   specs: { [K in keyof A]: ArgSpec<A[K]> },
-  impl: (env: EvalEnv, ...args: A) => Value
+  impl: (env: EvalEnv, ...args: A) => Value,
 ): Builtin {
-  return (env: EvalEnv, ...args: Value[]) => {
-    for (const v of args) if (v.kind === "issue") return v;
+  return (env, ...args) => {
+    const issue = firstIssue(...args);
+    if (issue) return issue;
 
-    const inputs: Value[] = Array.from({ length: specs.length }, (_, i) =>
-      i < args.length ? args[i]! : V.blank()
+    const inputs = Array.from(
+      { length: specs.length },
+      (_, i) => args[i] ?? V.blank(),
     );
 
     const resolved: unknown[] = [];
@@ -519,7 +513,7 @@ function typedFn<A extends unknown[]>(
         if (v === null) return V.blank();
         resolved.push(v);
       } else {
-        resolved.push(v === null ? spec.fallback : v);
+        resolved.push(v ?? spec.fallback);
       }
     }
     return impl(env, ...(resolved as A));
@@ -558,11 +552,16 @@ function groupTextsOpt(g: Value, env: EvalEnv): string[] {
 function reduceNumbers(
   g: Value,
   env: EvalEnv,
-  op: (ns: number[]) => number | null
+  op: (ns: number[]) => number | null,
 ): number | null {
   const ns = groupNumbersOpt(g, env);
   return ns.length ? op(ns) : null;
 }
+
+const groupSpec = {
+  kind: "req",
+  convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
+} as const;
 
 export const library: Record<string, Builtin> = {
   is_blank: contentFn((_env, v) => primitiveToValue(isBlank(v))),
@@ -593,11 +592,11 @@ export const library: Record<string, Builtin> = {
 
   if_blank: contentFn((_env, content, fallback) => {
     if (content.kind === "issue") return content;
-    return isBlank(content) ? fallback ?? V.blank() : content;
+    return isBlank(content) ? (fallback ?? V.blank()) : content;
   }),
 
   if_issue: contentFn((_env, content, fallback) =>
-    content.kind === "issue" ? fallback ?? V.blank() : content
+    content.kind === "issue" ? (fallback ?? V.blank()) : content,
   ),
 
   first_present: (_env, ...contents) => {
@@ -647,17 +646,17 @@ export const library: Record<string, Builtin> = {
       optNum(Number.NEGATIVE_INFINITY),
       optNum(Number.POSITIVE_INFINITY),
     ],
-    (_env, n, lo, hi) => V.scalar(Math.min(Math.max(n, lo), hi))
+    (_env, n, lo, hi) => V.scalar(Math.min(Math.max(n, lo), hi)),
   ),
 
   mod: typedFn([reqNum, optNum(1)], (_env, d, m) =>
-    V.scalar(((d % m) + m) % m)
+    V.scalar(((d % m) + m) % m),
   ),
 
   trim: typedFn([reqText], (_env, t) => V.scalar(t.trim())),
 
   contains: typedFn([reqText, reqText], (_env, t, s) =>
-    t.includes(s) ? V.scalar(true) : V.blank()
+    t.includes(s) ? V.scalar(true) : V.blank(),
   ),
 
   lower: typedFn([reqText], (_env, t) => V.scalar(t.toLowerCase())),
@@ -666,108 +665,58 @@ export const library: Record<string, Builtin> = {
 
   pad_start: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (_env, t, targetLen, padText) => V.scalar(t.padStart(targetLen, padText))
+    (_env, t, targetLen, padText) => V.scalar(t.padStart(targetLen, padText)),
   ),
 
   pad_end: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (_env, t, targetLen, padText) => V.scalar(t.padEnd(targetLen, padText))
+    (_env, t, targetLen, padText) => V.scalar(t.padEnd(targetLen, padText)),
   ),
 
   split: typedFn([reqText, optText("")], (_env, t, sep) =>
-    V.valueGroup(t.split(sep).map((p) => ({ value: V.scalar(p) })))
+    V.valueGroup(t.split(sep).map((p) => ({ value: V.scalar(p) }))),
   ),
 
   join: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-      optText(","),
-    ],
+    [groupSpec as any, optText(",")],
     (env, groupV: Value, sep: string) => {
       const parts = groupTextsOpt(groupV, env);
       return parts.length ? V.scalar(parts.join(sep)) : V.blank();
-    }
+    },
   ),
 
-  count: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-    ],
-    (env, source: Value) => {
-      const vs = iterGroupValues(source, env);
-      return V.scalar(vs.filter((c) => c.kind !== "blank").length);
-    }
+  count: typedFn([groupSpec as any], (env, source: Value) => {
+    const vs = iterGroupValues(source, env);
+    return V.scalar(vs.filter((c) => c.kind !== "blank").length);
+  }),
+
+  count_blank: typedFn([groupSpec as any], (env, source: Value) => {
+    const vs = iterGroupValues(source, env);
+    return V.scalar(vs.filter((c) => c.kind === "blank").length);
+  }),
+
+  sum: typedFn([groupSpec as any], (env, source: Value) =>
+    primitiveToValue(
+      reduceNumbers(source, env, (ns) => ns.reduce((a, b) => a + b, 0)),
+    ),
   ),
 
-  count_blank: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-    ],
-    (env, source: Value) => {
-      const vs = iterGroupValues(source, env);
-      return V.scalar(vs.filter((c) => c.kind === "blank").length);
-    }
+  avg: typedFn([groupSpec as any], (env, source: Value) =>
+    primitiveToValue(
+      reduceNumbers(
+        source,
+        env,
+        (ns) => ns.reduce((a, b) => a + b, 0) / ns.length,
+      ),
+    ),
   ),
 
-  sum: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-    ],
-    (env, source: Value) =>
-      primitiveToValue(
-        reduceNumbers(source, env, (ns) => ns.reduce((a, b) => a + b, 0))
-      )
+  min: typedFn([groupSpec as any], (env, source: Value) =>
+    primitiveToValue(reduceNumbers(source, env, (ns) => Math.min(...ns))),
   ),
 
-  avg: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-    ],
-    (env, source: Value) =>
-      primitiveToValue(
-        reduceNumbers(
-          source,
-          env,
-          (ns) => ns.reduce((a, b) => a + b, 0) / ns.length
-        )
-      )
-  ),
-
-  min: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-    ],
-    (env, source: Value) =>
-      primitiveToValue(reduceNumbers(source, env, (ns) => Math.min(...ns)))
-  ),
-
-  max: typedFn(
-    [
-      {
-        kind: "req",
-        convert: (v: Value) => (isItemGroup(v) || isValueGroup(v) ? v : null),
-      } as any,
-    ],
-    (env, source: Value) =>
-      primitiveToValue(reduceNumbers(source, env, (ns) => Math.max(...ns)))
+  max: typedFn([groupSpec as any], (env, source: Value) =>
+    primitiveToValue(reduceNumbers(source, env, (ns) => Math.max(...ns))),
   ),
 };
 
@@ -793,14 +742,12 @@ function interpretAst(e: Expr, env: EvalEnv): Value {
       case "Unary": {
         const v = interpretAst(e.argument, env);
         if (v.kind === "issue") return v;
-
         return primitiveToValue(UNARY_OPS[e.op](v));
       }
 
       case "Call": {
         const callee = e.callee;
-        if (callee.type !== "Ident")
-          throw new TypeError("Expected function name");
+        if (callee.type !== "Ident") throw new TypeError(ISSUE.fnName);
 
         const args = e.args.map((a) => interpretAst(a, env));
         const issue = firstIssue(...args);

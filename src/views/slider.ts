@@ -1,26 +1,19 @@
-import { effect } from "@preact/signals-core";
 import type { ItemId, Scalar, StoredContentSettable, Txn } from "../store";
+import type { Editor, View, Focus, ViewKeyResult, CmdResult } from "../editor";
 import {
-  type Editor,
-  type Region,
-  type Focus,
-  type Selection,
-  type EditorEffect,
-  type Binding,
-  type RegionKeyResult,
   mkFocusSelection,
+  caret0,
+  proposeSelection,
+  tryCmd,
+  applyCmd,
+  setIdle,
 } from "../editor";
-import { el, clamp, CleanupBag } from "../ui";
+import { createComponent, el, clamp, stopEvent, type Component } from "../ui";
 
-export type SliderRegionCtx = { editor: Editor };
+export type SliderViewCtx = { editor: Editor };
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
-type CmdResult = {
-  didChange: boolean;
-  selection?: Selection;
-  effects?: EditorEffect[];
-  issue?: string;
-};
+type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
 
 function toNumberOr(v: Scalar, fallback: number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
@@ -31,37 +24,51 @@ function toNumberOr(v: Scalar, fallback: number): number {
   return v === true ? 1 : fallback;
 }
 
+function precisionFromStep(step: number): number {
+  if (!Number.isFinite(step) || step <= 0) return 0;
+  const s = String(step);
+
+  if (/[eE]/.test(s)) {
+    const [m, e] = s.split(/[eE]/);
+    const exp = Number(e);
+    const dec = (m.split(".")[1]?.length ?? 0) - exp;
+    return Math.max(0, dec);
+  }
+
+  return Math.max(0, s.split(".")[1]?.length ?? 0);
+}
+
+function formatNumberForStep(n: number, step: number): string {
+  const p = precisionFromStep(step);
+  return p <= 0 ? String(Math.trunc(n)) : n.toFixed(p);
+}
+
 const canSetContent = (editor: Editor, id: ItemId) =>
   editor.store.sel.item(id).contentSettable;
 
-const withIssue = (err: unknown): CmdResult => ({
-  didChange: false,
-  issue: err instanceof Error ? err.message : String(err),
-});
+const getScalarOr = (editor: Editor, id: ItemId, fallback: number): number => {
+  const v = editor.store.sel.value(id);
+  return v.kind === "scalar" ? toNumberOr(v.value, fallback) : fallback;
+};
 
 export const sliderCommands = {
   setNumber(editor: Editor, focus: Focus, id: ItemId, n: number): CmdResult {
-    try {
+    return tryCmd(() => {
       if (!Number.isFinite(n) || !canSetContent(editor, id))
         return { didChange: false };
 
       const content: StoredContentSettable = { kind: "scalar", value: n };
       const txn: Txn = { ops: [{ kind: "patch", id, next: { content } }] };
 
-      const res = mkFocusSelection(focus, { kind: "content" }, 0);
-
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
+      const next = mkFocusSelection(focus, { kind: "content" }, caret0());
+      editor.apply(txn, proposeSelection(next));
 
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
-    } catch (err) {
-      return withIssue(err);
-    }
+    });
   },
 
   nudge(
@@ -69,164 +76,181 @@ export const sliderCommands = {
     focus: Focus,
     id: ItemId,
     deltaSteps: number,
-    opts: Required<Pick<SliderOpts, "min" | "max" | "step">>,
+    opts: SliderResolvedOpts,
   ): CmdResult {
-    try {
+    return tryCmd(() => {
       if (!canSetContent(editor, id)) return { didChange: false };
 
-      const v = editor.store.sel.value(id);
-      const cur =
-        v.kind === "scalar" ? toNumberOr(v.value, opts.min) : opts.min;
+      const cur = getScalarOr(editor, id, opts.min);
+      const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
 
-      return sliderCommands.setNumber(
-        editor,
-        focus,
-        id,
-        clamp(cur + deltaSteps * opts.step, opts.min, opts.max),
-      );
-    } catch (err) {
-      return withIssue(err);
-    }
+      return sliderCommands.setNumber(editor, focus, id, next);
+    });
   },
 } as const;
 
-export function createSliderRegion(
-  ctx: SliderRegionCtx,
+type SliderMountCtx = {
+  editor: Editor;
+  id: ItemId;
+  focus: Focus;
+  opts: SliderResolvedOpts;
+};
+
+function mountSlider({ editor, id, focus, opts }: SliderMountCtx): Component {
+  const { store } = editor;
+
+  return createComponent((cctx) => {
+    const root = el("div", "view slider");
+    root.tabIndex = 0;
+
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(opts.min);
+    input.max = String(opts.max);
+    input.step = String(opts.step);
+
+    const valueEl = el("div", "slider-value");
+    root.append(input, valueEl);
+
+    cctx.focusable({
+      editor,
+      focus,
+      elementFor: () => input,
+      targets: [
+        {
+          target: { kind: "content" },
+          getEl: () => input,
+          pointerHost: () => root,
+          caret: "zero",
+          stopPropagation: true,
+        },
+      ],
+    });
+
+    const focusContent = () => {
+      const res = mkFocusSelection(focus, { kind: "content" }, caret0());
+      editor.setSelection(res.selection, res.effects);
+    };
+
+    cctx.on(root, "pointerdown", (e) => {
+      focusContent();
+      e.stopPropagation();
+    });
+
+    cctx.on(input as any, "input", () => {
+      const n = Number(input.value);
+      if (Number.isFinite(n))
+        applyCmd(editor, sliderCommands.setNumber(editor, focus, id, n));
+    });
+
+    cctx.watch(() => {
+      const { contentSettable } = store.sel.item(id);
+      const cur = getScalarOr(editor, id, opts.min);
+      const clamped = clamp(cur, opts.min, opts.max);
+      const str = formatNumberForStep(clamped, opts.step);
+
+      if (input.value !== str) input.value = str;
+      if (valueEl.textContent !== str) valueEl.textContent = str;
+
+      input.disabled = !contentSettable;
+      root.classList.toggle("readonly", !contentSettable);
+    });
+
+    return root;
+  });
+}
+
+export function createSliderView(
+  ctx: SliderViewCtx,
   id: ItemId,
   focus: Focus,
   opts: SliderOpts = {},
-): Region {
+): View {
   const { editor } = ctx;
-  const { store } = editor;
 
-  const min = opts.min ?? 0;
-  const max = opts.max ?? 100;
-  const step = opts.step ?? 1;
-  const numericOpts = { min, max, step };
-
-  const root = el("div", "region slider");
-  root.tabIndex = 0;
-
-  const input = document.createElement("input");
-  input.type = "range";
-  input.min = String(min);
-  input.max = String(max);
-  input.step = String(step);
-
-  const valueEl = el("div", "slider-value");
-  root.append(input, valueEl);
-
-  const cleanup = new CleanupBag();
-
-  const binding: Binding = {
-    focus,
-    elementFor: () => input,
-    setCaret: () => {},
-    getTextLength: () => 0,
-  };
-  editor.runtime.registerBinding(binding);
-  cleanup.add(() => editor.runtime.unregisterBinding(focus));
-
-  const setFocusSelection = () => {
-    const res = mkFocusSelection(focus, { kind: "content" }, 0);
-    editor.setSelection(res.selection, res.effects);
+  const resolved: SliderResolvedOpts = {
+    min: opts.min ?? 0,
+    max: opts.max ?? 100,
+    step: opts.step ?? 1,
   };
 
-  const onPointerDown = () => setFocusSelection();
-  root.addEventListener("pointerdown", onPointerDown);
-  cleanup.add(() => root.removeEventListener("pointerdown", onPointerDown));
+  const mountCtx: SliderMountCtx = { editor, id, focus, opts: resolved };
+  const comp = mountSlider(mountCtx);
 
-  const onInput = () => {
-    const n = Number(input.value);
-    if (Number.isFinite(n)) sliderCommands.setNumber(editor, focus, id, n);
-  };
-  input.addEventListener("input", onInput);
-  cleanup.add(() => input.removeEventListener("input", onInput));
-
-  const stop = effect(() => {
-    const { contentSettable } = store.sel.item(id);
-    const v = store.sel.value(id);
-
-    const cur = v.kind === "scalar" ? toNumberOr(v.value, min) : min;
-    const clamped = clamp(cur, min, max);
-    const nextStr =
-      step % 1 === 0 ? String(Math.trunc(clamped)) : String(clamped);
-
-    if (input.value !== nextStr) input.value = nextStr;
-    valueEl.textContent = nextStr;
-
-    input.disabled = !contentSettable;
-    root.classList.toggle("readonly", !contentSettable);
-  });
-  cleanup.add(stop);
-
-  const region: Region = {
+  return {
     id: `slider:${String(id)}`,
-    root,
+    root: comp.el,
 
     onActivate() {
       const sel = editor.runtime.selection.value;
-      const want =
+      const focused =
         sel.kind === "focused" &&
         sel.focus.id === focus.id &&
-        sel.focus.containerId === focus.containerId;
+        sel.focus.scopeId === focus.scopeId;
 
-      if (!want) {
-        setFocusSelection();
-      } else {
-        editor.setSelection(sel, [
-          { type: "DOM_FOCUS", focus, target: { kind: "content" } },
-        ]);
+      if (!focused) {
+        const res = mkFocusSelection(focus, { kind: "content" }, caret0());
+        editor.setSelection(res.selection, res.effects);
+        return;
       }
+
+      editor.setSelection(sel, [
+        { type: "DOM_FOCUS", focus, target: { kind: "content" } },
+      ]);
     },
 
-    onKeyDown(e): RegionKeyResult {
+    onKeyDown(e): ViewKeyResult {
       if (e.metaKey || e.ctrlKey) return;
 
       let mul = 1;
       if (e.shiftKey) mul *= 10;
       if (e.altKey) mul *= 0.1;
 
-      const handled = () => {
-        e.preventDefault();
-        e.stopPropagation();
-      };
+      const nudge = (dir: number) =>
+        applyCmd(
+          editor,
+          sliderCommands.nudge(editor, focus, id, dir * mul, resolved),
+        );
 
       switch (e.key) {
         case "ArrowLeft":
         case "ArrowDown":
-          handled();
-          sliderCommands.nudge(editor, focus, id, -1 * mul, numericOpts);
+          stopEvent(e);
+          nudge(-1);
           return;
 
         case "ArrowRight":
         case "ArrowUp":
-          handled();
-          sliderCommands.nudge(editor, focus, id, 1 * mul, numericOpts);
+          stopEvent(e);
+          nudge(1);
           return;
 
         case "Home":
-          handled();
-          sliderCommands.setNumber(editor, focus, id, min);
+          stopEvent(e);
+          applyCmd(
+            editor,
+            sliderCommands.setNumber(editor, focus, id, resolved.min),
+          );
           return;
 
         case "End":
-          handled();
-          sliderCommands.setNumber(editor, focus, id, max);
+          stopEvent(e);
+          applyCmd(
+            editor,
+            sliderCommands.setNumber(editor, focus, id, resolved.max),
+          );
           return;
 
         case "Escape":
-          handled();
-          editor.setSelection({ kind: "idle" }, [{ type: "CLEAR_DOM_FOCUS" }]);
+          stopEvent(e);
+          setIdle(editor);
           return;
       }
     },
 
     dispose() {
-      cleanup.run();
-      root.replaceChildren();
+      comp.dispose();
+      comp.el.replaceChildren();
     },
   };
-
-  return region;
 }

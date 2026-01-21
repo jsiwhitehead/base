@@ -1,75 +1,140 @@
-import type { ItemId, ViewId } from "../store";
-import type { Editor, Region, Focus, EditorRuntime } from "../editor";
-import { createTreeRegion } from "./tree";
-import { createTableRegion } from "./table";
-import { createSliderRegion } from "./slider";
+import type { ItemId, ViewKind } from "../store";
+import type { Editor, View, Focus, EditorRuntime, Selection } from "../editor";
+import type { Component } from "../ui";
+import { el, ensureTabbable, valueField, mountChildViewInto } from "../ui";
+import { createTreeView } from "./tree";
+import { createTableView } from "./table";
+import { createSliderView } from "./slider";
 
-export type RegionCtx = { editor: Editor };
-
-export type RegionFactory = (
-  ctx: RegionCtx,
-  id: ItemId,
-  focus?: Focus,
-) => Region;
+export type ViewCtx = { editor: Editor };
+export type ViewFactory = (ctx: ViewCtx, id: ItemId, focus?: Focus) => View;
 
 const factories = {
-  tree: createTreeRegion,
-  table: createTableRegion,
-  slider: createSliderRegion,
-} as const satisfies Record<ViewId, RegionFactory | undefined>;
+  tree: createTreeView,
+  table: createTableView,
+  slider: createSliderView,
+} as const satisfies Record<ViewKind, ViewFactory | undefined>;
 
-export function createRegionForItem(
-  ctx: RegionCtx,
-  view: ViewId,
+export function createViewForItem(
+  ctx: ViewCtx,
+  viewKind: ViewKind,
   id: ItemId,
   focus?: Focus,
-): Region | null {
-  return factories[view]?.(ctx, id, focus) ?? null;
+): View | null {
+  return factories[viewKind]?.(ctx, id, focus) ?? null;
 }
 
-export function hasRegion(view: ViewId): boolean {
-  return view in factories;
+export function hasView(viewKind: ViewKind): boolean {
+  return viewKind in factories;
 }
 
-export type MountedRegion = {
+export function viewWantsChildView(viewKind: ViewKind): boolean {
+  return viewKind === "table" || viewKind === "slider";
+}
+
+export const createChildViewForItem = createViewForItem;
+
+export type MountedView = {
   id: string;
-  region: Region;
+  view: View;
   unmount(): void;
 };
 
-export function mountRegion(
+export function mountView(
   runtime: EditorRuntime,
   host: HTMLElement,
-  region: Region,
-): MountedRegion {
-  runtime.registerRegion(region);
-  host.replaceChildren(region.root);
+  view: View,
+): MountedView {
+  runtime.registerView(view);
+  host.replaceChildren(view.root);
 
   let mounted = true;
 
   const unmount = () => {
     if (!mounted) return;
     mounted = false;
-    runtime.unregisterRegion(region.id);
-    region.dispose();
+    runtime.unregisterView(view.id);
+    view.dispose();
   };
 
-  return { id: region.id, region, unmount };
+  return { id: view.id, view, unmount };
 }
 
-export function replaceMountedRegion(
+export function replaceMountedView(
   runtime: EditorRuntime,
   host: HTMLElement,
-  current: MountedRegion | null,
-  next: Region | null,
-): MountedRegion | null {
-  if (!next) {
-    current?.unmount();
-    return null;
-  }
-
-  if (current?.region === next) return current;
+  current: MountedView | null,
+  next: View | null,
+): MountedView | null {
+  if (current?.view === next) return current;
 
   current?.unmount();
-  return mountRegion(runtime, host, next);
+  host.replaceChildren();
+
+  return next ? mountView(runtime, host, next) : null;
+}
+
+export function mountViewWithIdleSelection(
+  runtime: EditorRuntime,
+  host: HTMLElement,
+  view: View,
+  opts: {
+    isIdle: () => boolean;
+    setSelection: (sel: Selection) => void;
+    idleSelection: Selection;
+  },
+): MountedView {
+  const mounted = mountView(runtime, host, view);
+  if (opts.isIdle()) opts.setSelection(opts.idleSelection);
+  return mounted;
+}
+
+export function itemBody(
+  ctx: { editor: Editor; focus: Focus; id: ItemId },
+  opts: {
+    textKeys?: (
+      inp: HTMLInputElement | HTMLTextAreaElement,
+    ) => (() => void) | void;
+    renderItemGroupChild?: (childId: ItemId) => Component;
+  } = {},
+): Component {
+  const { editor, id, focus } = ctx;
+  const viewKind = editor.store.sel.item(id).view as ViewKind;
+
+  if (!viewWantsChildView(viewKind)) {
+    return valueField({
+      editor,
+      focus,
+      id,
+      textKeys: opts.textKeys,
+      renderItemGroupChild: opts.renderItemGroupChild,
+    });
+  }
+
+  const child = createViewForItem({ editor }, viewKind, id, focus);
+  if (!child) {
+    return valueField({
+      editor,
+      focus,
+      id,
+      textKeys: opts.textKeys,
+      renderItemGroupChild: opts.renderItemGroupChild,
+    });
+  }
+
+  const host = el("div") as HTMLElement & { __unmount?: () => void };
+  ensureTabbable(host);
+  ensureTabbable(child.root);
+
+  host.__unmount = mountChildViewInto(editor, host, child);
+  host.replaceChildren(child.root);
+
+  return {
+    el: host,
+    dispose() {
+      host.__unmount?.();
+      host.__unmount = undefined;
+      host.replaceChildren();
+    },
+  };
 }

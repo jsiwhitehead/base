@@ -1,13 +1,13 @@
 import {
-  signal,
-  computed,
   batch,
+  computed,
+  signal,
   type ReadonlySignal,
 } from "@preact/signals-core";
 
 export type ItemId = number | string;
 export type Scalar = true | number | string;
-export type ViewId = string;
+export type ViewKind = string;
 
 export type StoredContentSettable =
   | Readonly<{ kind: "blank" }>
@@ -23,7 +23,7 @@ export type Item = Readonly<{
   id: ItemId;
   ownerId: ItemId | null;
   label: string;
-  view: ViewId;
+  view: ViewKind;
   content: StoredContent;
 }>;
 
@@ -47,17 +47,11 @@ export const V = {
   }),
 } as const;
 
-export function isPresent(v: Value): boolean {
-  return v.kind !== "blank" && v.kind !== "issue";
-}
+export const isPresent = (v: Value) => v.kind !== "blank" && v.kind !== "issue";
+export const isTrue = (v: Value) => v.kind === "scalar" && v.value === true;
 
-export function isTrue(v: Value): boolean {
-  return v.kind === "scalar" && v.value === true;
-}
-
-function isIssue(v: Value): v is { kind: "issue"; message: string } {
-  return v.kind === "issue";
-}
+const isIssue = (v: Value): v is { kind: "issue"; message: string } =>
+  v.kind === "issue";
 
 export type EvalEnv = {
   lookup(name: string): Value;
@@ -84,7 +78,7 @@ export type ItemInfo = {
   id: ItemId;
   ownerId: ItemId | null;
   label: string;
-  view: ViewId;
+  view: ViewKind;
   content: StoredContent;
 
   contentKind: StoredContent["kind"];
@@ -93,6 +87,58 @@ export type ItemInfo = {
   derivedExpr?: string;
   lensSpec?: { from: string; where: string; orderBy: string };
 };
+
+export type HeaderFieldKey =
+  | "derived.expr"
+  | "lens.from"
+  | "lens.where"
+  | "lens.orderBy";
+
+export type HeaderFieldDef = Readonly<{
+  key: HeaderFieldKey;
+  label: string;
+  multiline: boolean;
+}>;
+
+const DERIVED_FIELDS = [
+  { key: "derived.expr", label: "=", multiline: true },
+] as const;
+const LENS_FIELDS = [
+  { key: "lens.from", label: "~", multiline: false },
+  { key: "lens.where", label: "where:", multiline: true },
+  { key: "lens.orderBy", label: "orderBy:", multiline: true },
+] as const;
+
+export function headerFieldsForItem(info: ItemInfo): readonly HeaderFieldDef[] {
+  if (info.contentKind === "derived") return DERIVED_FIELDS;
+  if (info.contentKind === "lens") return LENS_FIELDS;
+  return [] as const;
+}
+
+export const headerFieldCountForItem = (info: ItemInfo) =>
+  headerFieldsForItem(info).length;
+
+export function headerFieldValueForItem(
+  info: ItemInfo,
+  key: HeaderFieldKey,
+): string {
+  if (info.contentKind === "derived")
+    return key === "derived.expr" ? (info.derivedExpr ?? "") : "";
+  if (info.contentKind !== "lens") return "";
+
+  const s = info.lensSpec;
+  if (!s) return "";
+  switch (key) {
+    case "lens.from":
+      return s.from ?? "";
+    case "lens.where":
+      return s.where ?? "";
+    case "lens.orderBy":
+      return s.orderBy ?? "";
+    default:
+      return "";
+  }
+}
 
 export type ReparentSpec = {
   childId: ItemId;
@@ -109,7 +155,7 @@ export type ReparentResult = {
 
 export type Patch = Readonly<{
   label?: string;
-  view?: ViewId;
+  view?: ViewKind;
   content?: StoredContent;
 }>;
 
@@ -139,8 +185,8 @@ export type Store = {
   setRoot(id: ItemId): void;
   getRoot(): ItemId;
 
-  allocId(): number;
-  setNextId(next: number): void;
+  allocId(): ItemId;
+  setNextId(next: ItemId): void;
 
   setInterpreter(fn: Interpreter): void;
 
@@ -153,7 +199,7 @@ export type Store = {
     create(item: Item): Op;
     patch(id: ItemId, next: Patch): Op;
     patchLabel(id: ItemId, label: string): Op;
-    patchView(id: ItemId, view: ViewId): Op;
+    patchView(id: ItemId, view: ViewKind): Op;
     patchContent(id: ItemId, content: StoredContent): Op;
     reparent(spec: ReparentSpec): Op;
     detach(childId: ItemId): Op;
@@ -181,9 +227,8 @@ export type Store = {
   compactUnreachable(): { removed: number };
 };
 
-export function isContentSettableKind(kind: StoredContent["kind"]): boolean {
-  return kind !== "derived" && kind !== "lens";
-}
+export const isContentSettableKind = (kind: StoredContent["kind"]) =>
+  kind !== "derived" && kind !== "lens";
 
 type GetSignal<T> = { get(): T; peek(): T };
 type SetSignal<T> = GetSignal<T> & { set(next: T): void };
@@ -211,6 +256,36 @@ type ItemRec = {
 type EvalCtx = { visiting: Set<ItemId> };
 const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<ItemId>() });
 
+const clampIndex = (i: number, len: number) => Math.max(0, Math.min(i, len));
+
+const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+const sortRank = (v: Value): [number, unknown] => {
+  if (v.kind === "blank" || v.kind === "issue") return [4, null];
+  if (v.kind === "scalar") {
+    const lit = v.value;
+    if (typeof lit === "number") return [0, lit];
+    if (typeof lit === "string") return [1, lit];
+    if (lit === true) return [2, 1];
+  }
+  return [3, null];
+};
+
+const compareSortKey = (a: Value, b: Value) => {
+  const [ra, va] = sortRank(a);
+  const [rb, vb] = sortRank(b);
+  if (ra !== rb) return ra - rb;
+
+  if (ra === 0) {
+    const d = (va as number) - (vb as number);
+    if (d) return d;
+  } else if (ra === 1) {
+    const d = collator.compare(String(va), String(vb));
+    if (d) return d;
+  }
+  return 0;
+};
+
 export function createStore(): Store {
   const items = new Map<ItemId, ItemRec>();
 
@@ -230,9 +305,8 @@ export function createStore(): Store {
   };
 
   const allocId = () => nextId++;
-
-  const setNextIdFn = (n: number) => {
-    nextId = n;
+  const setNextId = (n: ItemId) => {
+    nextId = Number(n);
   };
 
   const setInterpreter = (fn: Interpreter) => {
@@ -247,23 +321,20 @@ export function createStore(): Store {
 
   const itemAtom = (id: ItemId) => itemRec(id).atom;
 
-  const createItemInternal = (initial: Item): void => {
+  const createItemInternal = (initial: Item) => {
     if (items.has(initial.id))
       throw new Error(`Duplicate item id: ${String(initial.id)}`);
     items.set(initial.id, { atom: createAtom(initial) });
   };
 
-  const evaluateValueRoot = (id: ItemId): Value =>
-    evaluateValue(id, makeEvalCtx());
+  const evaluateValueRoot = (id: ItemId) => evaluateValue(id, makeEvalCtx());
 
-  const valueSig = (id: ItemId): GetSignal<Value> => {
+  const valueSig = (id: ItemId) => {
     const rec = itemRec(id);
     return (rec.valueSig ??= createComputed(() => evaluateValueRoot(id)));
   };
 
-  const childLabelIndexSig = (
-    groupId: ItemId,
-  ): GetSignal<Map<string, ItemId>> => {
+  const childLabelIndexSig = (groupId: ItemId) => {
     const rec = itemRec(groupId);
     return (rec.childLabelIndexSig ??= createComputed(() => {
       const it = itemAtom(groupId).get();
@@ -311,13 +382,18 @@ export function createStore(): Store {
     return v;
   };
 
+  const baseEnvFor = (ownerId: ItemId, ctx: EvalCtx): EvalEnv => ({
+    lookup: (name) => lookupValue(name, ownerId, ctx),
+    resolve: (childId) => evaluateValue(childId, ctx),
+    getLabel: (childId) => itemAtom(childId).get().label,
+  });
+
   function evaluateValue(id: ItemId, ctx: EvalCtx): Value {
     if (ctx.visiting.has(id)) return V.issue("Cyclic dependency");
     ctx.visiting.add(id);
 
     try {
       const it = itemAtom(id).get();
-
       switch (it.content.kind) {
         case "blank":
           return V.blank();
@@ -328,11 +404,7 @@ export function createStore(): Store {
         case "derived": {
           const expr = it.content.expr.trim();
           if (!expr) return V.blank();
-          const out = interpretExpr(expr, {
-            lookup: (name) => lookupValue(name, id, ctx),
-            resolve: (childId) => evaluateValue(childId, ctx),
-            getLabel: (childId) => itemAtom(childId).get().label,
-          });
+          const out = interpretExpr(expr, baseEnvFor(id, ctx));
           return materializeReadonly(out, ctx);
         }
         case "lens":
@@ -345,45 +417,11 @@ export function createStore(): Store {
     }
   }
 
-  const unwrapItemGroup = (
-    v: Value,
-    typeMessage: string,
-  ):
-    | { kind: "blank" }
-    | { kind: "issue"; value: Value }
-    | { kind: "ok"; items: ItemId[] } => {
-    if (v.kind === "blank") return { kind: "blank" };
-    if (v.kind === "issue") return { kind: "issue", value: v };
-    if (v.kind === "item-group") return { kind: "ok", items: v.items };
-    return { kind: "issue", value: V.issue(typeMessage) };
-  };
-
-  const sortRank = (v: Value): [number, unknown] => {
-    if (v.kind === "blank" || v.kind === "issue") return [4, null];
-    if (v.kind === "scalar") {
-      const lit = v.value;
-      if (typeof lit === "number") return [0, lit];
-      if (typeof lit === "string") return [1, lit];
-      if (lit === true) return [2, 1];
-    }
-    return [3, null];
-  };
-
-  const collator = new Intl.Collator(undefined, { sensitivity: "base" });
-
-  const compareSortKey = (a: Value, b: Value): number => {
-    const [ra, va] = sortRank(a);
-    const [rb, vb] = sortRank(b);
-    if (ra !== rb) return ra - rb;
-
-    if (ra === 0) {
-      const d = (va as number) - (vb as number);
-      if (d) return d;
-    } else if (ra === 1) {
-      const d = collator.compare(String(va), String(vb));
-      if (d) return d;
-    }
-    return 0;
+  const unwrapItemGroup = (v: Value, typeMessage: string) => {
+    if (v.kind === "blank") return { kind: "blank" } as const;
+    if (v.kind === "issue") return { kind: "issue", value: v } as const;
+    if (v.kind === "item-group") return { kind: "ok", items: v.items } as const;
+    return { kind: "issue", value: V.issue(typeMessage) } as const;
   };
 
   function evaluateLens(
@@ -398,12 +436,7 @@ export function createStore(): Store {
       visiting: new Set(base.visiting),
     });
 
-    const baseEnv: EvalEnv = {
-      lookup: (name) => lookupValue(name, ownerId, ctx),
-      resolve: (childId) => evaluateValue(childId, ctx),
-      getLabel: (childId) => itemAtom(childId).get().label,
-    };
-
+    const baseEnv = baseEnvFor(ownerId, ctx);
     const sourceVal = interpretExpr(from, baseEnv);
     const unwrapped = unwrapItemGroup(
       sourceVal,
@@ -449,7 +482,6 @@ export function createStore(): Store {
       for (let i = 0; i < ids.length; i++) {
         const rowId = ids[i]!;
         const rowCtx = forkCtx(ctx);
-
         const pred = evalRowExpr(where, rowId, i, rowCtx);
         if (isIssue(pred)) return pred;
         if (isTrue(pred)) next.push(rowId);
@@ -463,10 +495,8 @@ export function createStore(): Store {
       for (let i = 0; i < ids.length; i++) {
         const rowId = ids[i]!;
         const rowCtx = forkCtx(ctx);
-
         const key = evalRowExpr(orderBy, rowId, i, rowCtx);
         if (isIssue(key)) return key;
-
         rows.push({ rowId, i, key });
       }
       rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);
@@ -481,14 +511,14 @@ export function createStore(): Store {
       id,
       ownerId: null,
       label: "",
-      view: "" as ViewId,
+      view: "" as ViewKind,
       content: { kind: "blank" },
     }),
     group: (id: ItemId): Item => ({
       id,
       ownerId: null,
       label: "",
-      view: "" as ViewId,
+      view: "" as ViewKind,
       content: { kind: "group", items: [] },
     }),
   } as const;
@@ -501,7 +531,7 @@ export function createStore(): Store {
       id,
       next: { label },
     }),
-    patchView: (id: ItemId, view: ViewId): Op => ({
+    patchView: (id: ItemId, view: ViewKind): Op => ({
       kind: "patch",
       id,
       next: { view },
@@ -535,7 +565,7 @@ export function createStore(): Store {
     return { ownerId, index, items: items2 };
   };
 
-  const canEditScalarText = (id: ItemId): boolean => {
+  const canEditScalarText = (id: ItemId) => {
     const it = sel.item(id);
     return (
       it.contentSettable &&
@@ -545,8 +575,7 @@ export function createStore(): Store {
 
   const childByLabel = (ownerId: ItemId, label: string): ItemId | null => {
     try {
-      const hit = childLabelIndexSig(ownerId).get().get(label);
-      return hit ?? null;
+      return childLabelIndexSig(ownerId).get().get(label) ?? null;
     } catch {
       return null;
     }
@@ -581,25 +610,19 @@ export function createStore(): Store {
       return base;
     },
 
-    value: (id: ItemId): Value => valueSig(id).get(),
+    value: (id: ItemId) => valueSig(id).get(),
 
-    groupItems: (id: ItemId): ItemId[] => {
+    groupItems: (id: ItemId) => {
       const v = valueSig(id).get();
       return v.kind === "item-group" ? v.items : [];
     },
 
     childByLabel,
-
     locateInOwner,
-
     canEditScalarText,
   } as const;
 
-  const clampIndex = (i: number, len: number) => Math.max(0, Math.min(i, len));
-
-  const expectGroupOwner = (
-    ownerId: ItemId,
-  ): { ownerAtom: SetSignal<Item>; owner: Item } => {
+  const expectGroupOwner = (ownerId: ItemId) => {
     const ownerAtom = itemAtom(ownerId);
     const owner = ownerAtom.peek();
     if (owner.content.kind !== "group") throw new Error("Owner is not a group");
@@ -686,26 +709,26 @@ export function createStore(): Store {
     return { fromOwnerId, toOwnerId, fromIndex, toIndex };
   }
 
-  const patch = (id: ItemId, next: Patch): void => {
+  const patch = (id: ItemId, next: Patch) => {
     const a = itemAtom(id);
     const cur = a.peek();
     a.set({
       ...cur,
-      ...(next.label !== undefined ? { label: next.label } : null),
-      ...(next.view !== undefined ? { view: next.view } : null),
-      ...(next.content !== undefined ? { content: next.content } : null),
+      ...(next.label !== undefined ? { label: next.label } : {}),
+      ...(next.view !== undefined ? { view: next.view } : {}),
+      ...(next.content !== undefined ? { content: next.content } : {}),
     });
   };
 
   const ops: Store["ops"] = {
-    create: (item: Item) => createItemInternal(item),
+    create: createItemInternal,
     patch,
     reparent,
   } as const;
 
   const apply = (txn: Txn): ApplyResult => {
     const created: ItemId[] = [];
-    const touchedSet = new Set<ItemId>();
+    const touched = new Set<ItemId>();
     const reparentResults: ReparentResult[] = [];
 
     batch(() => {
@@ -714,18 +737,18 @@ export function createStore(): Store {
           case "create":
             createItemInternal(op0.item);
             created.push(op0.item.id);
-            touchedSet.add(op0.item.id);
+            touched.add(op0.item.id);
             break;
           case "patch":
             patch(op0.id, op0.next);
-            touchedSet.add(op0.id);
+            touched.add(op0.id);
             break;
           case "reparent": {
             const res = reparent(op0.spec);
             reparentResults.push(res);
-            touchedSet.add(op0.spec.childId);
-            if (res.fromOwnerId != null) touchedSet.add(res.fromOwnerId);
-            if (res.toOwnerId != null) touchedSet.add(res.toOwnerId);
+            touched.add(op0.spec.childId);
+            if (res.fromOwnerId != null) touched.add(res.fromOwnerId);
+            if (res.toOwnerId != null) touched.add(res.toOwnerId);
             break;
           }
           default: {
@@ -736,10 +759,10 @@ export function createStore(): Store {
       }
     });
 
-    return { created, touched: [...touchedSet], reparent: reparentResults };
+    return { created, touched: [...touched], reparent: reparentResults };
   };
 
-  const collectReachableFrom = (root: ItemId): Set<ItemId> => {
+  const collectReachableFrom = (root: ItemId) => {
     const seen = new Set<ItemId>();
     const stack: ItemId[] = [root];
 
@@ -756,7 +779,7 @@ export function createStore(): Store {
     return seen;
   };
 
-  const compactUnreachable = (): { removed: number } => {
+  const compactUnreachable = () => {
     const keep = collectReachableFrom(getRoot());
     let removed = 0;
     for (const [id] of items) {
@@ -784,10 +807,7 @@ export function createStore(): Store {
           orderBy: content.orderBy,
         };
       case "group":
-        return {
-          kind: "group",
-          items: content.items.map((childId) => snapshotStored(childId)),
-        };
+        return { kind: "group", items: content.items.map(snapshotStored) };
     }
   };
 
@@ -803,7 +823,7 @@ export function createStore(): Store {
     getRoot,
 
     allocId,
-    setNextId: setNextIdFn,
+    setNextId,
 
     setInterpreter,
 

@@ -1,26 +1,30 @@
 import { signal, type Signal } from "@preact/signals-core";
 import type { Store, ItemId, Txn, ApplyResult } from "./store";
+import { headerFieldCountForItem } from "./store";
 
-export type Focus = { containerId: ItemId; id: ItemId };
+export type Focus = { scopeId: ItemId; id: ItemId };
 
 export type FocusTarget =
   | { kind: "content" }
   | { kind: "header"; index: number };
 
+export type Caret = { start: number; end: number };
+
+export const caret0 = (): Caret => ({ start: 0, end: 0 });
+export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+export const caretRange = (start: number, end: number): Caret => ({
+  start,
+  end,
+});
+
 export type Selection =
   | { kind: "idle" }
-  | { kind: "focused"; focus: Focus; target: FocusTarget };
+  | { kind: "focused"; focus: Focus; target: FocusTarget; caret?: Caret };
 
 export type Anchor = "top" | "bottom";
 
 export type EditorEffect =
-  | {
-      type: "DOM_FOCUS";
-      focus: Focus;
-      target: FocusTarget;
-      caret?: number;
-      anchor?: Anchor;
-    }
+  | { type: "DOM_FOCUS"; focus: Focus; target: FocusTarget; anchor?: Anchor }
   | { type: "CLEAR_DOM_FOCUS" };
 
 export type SelectionHints = {
@@ -32,6 +36,24 @@ export type SelectionHints = {
   effects?: EditorEffect[];
 };
 
+export type SelectionProposal =
+  | { selection: Selection; effects?: EditorEffect[] }
+  | ((ctx: { store: Store; prevSelection: Selection; result: ApplyResult }) => {
+      selection?: Selection;
+      effects?: EditorEffect[];
+    });
+
+export function proposeSelection(proposal: SelectionProposal): SelectionHints {
+  return typeof proposal === "function"
+    ? { propose: proposal }
+    : {
+        propose: () => ({
+          selection: proposal.selection,
+          effects: proposal.effects,
+        }),
+      };
+}
+
 export type Editor = {
   store: Store;
   runtime: EditorRuntime;
@@ -40,17 +62,17 @@ export type Editor = {
   apply(txn: Txn, hints?: SelectionHints): ApplyResult;
 };
 
-export type RegionId = string;
+export type ViewId = string;
 
 export type NavDir = "left" | "right" | "up" | "down";
 export type NavMode = "step" | "jump";
 export type NavOut = { dir: NavDir; mode: NavMode };
-export type RegionKeyResult = void | { navOut: NavOut };
+export type ViewKeyResult = void | { navOut: NavOut };
 
-export type Region = {
-  id: RegionId;
+export type View = {
+  id: ViewId;
   root: HTMLElement;
-  onKeyDown(e: KeyboardEvent): RegionKeyResult;
+  onKeyDown(e: KeyboardEvent): ViewKeyResult;
   onActivate?(): void;
   onDeactivate?(): void;
   dispose(): void;
@@ -65,8 +87,7 @@ export type Binding = {
 
 const clamp = (n: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, n));
-
-const keyOf = (f: Focus) => `${String(f.containerId)}::${String(f.id)}`;
+const keyOf = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 
 function isTextInput(
   el: HTMLElement,
@@ -90,8 +111,8 @@ function computeAnchoredPos(
 
 function shouldBypassGlobalKeydown(): boolean {
   const active = document.activeElement;
-  if (!active) return false;
-  if (active instanceof HTMLElement && active.isContentEditable) return true;
+  if (!(active instanceof HTMLElement)) return false;
+  if (active.isContentEditable) return true;
   return (
     active instanceof HTMLTextAreaElement ||
     (active instanceof HTMLInputElement && active.type === "text")
@@ -102,65 +123,60 @@ export class EditorRuntime {
   selection: Signal<Selection>;
 
   private rafHandle: number | null = null;
-  private pendingEffects: { sel: Selection; effects: EditorEffect[] } | null =
-    null;
+  private pending: { sel: Selection; effects: EditorEffect[] } | null = null;
 
   private bindings = new Map<string, Binding>();
 
-  private regions = new Map<RegionId, Region>();
-  private regionRoots = new WeakMap<HTMLElement, RegionId>();
-  private activeRegionId: RegionId | null = null;
+  private views = new Map<ViewId, View>();
+  private viewRoots = new WeakMap<HTMLElement, ViewId>();
+  private activeViewId: ViewId | null = null;
 
-  private navOutHandler:
-    | ((fromRegionId: RegionId, navOut: NavOut) => void)
-    | null = null;
+  private navOutHandler: ((fromViewId: ViewId, navOut: NavOut) => void) | null =
+    null;
 
   constructor(initialSelection: Selection = { kind: "idle" }) {
-    this.selection = signal<Selection>(initialSelection);
+    this.selection = signal(initialSelection);
   }
 
-  getActiveRegionId(): RegionId | null {
-    return this.activeRegionId;
+  getActiveViewId(): ViewId | null {
+    return this.activeViewId;
   }
 
-  setNavOutHandler(
-    fn: ((fromRegionId: RegionId, navOut: NavOut) => void) | null,
-  ) {
+  setNavOutHandler(fn: ((fromViewId: ViewId, navOut: NavOut) => void) | null) {
     this.navOutHandler = fn;
   }
 
-  registerRegion(region: Region) {
-    this.regions.set(region.id, region);
-    this.regionRoots.set(region.root, region.id);
+  registerView(view: View) {
+    this.views.set(view.id, view);
+    this.viewRoots.set(view.root, view.id);
   }
 
-  unregisterRegion(regionId: RegionId) {
-    if (this.activeRegionId === regionId) this.setActiveRegion(null);
-    this.regions.delete(regionId);
+  unregisterView(viewId: ViewId) {
+    if (this.activeViewId === viewId) this.setActiveView(null);
+    this.views.delete(viewId);
   }
 
-  setActiveRegion(regionId: RegionId | null) {
-    if (regionId === this.activeRegionId) return;
+  setActiveView(viewId: ViewId | null) {
+    if (viewId === this.activeViewId) return;
 
-    const prev = this.activeRegionId
-      ? this.regions.get(this.activeRegionId)
-      : null;
-    const next = regionId ? this.regions.get(regionId) : null;
+    const prevId = this.activeViewId;
+    const prev = prevId ? this.views.get(prevId) : null;
+    const next = viewId ? this.views.get(viewId) : null;
 
     prev?.onDeactivate?.();
-    this.activeRegionId = regionId;
+    this.activeViewId = viewId;
     next?.onActivate?.();
   }
 
-  installRegionListeners() {
+  installViewListeners() {
     const onPointerDown = (e: PointerEvent) =>
-      this.setActiveRegion(this.regionAtTarget(e.target));
+      this.setActiveView(this.viewAtTarget(e.target));
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!this.activeRegionId || shouldBypassGlobalKeydown()) return;
-      const res = this.regions.get(this.activeRegionId)?.onKeyDown(e);
-      if (res && "navOut" in res)
-        this.navOutHandler?.(this.activeRegionId, res.navOut);
+      const viewId = this.activeViewId;
+      if (!viewId || shouldBypassGlobalKeydown()) return;
+      const res = this.views.get(viewId)?.onKeyDown(e);
+      if (res?.navOut) this.navOutHandler?.(viewId, res.navOut);
     };
 
     window.addEventListener("pointerdown", onPointerDown, { capture: true });
@@ -176,12 +192,13 @@ export class EditorRuntime {
 
   registerBinding(binding: Binding) {
     const k = keyOf(binding.focus);
-    if (this.bindings.get(k) === binding) {
-      this.updateDOMFocus(this.selection.peek());
-      return;
-    }
+    const prev = this.bindings.get(k);
     this.bindings.set(k, binding);
-    this.updateDOMFocus(this.selection.peek());
+    if (prev === binding) {
+      this.updateDOMFocus(this.selection.peek());
+    } else {
+      this.updateDOMFocus(this.selection.peek());
+    }
   }
 
   unregisterBinding(focus: Focus) {
@@ -189,23 +206,26 @@ export class EditorRuntime {
     this.bindings.delete(k);
 
     const sel = this.selection.peek();
-    if (sel.kind === "focused" && keyOf(sel.focus) === k) {
-      this.selection.value = { kind: "idle" };
-      this.scheduleEffects(this.selection.peek(), [
-        { type: "CLEAR_DOM_FOCUS" },
-      ]);
-    }
+    if (sel.kind !== "focused" || keyOf(sel.focus) !== k) return;
+
+    const next: Selection = { kind: "idle" };
+    this.selection.value = next;
+    this.scheduleEffects(next, [{ type: "CLEAR_DOM_FOCUS" }]);
   }
 
   scheduleEffects(sel: Selection, effects: EditorEffect[]) {
     if (!effects.length) return;
-    this.pendingEffects = { sel, effects };
+
+    this.pending = this.pending
+      ? { sel, effects: [...this.pending.effects, ...effects] }
+      : { sel, effects };
+
     if (this.rafHandle != null) return;
 
     this.rafHandle = requestAnimationFrame(() => {
       this.rafHandle = null;
-      const next = this.pendingEffects;
-      this.pendingEffects = null;
+      const next = this.pending;
+      this.pending = null;
       if (next) this.applyEffects(next.sel, next.effects);
     });
   }
@@ -213,15 +233,15 @@ export class EditorRuntime {
   applyEffects(sel: Selection, effects: EditorEffect[]) {
     for (const eff of effects) {
       if (eff.type === "DOM_FOCUS") {
-        this.updateDOMFocus(sel, eff.caret, eff.anchor);
-      } else if (eff.type === "CLEAR_DOM_FOCUS") {
+        this.updateDOMFocus(sel, eff.anchor);
+      } else {
         const active = document.activeElement;
         if (active instanceof HTMLElement) active.blur();
       }
     }
   }
 
-  updateDOMFocus(sel: Selection, caretPos?: number, anchor?: Anchor) {
+  updateDOMFocus(sel: Selection, anchor?: Anchor) {
     if (sel.kind !== "focused") return;
 
     const binding = this.bindings.get(keyOf(sel.focus));
@@ -231,40 +251,32 @@ export class EditorRuntime {
     const wasFocused = document.activeElement === targetEl;
     if (!wasFocused) targetEl.focus({ preventScroll: true });
 
-    const hitRegion = this.regionAtTarget(targetEl);
-    if (hitRegion) this.setActiveRegion(hitRegion);
+    const hitView = this.viewAtTarget(targetEl);
+    if (hitView) this.setActiveView(hitView);
 
-    if (caretPos !== undefined && binding.setCaret && binding.getTextLength) {
+    const caret = sel.caret;
+    if (caret && binding.setCaret && binding.getTextLength) {
       const len = binding.getTextLength();
-      binding.setCaret(caretPos === Infinity ? len : clamp(caretPos, 0, len));
+      binding.setCaret(clamp(caret.end, 0, len));
       return;
     }
 
-    if (!isTextInput(targetEl)) return;
+    if (!isTextInput(targetEl) || wasFocused) return;
 
-    let pos: number | null = null;
+    const pos = anchor
+      ? computeAnchoredPos(targetEl.value, targetEl.value.length, anchor)
+      : targetEl.value.length;
 
-    if (caretPos !== undefined) {
-      pos =
-        caretPos === Infinity
-          ? targetEl.value.length
-          : clamp(caretPos, 0, targetEl.value.length);
-    } else if (!wasFocused) {
-      pos = anchor
-        ? computeAnchoredPos(targetEl.value, targetEl.value.length, anchor)
-        : targetEl.value.length;
-    }
-
-    if (pos != null) targetEl.setSelectionRange(pos, pos);
+    targetEl.setSelectionRange(pos, pos);
   }
 
-  private regionAtTarget(target: EventTarget | null): RegionId | null {
+  private viewAtTarget(target: EventTarget | null): ViewId | null {
     for (
       let el = target instanceof HTMLElement ? target : null;
       el;
       el = el.parentElement
     ) {
-      const hit = this.regionRoots.get(el);
+      const hit = this.viewRoots.get(el);
       if (hit) return hit;
     }
     return null;
@@ -274,21 +286,21 @@ export class EditorRuntime {
 export function mkFocusSelection(
   focus: Focus,
   target: FocusTarget,
-  caret = 0,
+  caret?: Caret,
 ): { selection: Selection; effects: EditorEffect[] } {
-  const selection: Selection = { kind: "focused", focus, target };
-  const effects: EditorEffect[] = [{ type: "DOM_FOCUS", focus, target, caret }];
-  return { selection, effects };
+  const selection: Selection = {
+    kind: "focused",
+    focus,
+    target,
+    ...(caret ? { caret } : {}),
+  };
+  return { selection, effects: [{ type: "DOM_FOCUS", focus, target }] };
 }
 
-function headerExtraCount(store: Store, id: ItemId): number {
-  const { contentKind } = store.sel.item(id);
-  if (contentKind === "derived") return 1;
-  if (contentKind === "lens") return 3;
-  return 0;
-}
+const headerExtraCount = (store: Store, id: ItemId) =>
+  headerFieldCountForItem(store.sel.item(id));
 
-function normalizeTarget(
+export function normalizeTarget(
   store: Store,
   focusId: ItemId,
   target: FocusTarget,
@@ -300,7 +312,7 @@ function normalizeTarget(
   return index === target.index ? target : { kind: "header", index };
 }
 
-function repairSelection(store: Store, sel: Selection): Selection {
+export function repairSelection(store: Store, sel: Selection): Selection {
   if (sel.kind === "idle") return sel;
 
   try {
@@ -313,13 +325,23 @@ function repairSelection(store: Store, sel: Selection): Selection {
       store.sel.item(root);
       return {
         kind: "focused",
-        focus: { containerId: root, id: root },
+        focus: { scopeId: root, id: root },
         target: { kind: "content" },
       };
     } catch {
       return { kind: "idle" };
     }
   }
+}
+
+export function ensureSelection(
+  editor: Editor,
+  next: Selection,
+  effects: EditorEffect[] = [],
+) {
+  const repaired = repairSelection(editor.store, next);
+  editor.runtime.selection.value = repaired;
+  editor.runtime.scheduleEffects(repaired, effects);
 }
 
 export function createEditor(store: Store): Editor {
@@ -338,8 +360,10 @@ export function createEditor(store: Store): Editor {
     const result = store.apply(txn);
 
     const proposed = hints.propose?.({ store, prevSelection, result });
-    const nextSelection = proposed?.selection ?? prevSelection;
-    const repaired = repairSelection(store, nextSelection);
+    const repaired = repairSelection(
+      store,
+      proposed?.selection ?? prevSelection,
+    );
 
     runtime.selection.value = repaired;
     runtime.scheduleEffects(repaired, [
@@ -351,4 +375,32 @@ export function createEditor(store: Store): Editor {
   };
 
   return { store, runtime, getSelection, setSelection, apply };
+}
+
+export type CmdResult = {
+  didChange: boolean;
+  selection?: Selection;
+  effects?: EditorEffect[];
+  issue?: string;
+};
+
+export function safeIssue(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function tryCmd(fn: () => CmdResult): CmdResult {
+  try {
+    return fn();
+  } catch (err) {
+    return { didChange: false, issue: safeIssue(err) };
+  }
+}
+
+export function applyCmd(editor: Editor, res: CmdResult): CmdResult {
+  if (res.selection) editor.setSelection(res.selection, res.effects ?? []);
+  return res;
+}
+
+export function setIdle(editor: Editor) {
+  editor.setSelection({ kind: "idle" }, [{ type: "CLEAR_DOM_FOCUS" }]);
 }

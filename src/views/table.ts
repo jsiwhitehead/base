@@ -1,174 +1,188 @@
-import { effect, signal } from "@preact/signals-core";
-import type { Store, ItemId, Txn, Op, Value } from "../store";
-import {
-  type Editor,
-  type Region,
-  type Selection,
-  type Focus,
-  type FocusTarget,
-  type EditorEffect,
-  type Binding,
-  type RegionKeyResult,
-  mkFocusSelection,
+import { computed, effect } from "@preact/signals-core";
+import type { Store, ItemId, Txn, Op, ViewKind } from "../store";
+import type {
+  Editor,
+  View,
+  Selection,
+  Focus,
+  EditorEffect,
+  ViewKeyResult,
+  Caret,
+  NavDir,
+  NavMode,
+  CmdResult,
 } from "../editor";
 import {
+  mkFocusSelection,
+  caret0,
+  proposeSelection,
+  tryCmd,
+  applyCmd,
+  setIdle,
+} from "../editor";
+import {
+  createComponent,
   el,
-  on,
-  textInput,
-  syncValue,
   reconcileChildren,
-  ChildManager,
-  getEditableText,
   parseScalar,
-  bindCommitTextInput,
-  renderLabeledValueReadonly,
-  bindReadonlyItemText,
-  CleanupBag,
+  stopEvent,
+  bindTextControlKeys,
+  textField,
+  valueField,
+  ensureTabbable,
+  defaultTextNav,
+  mountChildViewInto,
+  type Component,
 } from "../ui";
-import { replaceMountedRegion } from "./index";
-import { createSliderRegion } from "./slider";
+import { createChildViewForItem, viewWantsChildView } from "./index";
 
-export type TableRegionCtx = { editor: Editor };
+type NavResult = { selection: Selection; effects: EditorEffect[] };
 
-export function createTableRegion(
-  ctx: TableRegionCtx,
+const focusRowLabel = (
   tableId: ItemId,
-  _tableFocus?: Focus,
-): Region {
-  const { editor } = ctx;
-  const store = editor.store;
-
-  const root = el("div", "region table");
-  root.tabIndex = 0;
-
-  const headerRow = el("div", "row table-header");
-  const body = el("div", "table-body");
-  root.append(headerRow, body);
-
-  const columnsJsonSig = signal("[]");
-
-  const rowMgr = new ChildManager<ItemId>(body, (rowId) => {
-    return new RowView({ editor, tableId, columnsJsonSig }, rowId);
-  });
-
-  const stopColumns = effect(() => {
-    const cols = deriveColumns(store, tableId);
-    columnsJsonSig.value = JSON.stringify(cols);
-
-    const cells: HTMLElement[] = [el("div", "label")];
-    for (const c of cols) {
-      const h = el("div", "item");
-      h.textContent = c;
-      cells.push(h);
-    }
-    reconcileChildren(headerRow, cells);
-  });
-
-  const stopRows = effect(() => {
-    const v = store.sel.value(tableId);
-    rowMgr.update(v.kind === "item-group" ? v.items : []);
-  });
-
-  const region: Region = {
-    id: `table:${String(tableId)}`,
-    root,
-
-    onActivate() {
-      const sel = editor.runtime.selection.value;
-      if (sel.kind !== "idle") return;
-
-      const rowsV = store.sel.value(tableId);
-      if (rowsV.kind !== "item-group" || rowsV.items.length === 0) return;
-
-      const firstRowId = rowsV.items[0]!;
-      const res = focusRowLabel(tableId, firstRowId, 0);
-      editor.setSelection(res.selection, res.effects);
-    },
-
-    onKeyDown(e): RegionKeyResult {
-      const sel = editor.runtime.selection.value;
-      if (sel.kind !== "focused") return;
-
-      const mod = e.metaKey || e.ctrlKey;
-      const mode = mod ? "jump" : "step";
-
-      switch (e.key) {
-        case "ArrowUp":
-        case "ArrowDown":
-        case "ArrowLeft":
-        case "ArrowRight": {
-          e.preventDefault();
-          e.stopPropagation();
-
-          const dir =
-            e.key === "ArrowUp"
-              ? "up"
-              : e.key === "ArrowDown"
-                ? "down"
-                : e.key === "ArrowLeft"
-                  ? "left"
-                  : "right";
-
-          const res = tableNavMove(store, tableId, sel, dir, mode);
-          if (res) editor.setSelection(res.selection, res.effects);
-          return;
-        }
-
-        case "Enter": {
-          e.preventDefault();
-          e.stopPropagation();
-
-          const res = tableCommands.confirm(editor, tableId, sel);
-          if (res.selection)
-            editor.setSelection(res.selection, res.effects ?? []);
-          return;
-        }
-
-        case "Escape": {
-          e.preventDefault();
-          e.stopPropagation();
-          editor.setSelection({ kind: "idle" }, [{ type: "CLEAR_DOM_FOCUS" }]);
-          return;
-        }
-      }
-    },
-
-    dispose() {
-      stopColumns();
-      stopRows();
-      rowMgr.dispose();
-      root.replaceChildren();
-    },
-  };
-
-  return region;
-}
-
-type CmdResult = {
-  didChange: boolean;
-  selection?: Selection;
-  effects?: EditorEffect[];
-  issue?: string;
-};
-
-function safeIssue(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function focusRowLabel(tableId: ItemId, rowId: ItemId, caret = 0) {
-  return mkFocusSelection(
-    { containerId: tableId, id: rowId },
+  rowId: ItemId,
+  caret: Caret = caret0(),
+): NavResult =>
+  mkFocusSelection(
+    { scopeId: tableId, id: rowId },
     { kind: "header", index: 0 },
     caret,
   );
+
+const focusCell = (
+  rowId: ItemId,
+  cellId: ItemId,
+  caret: Caret = caret0(),
+): NavResult =>
+  mkFocusSelection({ scopeId: rowId, id: cellId }, { kind: "content" }, caret);
+
+function deriveColumns(store: Store, tableId: ItemId): string[] {
+  const tableV = store.sel.value(tableId);
+  if (tableV.kind !== "item-group") return [];
+
+  const firstRowId = tableV.items[0];
+  if (!firstRowId) return [];
+
+  const rowV = store.sel.value(firstRowId);
+  if (rowV.kind !== "item-group") return [];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const cid of rowV.items) {
+    const nm = store.sel.item(cid).label;
+    if (!nm || seen.has(nm)) continue;
+    seen.add(nm);
+    out.push(nm);
+  }
+  return out;
 }
 
-function focusCell(rowId: ItemId, cellId: ItemId, caret = 0) {
-  return mkFocusSelection(
-    { containerId: rowId, id: cellId },
-    { kind: "content" },
-    caret,
-  );
+const isFocused = (
+  sel: Selection,
+): sel is Extract<Selection, { kind: "focused" }> => sel.kind === "focused";
+
+const isRowLabelSelection = (sel: Selection, tableId: ItemId): boolean =>
+  isFocused(sel) &&
+  sel.focus.scopeId === tableId &&
+  sel.target.kind === "header" &&
+  sel.target.index === 0;
+
+const isCellSelection = (sel: Selection, tableId: ItemId): boolean =>
+  isFocused(sel) &&
+  sel.target.kind === "content" &&
+  sel.focus.scopeId !== tableId;
+
+const rowIds = (store: Store, tableId: ItemId): ItemId[] => {
+  const v = store.sel.value(tableId);
+  return v.kind === "item-group" ? v.items : [];
+};
+
+function tableNavMove(
+  store: Store,
+  tableId: ItemId,
+  sel: Selection,
+  dir: NavDir,
+  _mode: NavMode,
+): NavResult | null {
+  if (!isFocused(sel)) return null;
+
+  const cols = deriveColumns(store, tableId);
+  const rows = rowIds(store, tableId);
+  if (rows.length === 0) return null;
+
+  const moveRowLabel = (rowId: ItemId, delta: number) => {
+    const r = rows.indexOf(rowId);
+    if (r < 0) return null;
+    const nextRowId = rows[r + delta];
+    return nextRowId ? focusRowLabel(tableId, nextRowId) : null;
+  };
+
+  const moveCellHoriz = (
+    rowId: ItemId,
+    colIdx: number,
+    delta: number,
+  ): NavResult | null => {
+    const nc = colIdx + delta;
+    if (nc < 0) return focusRowLabel(tableId, rowId);
+
+    const nextCol = cols[nc];
+    if (!nextCol) return null;
+
+    const nextCell = store.sel.childByLabel(rowId, nextCol);
+    return nextCell ? focusCell(rowId, nextCell) : null;
+  };
+
+  const moveCellVert = (
+    rowIdx: number,
+    colIdx: number,
+    delta: number,
+  ): NavResult | null => {
+    const nextRowId = rows[rowIdx + delta];
+    if (!nextRowId) return null;
+
+    const col = cols[colIdx];
+    if (!col) return null;
+
+    const nextCell = store.sel.childByLabel(nextRowId, col);
+    return nextCell
+      ? focusCell(nextRowId, nextCell)
+      : focusRowLabel(tableId, nextRowId);
+  };
+
+  if (isRowLabelSelection(sel, tableId)) {
+    const rowId = sel.focus.id;
+
+    if (dir === "up") return moveRowLabel(rowId, -1);
+    if (dir === "down") return moveRowLabel(rowId, 1);
+
+    if (dir === "right") {
+      const firstCol = cols[0];
+      if (!firstCol) return null;
+
+      const cid = store.sel.childByLabel(rowId, firstCol);
+      return cid ? focusCell(rowId, cid) : null;
+    }
+
+    return null;
+  }
+
+  if (!isCellSelection(sel, tableId)) return null;
+
+  const rowId = sel.focus.scopeId;
+  const cellId = sel.focus.id;
+
+  const rowIdx = rows.indexOf(rowId);
+  if (rowIdx < 0) return null;
+
+  const colLabel = store.sel.item(cellId).label || "";
+  const colIdx = Math.max(0, cols.indexOf(colLabel));
+
+  if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
+  if (dir === "right") return moveCellHoriz(rowId, colIdx, 1);
+  if (dir === "up") return moveCellVert(rowIdx, colIdx, -1);
+  if (dir === "down") return moveCellVert(rowIdx, colIdx, 1);
+
+  return null;
 }
 
 export const tableCommands = {
@@ -178,14 +192,12 @@ export const tableCommands = {
     rowId: ItemId,
     text: string,
   ): CmdResult {
-    try {
+    return tryCmd(() => {
       editor.apply({
         ops: [{ kind: "patch", id: rowId, next: { label: text } }],
       });
       return { didChange: true };
-    } catch (err) {
-      return { didChange: false, issue: safeIssue(err) };
-    }
+    });
   },
 
   commitCellText(
@@ -194,9 +206,10 @@ export const tableCommands = {
     cellId: ItemId,
     raw: string,
   ): CmdResult {
-    try {
+    return tryCmd(() => {
       const store = editor.store;
       if (!store.sel.canEditScalarText(cellId)) return { didChange: false };
+
       editor.apply({
         ops: [
           {
@@ -207,9 +220,7 @@ export const tableCommands = {
         ],
       });
       return { didChange: true };
-    } catch (err) {
-      return { didChange: false, issue: safeIssue(err) };
-    }
+    });
   },
 
   addRowAfter(
@@ -217,7 +228,7 @@ export const tableCommands = {
     tableId: ItemId,
     afterRowId: ItemId | null,
   ): CmdResult {
-    try {
+    return tryCmd(() => {
       const store = editor.store;
       const rows = store.sel.groupItems(tableId);
       const afterIdx =
@@ -236,32 +247,26 @@ export const tableCommands = {
         ],
       };
 
-      const res = focusRowLabel(tableId, rowId, 0);
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
-
+      const next = focusRowLabel(tableId, rowId);
+      editor.apply(txn, proposeSelection(next));
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
-    } catch (err) {
-      return { didChange: false, issue: safeIssue(err) };
-    }
+    });
   },
 
   removeRow(editor: Editor, tableId: ItemId, rowId: ItemId): CmdResult {
-    try {
+    return tryCmd(() => {
       const store = editor.store;
       const rows = store.sel.groupItems(tableId);
       const idx = rows.indexOf(rowId);
-
       const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
 
-      const res =
+      const next: NavResult =
         nextRow != null
-          ? focusRowLabel(tableId, nextRow, 0)
+          ? focusRowLabel(tableId, nextRow)
           : {
               selection: { kind: "idle" } as Selection,
               effects: [{ type: "CLEAR_DOM_FOCUS" } as EditorEffect],
@@ -271,22 +276,17 @@ export const tableCommands = {
         ops: [{ kind: "reparent", spec: { childId: rowId, toOwnerId: null } }],
       };
 
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
-
+      editor.apply(txn, proposeSelection(next));
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
-    } catch (err) {
-      return { didChange: false, issue: safeIssue(err) };
-    }
+    });
   },
 
   addColumn(editor: Editor, tableId: ItemId, label: string): CmdResult {
-    try {
+    return tryCmd(() => {
       const store = editor.store;
       const name = label.trim();
       if (!name) return { didChange: false };
@@ -295,11 +295,9 @@ export const tableCommands = {
       if (rowsV.kind !== "item-group") return { didChange: false };
 
       const ops: Op[] = [];
-
       for (const rowId of rowsV.items) {
         const rowInfo = store.sel.item(rowId);
         if (rowInfo.contentKind !== "group") continue;
-
         if (store.sel.childByLabel(rowId, name) != null) continue;
 
         const cellId = store.allocId();
@@ -316,16 +314,13 @@ export const tableCommands = {
       }
 
       if (ops.length === 0) return { didChange: false };
-
       editor.apply({ ops });
       return { didChange: true };
-    } catch (err) {
-      return { didChange: false, issue: safeIssue(err) };
-    }
+    });
   },
 
   removeColumn(editor: Editor, tableId: ItemId, label: string): CmdResult {
-    try {
+    return tryCmd(() => {
       const store = editor.store;
       const name = label.trim();
       if (!name) return { didChange: false };
@@ -334,27 +329,23 @@ export const tableCommands = {
       if (rowsV.kind !== "item-group") return { didChange: false };
 
       const ops: Op[] = [];
-
       for (const rowId of rowsV.items) {
         const cellId = store.sel.childByLabel(rowId, name);
-        if (cellId != null)
-          ops.push({
-            kind: "reparent",
-            spec: { childId: cellId, toOwnerId: null },
-          });
+        if (cellId == null) continue;
+        ops.push({
+          kind: "reparent",
+          spec: { childId: cellId, toOwnerId: null },
+        });
       }
 
       if (ops.length === 0) return { didChange: false };
-
       editor.apply({ ops });
       return { didChange: true };
-    } catch (err) {
-      return { didChange: false, issue: safeIssue(err) };
-    }
+    });
   },
 
   confirm(editor: Editor, tableId: ItemId, sel: Selection): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
+    if (!isFocused(sel)) return { didChange: false };
 
     if (sel.target.kind === "header") {
       return tableCommands.addRowAfter(editor, tableId, sel.focus.id);
@@ -368,602 +359,340 @@ export const tableCommands = {
         effects: move.effects,
       };
 
-    return tableCommands.addRowAfter(editor, tableId, sel.focus.containerId);
+    return tableCommands.addRowAfter(editor, tableId, sel.focus.scopeId);
   },
 } as const;
 
-type NavDir = "left" | "right" | "up" | "down";
-type NavMode = "step" | "jump";
-
-function deriveColumns(store: Store, tableId: ItemId): string[] {
-  const v = store.sel.value(tableId);
-  if (v.kind !== "item-group") return [];
-
-  const firstRowId = v.items[0];
-  if (firstRowId == null) return [];
-
-  const rowV = store.sel.value(firstRowId);
-  if (rowV.kind !== "item-group") return [];
-
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const cid of rowV.items) {
-    const nm = store.sel.item(cid).label;
-    if (nm && !seen.has(nm)) {
-      seen.add(nm);
-      out.push(nm);
-    }
-  }
-  return out;
-}
-
-function isRowLabelSelection(sel: Selection, tableId: ItemId): boolean {
-  return (
-    sel.kind === "focused" &&
-    sel.focus.containerId === tableId &&
-    sel.target.kind === "header" &&
-    sel.target.index === 0
-  );
-}
-
-function isCellSelection(sel: Selection, tableId: ItemId): boolean {
-  return (
-    sel.kind === "focused" &&
-    sel.target.kind === "content" &&
-    sel.focus.containerId !== tableId
-  );
-}
-
-function rowIds(store: Store, tableId: ItemId): ItemId[] {
-  const v = store.sel.value(tableId);
-  return v.kind === "item-group" ? v.items : [];
-}
-
-function cellIdByColumn(
-  store: Store,
-  rowId: ItemId,
-  col: string,
-): ItemId | null {
-  return store.sel.childByLabel(rowId, col);
-}
-
-function tableNavMove(
-  store: Store,
-  tableId: ItemId,
-  sel: Selection,
-  dir: NavDir,
-  mode: NavMode,
-): { selection: Selection; effects: EditorEffect[] } | null {
-  if (sel.kind !== "focused") return null;
-
-  const cols = deriveColumns(store, tableId);
-  const rows = rowIds(store, tableId);
-  if (rows.length === 0) return null;
-
-  if (isRowLabelSelection(sel, tableId)) {
-    const rowId = sel.focus.id;
-    const r = rows.indexOf(rowId);
-    if (r < 0) return null;
-
-    if (dir === "up" || dir === "down") {
-      const nr = r + (dir === "up" ? -1 : 1);
-      const nextRowId = rows[nr];
-      if (nextRowId == null) return null;
-      const res = focusRowLabel(tableId, nextRowId, 0);
-      return { selection: res.selection, effects: res.effects };
-    }
-
-    if (dir === "right") {
-      const firstCol = cols[0];
-      if (!firstCol) return null;
-      const cid = cellIdByColumn(store, rowId, firstCol);
-      if (!cid) return null;
-      const res = focusCell(rowId, cid, 0);
-      return { selection: res.selection, effects: res.effects };
-    }
-
-    void mode;
-    return null;
-  }
-
-  if (!isCellSelection(sel, tableId)) return null;
-
-  const rowId = sel.focus.containerId;
-  const cellId = sel.focus.id;
-
-  const r = rows.indexOf(rowId);
-  if (r < 0) return null;
-
-  const colLabel = store.sel.item(cellId).label || "";
-  const c = cols.indexOf(colLabel);
-  const colIdx = c >= 0 ? c : 0;
-
-  if (dir === "left" || dir === "right") {
-    const nc = colIdx + (dir === "left" ? -1 : 1);
-
-    if (nc < 0) {
-      const res = focusRowLabel(tableId, rowId, 0);
-      return { selection: res.selection, effects: res.effects };
-    }
-
-    const nextCol = cols[nc];
-    if (!nextCol) return null;
-
-    const nextCell = cellIdByColumn(store, rowId, nextCol);
-    if (!nextCell) return null;
-
-    const res = focusCell(rowId, nextCell, 0);
-    return { selection: res.selection, effects: res.effects };
-  }
-
-  if (dir === "up" || dir === "down") {
-    const nr = r + (dir === "up" ? -1 : 1);
-    const nextRowId = rows[nr];
-    if (!nextRowId) return null;
-
-    const col = cols[colIdx];
-    if (!col) return null;
-
-    const nextCell = cellIdByColumn(store, nextRowId, col);
-    if (!nextCell) {
-      const res = focusRowLabel(tableId, nextRowId, 0);
-      return { selection: res.selection, effects: res.effects };
-    }
-
-    const res = focusCell(nextRowId, nextCell, 0);
-    return { selection: res.selection, effects: res.effects };
-  }
-
-  void mode;
-  return null;
-}
-
-type RowCtx = {
+type TableMountCtx = {
   editor: Editor;
+  store: Store;
   tableId: ItemId;
-  columnsJsonSig: ReturnType<typeof signal>;
+  navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
+  columnsSig: { value: string[] };
 };
 
-class RowView {
-  element: HTMLElement;
+function mountTableHeader(ctx0: TableMountCtx): Component {
+  return createComponent((ctx) => {
+    const headerRow = el("div", "row table-header");
 
-  private headerCell = el("div", "label");
-  private labelDisplay = el("div", "label");
-  private labelInput = textInput(false);
+    ctx.watch(() => {
+      const cells: HTMLElement[] = [el("div", "label")];
+      for (const c of ctx0.columnsSig.value) cells.push(el("div", "item", c));
+      reconcileChildren(headerRow, cells);
+    });
 
-  private cellsHost = el("div", "row-cells");
+    return headerRow;
+  });
+}
 
-  private cellMgr: RowCellManager | null = null;
-  private cleanup = new CleanupBag();
-  private binding: Binding;
+function mountTableCellContent(ctx: {
+  editor: Editor;
+  store: Store;
+  tableId: ItemId;
+  rowId: ItemId;
+  cellId: ItemId;
+}): Component {
+  const { editor, store, rowId, cellId, tableId } = ctx;
+  const focus: Focus = { scopeId: rowId, id: cellId };
+  const viewKind = store.sel.item(cellId).view as ViewKind;
 
-  constructor(
-    private ctx: RowCtx,
-    private rowId: ItemId,
-  ) {
-    this.element = el("div", "row");
+  if (viewWantsChildView(viewKind)) {
+    const child = createChildViewForItem({ editor }, viewKind, cellId, focus);
+    if (child) {
+      return createComponent((cctx) => {
+        const host = el("div");
+        ensureTabbable(host);
 
-    this.headerCell.append(this.labelDisplay, this.labelInput);
-    this.element.append(this.headerCell, this.cellsHost);
+        cctx.focusable({
+          editor,
+          focus,
+          elementFor: () => child.root,
+          targets: [
+            {
+              target: { kind: "content" },
+              getEl: () => child.root,
+              pointerHost: () => host,
+              caret: "zero",
+              stopPropagation: true,
+            },
+          ],
+        });
 
-    const rowFocus: Focus = { containerId: ctx.tableId, id: rowId };
+        ensureTabbable(child.root);
+        cctx.using(mountChildViewInto(editor, host, child));
+        return host;
+      });
+    }
+  }
 
-    this.binding = {
-      focus: rowFocus,
-      elementFor: (target: FocusTarget) =>
-        target.kind === "header" ? this.labelInput : this.element,
-      setCaret: (pos: number) => {
-        this.labelInput.setSelectionRange(pos, pos);
-      },
-      getTextLength: () => this.labelInput.value.length,
+  return valueField({
+    editor,
+    focus,
+    id: cellId,
+    textKeys: (inp) =>
+      bindTextControlKeys(inp, {
+        nav: defaultTextNav,
+        onNav: (dir, mode) => {
+          const sel = editor.runtime.selection.value;
+          const res = tableNavMove(store, tableId, sel, dir, mode);
+          if (res) editor.setSelection(res.selection, res.effects);
+        },
+        onEnter: () => {
+          applyCmd(
+            editor,
+            tableCommands.confirm(
+              editor,
+              tableId,
+              editor.runtime.selection.value,
+            ),
+          );
+        },
+        onEscape: () => setIdle(editor),
+      }),
+  });
+}
+
+function mountTableCell(
+  ctx0: TableMountCtx,
+  rowId: ItemId,
+  col: string,
+): Component {
+  return createComponent((cctx) => {
+    const host = el("div", "item cell");
+    const inner = el("div");
+    host.append(inner);
+
+    let cur: Component | null = null;
+    let curCellId: ItemId | null = null;
+
+    const setInner = (node: HTMLElement) => inner.replaceChildren(node);
+
+    const mountMissing = () => {
+      cur?.dispose();
+      cur = null;
+      curCellId = null;
+      setInner(el("div", "item cell issue", "[missing]"));
     };
 
-    this.ctx.editor.runtime.registerBinding(this.binding);
-    this.cleanup.add(() => this.ctx.editor.runtime.unregisterBinding(rowFocus));
+    const mountPresent = (cellId: ItemId) => {
+      cur?.dispose();
+      cur = mountTableCellContent({
+        editor: ctx0.editor,
+        store: ctx0.store,
+        tableId: ctx0.tableId,
+        rowId,
+        cellId,
+      });
+      curCellId = cellId;
+      setInner(cur.el);
+      cctx.using(cur);
+    };
 
-    this.labelInput.classList.add("hidden");
+    const getCellId = () => ctx0.store.sel.childByLabel(rowId, col) ?? null;
 
-    this.cleanup.add(
-      on(this.headerCell, "mousedown", (e) => {
-        const res = focusRowLabel(this.ctx.tableId, this.rowId, 0);
-        this.ctx.editor.setSelection(res.selection, res.effects);
-        e.stopPropagation();
-      }),
-    );
+    cctx.watch(() => {
+      const nextCellId = getCellId();
+      if (nextCellId === curCellId) return;
+      nextCellId == null ? mountMissing() : mountPresent(nextCellId);
+    });
 
-    this.cleanup.add(
-      bindCommitTextInput(this.labelInput, {
-        commit: (text) => {
-          tableCommands.commitRowLabel(
-            this.ctx.editor,
-            this.ctx.tableId,
-            this.rowId,
-            text,
-          );
-        },
-      }),
-    );
+    cctx.on(host, "pointerdown", (e) => {
+      const nextCellId = getCellId();
+      const res =
+        nextCellId == null
+          ? focusRowLabel(ctx0.tableId, rowId)
+          : focusCell(rowId, nextCellId);
 
-    this.cleanup.add(
-      on(this.labelInput, "keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          const cols = JSON.parse(this.ctx.columnsJsonSig.value) as string[];
-          const first = cols[0];
-          if (!first) return;
-          const cid = cellIdByColumn(this.ctx.editor.store, this.rowId, first);
-          if (!cid) return;
-          const res = focusCell(this.rowId, cid, 0);
-          this.ctx.editor.setSelection(res.selection, res.effects);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          const res = focusRowLabel(this.ctx.tableId, this.rowId, 0);
-          this.ctx.editor.setSelection(res.selection, res.effects);
-        }
-      }),
-    );
+      ctx0.editor.setSelection(res.selection, res.effects);
+      e.stopPropagation();
+    });
 
-    this.cleanup.add(
-      effect(() => {
-        const store = this.ctx.editor.store;
-        const { tableId } = this.ctx;
-
-        const label = store.sel.item(this.rowId).label ?? "";
-
-        const sel = this.ctx.editor.runtime.selection.value;
-        const showInput =
-          isRowLabelSelection(sel, tableId) &&
-          sel.kind === "focused" &&
-          sel.focus.id === this.rowId;
-
-        this.labelInput.classList.toggle("hidden", !showInput);
-        this.labelDisplay.classList.toggle("hidden", showInput);
-
-        this.labelDisplay.textContent = label;
-        syncValue(this.labelInput, label);
-
-        const cols = JSON.parse(this.ctx.columnsJsonSig.value) as string[];
-        this.reconcileCells(cols);
-      }),
-    );
-  }
-
-  dispose() {
-    this.cellMgr?.dispose();
-    this.cellMgr = null;
-
-    this.cleanup.run();
-    this.element.replaceChildren();
-  }
-
-  private reconcileCells(cols: string[]) {
-    this.cellMgr ??= new RowCellManager(this.ctx, this.rowId, this.cellsHost);
-    this.cellMgr.update(cols);
-  }
+    return host;
+  });
 }
 
-class RowCellManager {
-  private cache = new Map<string, CellView>();
+function mountTableRow(ctx0: TableMountCtx, rowId: ItemId): Component {
+  return createComponent((cctx) => {
+    const rowEl = el("div", "row");
+    const labelCell = el("div", "label");
+    const labelHost = el("div", "row-label");
+    labelCell.append(labelHost);
 
-  constructor(
-    private ctx: RowCtx,
-    private rowId: ItemId,
-    private host: HTMLElement,
-  ) {}
+    const cellsHost = el("div", "row-cells");
+    rowEl.append(labelCell, cellsHost);
 
-  update(cols: string[]) {
-    const keep = new Set(cols);
+    const labelFocus: Focus = { scopeId: ctx0.tableId, id: rowId };
 
-    for (const [col, view] of this.cache) {
-      if (!keep.has(col)) {
-        view.dispose();
-        this.cache.delete(col);
-      }
-    }
+    const labelComp = textField({
+      editor: ctx0.editor,
+      focus: labelFocus,
+      target: { kind: "header", index: 0 },
+      multiline: false,
+      caret: "fromTarget",
+      stopPropagation: true,
+      onCommitEvents: ["input", "blur"],
+      commit: (text) =>
+        tableCommands.commitRowLabel(ctx0.editor, ctx0.tableId, rowId, text),
+      getState: () => {
+        const sel = ctx0.editor.runtime.selection.value;
+        const editing =
+          isRowLabelSelection(sel, ctx0.tableId) &&
+          isFocused(sel) &&
+          sel.focus.id === rowId;
+        const label = ctx0.store.sel.item(rowId).label ?? "";
+        return { text: label, readOnly: !editing, isIssue: false };
+      },
+      textKeys: (inp) =>
+        bindTextControlKeys(inp, {
+          nav: defaultTextNav,
+          onNav: (dir, mode) => {
+            const sel2 = ctx0.editor.runtime.selection.value;
+            const res = tableNavMove(ctx0.store, ctx0.tableId, sel2, dir, mode);
+            if (res) ctx0.editor.setSelection(res.selection, res.effects);
+          },
+          onEnter: () => {
+            const first = ctx0.columnsSig.value[0];
+            if (!first) return;
 
-    const desired: HTMLElement[] = [];
-    for (const col of cols) {
-      let v = this.cache.get(col);
-      if (!v) {
-        v = new CellView(this.ctx, this.rowId, col);
-        this.cache.set(col, v);
-      }
-      desired.push(v.element);
-    }
+            const cid = ctx0.store.sel.childByLabel(rowId, first);
+            if (!cid) return;
 
-    reconcileChildren(this.host, desired);
-  }
+            const res = focusCell(rowId, cid);
+            ctx0.editor.setSelection(res.selection, res.effects);
+          },
+          onEscape: () => setIdle(ctx0.editor),
+        }),
+    });
 
-  dispose() {
-    for (const v of this.cache.values()) v.dispose();
-    this.cache.clear();
-  }
+    labelHost.replaceChildren(labelComp.el);
+    cctx.using(labelComp);
+
+    const cellList = cctx.list(cellsHost, (col: string) =>
+      mountTableCell(ctx0, rowId, col),
+    );
+    cctx.watch(() => cellList.update(ctx0.columnsSig.value));
+
+    cctx.on(labelCell, "pointerdown", (e) => {
+      const res = focusRowLabel(ctx0.tableId, rowId);
+      ctx0.editor.setSelection(res.selection, res.effects);
+      e.stopPropagation();
+    });
+
+    return rowEl;
+  });
 }
 
-class CellView {
-  element: HTMLElement;
-
-  private inputEl = textInput(true);
-  private readonlyEl = el("div", "item readonly");
-  private groupEl = el("div", "group");
-  private valueGroupEl = el("div", "group readonly");
-
-  private mounted: ReturnType<typeof replaceMountedRegion> | null = null;
-  private childMgr: ChildManager<ItemId> | null = null;
-
-  private boundFocus: Focus | null = null;
-  private binding: Binding | null = null;
-  private currentContentEl: HTMLElement = this.inputEl;
-
-  private cleanup = new CleanupBag();
-  private readonlyStop: (() => void) | null = null;
-
-  constructor(
-    private ctx: RowCtx,
-    private rowId: ItemId,
-    private col: string,
-  ) {
-    this.element = el("div", "item cell");
-    this.element.append(this.inputEl);
-    this.inputEl.classList.add("content");
-
-    this.cleanup.add(
-      bindCommitTextInput(this.inputEl, {
-        commit: (text) => {
-          const curCellId = cellIdByColumn(
-            this.ctx.editor.store,
-            this.rowId,
-            this.col,
-          );
-          if (!curCellId) return;
-          tableCommands.commitCellText(
-            this.ctx.editor,
-            this.rowId,
-            curCellId,
-            text,
-          );
-        },
-      }),
+function mountTableBody(ctx0: TableMountCtx): Component {
+  return createComponent((ctx) => {
+    const body = el("div", "table-body");
+    const rowList = ctx.list(body, (rowId: ItemId) =>
+      mountTableRow(ctx0, rowId),
     );
 
-    this.cleanup.add(
-      on(this.inputEl, "keydown", (e: KeyboardEvent) => {
-        const mod = e.metaKey || e.ctrlKey;
+    ctx.watch(() => {
+      const v = ctx0.store.sel.value(ctx0.tableId);
+      rowList.update(v.kind === "item-group" ? v.items : []);
+    });
 
-        const caret = this.inputEl.selectionStart ?? 0;
-        const end = this.inputEl.selectionEnd ?? caret;
-        const len = this.inputEl.value.length;
+    return body;
+  });
+}
 
-        const dir =
-          e.key === "ArrowUp"
-            ? "up"
-            : e.key === "ArrowDown"
-              ? "down"
-              : e.key === "ArrowLeft"
-                ? "left"
-                : e.key === "ArrowRight"
-                  ? "right"
-                  : null;
+export type TableViewCtx = { editor: Editor };
 
-        if (!dir) return;
+export function createTableView(
+  ctx: TableViewCtx,
+  tableId: ItemId,
+  _tableFocus?: Focus,
+): View {
+  const { editor } = ctx;
+  const store = editor.store;
 
-        const atStart = caret === 0 && end === 0;
-        const atEnd = caret === len && end === len;
+  const root = el("div", "view table");
+  root.tabIndex = 0;
 
-        const boundary =
-          mod ||
-          (dir === "left" && atStart) ||
-          (dir === "right" && atEnd) ||
-          dir === "up" ||
-          dir === "down";
+  const headerHost = el("div");
+  const bodyHost = el("div");
+  root.append(headerHost, bodyHost);
 
-        if (!boundary) return;
+  const columnsSig = computed(() => deriveColumns(store, tableId));
 
-        e.preventDefault();
-        e.stopPropagation();
+  const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
+    tableNavMove(store, tableId, sel, dir, mode);
 
-        const sel = this.ctx.editor.runtime.selection.value;
-        const res = tableNavMove(
-          this.ctx.editor.store,
-          this.ctx.tableId,
-          sel,
-          dir as any,
-          mod ? "jump" : "step",
-        );
-        if (res) this.ctx.editor.setSelection(res.selection, res.effects);
-      }),
-    );
+  const mountCtx: TableMountCtx = {
+    editor,
+    store,
+    tableId,
+    navMove,
+    columnsSig,
+  };
 
-    this.cleanup.add(
-      effect(() => {
-        const store = this.ctx.editor.store;
-        const cellId = cellIdByColumn(store, this.rowId, this.col);
+  const header = mountTableHeader(mountCtx);
+  const body = mountTableBody(mountCtx);
 
-        if (!cellId) {
-          this.unmountChildRegion();
-          this.unbind();
-          this.stopReadonly();
-          this.element.replaceChildren(el("div", "item cell"));
-          return;
-        }
+  headerHost.replaceChildren(header.el);
+  bodyHost.replaceChildren(body.el);
 
-        const it = store.sel.item(cellId);
-        const v = store.sel.value(cellId);
+  const stopHeader = effect(() => headerHost.replaceChildren(header.el));
+  const stopBody = effect(() => bodyHost.replaceChildren(body.el));
 
-        if (it.view === "slider") {
-          this.stopReadonly();
-          this.mountChildRegion(cellId);
-          this.reconcileBinding(cellId, this.mounted!.region.root);
-          return;
-        }
+  return {
+    id: `table:${String(tableId)}`,
+    root,
 
-        this.unmountChildRegion();
+    onActivate() {
+      const sel = editor.runtime.selection.value;
+      if (sel.kind !== "idle") return;
 
-        const mode =
-          v.kind === "item-group"
-            ? "item-group"
-            : v.kind === "value-group"
-              ? "value-group"
-              : store.sel.canEditScalarText(cellId)
-                ? "text"
-                : "readonly-text";
+      const rowsV = store.sel.value(tableId);
+      if (rowsV.kind !== "item-group" || rowsV.items.length === 0) return;
 
-        if (mode === "item-group") {
-          this.stopReadonly();
-          const wrap = this.groupEl;
-          this.element.replaceChildren(wrap);
+      const firstRowId = rowsV.items[0]!;
+      const res = focusRowLabel(tableId, firstRowId);
+      editor.setSelection(res.selection, res.effects);
+    },
 
-          if (!this.childMgr) {
-            this.childMgr = new ChildManager<ItemId>(wrap, (id) => {
-              const d = el("div", "item readonly");
-              const stop = bindReadonlyItemText(d, this.ctx.editor.store, id);
-              return {
-                element: d,
-                dispose() {
-                  stop();
-                  d.replaceChildren();
-                },
-              };
-            });
-          } else {
-            this.childMgr.setContainer(wrap);
-          }
+    onKeyDown(e): ViewKeyResult {
+      const sel = editor.runtime.selection.value;
+      if (!isFocused(sel)) return;
 
-          this.childMgr.update(v.kind === "item-group" ? v.items : []);
-          this.reconcileBinding(cellId, wrap);
-          return;
-        }
+      const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
 
-        if (mode === "value-group") {
-          this.stopReadonly();
-          const wrap = this.valueGroupEl;
-          wrap.replaceChildren();
-          if (v.kind === "value-group") {
-            for (const it2 of v.items)
-              wrap.append(renderLabeledValueReadonly(it2.label, it2.value));
-          }
-          this.element.replaceChildren(wrap);
-          this.reconcileBinding(cellId, wrap);
-          return;
-        }
-
-        if (mode === "readonly-text") {
-          const wrap = this.readonlyEl;
-          wrap.classList.toggle("issue", v.kind === "issue");
-          this.element.replaceChildren(wrap);
-          this.reconcileBinding(cellId, wrap);
-
-          this.stopReadonly();
-          this.readonlyStop = bindReadonlyItemText(
-            wrap,
-            this.ctx.editor.store,
-            cellId,
-          );
-          return;
-        }
-
-        this.stopReadonly();
-
-        const editable = getEditableText(store, cellId);
-        this.inputEl.readOnly = editable.kind !== "editable";
-        syncValue(this.inputEl, editable.text);
-        this.inputEl.classList.toggle("issue", v.kind === "issue");
-
-        this.element.replaceChildren(this.inputEl);
-        this.reconcileBinding(cellId, this.inputEl);
-      }),
-    );
-  }
-
-  dispose() {
-    this.unmountChildRegion();
-    this.childMgr?.dispose();
-    this.childMgr = null;
-    this.unbind();
-    this.stopReadonly();
-
-    this.cleanup.run();
-    this.element.replaceChildren();
-  }
-
-  private stopReadonly() {
-    this.readonlyStop?.();
-    this.readonlyStop = null;
-  }
-
-  private reconcileBinding(cellId: ItemId, contentEl: HTMLElement) {
-    const focus: Focus = { containerId: this.rowId, id: cellId };
-
-    if (
-      this.boundFocus &&
-      (this.boundFocus.containerId !== focus.containerId ||
-        this.boundFocus.id !== focus.id)
-    ) {
-      this.unbind();
-    }
-
-    this.boundFocus = focus;
-    this.currentContentEl = contentEl;
-
-    if (!this.binding) {
-      this.binding = {
-        focus,
-        elementFor: () => this.currentContentEl,
-        setCaret: (pos: number) => {
-          const el2 = this.currentContentEl;
-          if (
-            el2 instanceof HTMLInputElement ||
-            el2 instanceof HTMLTextAreaElement
-          ) {
-            el2.setSelectionRange(pos, pos);
-          }
-        },
-        getTextLength: () => {
-          const el2 = this.currentContentEl;
-          if (
-            el2 instanceof HTMLInputElement ||
-            el2 instanceof HTMLTextAreaElement
-          )
-            return el2.value.length;
-          return 0;
-        },
+      const arrowDir: Record<string, NavDir | undefined> = {
+        ArrowUp: "up",
+        ArrowDown: "down",
+        ArrowLeft: "left",
+        ArrowRight: "right",
       };
-    } else {
-      this.binding.focus = focus;
-    }
 
-    this.ctx.editor.runtime.registerBinding(this.binding);
-  }
+      const dir = arrowDir[e.key];
+      if (dir) {
+        stopEvent(e);
+        const res = navMove(sel, dir, mode);
+        if (res) editor.setSelection(res.selection, res.effects);
+        return;
+      }
 
-  private unbind() {
-    if (!this.boundFocus) return;
-    this.ctx.editor.runtime.unregisterBinding(this.boundFocus);
-    this.boundFocus = null;
-    this.binding = null;
-  }
+      if (e.key === "Enter") {
+        stopEvent(e);
+        applyCmd(editor, tableCommands.confirm(editor, tableId, sel));
+        return;
+      }
 
-  private mountChildRegion(cellId: ItemId) {
-    const focus: Focus = { containerId: this.rowId, id: cellId };
-    const region = createSliderRegion(
-      { editor: this.ctx.editor },
-      cellId,
-      focus,
-    );
+      if (e.key === "Escape") {
+        stopEvent(e);
+        setIdle(editor);
+        return;
+      }
+    },
 
-    this.mounted = replaceMountedRegion(
-      this.ctx.editor.runtime,
-      this.element,
-      this.mounted,
-      region,
-    );
-    if (this.mounted) this.element.replaceChildren(this.mounted.region.root);
-  }
-
-  private unmountChildRegion() {
-    if (!this.mounted) return;
-    this.mounted.unmount();
-    this.mounted = null;
-  }
+    dispose() {
+      stopHeader();
+      stopBody();
+      header.dispose();
+      body.dispose();
+      root.replaceChildren();
+    },
+  };
 }

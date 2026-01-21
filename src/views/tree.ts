@@ -1,170 +1,131 @@
-import { effect } from "@preact/signals-core";
-import type { Store, ItemId, Value, Txn, StoredContent } from "../store";
+import { computed } from "@preact/signals-core";
+import type { Store, ItemId, Txn, ViewKind } from "../store";
 import {
-  type Editor,
-  type Region,
-  type Selection,
-  type Focus,
-  type FocusTarget,
-  type EditorEffect,
-  type Binding,
-  type RegionKeyResult,
-  mkFocusSelection,
+  headerFieldsForItem,
+  headerFieldValueForItem,
+  type HeaderFieldDef,
+} from "../store";
+import type {
+  Editor,
+  View,
+  Selection,
+  Focus,
+  FocusTarget,
+  EditorEffect,
+  ViewKeyResult,
+  NavDir,
+  NavMode,
+  CmdResult,
 } from "../editor";
 import {
+  mkFocusSelection,
+  caret0,
+  caretAt,
+  proposeSelection,
+  tryCmd,
+  applyCmd,
+  setIdle,
+} from "../editor";
+import {
+  createComponent,
   el,
   on,
-  textInput,
-  syncValue,
   clamp,
-  ChildManager,
-  getEditableText,
-  getDisplayText,
+  ensureTabbable,
+  stopEvent,
+  bindTextControlKeys,
   parseScalar,
-  bindCommitTextInput,
-  renderLabeledValueReadonly,
-  CleanupBag,
+  getEditableText,
+  valueField,
+  autosizeTextField,
+  textField,
+  defaultTextNav,
+  mountChildViewInto,
+  type Component,
 } from "../ui";
-import { replaceMountedRegion } from "./index";
-import { createTableRegion } from "./table";
-import { createSliderRegion } from "./slider";
+import { createChildViewForItem, viewWantsChildView } from "./index";
 
-export type TreeRegionCtx = { editor: Editor };
+const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 
-export function createTreeRegion(
-  ctx: TreeRegionCtx,
-  rootId: ItemId,
-  _focus?: Focus,
-): Region {
-  const { editor } = ctx;
-  const store = editor.store;
+const hasHeaderFields = (store: Store, id: ItemId) =>
+  headerFieldsForItem(store.sel.item(id)).length > 0;
 
-  const root = el("div", "region tree");
-  const regionId = `tree:${String(rootId)}`;
-
-  const rootView = new ItemView(
-    { editor, rootId, regionId },
-    { containerId: rootId, id: rootId },
-    { showHeader: false },
-  );
-  root.append(rootView.element);
-
-  return {
-    id: regionId,
-    root,
-
-    onActivate() {
-      const sel = editor.runtime.selection.value;
-      if (sel.kind !== "idle") return;
-
-      const first = firstNavStop(store, rootId);
-      if (!first) return;
-
-      const target = defaultTargetFor(store, first.id);
-      const res = mkFocusSelection(first, target, 0);
-      editor.setSelection(res.selection, res.effects);
-    },
-
-    onKeyDown(e): RegionKeyResult {
-      const sel = editor.runtime.selection.value;
-      if (sel.kind !== "focused") return;
-
-      const mod = e.metaKey || e.ctrlKey;
-      const mode = mod ? "jump" : "step";
-
-      const stopAndPrevent = () => {
-        e.preventDefault();
-        e.stopPropagation();
-      };
-
-      switch (e.key) {
-        case "ArrowUp":
-        case "ArrowDown":
-        case "ArrowLeft":
-        case "ArrowRight": {
-          stopAndPrevent();
-
-          const dir =
-            e.key === "ArrowUp"
-              ? "up"
-              : e.key === "ArrowDown"
-                ? "down"
-                : e.key === "ArrowLeft"
-                  ? "left"
-                  : "right";
-
-          const res = treeNavMove(store, sel, dir, mode);
-          if (res) editor.setSelection(res.selection, res.effects);
-          return;
-        }
-
-        case "Enter": {
-          stopAndPrevent();
-          const res = treeCommands.confirm(editor, sel);
-          if (res.selection)
-            editor.setSelection(res.selection, res.effects ?? []);
-          return;
-        }
-
-        case "Backspace": {
-          stopAndPrevent();
-          const res = treeCommands.deleteBoundary(editor, sel, "backward");
-          if (res.selection)
-            editor.setSelection(res.selection, res.effects ?? []);
-          return;
-        }
-
-        case "Delete": {
-          stopAndPrevent();
-          const res = treeCommands.deleteBoundary(editor, sel, "forward");
-          if (res.selection)
-            editor.setSelection(res.selection, res.effects ?? []);
-          return;
-        }
-
-        case "Tab": {
-          stopAndPrevent();
-          const res = treeCommands.changeNesting(
-            editor,
-            sel,
-            e.shiftKey ? "out" : "in",
-          );
-          if (res.selection)
-            editor.setSelection(res.selection, res.effects ?? []);
-          return;
-        }
-
-        case "Escape": {
-          stopAndPrevent();
-          editor.setSelection({ kind: "idle" }, [{ type: "CLEAR_DOM_FOCUS" }]);
-          return;
-        }
-      }
-    },
-
-    dispose() {
-      rootView.dispose();
-      root.replaceChildren();
-    },
-  };
-}
-
-type CmdResult = {
-  didChange: boolean;
-  selection?: Selection;
-  effects?: EditorEffect[];
-  issue?: string;
+const isNavStop = (store: Store, id: ItemId) => {
+  const kids = store.sel.groupItems(id);
+  return kids.length === 0 || hasHeaderFields(store, id);
 };
 
-function tryCmd(fn: () => CmdResult): CmdResult {
-  try {
-    return fn();
-  } catch (err) {
-    return {
-      didChange: false,
-      issue: err instanceof Error ? err.message : String(err),
-    };
+const defaultTargetFor = (store: Store, id: ItemId): FocusTarget =>
+  hasHeaderFields(store, id)
+    ? { kind: "header", index: 1 }
+    : { kind: "content" };
+
+function collectNavStopsFrom(store: Store, rootId: ItemId): Focus[] {
+  const out: Focus[] = [];
+  const walk = (ownerId: ItemId) => {
+    for (const id of store.sel.groupItems(ownerId)) {
+      if (isNavStop(store, id)) out.push({ scopeId: ownerId, id });
+      walk(id);
+    }
+  };
+  walk(rootId);
+  return out;
+}
+
+function treeNavMove(
+  store: Store,
+  stops: Focus[],
+  sel: Selection,
+  dir: NavDir,
+  mode: NavMode,
+): { selection: Selection; effects: EditorEffect[] } | null {
+  if (sel.kind !== "focused") return null;
+
+  const from = sel.focus;
+  const at = Math.max(
+    0,
+    stops.findIndex((s) => focusKey(s) === focusKey(from)),
+  );
+
+  const neighbor = (delta: -1 | 1) => {
+    const j = at + delta;
+    return j >= 0 && j < stops.length ? stops[j]! : null;
+  };
+
+  const parentFocus = (): Focus | null => {
+    const ownerId = store.sel.item(from.scopeId).ownerId;
+    return ownerId == null ? null : { scopeId: ownerId, id: from.scopeId };
+  };
+
+  const firstChildStop = (id: ItemId): Focus | null => {
+    for (const cid of store.sel.groupItems(id)) {
+      if (isNavStop(store, cid)) return { scopeId: id, id: cid };
+      const deeper = firstChildStop(cid);
+      if (deeper) return deeper;
+    }
+    return null;
+  };
+
+  let next: Focus | null = null;
+
+  if (dir === "up") next = neighbor(-1);
+  else if (dir === "down") next = neighbor(1);
+  else if (dir === "right") {
+    next = firstChildStop(from.id) ?? neighbor(1);
+    if (mode === "jump") next = neighbor(1) ?? next;
+  } else if (dir === "left") {
+    next = parentFocus() ?? neighbor(-1);
+    if (mode === "jump") next = neighbor(-1) ?? next;
   }
+
+  if (!next) return null;
+
+  const res = mkFocusSelection(
+    next,
+    defaultTargetFor(store, next.id),
+    caret0(),
+  );
+  return { selection: res.selection, effects: res.effects };
 }
 
 export const treeCommands = {
@@ -177,31 +138,9 @@ export const treeCommands = {
     });
   },
 
-  commitContentText(editor: Editor, f: Focus, raw: string): CmdResult {
-    return tryCmd(() => {
-      const store = editor.store;
-      if (!store.sel.canEditScalarText(f.id)) return { didChange: false };
-      editor.apply({
-        ops: [
-          {
-            kind: "patch",
-            id: f.id,
-            next: { content: { kind: "scalar", value: parseScalar(raw) } },
-          },
-        ],
-      });
-      return { didChange: true };
-    });
-  },
-
   setDerived(editor: Editor, f: Focus): CmdResult {
     return tryCmd(() => {
-      const target: FocusTarget = { kind: "header", index: 1 };
-      const nextSel: Selection = { kind: "focused", focus: f, target };
-      const effects: EditorEffect[] = [
-        { type: "DOM_FOCUS", focus: f, target, caret: 0 },
-      ];
-
+      const next = mkFocusSelection(f, { kind: "header", index: 1 }, caret0());
       editor.apply(
         {
           ops: [
@@ -212,10 +151,13 @@ export const treeCommands = {
             },
           ],
         },
-        { propose: () => ({ selection: nextSel, effects }) },
+        proposeSelection(next),
       );
-
-      return { didChange: true, selection: nextSel, effects };
+      return {
+        didChange: true,
+        selection: next.selection,
+        effects: next.effects,
+      };
     });
   },
 
@@ -226,8 +168,7 @@ export const treeCommands = {
     text: string,
   ): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
-      const info = store.sel.item(f.id);
+      const info = editor.store.sel.item(f.id);
 
       if (fieldKey === "derived.expr") {
         editor.apply({
@@ -242,26 +183,27 @@ export const treeCommands = {
         return { didChange: true };
       }
 
-      if (info.contentKind === "lens" && info.lensSpec) {
-        const cur = info.lensSpec;
-        const next = {
-          from: fieldKey === "lens.from" ? text : cur.from,
-          where: fieldKey === "lens.where" ? text : cur.where,
-          orderBy: fieldKey === "lens.orderBy" ? text : cur.orderBy,
-        };
-        editor.apply({
-          ops: [
-            {
-              kind: "patch",
-              id: f.id,
-              next: { content: { kind: "lens", ...next } },
-            },
-          ],
-        });
-        return { didChange: true };
-      }
+      if (info.contentKind !== "lens" || !info.lensSpec)
+        return { didChange: false };
 
-      return { didChange: false };
+      const cur = info.lensSpec;
+      const next = {
+        from: fieldKey === "lens.from" ? text : cur.from,
+        where: fieldKey === "lens.where" ? text : cur.where,
+        orderBy: fieldKey === "lens.orderBy" ? text : cur.orderBy,
+      };
+
+      editor.apply({
+        ops: [
+          {
+            kind: "patch",
+            id: f.id,
+            next: { content: { kind: "lens", ...next } },
+          },
+        ],
+      });
+
+      return { didChange: true };
     });
   },
 
@@ -279,8 +221,8 @@ export const treeCommands = {
       if (!loc) return { didChange: false };
 
       const at = side === "before" ? loc.index : loc.index + 1;
-
       const id = store.allocId();
+
       const txn: Txn = {
         ops: [
           { kind: "create", item: store.make.blank(id) },
@@ -291,17 +233,17 @@ export const treeCommands = {
         ],
       };
 
-      const nextFocus: Focus = { containerId: f.containerId, id };
-      const res = mkFocusSelection(nextFocus, { kind: "content" }, 0);
-
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
+      const next = mkFocusSelection(
+        { scopeId: f.scopeId, id },
+        { kind: "content" },
+        caret0(),
+      );
+      editor.apply(txn, proposeSelection(next));
 
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
     });
   },
@@ -357,17 +299,17 @@ export const treeCommands = {
         ],
       };
 
-      const nextFocus: Focus = { containerId: f.containerId, id: rightId };
-      const res = mkFocusSelection(nextFocus, { kind: "content" }, 0);
-
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
+      const next = mkFocusSelection(
+        { scopeId: f.scopeId, id: rightId },
+        { kind: "content" },
+        caret0(),
+      );
+      editor.apply(txn, proposeSelection(next));
 
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
     });
   },
@@ -387,49 +329,44 @@ export const treeCommands = {
       const loc = store.sel.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
-      const i = loc.index;
       const neighborId =
-        dir === "backward" ? loc.items[i - 1] : loc.items[i + 1];
-      if (neighborId == null) return { didChange: false };
-      if (!store.sel.canEditScalarText(neighborId)) return { didChange: false };
+        dir === "backward"
+          ? loc.items[loc.index - 1]
+          : loc.items[loc.index + 1];
+      if (neighborId == null || !store.sel.canEditScalarText(neighborId))
+        return { didChange: false };
 
-      const a = getEditableText(
-        store,
-        dir === "backward" ? neighborId : f.id,
-      ).text;
-      const b = getEditableText(
-        store,
-        dir === "backward" ? f.id : neighborId,
-      ).text;
-      const merged = a + b;
+      const leftId = dir === "backward" ? neighborId : f.id;
+      const rightId = dir === "backward" ? f.id : neighborId;
 
-      const survivorId = dir === "backward" ? neighborId : f.id;
-      const removedId = dir === "backward" ? f.id : neighborId;
+      const a = getEditableText(store, leftId).text;
+      const b = getEditableText(store, rightId).text;
 
-      const caret = a.length;
+      const survivorId = leftId;
+      const removedId = rightId;
 
       const txn: Txn = {
         ops: [
           {
             kind: "patch",
             id: survivorId,
-            next: { content: { kind: "scalar", value: parseScalar(merged) } },
+            next: { content: { kind: "scalar", value: parseScalar(a + b) } },
           },
           { kind: "reparent", spec: { childId: removedId, toOwnerId: null } },
         ],
       };
 
-      const nextFocus: Focus = { containerId: f.containerId, id: survivorId };
-      const res = mkFocusSelection(nextFocus, { kind: "content" }, caret);
-
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
+      const next = mkFocusSelection(
+        { scopeId: f.scopeId, id: survivorId },
+        { kind: "content" },
+        caretAt(a.length),
+      );
+      editor.apply(txn, proposeSelection(next));
 
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
     });
   },
@@ -455,26 +392,28 @@ export const treeCommands = {
           ? (prevId ?? nextId ?? loc.ownerId)
           : (nextId ?? prevId ?? loc.ownerId);
 
-      const containerKids = store.sel.groupItems(f.containerId);
+      const containerKids = store.sel.groupItems(f.scopeId);
       const nextFocus: Focus = containerKids.includes(chosen as ItemId)
-        ? { containerId: f.containerId, id: chosen as ItemId }
-        : { containerId: loc.ownerId, id: chosen as ItemId };
+        ? { scopeId: f.scopeId, id: chosen as ItemId }
+        : { scopeId: loc.ownerId, id: chosen as ItemId };
 
-      const target = defaultTargetFor(store, nextFocus.id);
-      const res = mkFocusSelection(nextFocus, target, 0);
+      const next = mkFocusSelection(
+        nextFocus,
+        defaultTargetFor(store, nextFocus.id),
+        caret0(),
+      );
 
-      const txn: Txn = {
-        ops: [{ kind: "reparent", spec: { childId: f.id, toOwnerId: null } }],
-      };
-
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
+      editor.apply(
+        {
+          ops: [{ kind: "reparent", spec: { childId: f.id, toOwnerId: null } }],
+        },
+        proposeSelection(next),
+      );
 
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
     });
   },
@@ -512,18 +451,17 @@ export const treeCommands = {
           ],
         };
 
-        const nextFocus: Focus = { containerId: wrapperId, id: f.id };
-        const target = defaultTargetFor(store, nextFocus.id);
-        const res = mkFocusSelection(nextFocus, target, 0);
+        const next = mkFocusSelection(
+          { scopeId: wrapperId, id: f.id },
+          defaultTargetFor(store, f.id),
+          caret0(),
+        );
 
-        editor.apply(txn, {
-          propose: () => ({ selection: res.selection, effects: res.effects }),
-        });
-
+        editor.apply(txn, proposeSelection(next));
         return {
           didChange: true,
-          selection: res.selection,
-          effects: res.effects,
+          selection: next.selection,
+          effects: next.effects,
         };
       }
 
@@ -540,8 +478,7 @@ export const treeCommands = {
       const ownerId = wrapper.ownerId;
       if (ownerId == null) return { didChange: false };
 
-      const ownerKids = store.sel.groupItems(ownerId);
-      const idx = ownerKids.indexOf(wrapperId);
+      const idx = store.sel.groupItems(ownerId).indexOf(wrapperId);
       if (idx < 0) return { didChange: false };
 
       const txn: Txn = {
@@ -560,18 +497,17 @@ export const treeCommands = {
         ],
       };
 
-      const nextFocus: Focus = { containerId: ownerId, id: f.id };
-      const target = defaultTargetFor(store, nextFocus.id);
-      const res = mkFocusSelection(nextFocus, target, 0);
+      const next = mkFocusSelection(
+        { scopeId: ownerId, id: f.id },
+        defaultTargetFor(store, f.id),
+        caret0(),
+      );
 
-      editor.apply(txn, {
-        propose: () => ({ selection: res.selection, effects: res.effects }),
-      });
-
+      editor.apply(txn, proposeSelection(next));
       return {
         didChange: true,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
     });
   },
@@ -580,14 +516,13 @@ export const treeCommands = {
     if (sel.kind !== "focused") return { didChange: false };
     const store = editor.store;
     const f = sel.focus;
-    const t = sel.target;
 
-    if (t.kind === "header") {
-      const res = mkFocusSelection(f, { kind: "content" }, 0);
+    if (sel.target.kind === "header") {
+      const next = mkFocusSelection(f, { kind: "content" }, caret0());
       return {
         didChange: false,
-        selection: res.selection,
-        effects: res.effects,
+        selection: next.selection,
+        effects: next.effects,
       };
     }
 
@@ -605,326 +540,69 @@ export const treeCommands = {
     const store = editor.store;
     const f = sel.focus;
 
-    if (store.sel.canEditScalarText(f.id)) {
-      const txt = getEditableText(store, f.id).text;
-      if (txt.length === 0) {
-        return treeCommands.removeItem(
-          editor,
-          sel,
-          dir === "backward" ? "prev" : "next",
-        );
-      }
-      return treeCommands.joinBoundary(editor, sel, dir);
-    }
+    const prefer = dir === "backward" ? "prev" : "next";
 
-    return treeCommands.removeItem(
-      editor,
-      sel,
-      dir === "backward" ? "prev" : "next",
-    );
+    if (!store.sel.canEditScalarText(f.id))
+      return treeCommands.removeItem(editor, sel, prefer);
+
+    const txt = getEditableText(store, f.id).text;
+    if (txt.length === 0) return treeCommands.removeItem(editor, sel, prefer);
+
+    return treeCommands.joinBoundary(editor, sel, dir);
   },
 } as const;
 
-type NavDir = "left" | "right" | "up" | "down";
-type NavMode = "step" | "jump";
-
-function hasHeaderFields(store: Store, id: ItemId): boolean {
-  const it = store.sel.item(id);
-  return it.contentKind === "derived" || it.contentKind === "lens";
-}
-
-function isNavStop(store: Store, id: ItemId): boolean {
-  const kids = store.sel.groupItems(id);
-  return kids.length === 0 || hasHeaderFields(store, id);
-}
-
-function defaultTargetFor(store: Store, id: ItemId): FocusTarget {
-  return hasHeaderFields(store, id)
-    ? { kind: "header", index: 1 }
-    : { kind: "content" };
-}
-
-function focusKey(f: Focus) {
-  return `${String(f.containerId)}::${String(f.id)}`;
-}
-
-function collectNavStopsFrom(store: Store, containerId: ItemId): Focus[] {
-  const out: Focus[] = [];
-  const walk = (ownerId: ItemId) => {
-    const kids = store.sel.groupItems(ownerId);
-    for (const id of kids) {
-      if (isNavStop(store, id)) out.push({ containerId: ownerId, id });
-      walk(id);
-    }
-  };
-  walk(containerId);
-  return out;
-}
-
-function neighborNavStop(store: Store, from: Focus, dir: -1 | 1): Focus | null {
-  const stops = collectNavStopsFrom(store, store.getRoot());
-  const key = focusKey(from);
-  const i = stops.findIndex((s) => focusKey(s) === key);
-  if (i < 0) return null;
-  const j = i + dir;
-  return j >= 0 && j < stops.length ? stops[j]! : null;
-}
-
-function parentFocus(store: Store, f: Focus): Focus | null {
-  const it = store.sel.item(f.containerId);
-  const ownerId = it.ownerId;
-  return ownerId == null ? null : { containerId: ownerId, id: f.containerId };
-}
-
-function firstChildStop(store: Store, id: ItemId): Focus | null {
-  const kids = store.sel.groupItems(id);
-  for (const cid of kids) {
-    if (isNavStop(store, cid)) return { containerId: id, id: cid };
-    const deeper = firstChildStop(store, cid);
-    if (deeper) return deeper;
-  }
-  return null;
-}
-
-function firstNavStop(store: Store, rootContainerId: ItemId): Focus | null {
-  return firstChildStop(store, rootContainerId);
-}
-
-function treeNavMove(
-  store: Store,
-  sel: Selection,
-  dir: NavDir,
-  mode: NavMode,
-): { selection: Selection; effects: EditorEffect[] } | null {
-  if (sel.kind !== "focused") return null;
-
-  const from = sel.focus;
-  const sign: -1 | 1 = dir === "up" || dir === "left" ? -1 : 1;
-
-  let next: Focus | null = null;
-
-  if (dir === "up" || dir === "down") {
-    next = neighborNavStop(store, from, sign);
-  } else if (dir === "right") {
-    next = firstChildStop(store, from.id) ?? neighborNavStop(store, from, 1);
-    if (mode === "jump") next = neighborNavStop(store, from, 1) ?? next;
-  } else if (dir === "left") {
-    next = parentFocus(store, from) ?? neighborNavStop(store, from, -1);
-    if (mode === "jump") next = neighborNavStop(store, from, -1) ?? next;
-  }
-
-  if (!next) return null;
-
-  const target = defaultTargetFor(store, next.id);
-  const res = mkFocusSelection(next, target, 0);
-  return { selection: res.selection, effects: res.effects };
-}
-
-type ItemRenderCtx = {
+type TreeMountCtx = {
   editor: Editor;
+  store: Store;
   rootId: ItemId;
-  regionId: string;
+  navMove: (
+    sel: Selection,
+    dir: NavDir,
+    mode: NavMode,
+  ) => { selection: Selection; effects: EditorEffect[] } | null;
 };
 
-type HeaderFieldDef = Readonly<{
-  key: string;
-  label: string;
-  multiline: boolean;
-}>;
+type TreeNodeSpec = {
+  focus: Focus;
+  showHeader: boolean;
+};
 
-function headerFieldsFor(store: Store, id: ItemId): readonly HeaderFieldDef[] {
-  const it = store.sel.item(id);
+function mountTreeHeader(
+  ctx0: TreeMountCtx,
+  focus: Focus,
+  defs: readonly HeaderFieldDef[],
+  onTargets: (targets: HTMLElement[]) => void,
+): Component {
+  const { editor, store } = ctx0;
 
-  if (it.contentKind === "derived") {
-    return [{ key: "derived.expr", label: "=", multiline: true }] as const;
-  }
-  if (it.contentKind === "lens") {
-    return [
-      { key: "lens.from", label: "~", multiline: false },
-      { key: "lens.where", label: "where:", multiline: true },
-      { key: "lens.orderBy", label: "orderBy:", multiline: true },
-    ] as const;
-  }
-  return [] as const;
-}
+  return createComponent((ctx) => {
+    const wrap = el("div");
+    const labelHost = el("div");
+    const fieldsHost = el("div", "header-fields");
+    wrap.append(labelHost, fieldsHost);
 
-function contentMode(
-  store: Store,
-  id: ItemId,
-): "text" | "readonly-text" | "item-group" | "value-group" {
-  const v = store.sel.value(id);
-  if (v.kind === "item-group") return "item-group";
-  if (v.kind === "value-group") return "value-group";
-  return store.sel.canEditScalarText(id) ? "text" : "readonly-text";
-}
-
-function ensureTabbable(elm: HTMLElement) {
-  const anyEl = elm as any;
-  if (anyEl.tabIndex == null || anyEl.tabIndex < 0) anyEl.tabIndex = 0;
-}
-
-class ItemView {
-  element: HTMLElement;
-
-  private headerEl = el("div", "header");
-  private labelWrap = el("div", "autosize label");
-  private labelMirror = el("span", "", "");
-  private labelInput = textInput(false);
-
-  private headerFieldsWrap = el("div", "header-fields");
-  private contentHost = el("div", "content-host");
-
-  private childMgr: ChildManager<ItemId> | null = null;
-  private mounted: ReturnType<typeof replaceMountedRegion> | null = null;
-
-  private headerInputs: (HTMLInputElement | HTMLTextAreaElement)[] = [];
-  private contentTarget: HTMLElement = this.contentHost;
-
-  private binding: Binding;
-
-  private cleanup = new CleanupBag();
-  private contentCleanup = new CleanupBag();
-  private labelBound = false;
-
-  constructor(
-    private ctx: ItemRenderCtx,
-    private focus: Focus,
-    private opts: { showHeader: boolean },
-  ) {
-    this.element = el("div", "item");
-
-    this.labelMirror.setAttribute("aria-hidden", "true");
-    this.labelWrap.append(this.labelMirror, this.labelInput as any);
-
-    this.headerEl.append(this.labelWrap, this.headerFieldsWrap);
-    this.element.append(this.contentHost);
-
-    this.binding = {
-      focus: { ...focus },
-      elementFor: (target: FocusTarget) => {
-        if (target.kind === "content") return this.contentTarget ?? null;
-        if (target.kind === "header")
-          return this.headerInputs[target.index] ?? null;
-        return null;
-      },
-      setCaret: (pos: number) => {
-        const sel = this.ctx.editor.runtime.selection.value;
-        const t =
-          sel.kind === "focused"
-            ? sel.target
-            : ({ kind: "content" } as FocusTarget);
-        const el2 = this.binding.elementFor(t) as any;
-        if (
-          el2 instanceof HTMLInputElement ||
-          el2 instanceof HTMLTextAreaElement
-        )
-          el2.setSelectionRange(pos, pos);
-      },
-      getTextLength: () => {
-        const sel = this.ctx.editor.runtime.selection.value;
-        const t =
-          sel.kind === "focused"
-            ? sel.target
-            : ({ kind: "content" } as FocusTarget);
-        const el2 = this.binding.elementFor(t) as any;
-        if (
-          el2 instanceof HTMLInputElement ||
-          el2 instanceof HTMLTextAreaElement
-        )
-          return el2.value.length;
-        return 0;
-      },
+    const toContent = () => {
+      const res = mkFocusSelection(focus, { kind: "content" }, caret0());
+      editor.setSelection(res.selection, res.effects);
     };
 
-    this.ctx.editor.runtime.registerBinding(this.binding);
-
-    this.cleanup.add(
-      effect(() => {
-        const store = this.ctx.editor.store;
-        const id = this.focus.id;
-
-        const it = store.sel.item(id);
-        const v = store.sel.value(id);
-        const mode = contentMode(store, id);
-        const headerDefs = headerFieldsFor(store, id);
-        const label = it.label ?? "";
-        const viewId = it.view || "";
-
-        const sel = this.ctx.editor.runtime.selection.value;
-        const focused =
-          sel.kind === "focused" &&
-          focusKey(sel.focus) === focusKey(this.focus);
-
-        const labelFocused =
-          focused &&
-          sel.kind === "focused" &&
-          sel.target.kind === "header" &&
-          sel.target.index === 0;
-
-        const needHeader =
-          this.opts.showHeader &&
-          (label.trim() !== "" || headerDefs.length > 0 || labelFocused);
-
-        this.reconcileHeader(needHeader, label, headerDefs, it, labelFocused);
-        this.reconcileContent(mode, v, viewId);
-        this.reconcileBinding(needHeader, headerDefs.length);
-
-        this.element.classList.toggle("focused", focused);
-        this.labelWrap.classList.toggle(
-          "hidden",
-          label.trim() === "" && !labelFocused,
-        );
-        this.contentHost.classList.toggle("issue", v.kind === "issue");
+    const labelComp = autosizeTextField({
+      editor,
+      focus,
+      target: { kind: "header", index: 0 },
+      commit: (text) => treeCommands.commitLabel(editor, focus, text),
+      getState: () => ({
+        text: store.sel.item(focus.id).label ?? "",
+        readOnly: false,
+        isIssue: false,
       }),
-    );
-  }
-
-  dispose() {
-    this.unmountChildRegion();
-    this.childMgr?.dispose();
-    this.childMgr = null;
-
-    this.contentCleanup.run();
-    this.ctx.editor.runtime.unregisterBinding(this.focus);
-
-    this.cleanup.run();
-    this.element.replaceChildren();
-  }
-
-  private setFocusedSelection(target: FocusTarget) {
-    const res = mkFocusSelection(this.focus, target, 0);
-    this.ctx.editor.setSelection(res.selection, res.effects);
-  }
-
-  private reconcileHeader(
-    needHeader: boolean,
-    labelText: string,
-    defs: readonly HeaderFieldDef[],
-    info: ReturnType<Store["sel"]["item"]>,
-    labelFocused: boolean,
-  ) {
-    if (needHeader) {
-      if (this.element.firstChild !== this.headerEl)
-        this.element.insertBefore(this.headerEl, this.contentHost);
-    } else {
-      if (this.headerEl.parentElement === this.element) this.headerEl.remove();
-    }
-
-    syncValue(this.labelInput as any, labelText);
-    this.labelMirror.textContent = labelText.length ? labelText : " ";
-
-    if (!this.labelBound) {
-      this.labelBound = true;
-
-      this.contentCleanup.add(
-        bindCommitTextInput(this.labelInput as any, {
-          commit: (text) =>
-            treeCommands.commitLabel(this.ctx.editor, this.focus, text),
-        }),
-      );
-
-      this.contentCleanup.add(
-        on(this.labelInput as any, "keydown", (e: any) => {
+      caret: "fromTarget",
+      stopPropagation: true,
+      onCommitEvents: ["input", "blur"],
+      wrapClassName: "autosize label",
+      textKeys: (inp) =>
+        on(inp as any, "keydown", (e: any) => {
           if (e.key === " ") {
             e.preventDefault();
             return;
@@ -932,376 +610,411 @@ class ItemView {
           if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
             e.preventDefault();
             e.stopPropagation();
-            const res = mkFocusSelection(this.focus, { kind: "content" }, 0);
-            this.ctx.editor.setSelection(res.selection, res.effects);
+            toContent();
           }
         }),
-      );
+    });
 
-      this.contentCleanup.add(
-        on(this.labelInput as any, "mousedown", (e: any) => {
-          this.setFocusedSelection({ kind: "header", index: 0 });
-          e.stopPropagation();
+    labelHost.replaceChildren(labelComp.el);
+    ctx.using(labelComp);
+
+    const targets: HTMLElement[] = [];
+    targets.push((labelComp.el as any).querySelector("input") ?? labelComp.el);
+
+    for (let i = 0; i < defs.length; i++) {
+      const d = defs[i]!;
+      const row = el("div", "wrap");
+      row.append(el("span", "equals", d.label), el("div"));
+      fieldsHost.append(row);
+
+      const host = row.lastElementChild as HTMLElement;
+      const headerIndex = i + 1;
+
+      const fc = textField({
+        editor,
+        focus,
+        target: { kind: "header", index: headerIndex },
+        multiline: d.multiline,
+        caret: "fromTarget",
+        stopPropagation: true,
+        commit: (text) =>
+          treeCommands.commitHeaderField(editor, focus, d.key, text),
+        getState: () => ({
+          text: headerFieldValueForItem(store.sel.item(focus.id), d.key as any),
+          readOnly: false,
+          isIssue: false,
         }),
-      );
-    }
-
-    this.headerFieldsWrap.replaceChildren();
-    this.headerInputs = [];
-
-    if (needHeader) {
-      this.headerInputs.push(this.labelInput as any);
-
-      for (let i = 0; i < defs.length; i++) {
-        const d = defs[i]!;
-        const wrap = el("div", "wrap");
-        const lab = el("span", "equals");
-        lab.textContent = d.label;
-        const inp = textInput(d.multiline);
-
-        syncValue(inp, headerFieldValue(info, d.key));
-
-        this.contentCleanup.add(
-          bindCommitTextInput(inp, {
-            commit: (text) =>
-              treeCommands.commitHeaderField(
-                this.ctx.editor,
-                this.focus,
-                d.key,
-                text,
-              ),
-          }),
-        );
-
-        this.contentCleanup.add(
-          on(inp, "keydown", (e: any) => {
+        onCommitEvents: ["input", "blur"],
+        textKeys: (inp) =>
+          on(inp as any, "keydown", (e: any) => {
             if ((e.key === "Enter" && !e.shiftKey) || e.key === "Escape") {
               e.preventDefault();
               e.stopPropagation();
-              const res = mkFocusSelection(this.focus, { kind: "content" }, 0);
-              this.ctx.editor.setSelection(res.selection, res.effects);
+              toContent();
+            }
+          }),
+      });
+
+      host.replaceChildren(fc.el);
+      ctx.using(fc);
+      targets.push(fc.el);
+    }
+
+    onTargets(targets);
+    ctx.onCleanup(() => onTargets([]));
+
+    return wrap;
+  });
+}
+
+function mountTreeChildren(ctx0: TreeMountCtx, focus: Focus): Component {
+  const { editor, store, rootId, navMove } = ctx0;
+
+  return createComponent((ctx) => {
+    const container = el("div", "group");
+    ensureTabbable(container);
+
+    const mgr = ctx.list(container, (childId: ItemId) =>
+      mountTreeNode(
+        { editor, store, rootId, navMove },
+        { focus: { scopeId: focus.id, id: childId }, showHeader: true },
+      ),
+    );
+
+    ctx.watch(() => {
+      mgr.update(store.sel.groupItems(focus.id));
+    });
+
+    ctx.on(container, "pointerdown", (e) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
+      const res = mkFocusSelection(focus, { kind: "content" }, caret0());
+      editor.setSelection(res.selection, res.effects);
+      e.stopPropagation();
+    });
+
+    return container;
+  });
+}
+
+function mountTreeBody(
+  ctx0: TreeMountCtx,
+  focus: Focus,
+  onContentTarget: (el0: HTMLElement | null) => void,
+): Component {
+  const { editor, store, navMove } = ctx0;
+
+  return createComponent((ctx) => {
+    const host = el("div");
+    const viewKind = store.sel.item(focus.id).view as ViewKind;
+
+    if (viewWantsChildView(viewKind)) {
+      const childView = createChildViewForItem(
+        { editor },
+        viewKind,
+        focus.id,
+        focus,
+      );
+      if (childView) {
+        ensureTabbable(childView.root);
+        onContentTarget(childView.root);
+        ctx.using(mountChildViewInto(editor, host, childView));
+        return host;
+      }
+    }
+
+    const vf = valueField({
+      editor,
+      focus,
+      id: focus.id,
+      textKeys: (inp) => {
+        const stops: Array<() => void> = [];
+
+        stops.push(
+          on(inp as any, "keydown", (e: KeyboardEvent) => {
+            if (e.key === "=" && !inp.value) {
+              stopEvent(e);
+              applyCmd(editor, treeCommands.setDerived(editor, focus));
             }
           }),
         );
 
-        const headerIndex = i + 1;
-        this.contentCleanup.add(
-          on(inp, "mousedown", (e: any) => {
-            this.setFocusedSelection({ kind: "header", index: headerIndex });
-            e.stopPropagation();
+        stops.push(
+          bindTextControlKeys(inp, {
+            nav: defaultTextNav,
+            onNav: (dir, mode) => {
+              const res = navMove(editor.runtime.selection.value, dir, mode);
+              if (res) editor.setSelection(res.selection, res.effects);
+            },
+            onEnter: (caret) => {
+              applyCmd(
+                editor,
+                treeCommands.splitAt(
+                  editor,
+                  editor.runtime.selection.value,
+                  caret.start,
+                  caret.end,
+                ),
+              );
+            },
+            onTab: (shift) => {
+              applyCmd(
+                editor,
+                treeCommands.changeNesting(
+                  editor,
+                  editor.runtime.selection.value,
+                  shift ? "out" : "in",
+                ),
+              );
+            },
+            onBackspaceBoundary: () => {
+              applyCmd(
+                editor,
+                treeCommands.deleteBoundary(
+                  editor,
+                  editor.runtime.selection.value,
+                  "backward",
+                ),
+              );
+            },
+            onDeleteBoundary: () => {
+              applyCmd(
+                editor,
+                treeCommands.deleteBoundary(
+                  editor,
+                  editor.runtime.selection.value,
+                  "forward",
+                ),
+              );
+            },
+            onEscape: () => {
+              const res = mkFocusSelection(
+                focus,
+                { kind: "content" },
+                caret0(),
+              );
+              editor.setSelection(res.selection, res.effects);
+            },
           }),
         );
 
-        wrap.append(lab, inp);
-        this.headerFieldsWrap.append(wrap);
-        this.headerInputs.push(inp);
-      }
-    }
-
-    this.labelWrap.classList.toggle(
-      "hidden",
-      labelText.trim() === "" && !labelFocused,
-    );
-  }
-
-  private reconcileContent(
-    mode: ReturnType<typeof contentMode>,
-    v: Value,
-    viewId: string,
-  ) {
-    this.contentCleanup.run();
-
-    if (viewId === "table") return void this.mountChildRegion("table");
-    if (viewId === "slider") return void this.mountChildRegion("slider");
-    this.unmountChildRegion();
-
-    const bindContentClick = (host: HTMLElement) => {
-      ensureTabbable(host);
-      this.contentCleanup.add(
-        on(host, "mousedown", (e: any) => {
-          this.setFocusedSelection({ kind: "content" });
-          e.stopPropagation();
-        }),
-      );
-    };
-
-    if (mode === "item-group") {
-      const wrap = el("div", "group");
-      this.contentHost.replaceChildren(wrap);
-
-      if (!this.childMgr) {
-        this.childMgr = new ChildManager<ItemId>(wrap, (id) => {
-          return new ItemView(
-            this.ctx,
-            { containerId: this.focus.id, id },
-            { showHeader: true },
-          );
-        });
-      } else {
-        this.childMgr.setContainer(wrap);
-      }
-
-      this.childMgr.update(v.kind === "item-group" ? v.items : []);
-
-      this.contentTarget = wrap;
-      bindContentClick(wrap);
-      return;
-    }
-
-    if (mode === "value-group") {
-      const wrap = el("div", "group readonly");
-      this.contentHost.replaceChildren(wrap);
-
-      if (v.kind === "value-group") {
-        for (const it of v.items)
-          wrap.append(renderLabeledValueReadonly(it.label, it.value));
-      }
-
-      this.contentTarget = wrap;
-      bindContentClick(wrap);
-      return;
-    }
-
-    const inp = textInput(true);
-    inp.classList.add("content");
-
-    const store = this.ctx.editor.store;
-    const editable = getEditableText(store, this.focus.id);
-    const display = getDisplayText(store.sel.value(this.focus.id));
-
-    syncValue(inp, editable.kind === "editable" ? editable.text : display.text);
-    inp.readOnly = editable.kind !== "editable";
-
-    this.contentCleanup.add(
-      bindCommitTextInput(inp, {
-        commit: (text) => {
-          const store2 = this.ctx.editor.store;
-          if (!store2.sel.canEditScalarText(this.focus.id)) return;
-          this.ctx.editor.apply({
-            ops: [
-              {
-                kind: "patch",
-                id: this.focus.id,
-                next: { content: { kind: "scalar", value: parseScalar(text) } },
-              },
-            ],
-          });
-        },
-      }),
-    );
-
-    this.contentCleanup.add(
-      on(inp, "blur", () => {
-        const store2 = this.ctx.editor.store;
-        if (!store2.sel.canEditScalarText(this.focus.id)) return;
-        this.ctx.editor.apply({
-          ops: [
-            {
-              kind: "patch",
-              id: this.focus.id,
-              next: {
-                content: { kind: "scalar", value: parseScalar(inp.value) },
-              },
-            },
-          ],
-        });
-      }),
-    );
-
-    this.contentCleanup.add(
-      on(inp, "mousedown", (e: any) => {
-        this.setFocusedSelection({ kind: "content" });
-        e.stopPropagation();
-      }),
-    );
-
-    this.contentCleanup.add(
-      on(inp, "keydown", (e: any) => {
-        const mod = e.metaKey || e.ctrlKey;
-        const caret = inp.selectionStart ?? 0;
-        const end = inp.selectionEnd ?? caret;
-        const hasSel = caret !== end;
-
-        const run = (res: CmdResult) => {
-          if (res.selection)
-            this.ctx.editor.setSelection(res.selection, res.effects ?? []);
+        return () => {
+          for (const fn of stops.toReversed()) fn();
         };
+      },
+      renderItemGroupChild: (childId) => {
+        const d = el("div", "item readonly");
+        return createComponent((cctx) => {
+          cctx.watch(() => {
+            const v = editor.store.sel.value(childId);
+            d.textContent =
+              v.kind === "issue"
+                ? v.message
+                : v.kind === "scalar"
+                  ? String(v.value)
+                  : "";
+            d.classList.toggle("issue", v.kind === "issue");
+          });
+          return d;
+        });
+      },
+    });
 
-        if (e.key === "=" && !inp.value) {
-          e.preventDefault();
-          e.stopPropagation();
-          return void run(treeCommands.setDerived(this.ctx.editor, this.focus));
-        }
+    host.replaceChildren(vf.el);
+    ctx.using(vf);
 
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          return void run(
-            treeCommands.splitAt(
-              this.ctx.editor,
-              this.ctx.editor.runtime.selection.value,
-              caret,
-              end,
-            ),
-          );
-        }
+    ensureTabbable(vf.el);
+    onContentTarget(vf.el);
+    ctx.onCleanup(() => onContentTarget(null));
 
-        if (e.key === "Tab") {
-          e.preventDefault();
-          e.stopPropagation();
-          return void run(
-            treeCommands.changeNesting(
-              this.ctx.editor,
-              this.ctx.editor.runtime.selection.value,
-              e.shiftKey ? "out" : "in",
-            ),
-          );
-        }
-
-        if (e.key === "Backspace" && !hasSel && caret === 0) {
-          e.preventDefault();
-          e.stopPropagation();
-          return void run(
-            treeCommands.deleteBoundary(
-              this.ctx.editor,
-              this.ctx.editor.runtime.selection.value,
-              "backward",
-            ),
-          );
-        }
-
-        if (e.key === "Delete" && !hasSel && caret === inp.value.length) {
-          e.preventDefault();
-          e.stopPropagation();
-          return void run(
-            treeCommands.deleteBoundary(
-              this.ctx.editor,
-              this.ctx.editor.runtime.selection.value,
-              "forward",
-            ),
-          );
-        }
-
-        if (
-          e.key === "ArrowUp" ||
-          e.key === "ArrowDown" ||
-          e.key === "ArrowLeft" ||
-          e.key === "ArrowRight"
-        ) {
-          const dir =
-            e.key === "ArrowUp"
-              ? "up"
-              : e.key === "ArrowDown"
-                ? "down"
-                : e.key === "ArrowLeft"
-                  ? "left"
-                  : "right";
-
-          const len = inp.value.length;
-          const atStart = caret === 0 && end === 0;
-          const atEnd = caret === len && end === len;
-
-          const atBoundary =
-            (dir === "left" && atStart) ||
-            (dir === "right" && atEnd) ||
-            dir === "up" ||
-            dir === "down";
-
-          if (mod || atBoundary) {
-            e.preventDefault();
-            e.stopPropagation();
-            const res = treeNavMove(
-              this.ctx.editor.store,
-              this.ctx.editor.runtime.selection.value,
-              dir as any,
-              mod ? "jump" : "step",
-            );
-            if (res) this.ctx.editor.setSelection(res.selection, res.effects);
-          }
-        }
-
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          const res = mkFocusSelection(this.focus, { kind: "content" }, 0);
-          this.ctx.editor.setSelection(res.selection, res.effects);
-        }
-      }),
-    );
-
-    this.contentHost.replaceChildren(inp);
-    this.contentTarget = inp;
-  }
-
-  private reconcileBinding(needHeader: boolean, headerFieldCount: number) {
-    const mountedRoot = this.mounted?.region?.root as HTMLElement | undefined;
-
-    this.contentTarget =
-      mountedRoot ??
-      this.contentTarget ??
-      (this.contentHost.firstElementChild as HTMLElement) ??
-      this.contentHost;
-
-    ensureTabbable(this.contentTarget);
-
-    if (!needHeader) {
-      this.headerInputs = [];
-    } else {
-      this.headerInputs = this.headerInputs.slice(0, 1 + headerFieldCount);
-    }
-
-    this.ctx.editor.runtime.registerBinding(this.binding);
-  }
-
-  private mountChildRegion(kind: "table" | "slider") {
-    const id = this.focus.id;
-    const focus: Focus = {
-      containerId: this.focus.containerId,
-      id: this.focus.id,
-    };
-
-    const region =
-      kind === "table"
-        ? createTableRegion({ editor: this.ctx.editor }, id, focus)
-        : createSliderRegion({ editor: this.ctx.editor }, id, focus);
-
-    this.mounted = replaceMountedRegion(
-      this.ctx.editor.runtime,
-      this.contentHost,
-      this.mounted,
-      region,
-    );
-
-    if (this.mounted) {
-      this.contentTarget = this.mounted.region.root;
-
-      this.contentCleanup.add(
-        on(this.mounted.region.root, "mousedown", (e: any) => {
-          this.setFocusedSelection({ kind: "content" });
-          e.stopPropagation();
-        }),
-      );
-    }
-  }
-
-  private unmountChildRegion() {
-    if (!this.mounted) return;
-    this.mounted.unmount();
-    this.mounted = null;
-  }
+    return host;
+  });
 }
 
-function headerFieldValue(
-  info: ReturnType<Store["sel"]["item"]>,
-  key: string,
-): string {
-  if (info.contentKind === "derived") {
-    if (key === "derived.expr") return info.derivedExpr ?? "";
-  }
-  if (info.contentKind === "lens") {
-    if (key === "lens.from") return info.lensSpec?.from ?? "";
-    if (key === "lens.where") return info.lensSpec?.where ?? "";
-    if (key === "lens.orderBy") return info.lensSpec?.orderBy ?? "";
-  }
-  return "";
+function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
+  const { editor, store } = ctx0;
+  const { focus } = spec;
+
+  return createComponent((ctx) => {
+    const root = el("div", "item");
+    const headerContainer = el("div", "header");
+    const contentContainer = el("div", "content-host");
+    root.append(contentContainer);
+
+    const headerSlot = ctx.slot(headerContainer);
+    const contentSlot = ctx.slot(contentContainer);
+
+    let headerTargets: HTMLElement[] = [];
+    let contentTargetEl: HTMLElement | null = contentContainer;
+
+    ctx.focusable({
+      editor,
+      focus,
+      elementFor: (target) =>
+        target.kind === "content"
+          ? contentTargetEl
+          : (headerTargets[target.index] ?? null),
+    });
+
+    const setHeaderTargets = (targets: HTMLElement[]) => {
+      headerTargets = targets;
+    };
+
+    const setContentTarget = (el0: HTMLElement | null) => {
+      contentTargetEl = el0 ?? contentContainer;
+    };
+
+    ctx.watch(() => {
+      const info = store.sel.item(focus.id);
+      const defs = headerFieldsForItem(info);
+      const label = info.label ?? "";
+
+      const sel = editor.runtime.selection.value;
+      const focused =
+        sel.kind === "focused" && focusKey(sel.focus) === focusKey(focus);
+      const labelFocused =
+        focused &&
+        sel.kind === "focused" &&
+        sel.target.kind === "header" &&
+        sel.target.index === 0;
+
+      const needHeader =
+        spec.showHeader &&
+        (label.trim() !== "" || defs.length > 0 || labelFocused);
+
+      if (needHeader) {
+        if (headerContainer.parentElement !== root)
+          root.insertBefore(headerContainer, contentContainer);
+
+        headerSlot.set(mountTreeHeader(ctx0, focus, defs, setHeaderTargets));
+      } else {
+        headerSlot.set(null);
+        setHeaderTargets([]);
+        if (headerContainer.parentElement === root) headerContainer.remove();
+      }
+
+      const v = store.sel.value(focus.id);
+      if (v.kind === "item-group") {
+        const kids = mountTreeChildren(ctx0, focus);
+        contentSlot.set(kids);
+        setContentTarget(kids.el);
+        ensureTabbable(kids.el);
+      } else {
+        contentSlot.set(mountTreeBody(ctx0, focus, setContentTarget));
+      }
+
+      root.classList.toggle("focused", focused);
+      contentContainer.classList.toggle("issue", v.kind === "issue");
+    });
+
+    return root;
+  });
+}
+
+export function createTreeView(
+  ctx: { editor: Editor },
+  rootId: ItemId,
+  _focus?: Focus,
+): View {
+  const { editor } = ctx;
+  const store = editor.store;
+
+  const root = el("div", "view tree");
+  const viewId = `tree:${String(rootId)}`;
+
+  const navStopsSig = computed(() =>
+    collectNavStopsFrom(store, store.getRoot()),
+  );
+
+  const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
+    treeNavMove(store, navStopsSig.value, sel, dir, mode);
+
+  const node = mountTreeNode(
+    { editor, store, rootId, navMove },
+    { focus: { scopeId: rootId, id: rootId }, showHeader: false },
+  );
+
+  root.append(node.el);
+
+  return {
+    id: viewId,
+    root,
+
+    onActivate() {
+      if (editor.runtime.selection.value.kind !== "idle") return;
+
+      const first = navStopsSig.value[0];
+      if (!first) return;
+
+      const res = mkFocusSelection(
+        first,
+        defaultTargetFor(store, first.id),
+        caret0(),
+      );
+      editor.setSelection(res.selection, res.effects);
+    },
+
+    onKeyDown(e): ViewKeyResult {
+      const sel = editor.runtime.selection.value;
+      if (sel.kind !== "focused") return;
+
+      const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
+
+      const arrowDir: Record<string, NavDir> = {
+        ArrowUp: "up",
+        ArrowDown: "down",
+        ArrowLeft: "left",
+        ArrowRight: "right",
+      };
+
+      const dir = arrowDir[e.key];
+      if (dir) {
+        stopEvent(e);
+        const res = navMove(sel, dir, mode);
+        if (res) editor.setSelection(res.selection, res.effects);
+        return;
+      }
+
+      if (e.key === "Enter") {
+        stopEvent(e);
+        applyCmd(editor, treeCommands.confirm(editor, sel));
+        return;
+      }
+
+      if (e.key === "Backspace") {
+        stopEvent(e);
+        applyCmd(editor, treeCommands.deleteBoundary(editor, sel, "backward"));
+        return;
+      }
+
+      if (e.key === "Delete") {
+        stopEvent(e);
+        applyCmd(editor, treeCommands.deleteBoundary(editor, sel, "forward"));
+        return;
+      }
+
+      if (e.key === "Tab") {
+        stopEvent(e);
+        applyCmd(
+          editor,
+          treeCommands.changeNesting(editor, sel, e.shiftKey ? "out" : "in"),
+        );
+        return;
+      }
+
+      if (e.key === "Escape") {
+        stopEvent(e);
+        setIdle(editor);
+        return;
+      }
+    },
+
+    dispose() {
+      node.dispose();
+      root.replaceChildren();
+    },
+  };
 }
