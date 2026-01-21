@@ -1,10 +1,5 @@
 import { computed } from "@preact/signals-core";
-import type { Store, ItemId, Txn, ViewKind } from "../store";
-import {
-  headerFieldsForItem,
-  headerFieldValueForItem,
-  type HeaderFieldDef,
-} from "../store";
+import type { Store, ItemId, Txn, ViewKind, StoredContent } from "../store";
 import type {
   Editor,
   View,
@@ -16,6 +11,7 @@ import type {
   NavDir,
   NavMode,
   CmdResult,
+  Caret,
 } from "../editor";
 import {
   mkFocusSelection,
@@ -26,6 +22,7 @@ import {
   applyCmd,
   setIdle,
 } from "../editor";
+import type { Evaluator } from "../evaluator";
 import {
   createComponent,
   el,
@@ -45,13 +42,69 @@ import {
 } from "../ui";
 import { createChildViewForItem, viewWantsChildView } from "./index";
 
+type HeaderFieldKey =
+  | "derived.expr"
+  | "lens.from"
+  | "lens.where"
+  | "lens.orderBy";
+
+type HeaderFieldDef = Readonly<{
+  key: HeaderFieldKey;
+  label: string;
+  multiline: boolean;
+}>;
+
+const DERIVED_FIELDS: readonly HeaderFieldDef[] = [
+  { key: "derived.expr", label: "=", multiline: true },
+] as const;
+
+const LENS_FIELDS: readonly HeaderFieldDef[] = [
+  { key: "lens.from", label: "~", multiline: false },
+  { key: "lens.where", label: "where:", multiline: true },
+  { key: "lens.orderBy", label: "orderBy:", multiline: true },
+] as const;
+
+function contentKindOf(store: Store, id: ItemId): StoredContent["kind"] {
+  return store.getItem(id).content.kind;
+}
+
+function headerFieldsForItem(store: Store, id: ItemId) {
+  const kind = contentKindOf(store, id);
+  if (kind === "derived") return DERIVED_FIELDS;
+  if (kind === "lens") return LENS_FIELDS;
+  return [] as const;
+}
+
+function headerFieldValueForItem(
+  store: Store,
+  id: ItemId,
+  key: HeaderFieldKey,
+): string {
+  const it = store.getItem(id);
+  const c = it.content;
+
+  if (c.kind === "derived") return key === "derived.expr" ? (c.expr ?? "") : "";
+  if (c.kind !== "lens") return "";
+
+  switch (key) {
+    case "lens.from":
+      return c.from ?? "";
+    case "lens.where":
+      return c.where ?? "";
+    case "lens.orderBy":
+      return c.orderBy ?? "";
+    default:
+      return "";
+  }
+}
+
 const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 
 const hasHeaderFields = (store: Store, id: ItemId) =>
-  headerFieldsForItem(store.sel.item(id)).length > 0;
+  headerFieldsForItem(store, id).length > 0;
 
-const isNavStop = (store: Store, id: ItemId) => {
-  const kids = store.sel.groupItems(id);
+const isNavStop = (store: Store, evaluator: Evaluator, id: ItemId) => {
+  const kids = evaluator.items(id);
   return kids.length === 0 || hasHeaderFields(store, id);
 };
 
@@ -60,11 +113,15 @@ const defaultTargetFor = (store: Store, id: ItemId): FocusTarget =>
     ? { kind: "header", index: 1 }
     : { kind: "content" };
 
-function collectNavStopsFrom(store: Store, rootId: ItemId): Focus[] {
+function collectNavStopsFrom(
+  store: Store,
+  evaluator: Evaluator,
+  rootId: ItemId,
+): Focus[] {
   const out: Focus[] = [];
   const walk = (ownerId: ItemId) => {
-    for (const id of store.sel.groupItems(ownerId)) {
-      if (isNavStop(store, id)) out.push({ scopeId: ownerId, id });
+    for (const id of evaluator.items(ownerId)) {
+      if (isNavStop(store, evaluator, id)) out.push({ scopeId: ownerId, id });
       walk(id);
     }
   };
@@ -74,6 +131,7 @@ function collectNavStopsFrom(store: Store, rootId: ItemId): Focus[] {
 
 function treeNavMove(
   store: Store,
+  evaluator: Evaluator,
   stops: Focus[],
   sel: Selection,
   dir: NavDir,
@@ -93,13 +151,13 @@ function treeNavMove(
   };
 
   const parentFocus = (): Focus | null => {
-    const ownerId = store.sel.item(from.scopeId).ownerId;
+    const ownerId = store.getItem(from.scopeId).ownerId;
     return ownerId == null ? null : { scopeId: ownerId, id: from.scopeId };
   };
 
   const firstChildStop = (id: ItemId): Focus | null => {
-    for (const cid of store.sel.groupItems(id)) {
-      if (isNavStop(store, cid)) return { scopeId: id, id: cid };
+    for (const cid of evaluator.items(id)) {
+      if (isNavStop(store, evaluator, cid)) return { scopeId: id, id: cid };
       const deeper = firstChildStop(cid);
       if (deeper) return deeper;
     }
@@ -128,12 +186,40 @@ function treeNavMove(
   return { selection: res.selection, effects: res.effects };
 }
 
+function canEditScalarText(store: Store, id: ItemId): boolean {
+  const kind = store.getItem(id).content.kind;
+  return kind === "blank" || kind === "scalar";
+}
+
 export const treeCommands = {
   commitLabel(editor: Editor, f: Focus, text: string): CmdResult {
     return tryCmd(() => {
       editor.apply({
         ops: [{ kind: "patch", id: f.id, next: { label: text } }],
       });
+      return { didChange: true };
+    });
+  },
+
+  commitScalarText(
+    editor: Editor,
+    evaluator: Evaluator,
+    id: ItemId,
+    text: string,
+  ): CmdResult {
+    return tryCmd(() => {
+      const store = editor.store;
+      if (!canEditScalarText(store, id)) return { didChange: false };
+      editor.apply({
+        ops: [
+          {
+            kind: "patch",
+            id,
+            next: { content: { kind: "scalar", value: parseScalar(text) } },
+          },
+        ],
+      });
+      void evaluator;
       return { didChange: true };
     });
   },
@@ -163,12 +249,14 @@ export const treeCommands = {
 
   commitHeaderField(
     editor: Editor,
+    store: Store,
     f: Focus,
     fieldKey: string,
     text: string,
   ): CmdResult {
     return tryCmd(() => {
-      const info = editor.store.sel.item(f.id);
+      const it = store.getItem(f.id);
+      const c = it.content;
 
       if (fieldKey === "derived.expr") {
         editor.apply({
@@ -183,14 +271,12 @@ export const treeCommands = {
         return { didChange: true };
       }
 
-      if (info.contentKind !== "lens" || !info.lensSpec)
-        return { didChange: false };
+      if (c.kind !== "lens") return { didChange: false };
 
-      const cur = info.lensSpec;
       const next = {
-        from: fieldKey === "lens.from" ? text : cur.from,
-        where: fieldKey === "lens.where" ? text : cur.where,
-        orderBy: fieldKey === "lens.orderBy" ? text : cur.orderBy,
+        from: fieldKey === "lens.from" ? text : c.from,
+        where: fieldKey === "lens.where" ? text : c.where,
+        orderBy: fieldKey === "lens.orderBy" ? text : c.orderBy,
       };
 
       editor.apply({
@@ -217,11 +303,11 @@ export const treeCommands = {
     const f = sel.focus;
 
     return tryCmd(() => {
-      const loc = store.sel.locateInOwner(f.id);
+      const loc = store.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
       const at = side === "before" ? loc.index : loc.index + 1;
-      const id = store.allocId();
+      const id = store.createId();
 
       const txn: Txn = {
         ops: [
@@ -250,6 +336,7 @@ export const treeCommands = {
 
   splitAt(
     editor: Editor,
+    evaluator: Evaluator,
     sel: Selection,
     caretStart: number,
     caretEnd = caretStart,
@@ -259,13 +346,13 @@ export const treeCommands = {
     const f = sel.focus;
 
     return tryCmd(() => {
-      if (!store.sel.canEditScalarText(f.id))
+      if (!canEditScalarText(store, f.id))
         return treeCommands.insertSibling(editor, sel, "after");
 
-      const loc = store.sel.locateInOwner(f.id);
+      const loc = store.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
-      const curText = getEditableText(store, f.id).text;
+      const curText = getEditableText(store, evaluator, f.id).text;
       const len = curText.length;
       const start = clamp(caretStart, 0, len);
       const end = clamp(caretEnd, 0, len);
@@ -273,7 +360,7 @@ export const treeCommands = {
       const left = curText.slice(0, start);
       const right = curText.slice(end);
 
-      const rightId = store.allocId();
+      const rightId = store.createId();
 
       const txn: Txn = {
         ops: [
@@ -316,6 +403,7 @@ export const treeCommands = {
 
   joinBoundary(
     editor: Editor,
+    evaluator: Evaluator,
     sel: Selection,
     dir: "backward" | "forward",
   ): CmdResult {
@@ -324,23 +412,23 @@ export const treeCommands = {
     const f = sel.focus;
 
     return tryCmd(() => {
-      if (!store.sel.canEditScalarText(f.id)) return { didChange: false };
+      if (!canEditScalarText(store, f.id)) return { didChange: false };
 
-      const loc = store.sel.locateInOwner(f.id);
+      const loc = store.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
       const neighborId =
         dir === "backward"
           ? loc.items[loc.index - 1]
           : loc.items[loc.index + 1];
-      if (neighborId == null || !store.sel.canEditScalarText(neighborId))
+      if (neighborId == null || !canEditScalarText(store, neighborId))
         return { didChange: false };
 
       const leftId = dir === "backward" ? neighborId : f.id;
       const rightId = dir === "backward" ? f.id : neighborId;
 
-      const a = getEditableText(store, leftId).text;
-      const b = getEditableText(store, rightId).text;
+      const a = getEditableText(store, evaluator, leftId).text;
+      const b = getEditableText(store, evaluator, rightId).text;
 
       const survivorId = leftId;
       const removedId = rightId;
@@ -373,6 +461,7 @@ export const treeCommands = {
 
   removeItem(
     editor: Editor,
+    evaluator: Evaluator,
     sel: Selection,
     prefer: "prev" | "next",
   ): CmdResult {
@@ -381,7 +470,7 @@ export const treeCommands = {
     const f = sel.focus;
 
     return tryCmd(() => {
-      const loc = store.sel.locateInOwner(f.id);
+      const loc = store.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
       const prevId = loc.items[loc.index - 1] ?? null;
@@ -392,7 +481,7 @@ export const treeCommands = {
           ? (prevId ?? nextId ?? loc.ownerId)
           : (nextId ?? prevId ?? loc.ownerId);
 
-      const containerKids = store.sel.groupItems(f.scopeId);
+      const containerKids = evaluator.items(f.scopeId);
       const nextFocus: Focus = containerKids.includes(chosen as ItemId)
         ? { scopeId: f.scopeId, id: chosen as ItemId }
         : { scopeId: loc.ownerId, id: chosen as ItemId };
@@ -418,18 +507,23 @@ export const treeCommands = {
     });
   },
 
-  changeNesting(editor: Editor, sel: Selection, dir: "in" | "out"): CmdResult {
+  changeNesting(
+    editor: Editor,
+    evaluator: Evaluator,
+    sel: Selection,
+    dir: "in" | "out",
+  ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
     const store = editor.store;
     const f = sel.focus;
 
     return tryCmd(() => {
       if (dir === "in") {
-        const loc = store.sel.locateInOwner(f.id);
+        const loc = store.locateInOwner(f.id);
         if (!loc) return { didChange: false };
 
-        const childInfo = store.sel.item(f.id);
-        const wrapperId = store.allocId();
+        const childInfo = store.getItem(f.id);
+        const wrapperId = store.createId();
         const wrapper = store.make.group(wrapperId);
 
         const txn: Txn = {
@@ -465,20 +559,20 @@ export const treeCommands = {
         };
       }
 
-      const child = store.sel.item(f.id);
+      const child = store.getItem(f.id);
       const wrapperId = child.ownerId;
       if (wrapperId == null) return { didChange: false };
 
-      const wrapper = store.sel.item(wrapperId);
-      if (wrapper.contentKind !== "group") return { didChange: false };
+      const wrapper = store.getItem(wrapperId);
+      if (wrapper.content.kind !== "group") return { didChange: false };
 
-      const kids = store.sel.groupItems(wrapperId);
+      const kids = evaluator.items(wrapperId);
       if (kids.length !== 1 || kids[0] !== f.id) return { didChange: false };
 
       const ownerId = wrapper.ownerId;
       if (ownerId == null) return { didChange: false };
 
-      const idx = store.sel.groupItems(ownerId).indexOf(wrapperId);
+      const idx = evaluator.items(ownerId).indexOf(wrapperId);
       if (idx < 0) return { didChange: false };
 
       const txn: Txn = {
@@ -512,7 +606,7 @@ export const treeCommands = {
     });
   },
 
-  confirm(editor: Editor, sel: Selection): CmdResult {
+  confirm(editor: Editor, evaluator: Evaluator, sel: Selection): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
     const store = editor.store;
     const f = sel.focus;
@@ -526,13 +620,14 @@ export const treeCommands = {
       };
     }
 
-    return store.sel.canEditScalarText(f.id)
-      ? treeCommands.splitAt(editor, sel, 0, 0)
+    return canEditScalarText(store, f.id)
+      ? treeCommands.splitAt(editor, evaluator, sel, 0, 0)
       : treeCommands.insertSibling(editor, sel, "after");
   },
 
   deleteBoundary(
     editor: Editor,
+    evaluator: Evaluator,
     sel: Selection,
     dir: "backward" | "forward",
   ): CmdResult {
@@ -542,18 +637,20 @@ export const treeCommands = {
 
     const prefer = dir === "backward" ? "prev" : "next";
 
-    if (!store.sel.canEditScalarText(f.id))
-      return treeCommands.removeItem(editor, sel, prefer);
+    if (!canEditScalarText(store, f.id))
+      return treeCommands.removeItem(editor, evaluator, sel, prefer);
 
-    const txt = getEditableText(store, f.id).text;
-    if (txt.length === 0) return treeCommands.removeItem(editor, sel, prefer);
+    const txt = getEditableText(store, evaluator, f.id).text;
+    if (txt.length === 0)
+      return treeCommands.removeItem(editor, evaluator, sel, prefer);
 
-    return treeCommands.joinBoundary(editor, sel, dir);
+    return treeCommands.joinBoundary(editor, evaluator, sel, dir);
   },
 } as const;
 
 type TreeMountCtx = {
   editor: Editor;
+  evaluator: Evaluator;
   store: Store;
   rootId: ItemId;
   navMove: (
@@ -561,12 +658,22 @@ type TreeMountCtx = {
     dir: NavDir,
     mode: NavMode,
   ) => { selection: Selection; effects: EditorEffect[] } | null;
+  dispatch: (intent: TreeIntent) => ViewKeyResult;
 };
 
 type TreeNodeSpec = {
   focus: Focus;
   showHeader: boolean;
 };
+
+type TreeIntent =
+  | { type: "NAV"; dir: NavDir; mode: NavMode }
+  | { type: "CONFIRM" }
+  | { type: "CANCEL" }
+  | { type: "INDENT"; dir: "in" | "out" }
+  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" }
+  | { type: "SPLIT"; caret: Caret }
+  | { type: "SET_DERIVED" };
 
 function mountTreeHeader(
   ctx0: TreeMountCtx,
@@ -583,17 +690,19 @@ function mountTreeHeader(
     wrap.append(labelHost, fieldsHost);
 
     const toContent = () => {
-      const res = mkFocusSelection(focus, { kind: "content" }, caret0());
-      editor.setSelection(res.selection, res.effects);
+      editor.setSelection(
+        mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+      );
     };
 
     const labelComp = autosizeTextField({
       editor,
       focus,
       target: { kind: "header", index: 0 },
-      commit: (text) => treeCommands.commitLabel(editor, focus, text),
+      commit: (text) =>
+        applyCmd(editor, treeCommands.commitLabel(editor, focus, text)),
       getState: () => ({
-        text: store.sel.item(focus.id).label ?? "",
+        text: store.getItem(focus.id).label ?? "",
         readOnly: false,
         isIssue: false,
       }),
@@ -638,9 +747,12 @@ function mountTreeHeader(
         caret: "fromTarget",
         stopPropagation: true,
         commit: (text) =>
-          treeCommands.commitHeaderField(editor, focus, d.key, text),
+          applyCmd(
+            editor,
+            treeCommands.commitHeaderField(editor, store, focus, d.key, text),
+          ),
         getState: () => ({
-          text: headerFieldValueForItem(store.sel.item(focus.id), d.key as any),
+          text: headerFieldValueForItem(store, focus.id, d.key as any),
           readOnly: false,
           isIssue: false,
         }),
@@ -668,7 +780,7 @@ function mountTreeHeader(
 }
 
 function mountTreeChildren(ctx0: TreeMountCtx, focus: Focus): Component {
-  const { editor, store, rootId, navMove } = ctx0;
+  const { editor, evaluator, store, rootId, navMove } = ctx0;
 
   return createComponent((ctx) => {
     const container = el("div", "group");
@@ -676,13 +788,13 @@ function mountTreeChildren(ctx0: TreeMountCtx, focus: Focus): Component {
 
     const mgr = ctx.list(container, (childId: ItemId) =>
       mountTreeNode(
-        { editor, store, rootId, navMove },
+        { ...ctx0, editor, evaluator, store, rootId, navMove },
         { focus: { scopeId: focus.id, id: childId }, showHeader: true },
       ),
     );
 
     ctx.watch(() => {
-      mgr.update(store.sel.groupItems(focus.id));
+      mgr.update(evaluator.items(focus.id));
     });
 
     ctx.on(container, "pointerdown", (e) => {
@@ -691,8 +803,9 @@ function mountTreeChildren(ctx0: TreeMountCtx, focus: Focus): Component {
         e.target instanceof HTMLTextAreaElement
       )
         return;
-      const res = mkFocusSelection(focus, { kind: "content" }, caret0());
-      editor.setSelection(res.selection, res.effects);
+      editor.setSelection(
+        mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+      );
       e.stopPropagation();
     });
 
@@ -705,15 +818,15 @@ function mountTreeBody(
   focus: Focus,
   onContentTarget: (el0: HTMLElement | null) => void,
 ): Component {
-  const { editor, store, navMove } = ctx0;
+  const { editor, evaluator, store, dispatch } = ctx0;
 
   return createComponent((ctx) => {
     const host = el("div");
-    const viewKind = store.sel.item(focus.id).view as ViewKind;
+    const viewKind = store.getItem(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
       const childView = createChildViewForItem(
-        { editor },
+        { editor, evaluator },
         viewKind,
         focus.id,
         focus,
@@ -728,8 +841,14 @@ function mountTreeBody(
 
     const vf = valueField({
       editor,
+      evaluator,
       focus,
       id: focus.id,
+      commitScalarText: (text) =>
+        applyCmd(
+          editor,
+          treeCommands.commitScalarText(editor, evaluator, focus.id, text),
+        ),
       textKeys: (inp) => {
         const stops: Array<() => void> = [];
 
@@ -737,7 +856,7 @@ function mountTreeBody(
           on(inp as any, "keydown", (e: KeyboardEvent) => {
             if (e.key === "=" && !inp.value) {
               stopEvent(e);
-              applyCmd(editor, treeCommands.setDerived(editor, focus));
+              dispatch({ type: "SET_DERIVED" });
             }
           }),
         );
@@ -745,59 +864,15 @@ function mountTreeBody(
         stops.push(
           bindTextControlKeys(inp, {
             nav: defaultTextNav,
-            onNav: (dir, mode) => {
-              const res = navMove(editor.runtime.selection.value, dir, mode);
-              if (res) editor.setSelection(res.selection, res.effects);
-            },
-            onEnter: (caret) => {
-              applyCmd(
-                editor,
-                treeCommands.splitAt(
-                  editor,
-                  editor.runtime.selection.value,
-                  caret.start,
-                  caret.end,
-                ),
-              );
-            },
-            onTab: (shift) => {
-              applyCmd(
-                editor,
-                treeCommands.changeNesting(
-                  editor,
-                  editor.runtime.selection.value,
-                  shift ? "out" : "in",
-                ),
-              );
-            },
-            onBackspaceBoundary: () => {
-              applyCmd(
-                editor,
-                treeCommands.deleteBoundary(
-                  editor,
-                  editor.runtime.selection.value,
-                  "backward",
-                ),
-              );
-            },
-            onDeleteBoundary: () => {
-              applyCmd(
-                editor,
-                treeCommands.deleteBoundary(
-                  editor,
-                  editor.runtime.selection.value,
-                  "forward",
-                ),
-              );
-            },
-            onEscape: () => {
-              const res = mkFocusSelection(
-                focus,
-                { kind: "content" },
-                caret0(),
-              );
-              editor.setSelection(res.selection, res.effects);
-            },
+            onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
+            onEnter: (caret) => dispatch({ type: "SPLIT", caret }),
+            onTab: (shift) =>
+              dispatch({ type: "INDENT", dir: shift ? "out" : "in" }),
+            onBackspaceBoundary: () =>
+              dispatch({ type: "DELETE_BOUNDARY", dir: "backward" }),
+            onDeleteBoundary: () =>
+              dispatch({ type: "DELETE_BOUNDARY", dir: "forward" }),
+            onEscape: () => dispatch({ type: "CANCEL" }),
           }),
         );
 
@@ -809,7 +884,7 @@ function mountTreeBody(
         const d = el("div", "item readonly");
         return createComponent((cctx) => {
           cctx.watch(() => {
-            const v = editor.store.sel.value(childId);
+            const v = evaluator.value(childId);
             d.textContent =
               v.kind === "issue"
                 ? v.message
@@ -835,7 +910,7 @@ function mountTreeBody(
 }
 
 function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
-  const { editor, store } = ctx0;
+  const { editor, evaluator, store } = ctx0;
   const { focus } = spec;
 
   return createComponent((ctx) => {
@@ -868,8 +943,8 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
     };
 
     ctx.watch(() => {
-      const info = store.sel.item(focus.id);
-      const defs = headerFieldsForItem(info);
+      const info = store.getItem(focus.id);
+      const defs = headerFieldsForItem(store, focus.id);
       const label = info.label ?? "";
 
       const sel = editor.runtime.selection.value;
@@ -896,7 +971,7 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
         if (headerContainer.parentElement === root) headerContainer.remove();
       }
 
-      const v = store.sel.value(focus.id);
+      const v = evaluator.value(focus.id);
       if (v.kind === "item-group") {
         const kids = mountTreeChildren(ctx0, focus);
         contentSlot.set(kids);
@@ -915,25 +990,83 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
 }
 
 export function createTreeView(
-  ctx: { editor: Editor },
+  ctx: { editor: Editor; evaluator: Evaluator },
   rootId: ItemId,
   _focus?: Focus,
 ): View {
-  const { editor } = ctx;
+  const { editor, evaluator } = ctx;
   const store = editor.store;
 
   const root = el("div", "view tree");
   const viewId = `tree:${String(rootId)}`;
 
   const navStopsSig = computed(() =>
-    collectNavStopsFrom(store, store.getRoot()),
+    collectNavStopsFrom(store, evaluator, store.getRoot()),
   );
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    treeNavMove(store, navStopsSig.value, sel, dir, mode);
+    treeNavMove(store, evaluator, navStopsSig.value, sel, dir, mode);
+
+  const dispatch = (intent: TreeIntent): ViewKeyResult => {
+    const sel = editor.runtime.selection.value;
+
+    switch (intent.type) {
+      case "NAV": {
+        const res = navMove(sel, intent.dir, intent.mode);
+        if (res) editor.setSelection(res.selection, res.effects);
+        return;
+      }
+
+      case "CONFIRM": {
+        applyCmd(editor, treeCommands.confirm(editor, evaluator, sel));
+        return;
+      }
+
+      case "CANCEL": {
+        setIdle(editor);
+        return;
+      }
+
+      case "INDENT": {
+        applyCmd(
+          editor,
+          treeCommands.changeNesting(editor, evaluator, sel, intent.dir),
+        );
+        return;
+      }
+
+      case "DELETE_BOUNDARY": {
+        applyCmd(
+          editor,
+          treeCommands.deleteBoundary(editor, evaluator, sel, intent.dir),
+        );
+        return;
+      }
+
+      case "SPLIT": {
+        applyCmd(
+          editor,
+          treeCommands.splitAt(
+            editor,
+            evaluator,
+            sel,
+            intent.caret.start,
+            intent.caret.end,
+          ),
+        );
+        return;
+      }
+
+      case "SET_DERIVED": {
+        if (sel.kind !== "focused") return;
+        applyCmd(editor, treeCommands.setDerived(editor, sel.focus));
+        return;
+      }
+    }
+  };
 
   const node = mountTreeNode(
-    { editor, store, rootId, navMove },
+    { editor, evaluator, store, rootId, navMove, dispatch },
     { focus: { scopeId: rootId, id: rootId }, showHeader: false },
   );
 
@@ -943,24 +1076,40 @@ export function createTreeView(
     id: viewId,
     root,
 
+    normalizeTarget({ store: store0 }, focus, target) {
+      void store0;
+
+      if (target.kind !== "header") return target;
+
+      if (focus.id === rootId) return { kind: "content" };
+
+      const defs = headerFieldsForItem(store, focus.id);
+      const label = (store.getItem(focus.id).label ?? "").trim();
+
+      if (target.index === 0) return { kind: "header", index: 0 };
+
+      if (defs.length === 0) return { kind: "content" };
+
+      void label;
+
+      const max = defs.length;
+      const idx = Math.max(1, Math.min(target.index, max));
+      return { kind: "header", index: idx };
+    },
+
     onActivate() {
       if (editor.runtime.selection.value.kind !== "idle") return;
 
       const first = navStopsSig.value[0];
       if (!first) return;
 
-      const res = mkFocusSelection(
-        first,
-        defaultTargetFor(store, first.id),
-        caret0(),
+      editor.setSelection(
+        mkFocusSelection(first, defaultTargetFor(store, first.id), caret0())
+          .selection,
       );
-      editor.setSelection(res.selection, res.effects);
     },
 
     onKeyDown(e): ViewKeyResult {
-      const sel = editor.runtime.selection.value;
-      if (sel.kind !== "focused") return;
-
       const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
 
       const arrowDir: Record<string, NavDir> = {
@@ -973,42 +1122,32 @@ export function createTreeView(
       const dir = arrowDir[e.key];
       if (dir) {
         stopEvent(e);
-        const res = navMove(sel, dir, mode);
-        if (res) editor.setSelection(res.selection, res.effects);
-        return;
+        return dispatch({ type: "NAV", dir, mode });
       }
 
       if (e.key === "Enter") {
         stopEvent(e);
-        applyCmd(editor, treeCommands.confirm(editor, sel));
-        return;
+        return dispatch({ type: "CONFIRM" });
       }
 
       if (e.key === "Backspace") {
         stopEvent(e);
-        applyCmd(editor, treeCommands.deleteBoundary(editor, sel, "backward"));
-        return;
+        return dispatch({ type: "DELETE_BOUNDARY", dir: "backward" });
       }
 
       if (e.key === "Delete") {
         stopEvent(e);
-        applyCmd(editor, treeCommands.deleteBoundary(editor, sel, "forward"));
-        return;
+        return dispatch({ type: "DELETE_BOUNDARY", dir: "forward" });
       }
 
       if (e.key === "Tab") {
         stopEvent(e);
-        applyCmd(
-          editor,
-          treeCommands.changeNesting(editor, sel, e.shiftKey ? "out" : "in"),
-        );
-        return;
+        return dispatch({ type: "INDENT", dir: e.shiftKey ? "out" : "in" });
       }
 
       if (e.key === "Escape") {
         stopEvent(e);
-        setIdle(editor);
-        return;
+        return dispatch({ type: "CANCEL" });
       }
     },
 

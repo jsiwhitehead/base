@@ -1,5 +1,13 @@
 import type { ItemId, Scalar, StoredContentSettable, Txn } from "../store";
-import type { Editor, View, Focus, ViewKeyResult, CmdResult } from "../editor";
+import type {
+  Editor,
+  View,
+  Focus,
+  FocusTarget,
+  ViewKeyResult,
+  CmdResult,
+  NavMode,
+} from "../editor";
 import {
   mkFocusSelection,
   caret0,
@@ -8,9 +16,10 @@ import {
   applyCmd,
   setIdle,
 } from "../editor";
+import type { Evaluator } from "../evaluator";
 import { createComponent, el, clamp, stopEvent, type Component } from "../ui";
 
-export type SliderViewCtx = { editor: Editor };
+export type SliderViewCtx = { editor: Editor; evaluator: Evaluator };
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
 type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
@@ -43,11 +52,17 @@ function formatNumberForStep(n: number, step: number): string {
   return p <= 0 ? String(Math.trunc(n)) : n.toFixed(p);
 }
 
-const canSetContent = (editor: Editor, id: ItemId) =>
-  editor.store.sel.item(id).contentSettable;
+const canSetContent = (editor: Editor, id: ItemId) => {
+  const kind = editor.store.getItem(id).content.kind;
+  return kind !== "derived" && kind !== "lens";
+};
 
-const getScalarOr = (editor: Editor, id: ItemId, fallback: number): number => {
-  const v = editor.store.sel.value(id);
+const getScalarOr = (
+  evaluator: Evaluator,
+  id: ItemId,
+  fallback: number,
+): number => {
+  const v = evaluator.value(id);
   return v.kind === "scalar" ? toNumberOr(v.value, fallback) : fallback;
 };
 
@@ -73,6 +88,7 @@ export const sliderCommands = {
 
   nudge(
     editor: Editor,
+    evaluator: Evaluator,
     focus: Focus,
     id: ItemId,
     deltaSteps: number,
@@ -81,7 +97,7 @@ export const sliderCommands = {
     return tryCmd(() => {
       if (!canSetContent(editor, id)) return { didChange: false };
 
-      const cur = getScalarOr(editor, id, opts.min);
+      const cur = getScalarOr(evaluator, id, opts.min);
       const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
 
       return sliderCommands.setNumber(editor, focus, id, next);
@@ -89,16 +105,28 @@ export const sliderCommands = {
   },
 } as const;
 
+type SliderIntent =
+  | { type: "NUDGE"; dir: -1 | 1; mul: number }
+  | { type: "SET"; kind: "min" | "max" }
+  | { type: "CANCEL" };
+
 type SliderMountCtx = {
   editor: Editor;
+  evaluator: Evaluator;
   id: ItemId;
   focus: Focus;
   opts: SliderResolvedOpts;
+  dispatch: (intent: SliderIntent) => ViewKeyResult;
 };
 
-function mountSlider({ editor, id, focus, opts }: SliderMountCtx): Component {
-  const { store } = editor;
-
+function mountSlider({
+  editor,
+  evaluator,
+  id,
+  focus,
+  opts,
+  dispatch,
+}: SliderMountCtx): Component {
   return createComponent((cctx) => {
     const root = el("div", "view slider");
     root.tabIndex = 0;
@@ -128,8 +156,9 @@ function mountSlider({ editor, id, focus, opts }: SliderMountCtx): Component {
     });
 
     const focusContent = () => {
-      const res = mkFocusSelection(focus, { kind: "content" }, caret0());
-      editor.setSelection(res.selection, res.effects);
+      editor.setSelection(
+        mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+      );
     };
 
     cctx.on(root, "pointerdown", (e) => {
@@ -143,9 +172,53 @@ function mountSlider({ editor, id, focus, opts }: SliderMountCtx): Component {
         applyCmd(editor, sliderCommands.setNumber(editor, focus, id, n));
     });
 
+    cctx.on(root, "keydown", (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) return;
+
+      let mul = 1;
+      if (e.shiftKey) mul *= 10;
+      if (e.altKey) mul *= 0.1;
+
+      const nudgeIntent = (dir: -1 | 1) =>
+        dispatch({ type: "NUDGE", dir, mul });
+
+      switch (e.key) {
+        case "ArrowLeft":
+        case "ArrowDown":
+          stopEvent(e);
+          nudgeIntent(-1);
+          return;
+
+        case "ArrowRight":
+        case "ArrowUp":
+          stopEvent(e);
+          nudgeIntent(1);
+          return;
+
+        case "Home":
+          stopEvent(e);
+          dispatch({ type: "SET", kind: "min" });
+          return;
+
+        case "End":
+          stopEvent(e);
+          dispatch({ type: "SET", kind: "max" });
+          return;
+
+        case "Escape":
+          stopEvent(e);
+          dispatch({ type: "CANCEL" });
+          return;
+      }
+    });
+
     cctx.watch(() => {
-      const { contentSettable } = store.sel.item(id);
-      const cur = getScalarOr(editor, id, opts.min);
+      const { contentSettable } = (() => {
+        const kind = editor.store.getItem(id).content.kind;
+        return { contentSettable: kind !== "derived" && kind !== "lens" };
+      })();
+
+      const cur = getScalarOr(evaluator, id, opts.min);
       const clamped = clamp(cur, opts.min, opts.max);
       const str = formatNumberForStep(clamped, opts.step);
 
@@ -166,7 +239,7 @@ export function createSliderView(
   focus: Focus,
   opts: SliderOpts = {},
 ): View {
-  const { editor } = ctx;
+  const { editor, evaluator } = ctx;
 
   const resolved: SliderResolvedOpts = {
     min: opts.min ?? 0,
@@ -174,12 +247,59 @@ export function createSliderView(
     step: opts.step ?? 1,
   };
 
-  const mountCtx: SliderMountCtx = { editor, id, focus, opts: resolved };
+  const dispatch = (intent: SliderIntent): ViewKeyResult => {
+    switch (intent.type) {
+      case "NUDGE":
+        applyCmd(
+          editor,
+          sliderCommands.nudge(
+            editor,
+            evaluator,
+            focus,
+            id,
+            intent.dir * intent.mul,
+            resolved,
+          ),
+        );
+        return;
+
+      case "SET":
+        applyCmd(
+          editor,
+          sliderCommands.setNumber(
+            editor,
+            focus,
+            id,
+            intent.kind === "min" ? resolved.min : resolved.max,
+          ),
+        );
+        return;
+
+      case "CANCEL":
+        setIdle(editor);
+        return;
+    }
+  };
+
+  const mountCtx: SliderMountCtx = {
+    editor,
+    evaluator,
+    id,
+    focus,
+    opts: resolved,
+    dispatch,
+  };
   const comp = mountSlider(mountCtx);
 
   return {
     id: `slider:${String(id)}`,
     root: comp.el,
+
+    normalizeTarget(_ctx2, _focus, target) {
+      return target.kind === "header"
+        ? ({ kind: "content" } as FocusTarget)
+        : target;
+    },
 
     onActivate() {
       const sel = editor.runtime.selection.value;
@@ -189,8 +309,9 @@ export function createSliderView(
         sel.focus.scopeId === focus.scopeId;
 
       if (!focused) {
-        const res = mkFocusSelection(focus, { kind: "content" }, caret0());
-        editor.setSelection(res.selection, res.effects);
+        editor.setSelection(
+          mkFocusSelection(focus, { kind: "content" }, caret0()).selection,
+        );
         return;
       }
 
@@ -200,52 +321,9 @@ export function createSliderView(
     },
 
     onKeyDown(e): ViewKeyResult {
-      if (e.metaKey || e.ctrlKey) return;
-
-      let mul = 1;
-      if (e.shiftKey) mul *= 10;
-      if (e.altKey) mul *= 0.1;
-
-      const nudge = (dir: number) =>
-        applyCmd(
-          editor,
-          sliderCommands.nudge(editor, focus, id, dir * mul, resolved),
-        );
-
-      switch (e.key) {
-        case "ArrowLeft":
-        case "ArrowDown":
-          stopEvent(e);
-          nudge(-1);
-          return;
-
-        case "ArrowRight":
-        case "ArrowUp":
-          stopEvent(e);
-          nudge(1);
-          return;
-
-        case "Home":
-          stopEvent(e);
-          applyCmd(
-            editor,
-            sliderCommands.setNumber(editor, focus, id, resolved.min),
-          );
-          return;
-
-        case "End":
-          stopEvent(e);
-          applyCmd(
-            editor,
-            sliderCommands.setNumber(editor, focus, id, resolved.max),
-          );
-          return;
-
-        case "Escape":
-          stopEvent(e);
-          setIdle(editor);
-          return;
-      }
+      const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
+      void mode;
+      void e;
     },
 
     dispose() {

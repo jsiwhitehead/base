@@ -5,6 +5,7 @@ import type {
   View,
   Selection,
   Focus,
+  FocusTarget,
   EditorEffect,
   ViewKeyResult,
   Caret,
@@ -20,6 +21,7 @@ import {
   applyCmd,
   setIdle,
 } from "../editor";
+import type { Evaluator } from "../evaluator";
 import {
   createComponent,
   el,
@@ -56,20 +58,24 @@ const focusCell = (
 ): NavResult =>
   mkFocusSelection({ scopeId: rowId, id: cellId }, { kind: "content" }, caret);
 
-function deriveColumns(store: Store, tableId: ItemId): string[] {
-  const tableV = store.sel.value(tableId);
+function deriveColumns(
+  store: Store,
+  evaluator: Evaluator,
+  tableId: ItemId,
+): string[] {
+  const tableV = evaluator.value(tableId);
   if (tableV.kind !== "item-group") return [];
 
   const firstRowId = tableV.items[0];
   if (!firstRowId) return [];
 
-  const rowV = store.sel.value(firstRowId);
+  const rowV = evaluator.value(firstRowId);
   if (rowV.kind !== "item-group") return [];
 
   const seen = new Set<string>();
   const out: string[] = [];
   for (const cid of rowV.items) {
-    const nm = store.sel.item(cid).label;
+    const nm = store.getItem(cid).label;
     if (!nm || seen.has(nm)) continue;
     seen.add(nm);
     out.push(nm);
@@ -92,13 +98,12 @@ const isCellSelection = (sel: Selection, tableId: ItemId): boolean =>
   sel.target.kind === "content" &&
   sel.focus.scopeId !== tableId;
 
-const rowIds = (store: Store, tableId: ItemId): ItemId[] => {
-  const v = store.sel.value(tableId);
-  return v.kind === "item-group" ? v.items : [];
-};
+const rowIds = (evaluator: Evaluator, tableId: ItemId): ItemId[] =>
+  evaluator.items(tableId);
 
 function tableNavMove(
   store: Store,
+  evaluator: Evaluator,
   tableId: ItemId,
   sel: Selection,
   dir: NavDir,
@@ -106,8 +111,8 @@ function tableNavMove(
 ): NavResult | null {
   if (!isFocused(sel)) return null;
 
-  const cols = deriveColumns(store, tableId);
-  const rows = rowIds(store, tableId);
+  const cols = deriveColumns(store, evaluator, tableId);
+  const rows = rowIds(evaluator, tableId);
   if (rows.length === 0) return null;
 
   const moveRowLabel = (rowId: ItemId, delta: number) => {
@@ -128,7 +133,7 @@ function tableNavMove(
     const nextCol = cols[nc];
     if (!nextCol) return null;
 
-    const nextCell = store.sel.childByLabel(rowId, nextCol);
+    const nextCell = store.findChildByLabel(rowId, nextCol);
     return nextCell ? focusCell(rowId, nextCell) : null;
   };
 
@@ -143,7 +148,7 @@ function tableNavMove(
     const col = cols[colIdx];
     if (!col) return null;
 
-    const nextCell = store.sel.childByLabel(nextRowId, col);
+    const nextCell = store.findChildByLabel(nextRowId, col);
     return nextCell
       ? focusCell(nextRowId, nextCell)
       : focusRowLabel(tableId, nextRowId);
@@ -159,7 +164,7 @@ function tableNavMove(
       const firstCol = cols[0];
       if (!firstCol) return null;
 
-      const cid = store.sel.childByLabel(rowId, firstCol);
+      const cid = store.findChildByLabel(rowId, firstCol);
       return cid ? focusCell(rowId, cid) : null;
     }
 
@@ -174,7 +179,7 @@ function tableNavMove(
   const rowIdx = rows.indexOf(rowId);
   if (rowIdx < 0) return null;
 
-  const colLabel = store.sel.item(cellId).label || "";
+  const colLabel = store.getItem(cellId).label || "";
   const colIdx = Math.max(0, cols.indexOf(colLabel));
 
   if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
@@ -183,6 +188,11 @@ function tableNavMove(
   if (dir === "down") return moveCellVert(rowIdx, colIdx, 1);
 
   return null;
+}
+
+function canEditScalarText(store: Store, id: ItemId): boolean {
+  const kind = store.getItem(id).content.kind;
+  return kind === "blank" || kind === "scalar";
 }
 
 export const tableCommands = {
@@ -202,13 +212,12 @@ export const tableCommands = {
 
   commitCellText(
     editor: Editor,
-    _rowId: ItemId,
+    store: Store,
     cellId: ItemId,
     raw: string,
   ): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
-      if (!store.sel.canEditScalarText(cellId)) return { didChange: false };
+      if (!canEditScalarText(store, cellId)) return { didChange: false };
 
       editor.apply({
         ops: [
@@ -225,17 +234,18 @@ export const tableCommands = {
 
   addRowAfter(
     editor: Editor,
+    evaluator: Evaluator,
     tableId: ItemId,
     afterRowId: ItemId | null,
   ): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
-      const rows = store.sel.groupItems(tableId);
+      const rows = evaluator.items(tableId);
       const afterIdx =
         afterRowId == null ? rows.length - 1 : rows.indexOf(afterRowId);
       const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
 
-      const rowId = store.allocId();
+      const rowId = store.createId();
 
       const txn: Txn = {
         ops: [
@@ -257,10 +267,15 @@ export const tableCommands = {
     });
   },
 
-  removeRow(editor: Editor, tableId: ItemId, rowId: ItemId): CmdResult {
+  removeRow(
+    editor: Editor,
+    evaluator: Evaluator,
+    tableId: ItemId,
+    rowId: ItemId,
+  ): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
-      const rows = store.sel.groupItems(tableId);
+      const rows = evaluator.items(tableId);
       const idx = rows.indexOf(rowId);
       const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
 
@@ -269,7 +284,7 @@ export const tableCommands = {
           ? focusRowLabel(tableId, nextRow)
           : {
               selection: { kind: "idle" } as Selection,
-              effects: [{ type: "CLEAR_DOM_FOCUS" } as EditorEffect],
+              effects: [],
             };
 
       const txn: Txn = {
@@ -285,22 +300,27 @@ export const tableCommands = {
     });
   },
 
-  addColumn(editor: Editor, tableId: ItemId, label: string): CmdResult {
+  addColumn(
+    editor: Editor,
+    evaluator: Evaluator,
+    tableId: ItemId,
+    label: string,
+  ): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
       const name = label.trim();
       if (!name) return { didChange: false };
 
-      const rowsV = store.sel.value(tableId);
-      if (rowsV.kind !== "item-group") return { didChange: false };
+      const rows = evaluator.items(tableId);
+      if (rows.length === 0) return { didChange: false };
 
       const ops: Op[] = [];
-      for (const rowId of rowsV.items) {
-        const rowInfo = store.sel.item(rowId);
-        if (rowInfo.contentKind !== "group") continue;
-        if (store.sel.childByLabel(rowId, name) != null) continue;
+      for (const rowId of rows) {
+        const row = store.getItem(rowId);
+        if (row.content.kind !== "group") continue;
+        if (store.findChildByLabel(rowId, name) != null) continue;
 
-        const cellId = store.allocId();
+        const cellId = store.createId();
         ops.push({ kind: "create", item: store.make.blank(cellId) });
         ops.push({ kind: "patch", id: cellId, next: { label: name } });
         ops.push({
@@ -308,7 +328,7 @@ export const tableCommands = {
           spec: {
             childId: cellId,
             toOwnerId: rowId,
-            toIndex: store.sel.groupItems(rowId).length,
+            toIndex: store.getChildren(rowId).length,
           },
         });
       }
@@ -319,18 +339,23 @@ export const tableCommands = {
     });
   },
 
-  removeColumn(editor: Editor, tableId: ItemId, label: string): CmdResult {
+  removeColumn(
+    editor: Editor,
+    evaluator: Evaluator,
+    tableId: ItemId,
+    label: string,
+  ): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
       const name = label.trim();
       if (!name) return { didChange: false };
 
-      const rowsV = store.sel.value(tableId);
-      if (rowsV.kind !== "item-group") return { didChange: false };
+      const rows = evaluator.items(tableId);
+      if (rows.length === 0) return { didChange: false };
 
       const ops: Op[] = [];
-      for (const rowId of rowsV.items) {
-        const cellId = store.sel.childByLabel(rowId, name);
+      for (const rowId of rows) {
+        const cellId = store.findChildByLabel(rowId, name);
         if (cellId == null) continue;
         ops.push({
           kind: "reparent",
@@ -344,14 +369,31 @@ export const tableCommands = {
     });
   },
 
-  confirm(editor: Editor, tableId: ItemId, sel: Selection): CmdResult {
+  confirm(
+    editor: Editor,
+    evaluator: Evaluator,
+    tableId: ItemId,
+    sel: Selection,
+  ): CmdResult {
     if (!isFocused(sel)) return { didChange: false };
 
     if (sel.target.kind === "header") {
-      return tableCommands.addRowAfter(editor, tableId, sel.focus.id);
+      return tableCommands.addRowAfter(
+        editor,
+        evaluator,
+        tableId,
+        sel.focus.id,
+      );
     }
 
-    const move = tableNavMove(editor.store, tableId, sel, "down", "step");
+    const move = tableNavMove(
+      editor.store,
+      evaluator,
+      tableId,
+      sel,
+      "down",
+      "step",
+    );
     if (move)
       return {
         didChange: false,
@@ -359,16 +401,28 @@ export const tableCommands = {
         effects: move.effects,
       };
 
-    return tableCommands.addRowAfter(editor, tableId, sel.focus.scopeId);
+    return tableCommands.addRowAfter(
+      editor,
+      evaluator,
+      tableId,
+      sel.focus.scopeId,
+    );
   },
 } as const;
 
+type TableIntent =
+  | { type: "NAV"; dir: NavDir; mode: NavMode }
+  | { type: "CONFIRM" }
+  | { type: "CANCEL" };
+
 type TableMountCtx = {
   editor: Editor;
+  evaluator: Evaluator;
   store: Store;
   tableId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   columnsSig: { value: string[] };
+  dispatch: (intent: TableIntent) => ViewKeyResult;
 };
 
 function mountTableHeader(ctx0: TableMountCtx): Component {
@@ -387,17 +441,24 @@ function mountTableHeader(ctx0: TableMountCtx): Component {
 
 function mountTableCellContent(ctx: {
   editor: Editor;
+  evaluator: Evaluator;
   store: Store;
   tableId: ItemId;
   rowId: ItemId;
   cellId: ItemId;
+  dispatch: (intent: TableIntent) => ViewKeyResult;
 }): Component {
-  const { editor, store, rowId, cellId, tableId } = ctx;
+  const { editor, evaluator, store, rowId, cellId, dispatch } = ctx;
   const focus: Focus = { scopeId: rowId, id: cellId };
-  const viewKind = store.sel.item(cellId).view as ViewKind;
+  const viewKind = store.getItem(cellId).view as ViewKind;
 
   if (viewWantsChildView(viewKind)) {
-    const child = createChildViewForItem({ editor }, viewKind, cellId, focus);
+    const child = createChildViewForItem(
+      { editor, evaluator },
+      viewKind,
+      cellId,
+      focus,
+    );
     if (child) {
       return createComponent((cctx) => {
         const host = el("div");
@@ -427,27 +488,20 @@ function mountTableCellContent(ctx: {
 
   return valueField({
     editor,
+    evaluator,
     focus,
     id: cellId,
+    commitScalarText: (text) =>
+      applyCmd(
+        editor,
+        tableCommands.commitCellText(editor, store, cellId, text),
+      ),
     textKeys: (inp) =>
       bindTextControlKeys(inp, {
         nav: defaultTextNav,
-        onNav: (dir, mode) => {
-          const sel = editor.runtime.selection.value;
-          const res = tableNavMove(store, tableId, sel, dir, mode);
-          if (res) editor.setSelection(res.selection, res.effects);
-        },
-        onEnter: () => {
-          applyCmd(
-            editor,
-            tableCommands.confirm(
-              editor,
-              tableId,
-              editor.runtime.selection.value,
-            ),
-          );
-        },
-        onEscape: () => setIdle(editor),
+        onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
+        onEnter: () => dispatch({ type: "CONFIRM" }),
+        onEscape: () => dispatch({ type: "CANCEL" }),
       }),
   });
 }
@@ -478,17 +532,19 @@ function mountTableCell(
       cur?.dispose();
       cur = mountTableCellContent({
         editor: ctx0.editor,
+        evaluator: ctx0.evaluator,
         store: ctx0.store,
         tableId: ctx0.tableId,
         rowId,
         cellId,
+        dispatch: ctx0.dispatch,
       });
       curCellId = cellId;
       setInner(cur.el);
       cctx.using(cur);
     };
 
-    const getCellId = () => ctx0.store.sel.childByLabel(rowId, col) ?? null;
+    const getCellId = () => ctx0.store.findChildByLabel(rowId, col) ?? null;
 
     cctx.watch(() => {
       const nextCellId = getCellId();
@@ -532,35 +588,34 @@ function mountTableRow(ctx0: TableMountCtx, rowId: ItemId): Component {
       stopPropagation: true,
       onCommitEvents: ["input", "blur"],
       commit: (text) =>
-        tableCommands.commitRowLabel(ctx0.editor, ctx0.tableId, rowId, text),
+        applyCmd(
+          ctx0.editor,
+          tableCommands.commitRowLabel(ctx0.editor, ctx0.tableId, rowId, text),
+        ),
       getState: () => {
         const sel = ctx0.editor.runtime.selection.value;
         const editing =
           isRowLabelSelection(sel, ctx0.tableId) &&
           isFocused(sel) &&
           sel.focus.id === rowId;
-        const label = ctx0.store.sel.item(rowId).label ?? "";
+        const label = ctx0.store.getItem(rowId).label ?? "";
         return { text: label, readOnly: !editing, isIssue: false };
       },
       textKeys: (inp) =>
         bindTextControlKeys(inp, {
           nav: defaultTextNav,
-          onNav: (dir, mode) => {
-            const sel2 = ctx0.editor.runtime.selection.value;
-            const res = tableNavMove(ctx0.store, ctx0.tableId, sel2, dir, mode);
-            if (res) ctx0.editor.setSelection(res.selection, res.effects);
-          },
+          onNav: (dir, mode) => ctx0.dispatch({ type: "NAV", dir, mode }),
           onEnter: () => {
             const first = ctx0.columnsSig.value[0];
             if (!first) return;
 
-            const cid = ctx0.store.sel.childByLabel(rowId, first);
+            const cid = ctx0.store.findChildByLabel(rowId, first);
             if (!cid) return;
 
             const res = focusCell(rowId, cid);
             ctx0.editor.setSelection(res.selection, res.effects);
           },
-          onEscape: () => setIdle(ctx0.editor),
+          onEscape: () => ctx0.dispatch({ type: "CANCEL" }),
         }),
     });
 
@@ -590,22 +645,21 @@ function mountTableBody(ctx0: TableMountCtx): Component {
     );
 
     ctx.watch(() => {
-      const v = ctx0.store.sel.value(ctx0.tableId);
-      rowList.update(v.kind === "item-group" ? v.items : []);
+      rowList.update(ctx0.evaluator.items(ctx0.tableId));
     });
 
     return body;
   });
 }
 
-export type TableViewCtx = { editor: Editor };
+export type TableViewCtx = { editor: Editor; evaluator: Evaluator };
 
 export function createTableView(
   ctx: TableViewCtx,
   tableId: ItemId,
   _tableFocus?: Focus,
 ): View {
-  const { editor } = ctx;
+  const { editor, evaluator } = ctx;
   const store = editor.store;
 
   const root = el("div", "view table");
@@ -615,17 +669,42 @@ export function createTableView(
   const bodyHost = el("div");
   root.append(headerHost, bodyHost);
 
-  const columnsSig = computed(() => deriveColumns(store, tableId));
+  const columnsSig = computed(() => deriveColumns(store, evaluator, tableId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    tableNavMove(store, tableId, sel, dir, mode);
+    tableNavMove(store, evaluator, tableId, sel, dir, mode);
+
+  const dispatch = (intent: TableIntent): ViewKeyResult => {
+    const sel = editor.runtime.selection.value;
+
+    switch (intent.type) {
+      case "NAV": {
+        const res = navMove(sel, intent.dir, intent.mode);
+        if (res) editor.setSelection(res.selection, res.effects);
+        return;
+      }
+      case "CONFIRM": {
+        applyCmd(
+          editor,
+          tableCommands.confirm(editor, evaluator, tableId, sel),
+        );
+        return;
+      }
+      case "CANCEL": {
+        setIdle(editor);
+        return;
+      }
+    }
+  };
 
   const mountCtx: TableMountCtx = {
     editor,
+    evaluator,
     store,
     tableId,
     navMove,
     columnsSig,
+    dispatch,
   };
 
   const header = mountTableHeader(mountCtx);
@@ -641,22 +720,26 @@ export function createTableView(
     id: `table:${String(tableId)}`,
     root,
 
+    normalizeTarget(_ctx2, focus, target) {
+      if (target.kind !== "header") return target;
+      if (target.index !== 0) return { kind: "content" };
+      if (focus.scopeId !== tableId) return { kind: "content" };
+      return { kind: "header", index: 0 };
+    },
+
     onActivate() {
       const sel = editor.runtime.selection.value;
       if (sel.kind !== "idle") return;
 
-      const rowsV = store.sel.value(tableId);
-      if (rowsV.kind !== "item-group" || rowsV.items.length === 0) return;
+      const rows = evaluator.items(tableId);
+      if (rows.length === 0) return;
 
-      const firstRowId = rowsV.items[0]!;
+      const firstRowId = rows[0]!;
       const res = focusRowLabel(tableId, firstRowId);
       editor.setSelection(res.selection, res.effects);
     },
 
     onKeyDown(e): ViewKeyResult {
-      const sel = editor.runtime.selection.value;
-      if (!isFocused(sel)) return;
-
       const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
 
       const arrowDir: Record<string, NavDir | undefined> = {
@@ -669,21 +752,17 @@ export function createTableView(
       const dir = arrowDir[e.key];
       if (dir) {
         stopEvent(e);
-        const res = navMove(sel, dir, mode);
-        if (res) editor.setSelection(res.selection, res.effects);
-        return;
+        return dispatch({ type: "NAV", dir, mode });
       }
 
       if (e.key === "Enter") {
         stopEvent(e);
-        applyCmd(editor, tableCommands.confirm(editor, tableId, sel));
-        return;
+        return dispatch({ type: "CONFIRM" });
       }
 
       if (e.key === "Escape") {
         stopEvent(e);
-        setIdle(editor);
-        return;
+        return dispatch({ type: "CANCEL" });
       }
     },
 

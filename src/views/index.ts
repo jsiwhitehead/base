@@ -2,11 +2,12 @@ import type { ItemId, ViewKind } from "../store";
 import type { Editor, View, Focus, EditorRuntime, Selection } from "../editor";
 import type { Component } from "../ui";
 import { el, ensureTabbable, valueField, mountChildViewInto } from "../ui";
+import type { Evaluator } from "../evaluator";
 import { createTreeView } from "./tree";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type ViewCtx = { editor: Editor };
+export type ViewCtx = { editor: Editor; evaluator: Evaluator };
 export type ViewFactory = (ctx: ViewCtx, id: ItemId, focus?: Focus) => View;
 
 const factories = {
@@ -90,35 +91,40 @@ export function mountViewWithIdleSelection(
 }
 
 export function itemBody(
-  ctx: { editor: Editor; focus: Focus; id: ItemId },
+  ctx: { editor: Editor; evaluator: Evaluator; focus: Focus; id: ItemId },
   opts: {
     textKeys?: (
       inp: HTMLInputElement | HTMLTextAreaElement,
     ) => (() => void) | void;
     renderItemGroupChild?: (childId: ItemId) => Component;
+    commitScalarText?: (text: string) => void;
   } = {},
 ): Component {
-  const { editor, id, focus } = ctx;
-  const viewKind = editor.store.sel.item(id).view as ViewKind;
+  const { editor, evaluator, id, focus } = ctx;
+  const viewKind = editor.store.getItem(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return valueField({
       editor,
+      evaluator,
       focus,
       id,
       textKeys: opts.textKeys,
       renderItemGroupChild: opts.renderItemGroupChild,
+      commitScalarText: opts.commitScalarText,
     });
   }
 
-  const child = createViewForItem({ editor }, viewKind, id, focus);
+  const child = createViewForItem({ editor, evaluator }, viewKind, id, focus);
   if (!child) {
     return valueField({
       editor,
+      evaluator,
       focus,
       id,
       textKeys: opts.textKeys,
       renderItemGroupChild: opts.renderItemGroupChild,
+      commitScalarText: opts.commitScalarText,
     });
   }
 

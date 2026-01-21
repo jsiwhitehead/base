@@ -1,14 +1,13 @@
 import * as ohm from "ohm-js";
+import type { ItemId, Scalar } from "./store";
 import {
-  type ItemId,
-  type Scalar,
   type LabeledValue,
   type Value,
   type EvalEnv,
   V,
   isPresent,
   isTrue,
-} from "./store";
+} from "./evaluator";
 
 const ISSUE = {
   literal: "Expected literal value",
@@ -382,7 +381,8 @@ function getItemGroupByLabel(group: Value, label: string, env: EvalEnv): Value {
   if (group.kind === "issue") return group;
   if (!isItemGroup(group)) return V.issue(ISSUE.labelOnNonItemGroup(label));
 
-  const id = group.items.find((cid) => env.getLabel(cid) === label);
+  const want = label;
+  const id = group.items.find((cid) => env.getLabel(cid) === want);
   if (id == null) return V.issue(ISSUE.unknownLabel(label));
   return env.resolve(id);
 }

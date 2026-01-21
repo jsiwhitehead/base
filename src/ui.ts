@@ -1,5 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Store, ItemId, Scalar, StoredContent, Value } from "./store";
+import type { Store, ItemId, Scalar, StoredContent } from "./store";
+import { isContentSettableKind } from "./store";
 import type {
   Editor,
   Focus,
@@ -11,6 +12,7 @@ import type {
   NavMode,
 } from "./editor";
 import { mkFocusSelection, caret0 } from "./editor";
+import type { Evaluator, Value, LabeledValue } from "./evaluator";
 
 export type Component = { el: HTMLElement; dispose(): void };
 
@@ -382,7 +384,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
                 : caret0();
 
             const out = mkFocusSelection(opts.focus, t.target, c);
-            opts.editor.setSelection(out.selection, out.effects);
+            opts.editor.setSelection(out.selection);
 
             if (t.stopPropagation ?? true) e.stopPropagation();
           };
@@ -496,12 +498,14 @@ function storedScalarTextForEdit(
   store: Store,
   id: ItemId,
 ): { kind: "editable"; text: string } | null {
-  const it = store.sel.item(id);
-  if (!it.contentSettable) return null;
+  const it = store.getItem(id);
+  const kind = it.content.kind;
 
-  if (it.contentKind === "blank") return { kind: "editable", text: "" };
+  if (!isContentSettableKind(kind)) return null;
 
-  if (it.contentKind === "scalar") {
+  if (kind === "blank") return { kind: "editable", text: "" };
+
+  if (kind === "scalar") {
     const c = it.content as Extract<StoredContent, { kind: "scalar" }>;
     return { kind: "editable", text: String(c.value) };
   }
@@ -509,11 +513,15 @@ function storedScalarTextForEdit(
   return null;
 }
 
-export function getEditableText(store: Store, id: ItemId): EditableText {
+export function getEditableText(
+  store: Store,
+  evaluator: Evaluator,
+  id: ItemId,
+): EditableText {
   return (
     storedScalarTextForEdit(store, id) ?? {
       kind: "readonly",
-      text: getDisplayText(store.sel.value(id)).text,
+      text: getDisplayText(evaluator.value(id)).text,
     }
   );
 }
@@ -672,6 +680,7 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
 
 export type ValueFieldOpts = {
   editor: Editor;
+  evaluator: Evaluator;
   focus: Focus;
   id: ItemId;
   className?: string;
@@ -679,14 +688,15 @@ export type ValueFieldOpts = {
     inp: HTMLInputElement | HTMLTextAreaElement,
   ) => (() => void) | void;
   renderItemGroupChild?: (childId: ItemId) => Component;
+  commitScalarText?: (text: string) => void;
 };
 
-function readonlyItemText(store: Store, id: ItemId): Component {
+function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
     ctx.watchComputed(
       () => {
-        const v = store.sel.value(id);
+        const v = evaluator.value(id);
         return { text: getDisplayText(v).text, isIssue: v.kind === "issue" };
       },
       ({ text, isIssue }) => {
@@ -696,6 +706,12 @@ function readonlyItemText(store: Store, id: ItemId): Component {
     );
     return d;
   });
+}
+
+function canEditScalarText(store: Store, id: ItemId): boolean {
+  const it = store.getItem(id);
+  const kind = it.content.kind;
+  return isContentSettableKind(kind) && (kind === "blank" || kind === "scalar");
 }
 
 export function valueField(opts: ValueFieldOpts): Component {
@@ -724,7 +740,7 @@ export function valueField(opts: ValueFieldOpts): Component {
     };
 
     const mountText = (): Component => {
-      const { editor, id, focus } = opts;
+      const { editor, id, focus, evaluator } = opts;
       return textField({
         editor,
         focus,
@@ -734,22 +750,12 @@ export function valueField(opts: ValueFieldOpts): Component {
         caret: "fromTarget",
         stopPropagation: true,
         commit: (text) => {
-          const store = editor.store;
-          if (!store.sel.canEditScalarText(id)) return;
-          editor.apply({
-            ops: [
-              {
-                kind: "patch",
-                id,
-                next: { content: { kind: "scalar", value: parseScalar(text) } },
-              },
-            ],
-          });
+          opts.commitScalarText?.(text);
         },
         getState: () => {
           const store = editor.store;
-          const editable = getEditableText(store, id);
-          const display = getDisplayText(store.sel.value(id));
+          const editable = getEditableText(store, evaluator, id);
+          const display = getDisplayText(evaluator.value(id));
           return {
             text: editable.kind === "editable" ? editable.text : display.text,
             readOnly: editable.kind !== "editable",
@@ -764,7 +770,7 @@ export function valueField(opts: ValueFieldOpts): Component {
       const d = el("div", "item readonly");
       mountReadonlyFocusWrap(d);
 
-      const inner = readonlyItemText(opts.editor.store, opts.id);
+      const inner = readonlyItemText(opts.evaluator, opts.id);
       d.replaceChildren(inner.el);
       ctx.using(inner);
 
@@ -782,7 +788,7 @@ export function valueField(opts: ValueFieldOpts): Component {
       mountReadonlyFocusWrap(wrap);
 
       ctx.watch(() => {
-        const v = opts.editor.store.sel.value(opts.id);
+        const v = opts.evaluator.value(opts.id);
         wrap.replaceChildren();
         if (v.kind === "value-group") {
           for (const it of v.items)
@@ -801,13 +807,13 @@ export function valueField(opts: ValueFieldOpts): Component {
       const children = ctx.list(wrap, (childId: ItemId) => {
         const c =
           opts.renderItemGroupChild?.(childId) ??
-          readonlyItemText(opts.editor.store, childId);
+          readonlyItemText(opts.evaluator, childId);
         c.el.classList.add("item");
         return c;
       });
 
       ctx.watch(() => {
-        const v = opts.editor.store.sel.value(opts.id);
+        const v = opts.evaluator.value(opts.id);
         children.update(v.kind === "item-group" ? v.items : []);
       });
 
@@ -815,8 +821,7 @@ export function valueField(opts: ValueFieldOpts): Component {
     };
 
     ctx.watch(() => {
-      const store = opts.editor.store;
-      const v = store.sel.value(opts.id);
+      const v = opts.evaluator.value(opts.id);
 
       host.classList.toggle("issue", v.kind === "issue");
 
@@ -831,7 +836,7 @@ export function valueField(opts: ValueFieldOpts): Component {
       }
 
       slot.set(
-        store.sel.canEditScalarText(opts.id)
+        canEditScalarText(opts.editor.store, opts.id)
           ? mountText()
           : mountReadonlyText(),
       );

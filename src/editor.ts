@@ -1,6 +1,5 @@
 import { signal, type Signal } from "@preact/signals-core";
 import type { Store, ItemId, Txn, ApplyResult } from "./store";
-import { headerFieldCountForItem } from "./store";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
 
@@ -75,6 +74,11 @@ export type View = {
   onKeyDown(e: KeyboardEvent): ViewKeyResult;
   onActivate?(): void;
   onDeactivate?(): void;
+  normalizeTarget?: (
+    ctx: { store: Store },
+    focus: Focus,
+    target: FocusTarget,
+  ) => FocusTarget;
   dispose(): void;
 };
 
@@ -119,6 +123,31 @@ function shouldBypassGlobalKeydown(): boolean {
   );
 }
 
+function normalizeEffectsForSelection(
+  sel: Selection,
+  effects: EditorEffect[],
+): EditorEffect[] {
+  const hasClear = effects.some((e) => e.type === "CLEAR_DOM_FOCUS");
+  const hasFocus = effects.some((e) => e.type === "DOM_FOCUS");
+
+  if (sel.kind === "idle") {
+    if (hasClear) return effects;
+    return [...effects, { type: "CLEAR_DOM_FOCUS" }];
+  }
+
+  if (hasClear) return effects;
+  if (hasFocus) return effects;
+
+  return [
+    ...effects,
+    { type: "DOM_FOCUS", focus: sel.focus, target: sel.target },
+  ];
+}
+
+function fallbackNormalizeTarget(target: FocusTarget): FocusTarget {
+  return target.kind === "header" ? { kind: "content" } : target;
+}
+
 export class EditorRuntime {
   selection: Signal<Selection>;
 
@@ -140,6 +169,11 @@ export class EditorRuntime {
 
   getActiveViewId(): ViewId | null {
     return this.activeViewId;
+  }
+
+  getActiveView(): View | null {
+    const id = this.activeViewId;
+    return id ? (this.views.get(id) ?? null) : null;
   }
 
   setNavOutHandler(fn: ((fromViewId: ViewId, navOut: NavOut) => void) | null) {
@@ -210,7 +244,7 @@ export class EditorRuntime {
 
     const next: Selection = { kind: "idle" };
     this.selection.value = next;
-    this.scheduleEffects(next, [{ type: "CLEAR_DOM_FOCUS" }]);
+    this.scheduleEffects(next, normalizeEffectsForSelection(next, []));
   }
 
   scheduleEffects(sel: Selection, effects: EditorEffect[]) {
@@ -297,32 +331,25 @@ export function mkFocusSelection(
   return { selection, effects: [{ type: "DOM_FOCUS", focus, target }] };
 }
 
-const headerExtraCount = (store: Store, id: ItemId) =>
-  headerFieldCountForItem(store.sel.item(id));
+export function repairSelection(editor: Editor, sel: Selection): Selection {
+  const store = editor.store;
 
-export function normalizeTarget(
-  store: Store,
-  focusId: ItemId,
-  target: FocusTarget,
-): FocusTarget {
-  if (target.kind !== "header") return target;
-  const total = 1 + headerExtraCount(store, focusId);
-  if (total <= 0) return { kind: "content" };
-  const index = clamp(target.index, 0, total - 1);
-  return index === target.index ? target : { kind: "header", index };
-}
-
-export function repairSelection(store: Store, sel: Selection): Selection {
   if (sel.kind === "idle") return sel;
 
   try {
-    store.sel.item(sel.focus.id);
-    const target = normalizeTarget(store, sel.focus.id, sel.target);
-    return target === sel.target ? sel : { ...sel, target };
+    store.getItem(sel.focus.id);
+
+    const active = editor.runtime.getActiveView();
+    const normalized =
+      active?.normalizeTarget?.({ store }, sel.focus, sel.target) ??
+      fallbackNormalizeTarget(sel.target);
+
+    if (normalized === sel.target) return sel;
+    return { ...sel, target: normalized };
   } catch {
     try {
       const root = store.getRoot();
-      store.sel.item(root);
+      store.getItem(root);
       return {
         kind: "focused",
         focus: { scopeId: root, id: root },
@@ -339,9 +366,12 @@ export function ensureSelection(
   next: Selection,
   effects: EditorEffect[] = [],
 ) {
-  const repaired = repairSelection(editor.store, next);
+  const repaired = repairSelection(editor, next);
   editor.runtime.selection.value = repaired;
-  editor.runtime.scheduleEffects(repaired, effects);
+  editor.runtime.scheduleEffects(
+    repaired,
+    normalizeEffectsForSelection(repaired, effects),
+  );
 }
 
 export function createEditor(store: Store): Editor {
@@ -350,9 +380,13 @@ export function createEditor(store: Store): Editor {
   const getSelection = () => runtime.selection.value;
 
   const setSelection = (next: Selection, effects: EditorEffect[] = []) => {
-    const repaired = repairSelection(store, next);
+    const editor = api;
+    const repaired = repairSelection(editor, next);
     runtime.selection.value = repaired;
-    runtime.scheduleEffects(repaired, effects);
+    runtime.scheduleEffects(
+      repaired,
+      normalizeEffectsForSelection(repaired, effects),
+    );
   };
 
   const apply = (txn: Txn, hints: SelectionHints = {}): ApplyResult => {
@@ -360,21 +394,29 @@ export function createEditor(store: Store): Editor {
     const result = store.apply(txn);
 
     const proposed = hints.propose?.({ store, prevSelection, result });
+    const editor = api;
     const repaired = repairSelection(
-      store,
+      editor,
       proposed?.selection ?? prevSelection,
     );
 
     runtime.selection.value = repaired;
-    runtime.scheduleEffects(repaired, [
+
+    const mergedEffects = [
       ...(proposed?.effects ?? []),
       ...(hints.effects ?? []),
-    ]);
+    ];
+
+    runtime.scheduleEffects(
+      repaired,
+      normalizeEffectsForSelection(repaired, mergedEffects),
+    );
 
     return result;
   };
 
-  return { store, runtime, getSelection, setSelection, apply };
+  const api: Editor = { store, runtime, getSelection, setSelection, apply };
+  return api;
 }
 
 export type CmdResult = {
@@ -402,5 +444,5 @@ export function applyCmd(editor: Editor, res: CmdResult): CmdResult {
 }
 
 export function setIdle(editor: Editor) {
-  editor.setSelection({ kind: "idle" }, [{ type: "CLEAR_DOM_FOCUS" }]);
+  editor.setSelection({ kind: "idle" });
 }
