@@ -1,4 +1,5 @@
 import { signal, type Signal } from "@preact/signals-core";
+import { DEV, devWarn } from "./dev";
 import type { Store, ItemId, Transaction, ApplyResult } from "./store";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
@@ -251,6 +252,12 @@ export class EditorRuntime {
 
     if (this.rafHandle != null) return;
 
+    if (DEV && typeof requestAnimationFrame !== "function") {
+      devWarn(
+        "requestAnimationFrame is not defined; EditorRuntime effects won't schedule (tests should shim it).",
+      );
+    }
+
     this.rafHandle = requestAnimationFrame(() => {
       this.rafHandle = null;
       const next = this.pending;
@@ -274,6 +281,7 @@ export class EditorRuntime {
     if (sel.kind !== "focused") return;
 
     const binding = this.bindings.get(keyOf(sel.focus));
+    if (DEV && !binding) devWarn("No binding for focus", sel.focus);
     const targetEl = binding?.elementFor(sel.target);
     if (!binding || !targetEl) return;
 

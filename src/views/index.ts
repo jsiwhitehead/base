@@ -12,11 +12,11 @@ export type Runtime = { editor: Editor; eval: Evaluator };
 export type ViewFactoryArgs = { runtime: Runtime; id: ItemId; focus?: Focus };
 export type ViewFactory = (args: ViewFactoryArgs) => View;
 
-const factories = {
+const factories: Record<Exclude<ViewKind, "">, ViewFactory> = {
   tree: createTreeView,
   table: createTableView,
   slider: createSliderView,
-} as const satisfies Record<ViewKind, ViewFactory | undefined>;
+};
 
 export function createView(
   runtime: Runtime,

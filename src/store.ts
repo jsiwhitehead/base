@@ -6,27 +6,29 @@ import {
   type Signal,
 } from "@preact/signals-core";
 
+import { DEV, devAssert } from "./dev";
+
 export type ItemId = number;
 export type Scalar = true | number | string;
-export type ViewKind = string;
+export type ViewKind = "" | "tree" | "table" | "slider";
 
 export type StoredContentSettable =
-  | Readonly<{ kind: "blank" }>
-  | Readonly<{ kind: "scalar"; value: Scalar }>
-  | Readonly<{ kind: "group"; items: readonly ItemId[] }>;
+  | { kind: "blank" }
+  | { kind: "scalar"; value: Scalar }
+  | { kind: "group"; items: readonly ItemId[] };
 
 export type StoredContent =
   | StoredContentSettable
-  | Readonly<{ kind: "derived"; expr: string }>
-  | Readonly<{ kind: "lens"; from: string; where: string; orderBy: string }>;
+  | { kind: "derived"; expr: string }
+  | { kind: "lens"; from: string; where: string; orderBy: string };
 
-export type Item = Readonly<{
-  id: ItemId;
-  ownerId: ItemId | null;
-  label: string;
-  view: ViewKind;
-  content: StoredContent;
-}>;
+export type Item = {
+  readonly id: ItemId;
+  readonly ownerId: ItemId | null;
+  readonly label: string;
+  readonly view: ViewKind;
+  readonly content: StoredContent;
+};
 
 export type SnapshotContent =
   | { kind: "blank" }
@@ -54,33 +56,33 @@ export type ReparentResult = {
   toIndex: number | null;
 };
 
-export type Patch = Readonly<{
+export type Patch = {
   label?: string;
   view?: ViewKind;
   content?: StoredContent;
-}>;
+};
 
 export type Op =
-  | Readonly<{ kind: "create"; item: Item }>
-  | Readonly<{ kind: "patch"; id: ItemId; next: Patch }>
-  | Readonly<{ kind: "reparent"; spec: ReparentSpec }>;
+  | { kind: "create"; item: Item }
+  | { kind: "patch"; id: ItemId; next: Patch }
+  | { kind: "reparent"; spec: ReparentSpec };
 
-export type Transaction = Readonly<{
-  ops: readonly Op[];
-  meta?: Readonly<{ source?: "local" | "remote" | string }>;
-}>;
+export type Transaction = {
+  readonly ops: readonly Op[];
+  readonly meta?: { source?: "local" | "remote" | string };
+};
 
-export type ApplyResult = Readonly<{
-  created: readonly ItemId[];
-  touched: readonly ItemId[];
-  reparent: readonly ReparentResult[];
-}>;
+export type ApplyResult = {
+  readonly created: readonly ItemId[];
+  readonly touched: readonly ItemId[];
+  readonly reparent: readonly ReparentResult[];
+};
 
-export type LocateInOwnerResult = Readonly<{
-  ownerId: ItemId;
-  index: number;
-  items: ItemId[];
-}>;
+export type LocateInOwnerResult = {
+  readonly ownerId: ItemId;
+  readonly index: number;
+  readonly items: ItemId[];
+};
 
 export type Store = {
   setRoot(id: ItemId): void;
@@ -125,8 +127,10 @@ export type Store = {
   normalizeLabel(s: string): string;
 };
 
-export const isContentSettableKind = (kind: StoredContent["kind"]) =>
-  kind !== "derived" && kind !== "lens";
+export function canEditTextContent(store: Store, id: ItemId): boolean {
+  const kind = store.readItem(id).content.kind;
+  return kind === "blank" || kind === "scalar";
+}
 
 type ItemRec = {
   itemSignal: Signal<Item>;
@@ -432,6 +436,7 @@ export function createStore(): Store {
       }
     });
 
+    if (DEV) assertValidInternal();
     return { created, touched: [...touched], reparent: reparentResults };
   };
 
@@ -492,8 +497,81 @@ export function createStore(): Store {
         removedIds.push(id);
       }
     }
+    if (DEV) assertValidInternal();
     return { removed: removedIds.length, removedIds };
   };
+
+  function assertValidInternal() {
+    devAssert(rootId != null, "Root not set");
+    devAssert(items.has(rootId!), `Root item missing: ${String(rootId)}`);
+
+    const groupItemsOf = (id: ItemId): readonly ItemId[] | null => {
+      const it = items.get(id)?.itemSignal.peek();
+      if (!it) return null;
+      return it.content.kind === "group" ? it.content.items : null;
+    };
+
+    for (const [gid, rec] of items) {
+      const it = rec.itemSignal.peek();
+      if (it.content.kind !== "group") continue;
+
+      const childIds = it.content.items;
+
+      const seenIds = new Set<ItemId>();
+      for (const cid of childIds) {
+        devAssert(
+          !seenIds.has(cid),
+          `Group ${gid} contains duplicate child id ${cid}`,
+        );
+        seenIds.add(cid);
+
+        devAssert(
+          items.has(cid),
+          `Group ${gid} references missing child id ${cid}`,
+        );
+
+        const child = items.get(cid)!.itemSignal.peek();
+        devAssert(
+          child.ownerId === gid,
+          `Child ${cid} has ownerId=${String(child.ownerId)} but is listed under group ${gid}`,
+        );
+      }
+
+      const seenLabels = new Set<string>();
+      for (const cid of childIds) {
+        const child = items.get(cid)!.itemSignal.peek();
+        const nm = normalizeLabel(child.label);
+        if (!nm) continue;
+        devAssert(
+          !seenLabels.has(nm),
+          `Duplicate label '${nm}' in group ${gid}`,
+        );
+        seenLabels.add(nm);
+      }
+    }
+
+    for (const [cid, rec] of items) {
+      const child = rec.itemSignal.peek();
+      const ownerId0 = child.ownerId;
+      if (ownerId0 == null) continue;
+
+      devAssert(
+        items.has(ownerId0),
+        `Item ${cid} has missing owner ${ownerId0}`,
+      );
+      const ownerItems = groupItemsOf(ownerId0);
+      devAssert(
+        ownerItems != null,
+        `Item ${cid} owner ${ownerId0} is not a group`,
+      );
+
+      const count = ownerItems!.reduce((n, x) => n + (x === cid ? 1 : 0), 0);
+      devAssert(
+        count === 1,
+        `Item ${cid} owner ${ownerId0} contains it ${count} times (expected 1)`,
+      );
+    }
+  }
 
   const snapshotContent = (content: StoredContent): SnapshotContent => {
     switch (content.kind) {

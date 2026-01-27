@@ -1,6 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Store, ItemId, Scalar, StoredContent } from "./store";
-import { isContentSettableKind } from "./store";
+import { canEditTextContent } from "./store";
 import type {
   Editor,
   Focus,
@@ -494,23 +494,13 @@ export type EditableText =
   | { kind: "editable"; text: string }
   | { kind: "readonly"; text: string };
 
-function storedScalarTextForEdit(
-  store: Store,
-  id: ItemId,
-): { kind: "editable"; text: string } | null {
+function storedScalarTextForEdit(store: Store, id: ItemId) {
+  if (!canEditTextContent(store, id)) return null;
+
   const it = store.readItem(id);
-  const kind = it.content.kind;
-
-  if (!isContentSettableKind(kind)) return null;
-
-  if (kind === "blank") return { kind: "editable", text: "" };
-
-  if (kind === "scalar") {
-    const c = it.content as Extract<StoredContent, { kind: "scalar" }>;
-    return { kind: "editable", text: String(c.value) };
-  }
-
-  return null;
+  if (it.content.kind === "blank")
+    return { kind: "editable", text: "" } as const;
+  return { kind: "editable", text: String(it.content.value) } as const;
 }
 
 export function getEditableText(
@@ -708,12 +698,6 @@ function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
   });
 }
 
-function canEditScalarText(store: Store, id: ItemId): boolean {
-  const it = store.readItem(id);
-  const kind = it.content.kind;
-  return isContentSettableKind(kind) && (kind === "blank" || kind === "scalar");
-}
-
 export function contentField(opts: ContentFieldOpts): Component {
   return createComponent((ctx) => {
     const host = el("div");
@@ -836,7 +820,7 @@ export function contentField(opts: ContentFieldOpts): Component {
       }
 
       slot.set(
-        canEditScalarText(opts.editor.store, opts.id)
+        canEditTextContent(opts.editor.store, opts.id)
           ? mountText()
           : mountReadonlyText(),
       );

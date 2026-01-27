@@ -1,5 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Store, ItemId, Transaction, Op, ViewKind } from "../store";
+import { canEditTextContent } from "../store";
 import type {
   Editor,
   View,
@@ -190,11 +191,6 @@ function tableNavMove(
   return null;
 }
 
-function canEditScalarText(store: Store, id: ItemId): boolean {
-  const kind = store.readItem(id).content.kind;
-  return kind === "blank" || kind === "scalar";
-}
-
 export const tableCommands = {
   commitRowLabel(
     editor: Editor,
@@ -217,7 +213,7 @@ export const tableCommands = {
     raw: string,
   ): CmdResult {
     return tryCmd(() => {
-      if (!canEditScalarText(store, cellId)) return { didChange: false };
+      if (!canEditTextContent(store, cellId)) return { didChange: false };
 
       editor.commit(
         store.op.transaction([

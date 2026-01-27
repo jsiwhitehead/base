@@ -1,180 +1,223 @@
-import { effect } from "@preact/signals-core";
-
-import {
-  type ItemId,
-  type Item,
-  type Scalar,
-  type StoredContent,
-  createItem,
-  setRoot,
-  setInterpreter,
-  selectValue,
-  itemAtom,
-} from "./store";
-
+import { DEV, devAssert, devWarn } from "./dev";
+import { createStore, type ItemId } from "./store";
+import { createEvaluator } from "./eval";
 import { interpretExpr } from "./expr";
-import { focusFirstRootCell, onRootKeyDown } from "./editor";
-import mountRoot from "../old/views";
+import { createEditor } from "./editor";
+import { createView } from "./views";
+import { mountViewInto } from "./dom";
 
-export function mount(rootId: ItemId, rootElement: HTMLElement) {
-  setInterpreter(interpretExpr);
-  setRoot(rootId);
-
-  const view = mountRoot(rootId, []);
-
-  rootElement.replaceChildren(view.element);
-
-  queueMicrotask(() => {
-    focusFirstRootCell();
-  });
-
-  rootElement.addEventListener("keydown", onRootKeyDown);
-
-  return () => {
-    view.dispose();
-    rootElement.removeEventListener("keydown", onRootKeyDown);
-    rootElement.textContent = "";
+export type App = {
+  store: ReturnType<typeof createStore>;
+  evaluator: ReturnType<typeof createEvaluator>;
+  editor: ReturnType<typeof createEditor>;
+  runtime: {
+    editor: ReturnType<typeof createEditor>;
+    eval: ReturnType<typeof createEvaluator>;
   };
-}
-
-let nextId = 1;
-const newId = (): number => nextId++;
-
-const blankItem = (ownerId: ItemId | null): Item => ({
-  id: newId(),
-  ownerId,
-  label: "",
-  view: "",
-  content: { kind: "blank" },
-});
-
-const scalarItem = (
-  ownerId: ItemId | null,
-  value: Scalar,
-  label = "",
-): Item => ({
-  id: newId(),
-  ownerId,
-  label,
-  view: "",
-  content: { kind: "scalar", value },
-});
-
-const derivedItem = (
-  ownerId: ItemId | null,
-  expr: string,
-  label = "",
-): Item => ({
-  id: newId(),
-  ownerId,
-  label,
-  view: "",
-  content: { kind: "derived", expr },
-});
-
-const lensItem = (
-  ownerId: ItemId | null,
-  from: string,
-  where = "",
-  orderBy = "",
-  label = "",
-): Item => ({
-  id: newId(),
-  ownerId,
-  label,
-  view: "",
-  content: { kind: "lens", from, where, orderBy },
-});
-
-const groupItem = (
-  ownerId: ItemId | null,
-  children: Item[],
-  label = "",
-  view = "",
-): Item => {
-  const id = newId();
-  for (const c of children) c.ownerId = id;
-
-  const group: Item = {
-    id,
-    ownerId,
-    label,
-    view,
-    content: { kind: "group", items: children.map((c) => c.id) },
-  };
-
-  createItem(group);
-  for (const c of children) createItem(c);
-
-  return group;
+  rootId: ItemId;
+  dispose(): void;
 };
 
-const rootId = newId();
+export type CreateAppOpts = {
+  host?: HTMLElement;
+  rootView?: "tree" | "table" | "slider";
+  demo?: boolean;
+};
 
-createItem({
-  id: rootId,
-  ownerId: null,
-  label: "",
-  view: "",
-  content: { kind: "group", items: [] },
-});
+export function createApp(opts: CreateAppOpts = {}): App {
+  const rootView = opts.rootView ?? "tree";
+  const demo = opts.demo ?? DEV;
 
-const a = scalarItem(rootId, 10);
-const b = scalarItem(rootId, 20);
-const c = scalarItem(rootId, 30);
+  const host =
+    opts.host ??
+    (typeof document !== "undefined"
+      ? (document.getElementById("app") as HTMLElement | null)
+      : null);
 
-createItem(a);
-createItem(b);
-createItem(c);
+  devAssert(host, "Missing app host element (#app)");
 
-itemAtom(rootId).set({
-  ...itemAtom(rootId).peek(),
-  content: { kind: "group", items: [a.id, b.id, c.id] },
-});
+  const store = createStore();
 
-// Example group "x"
-// const x = groupItem(rootId, [
-//   scalarItem(null, 10),
-//   scalarItem(null, 20),
-//   scalarItem(null, 30),
-// ], "x");
-// itemAtom(rootId).set({
-//   ...itemAtom(rootId).peek(),
-//   content: {
-//     kind: "group",
-//     items: [...(itemAtom(rootId).peek().content as any).items, x.id],
-//   },
-// });
+  const rootId = store.createId();
+  store.apply(
+    store.op.transaction([
+      store.op.create(store.create.group(rootId)),
+      store.op.patchView(rootId, rootView),
+    ]),
+  );
+  store.setRoot(rootId);
 
-// Example lens filtering + sorting over x
-// const ln = lensItem(rootId, "x", "_.[1] > 15", "_.[1]");
-// createItem(ln);
-// itemAtom(rootId).set({
-//   ...itemAtom(rootId).peek(),
-//   content: { kind: "group", items: [...(itemAtom(rootId).peek().content as any).items, ln.id] },
-// });
+  const evaluator = createEvaluator({ store, interpret: interpretExpr });
+  const editor = createEditor(store);
+  const runtime = { editor, eval: evaluator } as const;
 
-// Example table
-// const people = groupItem(rootId, [
-//   groupItem(null, [scalarItem(null, "Steve", "Name"), scalarItem(null, 25, "Age")]),
-//   groupItem(null, [scalarItem(null, "Lucy", "Name"), scalarItem(null, 32, "Age")]),
-//   groupItem(null, [scalarItem(null, "James", "Name"), scalarItem(null, 18, "Age")]),
-// ], "people", "table");
-// itemAtom(rootId).set({
-//   ...itemAtom(rootId).peek(),
-//   content: { kind: "group", items: [...(itemAtom(rootId).peek().content as any).items, people.id] },
-// });
+  const view = createView(runtime, rootView, rootId, {
+    scopeId: rootId,
+    id: rootId,
+  });
+  devAssert(view, `No view factory for rootView='${rootView}'`);
 
-// Example derived call to builtins
-// const d = derivedItem(rootId, "min(10, 20, 5)");
-// createItem(d);
-// itemAtom(rootId).set({
-//   ...itemAtom(rootId).peek(),
-//   content: { kind: "group", items: [...(itemAtom(rootId).peek().content as any).items, d.id] },
-// });
+  const uninstallListeners = editor.runtime.installViewListeners();
+  const unmount = mountViewInto(editor, host!, view!);
 
-const unmount = mount(rootId, document.getElementById("root")!);
+  const app: App = {
+    store,
+    evaluator,
+    editor,
+    runtime,
+    rootId,
+    dispose() {
+      uninstallListeners();
+      unmount();
+      evaluator.dispose();
+    },
+  };
 
-effect(() => {
-  console.log(JSON.stringify(selectValue(rootId), null, 2));
-});
+  if (demo) {
+    try {
+      seedDemo(app);
+    } catch (e) {
+      devWarn("seedDemo failed:", e);
+    }
+  }
+
+  return app;
+}
+
+export function seedDemo(app: App) {
+  const { store, rootId } = app;
+
+  if (store.findChildByLabel(rootId, "Demo") != null) return;
+
+  const id = () => store.createId();
+
+  const mkGroup = (
+    owner: ItemId,
+    label: string,
+    view: "" | "tree" | "table" | "slider" = "",
+  ) => {
+    const gid = id();
+    store.apply(
+      store.op.transaction([
+        store.op.create(store.create.group(gid)),
+        store.op.patchLabel(gid, label),
+        ...(view ? [store.op.patchView(gid, view)] : []),
+        store.op.reparent({ childId: gid, toOwnerId: owner }),
+      ]),
+    );
+    return gid;
+  };
+
+  const mkScalar = (
+    owner: ItemId,
+    label: string,
+    value: true | number | string,
+  ) => {
+    const cid = id();
+    store.apply(
+      store.op.transaction([
+        store.op.create(store.create.blank(cid)),
+        store.op.patchLabel(cid, label),
+        store.op.patchContent(cid, { kind: "scalar", value }),
+        store.op.reparent({ childId: cid, toOwnerId: owner }),
+      ]),
+    );
+    return cid;
+  };
+
+  const mkDerived = (owner: ItemId, label: string, expr: string) => {
+    const cid = id();
+    store.apply(
+      store.op.transaction([
+        store.op.create(store.create.blank(cid)),
+        store.op.patchLabel(cid, label),
+        store.op.patchContent(cid, { kind: "derived", expr }),
+        store.op.reparent({ childId: cid, toOwnerId: owner }),
+      ]),
+    );
+    return cid;
+  };
+
+  const mkLens = (
+    owner: ItemId,
+    label: string,
+    spec: { from: string; where?: string; orderBy?: string },
+  ) => {
+    const cid = id();
+    store.apply(
+      store.op.transaction([
+        store.op.create(store.create.blank(cid)),
+        store.op.patchLabel(cid, label),
+        store.op.patchContent(cid, {
+          kind: "lens",
+          from: spec.from,
+          where: spec.where ?? "",
+          orderBy: spec.orderBy ?? "",
+        }),
+        store.op.reparent({ childId: cid, toOwnerId: owner }),
+      ]),
+    );
+    return cid;
+  };
+
+  const demo = mkGroup(rootId, "Demo", "tree");
+
+  mkScalar(demo, "x", 10);
+  mkScalar(demo, "y", 2);
+  mkDerived(demo, "x_plus_y", "x + y");
+  mkDerived(demo, "x_times_y", "x * y");
+
+  const rows = mkGroup(demo, "rows", "tree");
+
+  const mkRow = (label: string, score: number, note: string) => {
+    const row = mkGroup(rows, label, "");
+    mkScalar(row, "score", score);
+    mkScalar(row, "note", note);
+    return row;
+  };
+
+  mkRow("a", 2, "ok");
+  mkRow("b", 1, "low");
+  mkRow("c", 3, "high");
+
+  const table = id();
+  store.apply(
+    store.op.transaction([
+      store.op.create(store.create.blank(table)),
+      store.op.patchLabel(table, "Table"),
+      store.op.patchView(table, "table"),
+      store.op.patchContent(table, { kind: "derived", expr: "rows" }),
+      store.op.reparent({ childId: table, toOwnerId: demo }),
+    ]),
+  );
+
+  mkLens(demo, "TopScores", {
+    from: "rows",
+    where: "_.score > 1",
+    orderBy: "_.score",
+  });
+
+  const slider = id();
+  store.apply(
+    store.op.transaction([
+      store.op.create(store.create.blank(slider)),
+      store.op.patchLabel(slider, "Slider"),
+      store.op.patchView(slider, "slider"),
+      store.op.patchContent(slider, { kind: "scalar", value: 25 }),
+      store.op.reparent({ childId: slider, toOwnerId: demo }),
+    ]),
+  );
+}
+
+function autoMount() {
+  if (typeof document === "undefined") return;
+  if (typeof window === "undefined") return;
+
+  const g = globalThis as any;
+  if (g.__APP_MOUNTED__) return;
+  g.__APP_MOUNTED__ = true;
+
+  createApp({ demo: true, rootView: "tree" });
+}
+
+autoMount();

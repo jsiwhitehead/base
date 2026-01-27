@@ -6,6 +6,7 @@ import type {
   ViewKind,
   StoredContent,
 } from "../store";
+import { canEditTextContent } from "../store";
 import type {
   Editor,
   View,
@@ -49,60 +50,42 @@ import {
 import type { Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
 
-type HeaderFieldKey =
-  | "derived.expr"
-  | "lens.from"
-  | "lens.where"
-  | "lens.orderBy";
+type HeaderKind = "derived" | "lens";
 
 type HeaderFieldDef = Readonly<{
-  key: HeaderFieldKey;
+  field: "expr" | "from" | "where" | "orderBy";
   label: string;
   multiline: boolean;
 }>;
 
-const DERIVED_FIELDS: readonly HeaderFieldDef[] = [
-  { key: "derived.expr", label: "=", multiline: true },
-] as const;
+const HEADER_FIELDS: Record<HeaderKind, readonly HeaderFieldDef[]> = {
+  derived: [{ field: "expr", label: "=", multiline: true }],
+  lens: [
+    { field: "from", label: "~", multiline: false },
+    { field: "where", label: "where:", multiline: true },
+    { field: "orderBy", label: "orderBy:", multiline: true },
+  ],
+} as const;
 
-const LENS_FIELDS: readonly HeaderFieldDef[] = [
-  { key: "lens.from", label: "~", multiline: false },
-  { key: "lens.where", label: "where:", multiline: true },
-  { key: "lens.orderBy", label: "orderBy:", multiline: true },
-] as const;
-
-function contentKindOf(store: Store, id: ItemId): StoredContent["kind"] {
-  return store.readItem(id).content.kind;
-}
-
-function headerFieldsForItem(store: Store, id: ItemId) {
-  const kind = contentKindOf(store, id);
-  if (kind === "derived") return DERIVED_FIELDS;
-  if (kind === "lens") return LENS_FIELDS;
-  return [] as const;
-}
-
-function headerFieldValueForItem(
+function headerFieldsForItem(
   store: Store,
   id: ItemId,
-  key: HeaderFieldKey,
+): readonly HeaderFieldDef[] {
+  const kind = store.readItem(id).content.kind;
+  if (kind === "derived") return HEADER_FIELDS.derived;
+  if (kind === "lens") return HEADER_FIELDS.lens;
+  return [];
+}
+
+function headerFieldValue(
+  store: Store,
+  id: ItemId,
+  def: HeaderFieldDef,
 ): string {
-  const it = store.readItem(id);
-  const c = it.content;
-
-  if (c.kind === "derived") return key === "derived.expr" ? (c.expr ?? "") : "";
-  if (c.kind !== "lens") return "";
-
-  switch (key) {
-    case "lens.from":
-      return c.from ?? "";
-    case "lens.where":
-      return c.where ?? "";
-    case "lens.orderBy":
-      return c.orderBy ?? "";
-    default:
-      return "";
-  }
+  const c = store.readItem(id).content;
+  if (c.kind === "derived") return def.field === "expr" ? (c.expr ?? "") : "";
+  if (c.kind === "lens") return String((c as any)[def.field] ?? "");
+  return "";
 }
 
 const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
@@ -189,11 +172,6 @@ function treeNavMove(
   return { selection: res.selection, effects: res.effects };
 }
 
-function canEditScalarText(store: Store, id: ItemId): boolean {
-  const kind = store.readItem(id).content.kind;
-  return kind === "blank" || kind === "scalar";
-}
-
 export const treeCommands = {
   commitLabel(editor: Editor, f: Focus, text: string): CmdResult {
     return tryCmd(() => {
@@ -211,7 +189,7 @@ export const treeCommands = {
   ): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
-      if (!canEditScalarText(store, id)) return { didChange: false };
+      if (!canEditTextContent(store, id)) return { didChange: false };
       editor.commit(
         store.op.transaction([
           store.op.patchContent(id, {
@@ -245,14 +223,15 @@ export const treeCommands = {
     editor: Editor,
     store: Store,
     f: Focus,
-    fieldKey: string,
+    def: HeaderFieldDef,
     text: string,
   ): CmdResult {
     return tryCmd(() => {
       const it = store.readItem(f.id);
       const c = it.content;
 
-      if (fieldKey === "derived.expr") {
+      if (c.kind === "derived") {
+        if (def.field !== "expr") return { didChange: false };
         editor.commit(
           store.op.transaction([
             store.op.patchContent(f.id, { kind: "derived", expr: text }),
@@ -263,15 +242,14 @@ export const treeCommands = {
 
       if (c.kind !== "lens") return { didChange: false };
 
-      const next = {
-        from: fieldKey === "lens.from" ? text : c.from,
-        where: fieldKey === "lens.where" ? text : c.where,
-        orderBy: fieldKey === "lens.orderBy" ? text : c.orderBy,
-      };
-
       editor.commit(
         store.op.transaction([
-          store.op.patchContent(f.id, { kind: "lens", ...next }),
+          store.op.patchContent(f.id, {
+            kind: "lens",
+            from: def.field === "from" ? text : c.from,
+            where: def.field === "where" ? text : c.where,
+            orderBy: def.field === "orderBy" ? text : c.orderBy,
+          }),
         ]),
       );
 
@@ -323,7 +301,7 @@ export const treeCommands = {
     const f = sel.focus;
 
     return tryCmd(() => {
-      if (!canEditScalarText(store, f.id))
+      if (!canEditTextContent(store, f.id))
         return treeCommands.insertSibling(editor, sel, "after");
 
       const loc = store.locateInOwner(f.id);
@@ -378,7 +356,7 @@ export const treeCommands = {
     const f = sel.focus;
 
     return tryCmd(() => {
-      if (!canEditScalarText(store, f.id)) return { didChange: false };
+      if (!canEditTextContent(store, f.id)) return { didChange: false };
 
       const loc = store.locateInOwner(f.id);
       if (!loc) return { didChange: false };
@@ -387,7 +365,7 @@ export const treeCommands = {
         dir === "backward"
           ? loc.items[loc.index - 1]
           : loc.items[loc.index + 1];
-      if (neighborId == null || !canEditScalarText(store, neighborId))
+      if (neighborId == null || !canEditTextContent(store, neighborId))
         return { didChange: false };
 
       const leftId = dir === "backward" ? neighborId : f.id;
@@ -547,7 +525,7 @@ export const treeCommands = {
       return { didChange: false, selection: nextSel.selection };
     }
 
-    return canEditScalarText(store, f.id)
+    return canEditTextContent(store, f.id)
       ? treeCommands.splitAt(editor, evaluator, sel, 0, 0)
       : treeCommands.insertSibling(editor, sel, "after");
   },
@@ -564,7 +542,7 @@ export const treeCommands = {
 
     const prefer = dir === "backward" ? "prev" : "next";
 
-    if (!canEditScalarText(store, f.id))
+    if (!canEditTextContent(store, f.id))
       return treeCommands.removeItem(editor, evaluator, sel, prefer);
 
     const txt = getEditableText(store, evaluator, f.id).text;
@@ -677,10 +655,10 @@ function mountTreeHeader(
         commit: (text) =>
           applyCmd(
             editor,
-            treeCommands.commitHeaderField(editor, store, focus, d.key, text),
+            treeCommands.commitHeaderField(editor, store, focus, d, text),
           ),
         getState: () => ({
-          text: headerFieldValueForItem(store, focus.id, d.key as any),
+          text: headerFieldValue(store, focus.id, d),
           readOnly: false,
           isIssue: false,
         }),
@@ -920,7 +898,7 @@ export function createTreeView({ runtime, id: rootId }: ViewFactoryArgs): View {
   const viewId = `tree:${String(rootId)}`;
 
   const navStopsSignal = computed(() =>
-    collectNavStopsFrom(store, evaluator, store.getRoot()),
+    collectNavStopsFrom(store, evaluator, rootId),
   );
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>

@@ -2,7 +2,8 @@
   "name": "base",
   "type": "module",
   "scripts": {
-    "app": "bun ./static/index.html"
+    "app": "bun ./static/index.html",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest"
