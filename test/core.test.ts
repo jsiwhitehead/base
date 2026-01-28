@@ -1,4 +1,5 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import { createStore, type ItemId } from "../src/store";
 import {
@@ -11,6 +12,11 @@ import {
 } from "../src/eval";
 import { interpretExpr } from "../src/expr";
 import { createEditor } from "../src/editor";
+import { createSliderView } from "../src/views/slider";
+import { createTableView } from "../src/views/table";
+import { createTreeView } from "../src/views/tree";
+
+GlobalRegistrator.register();
 
 function installRafShim() {
   if (typeof globalThis.requestAnimationFrame !== "function") {
@@ -24,6 +30,10 @@ function installRafShim() {
 }
 
 installRafShim();
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
 
 function makeRuntime() {
   const store = createStore();
@@ -91,6 +101,20 @@ function asScalar(v: Value): true | number | string | null {
   if (isBlankValue(v)) return null;
   if (!isScalarValue(v)) throw new Error(`Expected scalar, got ${v.kind}`);
   return v.value;
+}
+
+function addTableRow(
+  store: ReturnType<typeof createStore>,
+  tableId: ItemId,
+  label: string,
+  cells: Record<string, true | number | string>,
+) {
+  const rowId = addGroupChild(store, tableId, label);
+  for (const [cellLabel, value] of Object.entries(cells)) {
+    const cellId = addBlankChild(store, rowId, cellLabel);
+    patchScalar(store, cellId, value);
+  }
+  return rowId;
 }
 
 describe("store", () => {
@@ -316,5 +340,108 @@ describe("editor/store integration (no DOM)", () => {
 
     editor.commit(store.op.transaction([store.op.patchLabel(a, "aa")]));
     expect(store.readItem(a).label).toBe("aa");
+  });
+});
+
+describe("slider DOM integration", () => {
+  test("range input updates scalar content", () => {
+    const { store, evaluator, editor, rootId } = makeRuntime();
+    const sliderId = addBlankChild(store, rootId, "slider");
+
+    store.apply(store.op.transaction([store.op.patchView(sliderId, "slider")]));
+    patchScalar(store, sliderId, 10);
+
+    const view = createSliderView({
+      runtime: { editor, evaluator },
+      id: sliderId,
+    });
+
+    document.body.append(view.root);
+
+    const input = view.root.querySelector("input");
+    expect(input).not.toBeNull();
+
+    if (!input) {
+      view.dispose();
+      return;
+    }
+
+    input.value = "42";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(store.readItem(sliderId).content).toEqual({
+      kind: "scalar",
+      value: 42,
+    });
+
+    view.dispose();
+  });
+});
+
+describe("table DOM integration", () => {
+  test("editing a cell textarea commits scalar text", () => {
+    const { store, evaluator, editor, rootId } = makeRuntime();
+    const tableId = addGroupChild(store, rootId, "table");
+    store.apply(store.op.transaction([store.op.patchView(tableId, "table")]));
+
+    const rowId = addTableRow(store, tableId, "rowA", { score: 5 });
+    const scoreId = store.findChildByLabel(rowId, "score");
+    if (!scoreId) throw new Error("score cell missing");
+
+    const view = createTableView({
+      runtime: { editor, evaluator },
+      id: tableId,
+    });
+
+    document.body.append(view.root);
+
+    const cellTextarea = view.root.querySelector(
+      ".row-cells textarea",
+    ) as HTMLTextAreaElement | null;
+    expect(cellTextarea).not.toBeNull();
+    if (!cellTextarea) {
+      view.dispose();
+      return;
+    }
+
+    cellTextarea.value = "25";
+    cellTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(store.readItem(scoreId).content).toEqual({
+      kind: "scalar",
+      value: 25,
+    });
+
+    view.dispose();
+  });
+});
+
+describe("tree DOM integration", () => {
+  test("header label input updates item label", () => {
+    const { store, evaluator, editor, rootId } = makeRuntime();
+    const nodeId = addBlankChild(store, rootId, "node");
+
+    const view = createTreeView({
+      runtime: { editor, evaluator },
+      id: rootId,
+    });
+
+    document.body.append(view.root);
+
+    const labelInput = view.root.querySelector(
+      ".header .label input",
+    ) as HTMLInputElement | null;
+    expect(labelInput).not.toBeNull();
+    if (!labelInput) {
+      view.dispose();
+      return;
+    }
+
+    labelInput.value = "renamed";
+    labelInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(store.readItem(nodeId).label).toBe("renamed");
+
+    view.dispose();
   });
 });

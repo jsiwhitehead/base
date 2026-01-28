@@ -36,21 +36,21 @@ export function createApp(opts: CreateAppOpts = {}): App {
   const host =
     opts.host ??
     (typeof document !== "undefined"
-      ? (document.getElementById("app") as HTMLElement | null)
+      ? (document.getElementById("root") as HTMLElement | null)
       : null);
 
-  devAssert(host, "Missing app host element (#app)");
+  devAssert(host, "Missing app root element (#root)");
 
   const store = createStore();
 
   const rootId = store.createId();
+  store.setRoot(rootId);
   store.apply(
     store.op.transaction([
       store.op.create(store.create.group(rootId)),
       store.op.patchView(rootId, rootView),
     ]),
   );
-  store.setRoot(rootId);
 
   const evaluator = createEvaluator({ store, interpret: interpretExpr });
   const editor = createEditor(store);
