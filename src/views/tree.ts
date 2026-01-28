@@ -650,9 +650,7 @@ function mountTreeHeader(
     componentCtx.use(labelComp);
 
     const targets: HTMLElement[] = [];
-    const labelInput =
-      labelComp.el.querySelector<HTMLInputElement>("input") ?? labelComp.el;
-    targets.push(labelInput);
+    targets.push(labelComp.focusEl);
 
     for (let i = 0; i < defs.length; i++) {
       const d = defs[i]!;
@@ -696,7 +694,7 @@ function mountTreeHeader(
 
       valueHost.replaceChildren(fc.el);
       componentCtx.use(fc);
-      targets.push(fc.el);
+      targets.push(fc.focusEl);
     }
 
     onTargets(targets);
@@ -744,10 +742,12 @@ function mountTreeChildren(mountCtx: TreeMountCtx, focus: Focus): Component {
   });
 }
 
+type ContentTargetRef = { current: HTMLElement | null };
+
 function mountTreeBody(
   mountCtx: TreeMountCtx,
   focus: Focus,
-  onContentTarget: (el0: HTMLElement | null) => void,
+  contentTargetRef: ContentTargetRef,
 ): Component {
   const { editor, evaluator, dispatch, runtime } = mountCtx;
   const store = editor.store;
@@ -760,7 +760,7 @@ function mountTreeBody(
       const childView = createView(runtime, viewKind, focus.id, focus);
       if (childView) {
         ensureTabbable(childView.root);
-        onContentTarget(childView.root);
+        contentTargetRef.current = childView.root;
         componentCtx.use(mountViewInto(editor, host, childView));
         return host;
       }
@@ -772,6 +772,7 @@ function mountTreeBody(
       focus,
       id: focus.id,
       registerFocus: false,
+      focusElRef: contentTargetRef,
       commitScalarText: (text) =>
         applyCmd(editor, treeCommands.setScalarValue(editor, focus.id, text)),
       textKeys: (inp) => {
@@ -833,9 +834,9 @@ function mountTreeBody(
     host.replaceChildren(vf.el);
     componentCtx.use(vf);
 
-    ensureTabbable(vf.el);
-    onContentTarget(vf.el);
-    componentCtx.onCleanup(() => onContentTarget(null));
+    componentCtx.onCleanup(() => {
+      contentTargetRef.current = host;
+    });
 
     return host;
   });
@@ -856,23 +857,21 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
     const contentSlot = componentCtx.slot(contentContainer);
 
     let headerTargets: HTMLElement[] = [];
-    let contentTargetEl: HTMLElement | null = contentContainer;
+    const contentTargetRef: ContentTargetRef = {
+      current: contentContainer,
+    };
 
     componentCtx.focusable({
       editor,
       focus,
       elementFor: (target) =>
         target.kind === "content"
-          ? contentTargetEl
+          ? contentTargetRef.current ?? contentContainer
           : (headerTargets[target.index] ?? null),
     });
 
     const setHeaderTargets = (targets: HTMLElement[]) => {
       headerTargets = targets;
-    };
-
-    const setContentTarget = (el0: HTMLElement | null) => {
-      contentTargetEl = el0 ?? contentContainer;
     };
 
     componentCtx.watch(
@@ -954,10 +953,12 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
           if (mode === "children") {
             const kids = mountTreeChildren(mountCtx, focus);
             contentSlot.set(kids);
-            setContentTarget(kids.el);
             ensureTabbable(kids.el);
+            contentTargetRef.current = kids.el;
           } else {
-            contentSlot.set(mountTreeBody(mountCtx, focus, setContentTarget));
+            contentSlot.set(
+              mountTreeBody(mountCtx, focus, contentTargetRef),
+            );
           }
         }
       },

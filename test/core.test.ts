@@ -13,11 +13,7 @@ import {
   isValueGroupValue,
 } from "../src/eval";
 import { interpretExpr } from "../src/expr";
-import {
-  createEditor,
-  repairSelection,
-  type Selection,
-} from "../src/editor";
+import { createEditor, repairSelection, type Selection } from "../src/editor";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
 import { createTreeView } from "../src/views/tree";
@@ -850,4 +846,58 @@ describe("DOM smoke", () => {
 
     assertPublicStoreContracts(store);
   });
+});
+
+test("tree: clicking editable content focuses the text input element", async () => {
+  const { store, evaluator, editor, rootId } = makeRuntime();
+
+  const x = addBlankChild(store, rootId, "x");
+  patchScalar(store, x, 10);
+
+  const view = createTreeView({ runtime: { editor, evaluator }, id: rootId });
+  const unmount = await mountAndActivateView(editor, view);
+
+  const labelInputs = Array.from(
+    view.root.querySelectorAll(".autosize.label input"),
+  ) as HTMLInputElement[];
+
+  const xLabelInput = labelInputs.find((n) => (n.value ?? "") === "x") ?? null;
+  expect(xLabelInput).not.toBeNull();
+  if (!xLabelInput) {
+    unmount();
+    return;
+  }
+
+  const itemRoot = xLabelInput.closest(".item") as HTMLElement | null;
+  expect(itemRoot).not.toBeNull();
+  if (!itemRoot) {
+    unmount();
+    return;
+  }
+
+  const contentTextarea = itemRoot.querySelector(
+    "textarea.content",
+  ) as HTMLTextAreaElement | null;
+
+  expect(contentTextarea).not.toBeNull();
+  if (!contentTextarea) {
+    unmount();
+    return;
+  }
+
+  contentTextarea.dispatchEvent(
+    new Event("pointerdown", { bubbles: true, cancelable: true }),
+  );
+
+  await tick();
+  await tick();
+
+  expect(document.activeElement === contentTextarea).toBe(true);
+
+  const sel = editor.getSelection();
+  expectFocusedSelection(sel);
+  expect(sel.target.kind).toBe("content");
+
+  unmount();
+  assertPublicStoreContracts(store);
 });

@@ -33,6 +33,19 @@ type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
 export type Component = { el: HTMLElement; dispose(): void };
 
+export type InputComponent<E extends HTMLElement = TextInputElement> =
+  Component & {
+    focusEl: E;
+  };
+
+export function isInputComponent(c: Component): c is InputComponent {
+  return "focusEl" in (c as any) && (c as any).focusEl instanceof HTMLElement;
+}
+
+export function focusElOf(c: Component): HTMLElement {
+  return isInputComponent(c) ? c.focusEl : c.el;
+}
+
 function shallowEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
@@ -643,8 +656,8 @@ export type TextFieldOpts = {
   textKeys?: (inp: TextInputElement) => (() => void) | void;
 };
 
-export function textField(opts: TextFieldOpts): Component {
-  return createComponent((ctx) => {
+export function textField(opts: TextFieldOpts): InputComponent {
+  const c = createComponent((ctx) => {
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
 
@@ -690,6 +703,8 @@ export function textField(opts: TextFieldOpts): Component {
 
     return inp;
   });
+
+  return { ...c, focusEl: c.el as TextInputElement };
 }
 
 export type AutosizeTextFieldOpts = Omit<
@@ -702,15 +717,18 @@ export type AutosizeTextFieldOpts = Omit<
   wrapClassName?: string;
 };
 
-export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
-  return createComponent((ctx) => {
+export function autosizeTextField(opts: AutosizeTextFieldOpts): InputComponent {
+  let focusEl!: HTMLInputElement;
+
+  const c = createComponent((ctx) => {
     const wrap = el("div", opts.wrapClassName ?? "autosize");
     if (opts.className) wrap.classList.add(opts.className);
 
     const mirror = el("span", opts.mirrorClassName ?? "");
     mirror.setAttribute("aria-hidden", "true");
 
-    const inp = textInput(false);
+    const inp = textInput(false) as HTMLInputElement;
+    focusEl = inp;
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
     wrap.append(mirror, inp);
@@ -758,6 +776,8 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
 
     return wrap;
   });
+
+  return { ...c, focusEl };
 }
 
 export type ContentFieldOpts = {
@@ -770,6 +790,7 @@ export type ContentFieldOpts = {
   textKeys?: (inp: TextInputElement) => (() => void) | void;
   renderItemGroupChild?: (childId: ItemId) => Component;
   commitScalarText?: (text: string) => void;
+  focusElRef?: { current: HTMLElement | null };
 };
 
 function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
@@ -797,6 +818,11 @@ export function contentField(opts: ContentFieldOpts): Component {
     const slot = ctx.slot(host);
 
     const register = opts.registerFocus !== false;
+    const setFocusEl = (comp: Component | null) => {
+      const next = comp ? focusElOf(comp) : host;
+      if (opts.focusElRef) opts.focusElRef.current = next;
+    };
+    setFocusEl(null);
 
     const installContentClickTarget = (wrap: HTMLElement) => {
       const targets: FocusableTargetSpec[] = [
@@ -916,21 +942,24 @@ export function contentField(opts: ContentFieldOpts): Component {
 
       host.classList.toggle("issue", isIssueValue(v));
 
+      let nextComp: Component;
+
       if (isItemGroupValue(v)) {
-        slot.set(mountItemGroup());
-        return;
-      }
-
-      if (isValueGroupValue(v)) {
-        slot.set(mountValueGroup());
-        return;
-      }
-
-      slot.set(
-        canEditTextContent(opts.editor.store, opts.id)
+        nextComp = mountItemGroup();
+      } else if (isValueGroupValue(v)) {
+        nextComp = mountValueGroup();
+      } else {
+        nextComp = canEditTextContent(opts.editor.store, opts.id)
           ? mountText()
-          : mountReadonlyText(),
-      );
+          : mountReadonlyText();
+      }
+
+      slot.set(nextComp);
+      setFocusEl(nextComp);
+    });
+
+    ctx.onCleanup(() => {
+      if (opts.focusElRef) opts.focusElRef.current = host;
     });
 
     return host;
