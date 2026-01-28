@@ -168,29 +168,29 @@ export function seedDemo(app: App) {
   mkDerived(demo, "x_plus_y", "x + y");
   mkDerived(demo, "x_times_y", "x * y");
 
-  // const rows = mkGroup(demo, "rows", "tree");
+  const rows = mkGroup(demo, "rows", "table");
 
-  // const mkRow = (label: string, score: number, note: string) => {
-  //   const row = mkGroup(rows, label);
-  //   mkScalar(row, "score", score);
-  //   mkScalar(row, "note", note);
-  //   return row;
-  // };
+  const mkRow = (label: string, score: number, note: string) => {
+    const row = mkGroup(rows, label);
+    mkScalar(row, "score", score);
+    mkScalar(row, "note", note);
+    return row;
+  };
 
-  // mkRow("a", 2, "ok");
-  // mkRow("b", 1, "low");
-  // mkRow("c", 3, "high");
+  mkRow("a", 2, "ok");
+  mkRow("b", 1, "low");
+  mkRow("c", 3, "high");
 
-  // const table = id();
-  // store.apply(
-  //   store.op.transaction([
-  //     store.op.create(store.create.blank(table)),
-  //     store.op.patchLabel(table, "Table"),
-  //     store.op.patchView(table, "table"),
-  //     store.op.patchContent(table, { kind: "derived", expr: "rows" }),
-  //     store.op.reparent({ childId: table, toOwnerId: demo }),
-  //   ]),
-  // );
+  const table = id();
+  store.apply(
+    store.op.transaction([
+      store.op.create(store.create.blank(table)),
+      store.op.patchLabel(table, "Table"),
+      store.op.patchView(table, "tree"),
+      store.op.patchContent(table, { kind: "derived", expr: "rows" }),
+      store.op.reparent({ childId: table, toOwnerId: demo }),
+    ]),
+  );
 
   // mkLens(demo, "TopScores", {
   //   from: "rows",

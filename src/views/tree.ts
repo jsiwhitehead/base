@@ -1006,9 +1006,13 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
               : "none";
 
         const v = evaluator.value(focus.id);
-        const mode: "children" | "body" = isItemGroupValue(v)
-          ? "children"
-          : "body";
+        const viewKind = info.view as ViewKind;
+        const wantsChildView = viewWantsChildView(viewKind);
+        const mode: "children" | "body" = wantsChildView
+          ? "body"
+          : isItemGroupValue(v)
+            ? "children"
+            : "body";
 
         const sel = editor.runtime.selection.value;
         const labelFocused =
