@@ -238,9 +238,7 @@ export class EditorRuntime {
     const sel = this.selection.peek();
     if (sel.kind !== "focused" || keyOf(sel.focus) !== k) return;
 
-    const next: Selection = { kind: "idle" };
-    this.selection.value = next;
-    this.scheduleEffects(next, normalizeEffectsForSelection(next, []));
+    this.scheduleEffects(sel, [{ type: "CLEAR_DOM_FOCUS" }]);
   }
 
   scheduleEffects(sel: Selection, effects: EditorEffect[]): void {

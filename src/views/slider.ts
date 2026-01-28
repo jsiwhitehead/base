@@ -2,8 +2,6 @@ import {
   type ItemId,
   type Scalar,
   type StoredContentSettable,
-  isDerivedContent,
-  isLensContent,
   type Transaction,
 } from "../store";
 import { isScalarValue, type Evaluator } from "../eval";
@@ -12,7 +10,6 @@ import {
   caret0,
   withSelection,
   type Editor,
-  type NavMode,
   type ViewKeyResult,
   type View,
   focusSelection,
@@ -27,6 +24,54 @@ import type { ViewFactoryArgs } from "./index";
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
 type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
+
+const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
+  min: 0,
+  max: 100,
+  step: 1,
+};
+
+function handleSliderKey(
+  e: KeyboardEvent,
+  dispatch: (intent: SliderIntent) => ViewKeyResult,
+): boolean {
+  if (e.metaKey || e.ctrlKey) return false;
+
+  const mul = (e.shiftKey ? 10 : 1) * (e.altKey ? 0.1 : 1);
+  const nudge = (dir: -1 | 1) => dispatch({ type: "NUDGE", dir, mul });
+
+  switch (e.key) {
+    case "ArrowLeft":
+    case "ArrowDown":
+      stopEvent(e);
+      nudge(-1);
+      return true;
+
+    case "ArrowRight":
+    case "ArrowUp":
+      stopEvent(e);
+      nudge(1);
+      return true;
+
+    case "Home":
+      stopEvent(e);
+      dispatch({ type: "SET", kind: "min" });
+      return true;
+
+    case "End":
+      stopEvent(e);
+      dispatch({ type: "SET", kind: "max" });
+      return true;
+
+    case "Escape":
+      stopEvent(e);
+      dispatch({ type: "CANCEL" });
+      return true;
+
+    default:
+      return false;
+  }
+}
 
 function toNumberOr(v: Scalar, fallback: number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
@@ -57,8 +102,8 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetContent = (editor: Editor, id: ItemId) => {
-  const content = editor.store.readItem(id).content;
-  return !isDerivedContent(content) && !isLensContent(content);
+  const kind = editor.store.getContentKind(id);
+  return kind !== "derived" && kind !== "lens";
 };
 
 const getScalarOr = (
@@ -163,65 +208,38 @@ function mountSlider({
       ],
     });
 
+    const commitValue = (next: number) => {
+      if (!Number.isFinite(next)) return;
+      applyCmd(editor, sliderCommands.setScalarValue(editor, focus, id, next));
+    };
+
     componentCtx.on(input, "input", () => {
-      const n = Number(input.value);
-      if (Number.isFinite(n))
-        applyCmd(editor, sliderCommands.setScalarValue(editor, focus, id, n));
+      commitValue(Number(input.value));
     });
 
     componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey) return;
-
-      let mul = 1;
-      if (e.shiftKey) mul *= 10;
-      if (e.altKey) mul *= 0.1;
-
-      const nudgeIntent = (dir: -1 | 1) =>
-        dispatch({ type: "NUDGE", dir, mul });
-
-      switch (e.key) {
-        case "ArrowLeft":
-        case "ArrowDown":
-          stopEvent(e);
-          nudgeIntent(-1);
-          return;
-
-        case "ArrowRight":
-        case "ArrowUp":
-          stopEvent(e);
-          nudgeIntent(1);
-          return;
-
-        case "Home":
-          stopEvent(e);
-          dispatch({ type: "SET", kind: "min" });
-          return;
-
-        case "End":
-          stopEvent(e);
-          dispatch({ type: "SET", kind: "max" });
-          return;
-
-        case "Escape":
-          stopEvent(e);
-          dispatch({ type: "CANCEL" });
-          return;
-      }
+      handleSliderKey(e, dispatch);
     });
 
-    componentCtx.watch(() => {
-      const contentSettable = canSetContent(editor, id);
+    componentCtx.watch(
+      () => {
+        const cur = getScalarOr(evaluator, id, opts.min);
+        const clamped = clamp(cur, opts.min, opts.max);
+        return formatNumberForStep(clamped, opts.step);
+      },
+      (str) => {
+        if (input.value !== str) input.value = str;
+        if (valueEl.textContent !== str) valueEl.textContent = str;
+      },
+    );
 
-      const cur = getScalarOr(evaluator, id, opts.min);
-      const clamped = clamp(cur, opts.min, opts.max);
-      const str = formatNumberForStep(clamped, opts.step);
-
-      if (input.value !== str) input.value = str;
-      if (valueEl.textContent !== str) valueEl.textContent = str;
-
-      input.disabled = !contentSettable;
-      root.classList.toggle("readonly", !contentSettable);
-    });
+    componentCtx.watch(
+      () => !canSetContent(editor, id),
+      (shouldDisable) => {
+        if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
+        root.classList.toggle("readonly", shouldDisable);
+      },
+    );
 
     return root;
   });
@@ -235,11 +253,7 @@ export function createSliderView({
   const { editor, evaluator } = runtime;
   const safeFocus: Focus = focus ?? { scopeId: id, id };
 
-  const resolved: SliderResolvedOpts = {
-    min: 0,
-    max: 100,
-    step: 1,
-  };
+  const resolved = DEFAULT_SLIDER_OPTS;
 
   const dispatch = (intent: SliderIntent): ViewKeyResult => {
     switch (intent.type) {
@@ -312,10 +326,8 @@ export function createSliderView({
       ]);
     },
 
-    onKeyDown(e): ViewKeyResult {
-      const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
-      void mode;
-      void e;
+    onKeyDown(e) {
+      handleSliderKey(e, dispatch);
     },
 
     dispose() {

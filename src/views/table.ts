@@ -1,4 +1,4 @@
-import { computed, effect } from "@preact/signals-core";
+import { computed } from "@preact/signals-core";
 import {
   type ItemId,
   type ViewKind,
@@ -89,17 +89,28 @@ function deriveColumns(
   return out;
 }
 
-const isFocused = (
-  sel: Selection,
-): sel is Extract<Selection, { kind: "focused" }> => sel.kind === "focused";
+type FocusedSelection = Extract<Selection, { kind: "focused" }>;
+type RowLabelSelection = FocusedSelection & {
+  target: { kind: "header"; index: 0 };
+};
+type CellSelection = FocusedSelection & { target: { kind: "content" } };
 
-const isRowLabelSelection = (sel: Selection, tableId: ItemId): boolean =>
+const isFocused = (sel: Selection): sel is FocusedSelection =>
+  sel.kind === "focused";
+
+const isRowLabelSelection = (
+  sel: Selection,
+  tableId: ItemId,
+): sel is RowLabelSelection =>
   isFocused(sel) &&
   sel.focus.scopeId === tableId &&
   sel.target.kind === "header" &&
   sel.target.index === 0;
 
-const isCellSelection = (sel: Selection, tableId: ItemId): boolean =>
+const isCellSelection = (
+  sel: Selection,
+  tableId: ItemId,
+): sel is CellSelection =>
   isFocused(sel) &&
   sel.target.kind === "content" &&
   sel.focus.scopeId !== tableId;
@@ -197,15 +208,9 @@ function tableNavMove(
 }
 
 export const tableCommands = {
-  setLabel(
-    editor: Editor,
-    tableId: ItemId,
-    rowId: ItemId,
-    text: string,
-  ): CmdResult {
+  setLabel(editor: Editor, rowId: ItemId, text: string): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
-      void tableId;
       editor.commit(store.op.transaction([store.op.patchLabel(rowId, text)]));
       return { didChange: true };
     });
@@ -266,10 +271,11 @@ export const tableCommands = {
       const idx = rows.indexOf(rowId);
       const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
 
+      const idleSelection: Selection = { kind: "idle" };
       const next: NavResult =
         nextRow != null
           ? focusRowLabel(tableId, nextRow)
-          : { selection: { kind: "idle" } as Selection, effects: [] };
+          : { selection: idleSelection, effects: [] };
 
       const txn: Transaction = store.op.transaction([store.op.detach(rowId)]);
       editor.commit(txn, withSelection({ selection: next.selection }));
@@ -396,13 +402,41 @@ type TableMountCtx = {
 function mountTableHeader(mountCtx: TableMountCtx): Component {
   return createComponent((componentCtx) => {
     const headerRow = el("div", "row table-header");
+    const labelCell = el("div", "label");
+    headerRow.append(labelCell);
 
-    componentCtx.watch(() => {
-      const cells: HTMLElement[] = [el("div", "label")];
-      for (const c of mountCtx.columnsSignal.value)
-        cells.push(el("div", "item", c));
-      reconcileChildren(headerRow, cells);
-    });
+    const columnEls = new Map<string, HTMLElement>();
+
+    const reconcileColumns = (cols: readonly string[]) => {
+      const desired: HTMLElement[] = [labelCell];
+
+      for (const col of cols) {
+        let cell = columnEls.get(col);
+        if (!cell) {
+          cell = el("div", "item", col);
+          columnEls.set(col, cell);
+        } else if (cell.textContent !== col) {
+          cell.textContent = col;
+        }
+        desired.push(cell);
+      }
+
+      reconcileChildren(headerRow, desired);
+
+      const keep = new Set(cols);
+      for (const [name, cell] of columnEls) {
+        if (keep.has(name)) continue;
+        cell.remove();
+        columnEls.delete(name);
+      }
+    };
+
+    componentCtx.watch(
+      () => mountCtx.columnsSignal.value,
+      (cols) => {
+        reconcileColumns(cols);
+      },
+    );
 
     return headerRow;
   });
@@ -509,13 +543,15 @@ function mountTableCell(
     const getCellId = () =>
       mountCtx.editor.store.findChildByLabel(rowId, col) ?? null;
 
-    componentCtx.watch(() => {
-      const nextCellId = getCellId();
-      if (nextCellId === curCellId) return;
-      nextCellId == null ? mountMissing() : mountPresent(nextCellId);
-    });
+    componentCtx.watch(
+      () => getCellId(),
+      (nextCellId) => {
+        if (nextCellId === curCellId) return;
+        nextCellId == null ? mountMissing() : mountPresent(nextCellId);
+      },
+    );
 
-    componentCtx.on(host, "pointerdown", (e) => {
+    componentCtx.on(host, "pointerdown", (e: PointerEvent) => {
       const nextCellId = getCellId();
       const res =
         nextCellId == null
@@ -555,19 +591,12 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       commit: (text) =>
         applyCmd(
           mountCtx.editor,
-          tableCommands.setLabel(
-            mountCtx.editor,
-            mountCtx.tableId,
-            rowId,
-            text,
-          ),
+          tableCommands.setLabel(mountCtx.editor, rowId, text),
         ),
       getState: () => {
         const sel = mountCtx.editor.runtime.selection.value;
         const editing =
-          isRowLabelSelection(sel, mountCtx.tableId) &&
-          isFocused(sel) &&
-          sel.focus.id === rowId;
+          isRowLabelSelection(sel, mountCtx.tableId) && sel.focus.id === rowId;
         const label = store.readItem(rowId).label ?? "";
         return { text: label, readOnly: !editing, isIssue: false };
       },
@@ -595,9 +624,14 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
     const cellList = componentCtx.list(cellsHost, (col: string) =>
       mountTableCell(mountCtx, rowId, col),
     );
-    componentCtx.watch(() => cellList.update(mountCtx.columnsSignal.value));
+    componentCtx.watch(
+      () => mountCtx.columnsSignal.value,
+      (cols) => {
+        cellList.update(cols);
+      },
+    );
 
-    componentCtx.on(labelCell, "pointerdown", (e) => {
+    componentCtx.on(labelCell, "pointerdown", (e: PointerEvent) => {
       const res = focusRowLabel(mountCtx.tableId, rowId);
       mountCtx.editor.setSelection(res.selection);
       e.stopPropagation();
@@ -614,9 +648,12 @@ function mountTableBody(mountCtx: TableMountCtx): Component {
       mountTableRow(mountCtx, rowId),
     );
 
-    componentCtx.watch(() => {
-      rowList.update(mountCtx.evaluator.items(mountCtx.tableId));
-    });
+    componentCtx.watch(
+      () => mountCtx.evaluator.items(mountCtx.tableId),
+      (rows) => {
+        rowList.update(rows);
+      },
+    );
 
     return body;
   });
@@ -682,9 +719,6 @@ export function createTableView({
   headerHost.replaceChildren(header.el);
   bodyHost.replaceChildren(body.el);
 
-  const stopHeader = effect(() => headerHost.replaceChildren(header.el));
-  const stopBody = effect(() => bodyHost.replaceChildren(body.el));
-
   return {
     id: `table:${String(tableId)}`,
     root,
@@ -736,8 +770,6 @@ export function createTableView({
     },
 
     dispose() {
-      stopHeader();
-      stopBody();
       header.dispose();
       body.dispose();
       root.replaceChildren();

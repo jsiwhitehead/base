@@ -29,7 +29,26 @@ import {
   type Evaluator,
 } from "./eval";
 
+type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
+
 export type Component = { el: HTMLElement; dispose(): void };
+
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+
+  const aKeys = Object.keys(a as object);
+  const bKeys = Object.keys(b as object);
+  if (aKeys.length !== bKeys.length) return false;
+
+  for (const k of aKeys) {
+    if (!(k in (b as object)) || !Object.is((a as any)[k], (b as any)[k])) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 export const defaultTextNav = {
   yieldUpDown: "always",
@@ -140,9 +159,7 @@ class ChildManager<Id extends string | number> {
   }
 }
 
-function isTextInputEl(
-  el0: HTMLElement | null,
-): el0 is HTMLInputElement | HTMLTextAreaElement {
+function isTextInputEl(el0: HTMLElement | null): el0 is TextInputElement {
   return (
     !!el0 &&
     ((el0 instanceof HTMLInputElement && el0.type === "text") ||
@@ -179,7 +196,7 @@ export type TextControlKeyHandlers = {
 };
 
 export function bindTextControlKeys(
-  inp: HTMLInputElement | HTMLTextAreaElement,
+  inp: TextInputElement,
   handlers: TextControlKeyHandlers,
 ): () => void {
   const {
@@ -291,9 +308,12 @@ export type Ctx = {
     opts?: AddEventListenerOptions,
   ): void;
 
-  watch(fn: () => void): void;
-
-  watchComputed<T>(compute: () => T, apply: (v: T) => void): void;
+  watch<T extends readonly unknown[]>(
+    ...args: [
+      ...computes: { [K in keyof T]: () => T[K] },
+      run: (...vals: T) => void | (() => void),
+    ]
+  ): void;
 
   slot(host: HTMLElement): { set(next: Component | null): void };
 
@@ -309,6 +329,35 @@ export type Ctx = {
     targets?: readonly FocusableTargetSpec[];
   }): void;
 };
+
+export function installFocusableTargets(
+  ctx: Ctx,
+  opts: {
+    editor: Editor;
+    focus: Focus;
+    targets: readonly FocusableTargetSpec[];
+  },
+): void {
+  for (const t of opts.targets) {
+    const hostFn = t.pointerHost ?? t.getEl;
+    const host = hostFn();
+    if (!host) continue;
+
+    ctx.on(host, "pointerdown", (e: PointerEvent) => {
+      const pointerTarget =
+        t.getEl() ?? (e.target instanceof HTMLElement ? e.target : null);
+      const c =
+        (t.caret ?? "zero") === "fromTarget"
+          ? caretFromTarget(pointerTarget)
+          : caret0();
+
+      const out = focusSelection(opts.focus, t.target, c);
+      opts.editor.setSelection(out.selection);
+
+      if (t.stopPropagation ?? true) e.stopPropagation();
+    });
+  }
+}
 
 export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
   const bag = new Disposer();
@@ -328,13 +377,24 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       bag.add(domOn(el0, type, handler, opts));
     },
 
-    watch(fn) {
-      bag.add(effect(fn));
-    },
+    watch(...args) {
+      const run = args.at(-1) as (...vals: any[]) => void | (() => void);
+      const sigs = args.slice(0, -1).map((c) => computed(c as () => unknown));
 
-    watchComputed(compute, apply) {
-      const sig = computed(compute);
-      bag.add(effect(() => apply(sig.value)));
+      let prev: unknown[] | null = null;
+
+      const memo = computed(() => {
+        const next = sigs.map((s) => s.value);
+
+        if (prev && next.every((v, i) => shallowEqual(v, prev![i]))) {
+          return prev;
+        }
+
+        prev = next;
+        return next;
+      });
+
+      bag.add(effect(() => run(...memo.value)));
     },
 
     slot(host) {
@@ -393,32 +453,11 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       runtime.registerBinding(binding);
       bag.add(() => runtime.unregisterBinding(opts.focus));
 
-      for (const t of opts.targets ?? []) {
-        const hostFn = t.pointerHost ?? t.getEl;
-
-        const stop = (() => {
-          const host = hostFn();
-          if (!host) return null;
-
-          const handler = (e: PointerEvent) => {
-            const targetEl = t.getEl() ?? (e.target as HTMLElement);
-            const c =
-              (t.caret ?? "zero") === "fromTarget"
-                ? caretFromTarget(targetEl)
-                : caret0();
-
-            const out = focusSelection(opts.focus, t.target, c);
-            opts.editor.setSelection(out.selection);
-
-            if (t.stopPropagation ?? true) e.stopPropagation();
-          };
-
-          host.addEventListener("pointerdown", handler);
-          return () => host.removeEventListener("pointerdown", handler);
-        })();
-
-        bag.add(stop);
-      }
+      installFocusableTargets(ctx, {
+        editor: opts.editor,
+        focus: opts.focus,
+        targets: opts.targets ?? [],
+      });
     },
   };
 
@@ -447,26 +486,42 @@ export function mountViewInto(
   };
 }
 
-export function textInput(
-  multiline: boolean,
-): HTMLInputElement | HTMLTextAreaElement {
-  const n = document.createElement(multiline ? "textarea" : "input") as
-    | HTMLInputElement
-    | HTMLTextAreaElement;
+export function textInput(multiline: boolean): TextInputElement {
+  const n = document.createElement(
+    multiline ? "textarea" : "input",
+  ) as TextInputElement;
 
   if (n instanceof HTMLInputElement) n.type = "text";
   n.autocapitalize = "off";
   n.autocomplete = "off";
-  n.autocorrect = "off" as any;
+  n.setAttribute("autocorrect", "off");
   n.spellcheck = false;
   if (n instanceof HTMLTextAreaElement) n.rows = 1;
   return n;
 }
 
-export function syncValue(
-  inp: HTMLInputElement | HTMLTextAreaElement,
-  next: string,
-) {
+type TextCommitEvent = "input" | "blur";
+
+function registerCommitHandlers(
+  ctx: Ctx,
+  target: TextInputElement,
+  events: readonly TextCommitEvent[] | undefined,
+  handler: () => void,
+): void {
+  const active = new Set(events ?? ["input", "blur"]);
+
+  if (active.has("input"))
+    ctx.on(target, "input", () => {
+      handler();
+    });
+
+  if (active.has("blur"))
+    ctx.on(target, "blur", () => {
+      handler();
+    });
+}
+
+export function syncValue(inp: TextInputElement, next: string) {
   if (inp.value === next) return;
 
   if (document.activeElement !== inp) {
@@ -581,12 +636,11 @@ export type TextFieldOpts = {
   className?: string;
   caret?: "zero" | "fromTarget";
   stopPropagation?: boolean;
+  registerFocus?: boolean;
   commit: (text: string) => void;
   getState: () => TextFieldState;
   onCommitEvents?: readonly ("input" | "blur")[];
-  textKeys?: (
-    inp: HTMLInputElement | HTMLTextAreaElement,
-  ) => (() => void) | void;
+  textKeys?: (inp: TextInputElement) => (() => void) | void;
 };
 
 export function textField(opts: TextFieldOpts): Component {
@@ -594,30 +648,38 @@ export function textField(opts: TextFieldOpts): Component {
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
 
-    ctx.focusable({
-      editor: opts.editor,
-      focus: opts.focus,
-      elementFor: () => inp,
-      targets: [
-        {
-          target: opts.target,
-          getEl: () => inp,
-          pointerHost: () => inp,
-          caret: opts.caret ?? "fromTarget",
-          stopPropagation: opts.stopPropagation ?? true,
-        },
-      ],
-    });
+    const targets: FocusableTargetSpec[] = [
+      {
+        target: opts.target,
+        getEl: () => inp,
+        pointerHost: () => inp,
+        caret: opts.caret ?? "fromTarget",
+        stopPropagation: opts.stopPropagation ?? true,
+      },
+    ];
 
-    const events = opts.onCommitEvents ?? ["input", "blur"];
-    const commit = () => opts.commit(inp.value);
+    if (opts.registerFocus !== false) {
+      ctx.focusable({
+        editor: opts.editor,
+        focus: opts.focus,
+        elementFor: () => inp,
+        targets,
+      });
+    } else {
+      installFocusableTargets(ctx, {
+        editor: opts.editor,
+        focus: opts.focus,
+        targets,
+      });
+    }
 
-    if (events.includes("input")) ctx.on(inp, "input", () => commit());
-    if (events.includes("blur")) ctx.on(inp, "blur", () => commit());
+    registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
+      opts.commit(inp.value),
+    );
 
     if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
 
-    ctx.watchComputed(
+    ctx.watch(
       () => opts.getState(),
       (st) => {
         inp.readOnly = st.readOnly;
@@ -653,30 +715,38 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
 
     wrap.append(mirror, inp);
 
-    ctx.focusable({
-      editor: opts.editor,
-      focus: opts.focus,
-      elementFor: () => inp,
-      targets: [
-        {
-          target: opts.target,
-          getEl: () => inp,
-          pointerHost: () => inp,
-          caret: opts.caret ?? "fromTarget",
-          stopPropagation: opts.stopPropagation ?? true,
-        },
-      ],
-    });
+    const targets: FocusableTargetSpec[] = [
+      {
+        target: opts.target,
+        getEl: () => inp,
+        pointerHost: () => wrap,
+        caret: opts.caret ?? "fromTarget",
+        stopPropagation: opts.stopPropagation ?? true,
+      },
+    ];
 
-    const events = opts.onCommitEvents ?? ["input", "blur"];
-    const commit = () => opts.commit(inp.value);
+    if (opts.registerFocus !== false) {
+      ctx.focusable({
+        editor: opts.editor,
+        focus: opts.focus,
+        elementFor: () => inp,
+        targets,
+      });
+    } else {
+      installFocusableTargets(ctx, {
+        editor: opts.editor,
+        focus: opts.focus,
+        targets,
+      });
+    }
 
-    if (events.includes("input")) ctx.on(inp, "input", () => commit());
-    if (events.includes("blur")) ctx.on(inp, "blur", () => commit());
+    registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
+      opts.commit(inp.value),
+    );
 
     if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
 
-    ctx.watchComputed(
+    ctx.watch(
       () => opts.getState(),
       (st) => {
         inp.readOnly = st.readOnly;
@@ -696,9 +766,8 @@ export type ContentFieldOpts = {
   focus: Focus;
   id: ItemId;
   className?: string;
-  textKeys?: (
-    inp: HTMLInputElement | HTMLTextAreaElement,
-  ) => (() => void) | void;
+  registerFocus?: boolean;
+  textKeys?: (inp: TextInputElement) => (() => void) | void;
   renderItemGroupChild?: (childId: ItemId) => Component;
   commitScalarText?: (text: string) => void;
 };
@@ -706,7 +775,7 @@ export type ContentFieldOpts = {
 function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
-    ctx.watchComputed(
+    ctx.watch(
       () => {
         const v = evaluator.value(id);
         return { text: getDisplayText(v).text, isIssue: isIssueValue(v) };
@@ -727,22 +796,33 @@ export function contentField(opts: ContentFieldOpts): Component {
 
     const slot = ctx.slot(host);
 
-    const mountReadonlyFocusWrap = (wrap: HTMLElement): Component => {
-      ctx.focusable({
-        editor: opts.editor,
-        focus: opts.focus,
-        elementFor: () => wrap,
-        targets: [
-          {
-            target: { kind: "content" },
-            getEl: () => wrap,
-            pointerHost: () => wrap,
-            caret: "zero",
-            stopPropagation: true,
-          },
-        ],
-      });
-      return { el: wrap, dispose: () => wrap.replaceChildren() };
+    const register = opts.registerFocus !== false;
+
+    const installContentClickTarget = (wrap: HTMLElement) => {
+      const targets: FocusableTargetSpec[] = [
+        {
+          target: { kind: "content" },
+          getEl: () => wrap,
+          pointerHost: () => wrap,
+          caret: "zero",
+          stopPropagation: true,
+        },
+      ];
+
+      if (register) {
+        ctx.focusable({
+          editor: opts.editor,
+          focus: opts.focus,
+          elementFor: () => wrap,
+          targets,
+        });
+      } else {
+        installFocusableTargets(ctx, {
+          editor: opts.editor,
+          focus: opts.focus,
+          targets,
+        });
+      }
     };
 
     const mountText = (): Component => {
@@ -755,6 +835,7 @@ export function contentField(opts: ContentFieldOpts): Component {
         className: "content",
         caret: "fromTarget",
         stopPropagation: true,
+        registerFocus: register,
         commit: (text) => {
           opts.commitScalarText?.(text);
         },
@@ -774,7 +855,7 @@ export function contentField(opts: ContentFieldOpts): Component {
 
     const mountReadonlyText = (): Component => {
       const d = el("div", "item readonly");
-      mountReadonlyFocusWrap(d);
+      installContentClickTarget(d);
 
       const inner = readonlyItemText(opts.evaluator, opts.id);
       d.replaceChildren(inner.el);
@@ -791,15 +872,19 @@ export function contentField(opts: ContentFieldOpts): Component {
 
     const mountValueGroup = (): Component => {
       const wrap = el("div", "group readonly");
-      mountReadonlyFocusWrap(wrap);
+      installContentClickTarget(wrap);
 
       ctx.watch(() => {
         const v = opts.evaluator.value(opts.id);
-        wrap.replaceChildren();
-        if (isValueGroupValue(v)) {
-          for (const it of v.items)
-            wrap.append(renderLabeledValueReadonly(it.label, it.value));
+        if (!isValueGroupValue(v)) {
+          wrap.replaceChildren();
+          return;
         }
+
+        const nodes = v.items.map((it) =>
+          renderLabeledValueReadonly(it.label, it.value),
+        );
+        wrap.replaceChildren(...nodes);
       });
 
       return { el: wrap, dispose: () => wrap.replaceChildren() };
@@ -808,7 +893,7 @@ export function contentField(opts: ContentFieldOpts): Component {
     const mountItemGroup = (): Component => {
       const wrap = el("div", "group");
       ensureTabbable(wrap);
-      mountReadonlyFocusWrap(wrap);
+      installContentClickTarget(wrap);
 
       const children = ctx.list(wrap, (childId: ItemId) => {
         const c =
