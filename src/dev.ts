@@ -7,6 +7,6 @@ export function devAssert(cond: unknown, msg: string): asserts cond {
   if (DEV && !cond) throw new Error(msg);
 }
 
-export function devWarn(...args: any[]) {
+export function devWarn(...args: unknown[]) {
   if (DEV) console.warn(...args);
 }

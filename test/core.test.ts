@@ -1,7 +1,14 @@
 import { describe, test, expect } from "bun:test";
 
 import { createStore, type ItemId } from "../src/store";
-import { createEvaluator, V, type Value } from "../src/eval";
+import {
+  createEvaluator,
+  V,
+  type Value,
+  isBlankValue,
+  isScalarValue,
+  isItemGroupValue,
+} from "../src/eval";
 import { interpretExpr } from "../src/expr";
 import { createEditor } from "../src/editor";
 
@@ -81,8 +88,8 @@ function patchScalar(
 }
 
 function asScalar(v: Value): true | number | string | null {
-  if (v.kind === "blank") return null;
-  if (v.kind !== "scalar") throw new Error(`Expected scalar, got ${v.kind}`);
+  if (isBlankValue(v)) return null;
+  if (!isScalarValue(v)) throw new Error(`Expected scalar, got ${v.kind}`);
   return v.value;
 }
 
@@ -261,8 +268,8 @@ describe("evaluator", () => {
     );
 
     const out = evaluator.value(lensId);
-    expect(out.kind).toBe("item-group");
-    if (out.kind !== "item-group") return;
+    expect(isItemGroupValue(out)).toBe(true);
+    if (!isItemGroupValue(out)) return;
 
     const labels = out.items.map((id) => store.readItem(id).label);
     expect(labels).toEqual(["a", "c"]);
@@ -294,8 +301,8 @@ describe("evaluator", () => {
     );
 
     const out = evaluator.value(lensId);
-    expect(out.kind).toBe("item-group");
-    if (out.kind !== "item-group") return;
+    expect(isItemGroupValue(out)).toBe(true);
+    if (!isItemGroupValue(out)) return;
 
     const labels = out.items.map((id) => store.readItem(id).label);
     expect(labels).toEqual(["rowB"]);

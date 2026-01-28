@@ -90,9 +90,9 @@ export type Binding = {
   getTextLength?: () => number;
 };
 
-const clamp = (n: number, lo: number, hi: number) =>
+const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
-const keyOf = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
+const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
 
 function isTextInput(
   el: HTMLElement,
@@ -177,21 +177,23 @@ export class EditorRuntime {
     return id ? (this.views.get(id) ?? null) : null;
   }
 
-  setNavOutHandler(fn: ((fromViewId: ViewId, navOut: NavOut) => void) | null) {
+  setNavOutHandler(
+    fn: ((fromViewId: ViewId, navOut: NavOut) => void) | null,
+  ): void {
     this.navOutHandler = fn;
   }
 
-  registerView(view: View) {
+  registerView(view: View): void {
     this.views.set(view.id, view);
     this.viewRoots.set(view.root, view.id);
   }
 
-  unregisterView(viewId: ViewId) {
+  unregisterView(viewId: ViewId): void {
     if (this.activeViewId === viewId) this.setActiveView(null);
     this.views.delete(viewId);
   }
 
-  setActiveView(viewId: ViewId | null) {
+  setActiveView(viewId: ViewId | null): void {
     if (viewId === this.activeViewId) return;
 
     const prevId = this.activeViewId;
@@ -203,10 +205,10 @@ export class EditorRuntime {
     next?.onActivate?.();
   }
 
-  installViewListeners() {
+  installViewListeners(): () => void {
     const onPointerDown = (e: PointerEvent) =>
       this.setActiveView(this.viewAtTarget(e.target));
-
+    const pointerOptions = { capture: true } as const;
     const onKeyDown = (e: KeyboardEvent) => {
       const viewId = this.activeViewId;
       if (!viewId || shouldBypassGlobalKeydown()) return;
@@ -214,24 +216,22 @@ export class EditorRuntime {
       if (res?.navOut) this.navOutHandler?.(viewId, res.navOut);
     };
 
-    window.addEventListener("pointerdown", onPointerDown, { capture: true });
+    window.addEventListener("pointerdown", onPointerDown, pointerOptions);
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      window.removeEventListener("pointerdown", onPointerDown, {
-        capture: true,
-      } as any);
+      window.removeEventListener("pointerdown", onPointerDown, pointerOptions);
       window.removeEventListener("keydown", onKeyDown);
     };
   }
 
-  registerBinding(binding: Binding) {
+  registerBinding(binding: Binding): void {
     const k = keyOf(binding.focus);
     this.bindings.set(k, binding);
     this.updateDOMFocus(this.selection.peek());
   }
 
-  unregisterBinding(focus: Focus) {
+  unregisterBinding(focus: Focus): void {
     const k = keyOf(focus);
     this.bindings.delete(k);
 
@@ -243,7 +243,7 @@ export class EditorRuntime {
     this.scheduleEffects(next, normalizeEffectsForSelection(next, []));
   }
 
-  scheduleEffects(sel: Selection, effects: EditorEffect[]) {
+  scheduleEffects(sel: Selection, effects: EditorEffect[]): void {
     if (!effects.length) return;
 
     this.pending = this.pending
@@ -266,7 +266,7 @@ export class EditorRuntime {
     });
   }
 
-  applyEffects(sel: Selection, effects: EditorEffect[]) {
+  applyEffects(sel: Selection, effects: EditorEffect[]): void {
     for (const eff of effects) {
       if (eff.type === "DOM_FOCUS") {
         this.updateDOMFocus(sel, eff.anchor);
@@ -277,7 +277,7 @@ export class EditorRuntime {
     }
   }
 
-  updateDOMFocus(sel: Selection, anchor?: Anchor) {
+  updateDOMFocus(sel: Selection, anchor?: Anchor): void {
     if (sel.kind !== "focused") return;
 
     const binding = this.bindings.get(keyOf(sel.focus));
@@ -368,7 +368,7 @@ export function ensureSelection(
   editor: Editor,
   next: Selection,
   effects: EditorEffect[] = [],
-) {
+): void {
   const repaired = repairSelection(editor, next);
   editor.runtime.selection.value = repaired;
   editor.runtime.scheduleEffects(
@@ -380,9 +380,12 @@ export function ensureSelection(
 export function createEditor(store: Store): Editor {
   const runtime = new EditorRuntime({ kind: "idle" });
 
-  const getSelection = () => runtime.selection.value;
+  const getSelection = (): Selection => runtime.selection.value;
 
-  const setSelection = (next: Selection, effects: EditorEffect[] = []) => {
+  const setSelection = (
+    next: Selection,
+    effects: EditorEffect[] = [],
+  ): void => {
     const editor = api;
     const repaired = repairSelection(editor, next);
     runtime.selection.value = repaired;
@@ -446,6 +449,6 @@ export function applyCmd(editor: Editor, res: CmdResult): CmdResult {
   return res;
 }
 
-export function setIdle(editor: Editor) {
+export function setIdle(editor: Editor): void {
   editor.setSelection({ kind: "idle" });
 }

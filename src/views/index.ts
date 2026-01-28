@@ -24,11 +24,12 @@ export function createView(
   id: ItemId,
   focus?: Focus,
 ): View | null {
+  if (!viewKind) return null;
   return factories[viewKind]?.({ runtime, id, focus }) ?? null;
 }
 
 export function hasView(viewKind: ViewKind): boolean {
-  return viewKind in factories;
+  return !!viewKind && viewKind in factories;
 }
 
 export function viewWantsChildView(viewKind: ViewKind): boolean {

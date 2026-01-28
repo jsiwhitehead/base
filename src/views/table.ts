@@ -1,6 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Store, ItemId, Transaction, Op, ViewKind } from "../store";
-import { canEditTextContent } from "../store";
+import { canEditTextContent, isGroupContent } from "../store";
 import type {
   Editor,
   View,
@@ -22,6 +22,7 @@ import {
   setIdle,
 } from "../editor";
 import type { Evaluator } from "../eval";
+import { isItemGroupValue } from "../eval";
 import {
   createComponent,
   el,
@@ -65,13 +66,13 @@ function deriveColumns(
   tableId: ItemId,
 ): string[] {
   const tableV = evaluator.value(tableId);
-  if (tableV.kind !== "item-group") return [];
+  if (!isItemGroupValue(tableV)) return [];
 
   const firstRowId = tableV.items[0];
   if (!firstRowId) return [];
 
   const rowV = evaluator.value(firstRowId);
-  if (rowV.kind !== "item-group") return [];
+  if (!isItemGroupValue(rowV)) return [];
 
   const seen = new Set<string>();
   const out: string[] = [];
@@ -293,7 +294,7 @@ export const tableCommands = {
       const ops: Op[] = [];
       for (const rowId of rows) {
         const row = store.readItem(rowId);
-        if (row.content.kind !== "group") continue;
+        if (!isGroupContent(row.content)) continue;
         if (store.findChildByLabel(rowId, name) != null) continue;
 
         const cellId = store.createId();

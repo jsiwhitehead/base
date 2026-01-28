@@ -1,6 +1,10 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Store, ItemId, Scalar, StoredContent } from "./store";
-import { canEditTextContent } from "./store";
+import {
+  canEditTextContent,
+  isBlankContent,
+  isScalarContent,
+} from "./store";
 import type {
   Editor,
   Focus,
@@ -13,6 +17,13 @@ import type {
 } from "./editor";
 import { focusSelection, caret0 } from "./editor";
 import type { Evaluator, Value, LabeledValue } from "./eval";
+import {
+  isBlankValue,
+  isIssueValue,
+  isScalarValue,
+  isItemGroupValue,
+  isValueGroupValue,
+} from "./eval";
 
 export type Component = { el: HTMLElement; dispose(): void };
 
@@ -24,13 +35,13 @@ export const defaultTextNav = {
 export class Disposer {
   private fns: (() => void)[] = [];
 
-  add(fn: (() => void) | null | undefined) {
-    if (!fn) return fn ?? undefined;
+  add(fn: (() => void) | null | undefined): (() => void) | undefined {
+    if (!fn) return undefined;
     this.fns.push(fn);
     return fn;
   }
 
-  run() {
+  run(): void {
     for (let i = this.fns.length - 1; i >= 0; i--) this.fns[i]?.();
     this.fns = [];
   }
@@ -53,23 +64,29 @@ export function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
   handler: (e: HTMLElementEventMap[K]) => void,
   opts?: AddEventListenerOptions,
 ): () => void {
-  el0.addEventListener(type, handler as any, opts);
-  return () => el0.removeEventListener(type, handler as any, opts as any);
+  const listener = (event: Event) =>
+    handler.call(el0, event as HTMLElementEventMap[K]);
+  el0.addEventListener(type, listener as EventListener, opts);
+  return () => el0.removeEventListener(type, listener as EventListener, opts);
 }
 
-export const clamp = (n: number, lo: number, hi: number) =>
+const domOn = on;
+
+export const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
 
-export function ensureTabbable(elm: HTMLElement) {
-  const e = elm as any;
-  if (e.tabIndex == null || e.tabIndex < 0) e.tabIndex = 0;
+export function ensureTabbable(elm: HTMLElement): void {
+  if (elm.tabIndex == null || elm.tabIndex < 0) elm.tabIndex = 0;
 }
 
-export function reconcileChildren(parent: HTMLElement, desired: HTMLElement[]) {
+export function reconcileChildren(
+  parent: HTMLElement,
+  desired: readonly HTMLElement[],
+): void {
   for (let i = 0; i < desired.length; i++) {
-    const next = desired[i];
-    const cur = parent.children[i];
-    if (cur !== next) parent.insertBefore(next, cur || null);
+    const next = desired[i]!;
+    const cur = parent.children.item(i);
+    if (cur !== next) parent.insertBefore(next, cur);
   }
   while (parent.children.length > desired.length)
     parent.lastElementChild?.remove();
@@ -100,7 +117,7 @@ class ChildManager<Id extends string | number> {
       this.cache.delete(id);
     }
 
-    const desired = ids.map((id) => {
+    const desired: HTMLElement[] = ids.map((id) => {
       let rec = this.cache.get(id);
       if (!rec) {
         const v = this.create(id);
@@ -110,7 +127,7 @@ class ChildManager<Id extends string | number> {
       return rec.element;
     });
 
-    reconcileChildren(this.container, desired as any);
+    reconcileChildren(this.container, desired);
   }
 
   dispose() {
@@ -136,9 +153,9 @@ export function caretFromTarget(el0: HTMLElement | null): Caret {
   return { start, end };
 }
 
-export function stopEvent(e: Event) {
-  (e as any).preventDefault?.();
-  (e as any).stopPropagation?.();
+export function stopEvent(e: Event): void {
+  e.preventDefault?.();
+  e.stopPropagation?.();
 }
 
 export type TextNavDir = NavDir;
@@ -247,8 +264,7 @@ export function bindTextControlKeys(
     }
   };
 
-  inp.addEventListener("keydown", onKeyDown);
-  return () => inp.removeEventListener("keydown", onKeyDown);
+  return on(inp, "keydown", onKeyDown);
 }
 
 export type FocusableTargetSpec = Readonly<{
@@ -305,7 +321,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
     },
 
     on(el0, type, handler, opts) {
-      bag.add(on(el0 as any, type as any, handler as any, opts));
+      bag.add(domOn(el0, type, handler, opts));
     },
 
     watch(fn) {
@@ -324,7 +340,8 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
         if (cur === next) return;
         cur?.dispose();
         cur = next;
-        host.replaceChildren(next ? next.el : null);
+        if (next) host.replaceChildren(next.el);
+        else host.replaceChildren();
       };
 
       bag.add(() => {
@@ -335,15 +352,18 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       return { set };
     },
 
-    list(host, create) {
-      const mgr = new ChildManager<any>(host, (id) => {
+    list<Id extends string | number>(
+      host: HTMLElement,
+      create: (id: Id) => Component,
+    ) {
+      const mgr = new ChildManager<Id>(host, (id) => {
         const c = create(id);
         return { element: c.el, dispose: c.dispose };
       });
 
       bag.add(() => mgr.dispose());
 
-      return { update: (ids: readonly any[]) => mgr.update(ids) };
+      return { update: (ids: readonly Id[]) => mgr.update(ids) };
     },
 
     focusable(opts) {
@@ -478,29 +498,27 @@ export type DisplayText =
   | { kind: "other"; text: string };
 
 export function getDisplayText(v: Value): DisplayText {
-  switch (v.kind) {
-    case "blank":
-      return { kind: "blank", text: "" };
-    case "issue":
-      return { kind: "issue", text: v.message };
-    case "scalar":
-      return { kind: "scalar", text: String(v.value) };
-    default:
-      return { kind: "other", text: "" };
-  }
+  if (isBlankValue(v)) return { kind: "blank", text: "" };
+  if (isIssueValue(v)) return { kind: "issue", text: v.message };
+  if (isScalarValue(v)) return { kind: "scalar", text: String(v.value) };
+  return { kind: "other", text: "" };
 }
 
 export type EditableText =
   | { kind: "editable"; text: string }
   | { kind: "readonly"; text: string };
 
-function storedScalarTextForEdit(store: Store, id: ItemId) {
+function storedScalarTextForEdit(
+  store: Store,
+  id: ItemId,
+): EditableText | null {
   if (!canEditTextContent(store, id)) return null;
 
-  const it = store.readItem(id);
-  if (it.content.kind === "blank")
-    return { kind: "editable", text: "" } as const;
-  return { kind: "editable", text: String(it.content.value) } as const;
+  const content = store.readItem(id).content;
+  if (isBlankContent(content)) return { kind: "editable", text: "" } as const;
+  if (isScalarContent(content))
+    return { kind: "editable", text: String(content.value) } as const;
+  return null;
 }
 
 export function getEditableText(
@@ -517,13 +535,13 @@ export function getEditableText(
 }
 
 export function renderValueReadonly(v: Value): HTMLElement {
-  if (v.kind === "blank") return el("div", "item readonly");
+  if (isBlankValue(v)) return el("div", "item readonly");
 
-  if (v.kind === "issue") return el("div", "item readonly issue", v.message);
+  if (isIssueValue(v)) return el("div", "item readonly issue", v.message);
 
-  if (v.kind === "scalar") return el("div", "item readonly", String(v.value));
+  if (isScalarValue(v)) return el("div", "item readonly", String(v.value));
 
-  if (v.kind === "item-group")
+  if (isItemGroupValue(v))
     return el("div", "item readonly issue", "[item-group]");
 
   const wrap = el("div", "group readonly");
@@ -590,8 +608,8 @@ export function textField(opts: TextFieldOpts): Component {
     const events = opts.onCommitEvents ?? ["input", "blur"];
     const commit = () => opts.commit(inp.value);
 
-    if (events.includes("input")) ctx.on(inp as any, "input", commit as any);
-    if (events.includes("blur")) ctx.on(inp as any, "blur", commit as any);
+    if (events.includes("input")) ctx.on(inp, "input", () => commit());
+    if (events.includes("blur")) ctx.on(inp, "blur", () => commit());
 
     if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
 
@@ -629,7 +647,7 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
     const inp = textInput(false);
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
-    wrap.append(mirror, inp as any);
+    wrap.append(mirror, inp);
 
     ctx.focusable({
       editor: opts.editor,
@@ -649,8 +667,8 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): Component {
     const events = opts.onCommitEvents ?? ["input", "blur"];
     const commit = () => opts.commit(inp.value);
 
-    if (events.includes("input")) ctx.on(inp as any, "input", commit as any);
-    if (events.includes("blur")) ctx.on(inp as any, "blur", commit as any);
+    if (events.includes("input")) ctx.on(inp, "input", () => commit());
+    if (events.includes("blur")) ctx.on(inp, "blur", () => commit());
 
     if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
 
@@ -687,7 +705,7 @@ function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
     ctx.watchComputed(
       () => {
         const v = evaluator.value(id);
-        return { text: getDisplayText(v).text, isIssue: v.kind === "issue" };
+        return { text: getDisplayText(v).text, isIssue: isIssueValue(v) };
       },
       ({ text, isIssue }) => {
         d.textContent = text;
@@ -774,7 +792,7 @@ export function contentField(opts: ContentFieldOpts): Component {
       ctx.watch(() => {
         const v = opts.evaluator.value(opts.id);
         wrap.replaceChildren();
-        if (v.kind === "value-group") {
+        if (isValueGroupValue(v)) {
           for (const it of v.items)
             wrap.append(renderLabeledValueReadonly(it.label, it.value));
         }
@@ -798,7 +816,7 @@ export function contentField(opts: ContentFieldOpts): Component {
 
       ctx.watch(() => {
         const v = opts.evaluator.value(opts.id);
-        children.update(v.kind === "item-group" ? v.items : []);
+        children.update(isItemGroupValue(v) ? v.items : []);
       });
 
       return { el: wrap, dispose: () => wrap.replaceChildren() };
@@ -807,14 +825,14 @@ export function contentField(opts: ContentFieldOpts): Component {
     ctx.watch(() => {
       const v = opts.evaluator.value(opts.id);
 
-      host.classList.toggle("issue", v.kind === "issue");
+      host.classList.toggle("issue", isIssueValue(v));
 
-      if (v.kind === "item-group") {
+      if (isItemGroupValue(v)) {
         slot.set(mountItemGroup());
         return;
       }
 
-      if (v.kind === "value-group") {
+      if (isValueGroupValue(v)) {
         slot.set(mountValueGroup());
         return;
       }

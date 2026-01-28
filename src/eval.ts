@@ -3,29 +3,60 @@ import type { ItemId, Scalar, StoredContent, Store } from "./store";
 
 export type LabeledValue = { label?: string; value: Value };
 
+type BlankValue = { kind: "blank" };
+type IssueValue = { kind: "issue"; message: string };
+type ScalarValue = { kind: "scalar"; value: Scalar };
+type ItemGroupValue = { kind: "item-group"; items: readonly ItemId[] };
+type ValueGroupValue = {
+  kind: "value-group";
+  items: readonly LabeledValue[];
+};
+
 export type Value =
-  | { kind: "blank" }
-  | { kind: "issue"; message: string }
-  | { kind: "scalar"; value: Scalar }
-  | { kind: "item-group"; items: ItemId[] }
-  | { kind: "value-group"; items: LabeledValue[] };
+  | BlankValue
+  | IssueValue
+  | ScalarValue
+  | ItemGroupValue
+  | ValueGroupValue;
 
 export const V = {
   blank: (): Value => ({ kind: "blank" }),
   issue: (message: string): Value => ({ kind: "issue", message }),
   scalar: (value: Scalar): Value => ({ kind: "scalar", value }),
-  itemGroup: (items: ItemId[]): Value => ({ kind: "item-group", items }),
-  valueGroup: (items: LabeledValue[]): Value => ({
+  itemGroup: (items: readonly ItemId[]): Value => ({
+    kind: "item-group",
+    items,
+  }),
+  valueGroup: (items: readonly LabeledValue[]): Value => ({
     kind: "value-group",
     items,
   }),
 } as const;
 
-export const isPresent = (v: Value) => v.kind !== "blank" && v.kind !== "issue";
-export const isTrue = (v: Value) => v.kind === "scalar" && v.value === true;
+export const isPresent = (v: Value): boolean =>
+  v.kind !== "blank" && v.kind !== "issue";
+export const isTrue = (v: Value): boolean =>
+  v.kind === "scalar" && v.value === true;
 
-const isIssue = (v: Value): v is { kind: "issue"; message: string } =>
-  v.kind === "issue";
+export function isBlankValue(v: Value): v is BlankValue {
+  return v.kind === "blank";
+}
+
+export function isIssueValue(v: Value): v is IssueValue {
+  return v.kind === "issue";
+}
+
+export function isScalarValue(v: Value): v is ScalarValue {
+  return v.kind === "scalar";
+}
+
+export function isItemGroupValue(v: Value): v is ItemGroupValue {
+  return v.kind === "item-group";
+}
+
+export function isValueGroupValue(v: Value): v is ValueGroupValue {
+  return v.kind === "value-group";
+}
 
 export type EvalEnv = {
   lookup(name: string): Value;
@@ -41,8 +72,8 @@ const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<ItemId>() });
 const collator = new Intl.Collator(undefined, { sensitivity: "base" });
 
 const sortRank = (v: Value): [number, unknown] => {
-  if (v.kind === "blank" || v.kind === "issue") return [4, null];
-  if (v.kind === "scalar") {
+  if (isBlankValue(v) || isIssueValue(v)) return [4, null];
+  if (isScalarValue(v)) {
     const lit = v.value;
     if (typeof lit === "number") return [0, lit];
     if (typeof lit === "string") return [1, lit];
@@ -51,7 +82,7 @@ const sortRank = (v: Value): [number, unknown] => {
   return [3, null];
 };
 
-const compareSortKey = (a: Value, b: Value) => {
+const compareSortKey = (a: Value, b: Value): number => {
   const [ra, va] = sortRank(a);
   const [rb, vb] = sortRank(b);
   if (ra !== rb) return ra - rb;
@@ -100,10 +131,14 @@ export function createEvaluator(opts: {
     getLabel: (id) => store.normalizeLabel(store.readItem(id).label),
   });
 
-  const lookupInAncestors = (name: string, fromId: ItemId, ctx: EvalCtx) => {
+  const lookupInAncestors = (
+    name: string,
+    fromId: ItemId,
+    ctx: EvalCtx,
+  ): Value => {
     let cur: ItemId | null = fromId;
     while (cur != null) {
-      const ownerId = store.readItem(cur).ownerId;
+      const ownerId: ItemId | null = store.readItem(cur).ownerId;
       if (ownerId == null) break;
 
       const hit = store.findChildByLabel(ownerId, name);
@@ -115,7 +150,7 @@ export function createEvaluator(opts: {
   };
 
   const materializeItemGroups = (v: Value, ctx: EvalCtx): Value => {
-    if (v.kind === "item-group") {
+    if (isItemGroupValue(v)) {
       return V.valueGroup(
         v.items.map((id) => ({
           label: store.readItem(id).label || undefined,
@@ -123,7 +158,7 @@ export function createEvaluator(opts: {
         })),
       );
     }
-    if (v.kind === "value-group") {
+    if (isValueGroupValue(v)) {
       return V.valueGroup(
         v.items.map((it) => ({
           label: it.label,
@@ -134,11 +169,19 @@ export function createEvaluator(opts: {
     return v;
   };
 
-  const unwrapItemGroup = (v: Value, typeMessage: string) => {
-    if (v.kind === "blank") return { kind: "blank" } as const;
-    if (v.kind === "issue") return { kind: "issue", value: v } as const;
-    if (v.kind === "item-group") return { kind: "ok", items: v.items } as const;
-    return { kind: "issue", value: V.issue(typeMessage) } as const;
+  type UnwrapItemGroupResult =
+    | { kind: "blank" }
+    | { kind: "issue"; value: Value }
+    | { kind: "ok"; items: readonly ItemId[] };
+
+  const unwrapItemGroup = (
+    v: Value,
+    typeMessage: string,
+  ): UnwrapItemGroupResult => {
+    if (isBlankValue(v)) return { kind: "blank" };
+    if (isIssueValue(v)) return { kind: "issue", value: v };
+    if (isItemGroupValue(v)) return { kind: "ok", items: v.items };
+    return { kind: "issue", value: V.issue(typeMessage) };
   };
 
   const forkCtx = (base: EvalCtx): EvalCtx => ({
@@ -172,7 +215,7 @@ export function createEvaluator(opts: {
       rowCtx: EvalCtx,
     ): Value => {
       const row = evaluateValue(rowId, rowCtx);
-      if (isIssue(row)) return row;
+      if (isIssueValue(row)) return row;
 
       const position = V.scalar(i + 1);
       const label = V.scalar(store.readItem(rowId).label || "");
@@ -200,7 +243,7 @@ export function createEvaluator(opts: {
         const rowId = ids[i]!;
         const rowCtx = forkCtx(ctx);
         const pred = evalRowExpr(where, rowId, i, rowCtx);
-        if (isIssue(pred)) return pred;
+        if (isIssueValue(pred)) return pred;
         if (isTrue(pred)) next.push(rowId);
       }
       ids = next;
@@ -213,7 +256,7 @@ export function createEvaluator(opts: {
         const rowId = ids[i]!;
         const rowCtx = forkCtx(ctx);
         const key = evalRowExpr(orderBy, rowId, i, rowCtx);
-        if (isIssue(key)) return key;
+        if (isIssueValue(key)) return key;
         rows.push({ rowId, i, key });
       }
       rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);
@@ -261,14 +304,14 @@ export function createEvaluator(opts: {
 
   const items = (id: ItemId): ItemId[] => {
     const v = value(id);
-    return v.kind === "item-group" ? v.items : [];
+    return isItemGroupValue(v) ? [...v.items] : [];
   };
 
-  const prune = (ids: readonly ItemId[]) => {
+  const prune = (ids: readonly ItemId[]): void => {
     for (const id of ids) cache.delete(id);
   };
 
-  const dispose = () => {
+  const dispose = (): void => {
     cache.clear();
   };
 

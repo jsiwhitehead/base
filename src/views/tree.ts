@@ -6,7 +6,12 @@ import type {
   ViewKind,
   StoredContent,
 } from "../store";
-import { canEditTextContent } from "../store";
+import {
+  canEditTextContent,
+  isDerivedContent,
+  isLensContent,
+  isGroupContent,
+} from "../store";
 import type {
   Editor,
   View,
@@ -30,6 +35,12 @@ import {
   setIdle,
 } from "../editor";
 import type { Evaluator } from "../eval";
+import {
+  isBlankValue,
+  isIssueValue,
+  isScalarValue,
+  isItemGroupValue,
+} from "../eval";
 import {
   createComponent,
   el,
@@ -71,9 +82,9 @@ function headerFieldsForItem(
   store: Store,
   id: ItemId,
 ): readonly HeaderFieldDef[] {
-  const kind = store.readItem(id).content.kind;
-  if (kind === "derived") return HEADER_FIELDS.derived;
-  if (kind === "lens") return HEADER_FIELDS.lens;
+  const content = store.readItem(id).content;
+  if (isDerivedContent(content)) return HEADER_FIELDS.derived;
+  if (isLensContent(content)) return HEADER_FIELDS.lens;
   return [];
 }
 
@@ -83,8 +94,15 @@ function headerFieldValue(
   def: HeaderFieldDef,
 ): string {
   const c = store.readItem(id).content;
-  if (c.kind === "derived") return def.field === "expr" ? (c.expr ?? "") : "";
-  if (c.kind === "lens") return String((c as any)[def.field] ?? "");
+  if (isDerivedContent(c)) {
+    return def.field === "expr" ? c.expr ?? "" : "";
+  }
+  if (isLensContent(c)) {
+    if (def.field === "from") return c.from ?? "";
+    if (def.field === "where") return c.where ?? "";
+    if (def.field === "orderBy") return c.orderBy ?? "";
+    return "";
+  }
   return "";
 }
 
@@ -230,7 +248,7 @@ export const treeCommands = {
       const it = store.readItem(f.id);
       const c = it.content;
 
-      if (c.kind === "derived") {
+      if (isDerivedContent(c)) {
         if (def.field !== "expr") return { didChange: false };
         editor.commit(
           store.op.transaction([
@@ -240,7 +258,7 @@ export const treeCommands = {
         return { didChange: true };
       }
 
-      if (c.kind !== "lens") return { didChange: false };
+      if (!isLensContent(c)) return { didChange: false };
 
       editor.commit(
         store.op.transaction([
@@ -487,7 +505,7 @@ export const treeCommands = {
       if (wrapperId == null) return { didChange: false };
 
       const wrapper = store.readItem(wrapperId);
-      if (wrapper.content.kind !== "group") return { didChange: false };
+      if (!isGroupContent(wrapper.content)) return { didChange: false };
 
       const kids = evaluator.items(wrapperId);
       if (kids.length !== 1 || kids[0] !== f.id) return { didChange: false };
@@ -786,13 +804,14 @@ function mountTreeBody(
         return createComponent((cctx) => {
           cctx.watch(() => {
             const v = evaluator.value(childId);
-            d.textContent =
-              v.kind === "issue"
-                ? v.message
-                : v.kind === "scalar"
-                  ? String(v.value)
-                  : "";
-            d.classList.toggle("issue", v.kind === "issue");
+            if (isIssueValue(v)) {
+              d.textContent = v.message;
+            } else if (isScalarValue(v)) {
+              d.textContent = String(v.value);
+            } else {
+              d.textContent = "";
+            }
+            d.classList.toggle("issue", isIssueValue(v));
           });
           return d;
         });
@@ -873,7 +892,7 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
       }
 
       const v = evaluator.value(focus.id);
-      if (v.kind === "item-group") {
+      if (isItemGroupValue(v)) {
         const kids = mountTreeChildren(ctx0, focus);
         contentSlot.set(kids);
         setContentTarget(kids.el);
@@ -883,7 +902,7 @@ function mountTreeNode(ctx0: TreeMountCtx, spec: TreeNodeSpec): Component {
       }
 
       root.classList.toggle("focused", focused);
-      contentContainer.classList.toggle("issue", v.kind === "issue");
+      contentContainer.classList.toggle("issue", isIssueValue(v));
     });
 
     return root;

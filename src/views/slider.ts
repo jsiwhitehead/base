@@ -1,8 +1,10 @@
-import type {
-  ItemId,
-  Scalar,
-  StoredContentSettable,
-  Transaction,
+import {
+  type ItemId,
+  type Scalar,
+  type StoredContentSettable,
+  type Transaction,
+  isDerivedContent,
+  isLensContent,
 } from "../store";
 import type {
   Editor,
@@ -22,6 +24,7 @@ import {
   setIdle,
 } from "../editor";
 import type { Evaluator } from "../eval";
+import { isScalarValue } from "../eval";
 import { createComponent, el, clamp, stopEvent, type Component } from "../dom";
 import type { ViewFactoryArgs } from "./index";
 
@@ -43,7 +46,7 @@ function precisionFromStep(step: number): number {
   const s = String(step);
 
   if (/[eE]/.test(s)) {
-    const [m, e] = s.split(/[eE]/);
+    const [m = "", e = "0"] = s.split(/[eE]/);
     const exp = Number(e);
     const dec = (m.split(".")[1]?.length ?? 0) - exp;
     return Math.max(0, dec);
@@ -58,8 +61,8 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetContent = (editor: Editor, id: ItemId) => {
-  const kind = editor.store.readItem(id).content.kind;
-  return kind !== "derived" && kind !== "lens";
+  const content = editor.store.readItem(id).content;
+  return !isDerivedContent(content) && !isLensContent(content);
 };
 
 const getScalarOr = (
@@ -68,7 +71,7 @@ const getScalarOr = (
   fallback: number,
 ): number => {
   const v = evaluator.value(id);
-  return v.kind === "scalar" ? toNumberOr(v.value, fallback) : fallback;
+  return isScalarValue(v) ? toNumberOr(v.value, fallback) : fallback;
 };
 
 export const sliderCommands = {
@@ -159,7 +162,7 @@ function mountSlider({
       ],
     });
 
-    cctx.on(input as any, "input", () => {
+    cctx.on(input, "input", () => {
       const n = Number(input.value);
       if (Number.isFinite(n))
         applyCmd(editor, sliderCommands.setNumber(editor, focus, id, n));
@@ -206,10 +209,7 @@ function mountSlider({
     });
 
     cctx.watch(() => {
-      const { contentSettable } = (() => {
-        const kind = editor.store.readItem(id).content.kind;
-        return { contentSettable: kind !== "derived" && kind !== "lens" };
-      })();
+      const contentSettable = canSetContent(editor, id);
 
       const cur = getScalarOr(evaluator, id, opts.min);
       const clamped = clamp(cur, opts.min, opts.max);
@@ -230,8 +230,9 @@ export function createSliderView({
   runtime,
   id,
   focus,
-}: ViewFactoryArgs & { focus: Focus }): View {
+}: ViewFactoryArgs): View {
   const { editor, eval: evaluator } = runtime;
+  const safeFocus: Focus = focus ?? { scopeId: id, id };
 
   const resolved: SliderResolvedOpts = {
     min: 0,
@@ -247,7 +248,7 @@ export function createSliderView({
           sliderCommands.nudge(
             editor,
             evaluator,
-            focus,
+            safeFocus,
             id,
             intent.dir * intent.mul,
             resolved,
@@ -260,7 +261,7 @@ export function createSliderView({
           editor,
           sliderCommands.setNumber(
             editor,
-            focus,
+            safeFocus,
             id,
             intent.kind === "min" ? resolved.min : resolved.max,
           ),
@@ -277,7 +278,7 @@ export function createSliderView({
     editor,
     evaluator,
     id,
-    focus,
+    focus: safeFocus,
     opts: resolved,
     dispatch,
   };
@@ -288,27 +289,25 @@ export function createSliderView({
     root: comp.el,
 
     normalizeTarget(_ctx2, _focus, target) {
-      return target.kind === "header"
-        ? ({ kind: "content" } as FocusTarget)
-        : target;
+      return target.kind === "header" ? { kind: "content" } : target;
     },
 
     onActivate() {
       const sel = editor.runtime.selection.value;
       const focused =
         sel.kind === "focused" &&
-        sel.focus.id === focus.id &&
-        sel.focus.scopeId === focus.scopeId;
+        sel.focus.id === safeFocus.id &&
+        sel.focus.scopeId === safeFocus.scopeId;
 
       if (!focused) {
         editor.setSelection(
-          focusSelection(focus, { kind: "content" }, caret0()).selection,
+          focusSelection(safeFocus, { kind: "content" }, caret0()).selection,
         );
         return;
       }
 
       editor.setSelection(sel, [
-        { type: "DOM_FOCUS", focus, target: { kind: "content" } },
+        { type: "DOM_FOCUS", focus: safeFocus, target: { kind: "content" } },
       ]);
     },
 

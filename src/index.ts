@@ -209,11 +209,11 @@ export function seedDemo(app: App) {
   );
 }
 
-function autoMount() {
+function autoMount(): void {
   if (typeof document === "undefined") return;
   if (typeof window === "undefined") return;
 
-  const g = globalThis as any;
+  const g = globalThis as { __APP_MOUNTED__?: boolean };
   if (g.__APP_MOUNTED__) return;
   g.__APP_MOUNTED__ = true;
 
