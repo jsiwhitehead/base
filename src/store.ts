@@ -10,7 +10,8 @@ import { DEV, devAssert } from "./dev";
 
 export type ItemId = number;
 export type Scalar = true | number | string;
-export type ViewKind = "" | "tree" | "table" | "slider";
+export type ViewName = "tree" | "table" | "slider";
+export type ViewKind = ViewName | null;
 
 type BlankContent = { kind: "blank" };
 type ScalarContent = { kind: "scalar"; value: Scalar };
@@ -81,7 +82,7 @@ export type SnapshotContent =
 
 export type SnapshotItem = {
   label?: string;
-  view?: string;
+  view?: ViewName;
   content: SnapshotContent;
 };
 
@@ -284,14 +285,14 @@ export function createStore(): Store {
       id,
       ownerId: null,
       label: "",
-      view: "",
+      view: null,
       content: { kind: "blank" },
     }),
     group: (id: ItemId): Item => ({
       id,
       ownerId: null,
       label: "",
-      view: "",
+      view: null,
       content: { kind: "group", items: [] },
     }),
   } as const;
@@ -640,7 +641,7 @@ export function createStore(): Store {
   const snapshot = (id: ItemId): SnapshotItem => {
     const it = itemSignal(id).value;
     const label = it.label.trim() ? it.label : undefined;
-    const view = it.view.trim() ? it.view : undefined;
+    const view = it.view ?? undefined;
     return { label, view, content: snapshotContent(it.content) };
   };
 

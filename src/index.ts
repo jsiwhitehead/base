@@ -1,10 +1,15 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import { createStore, type ItemId } from "./store";
+import {
+  type ItemId,
+  type ViewName,
+  type ViewKind,
+  createStore,
+} from "./store";
 import { createEvaluator } from "./eval";
 import { interpretExpr } from "./expr";
 import { createEditor } from "./editor";
-import { createView } from "./views";
 import { mountViewInto } from "./dom";
+import { createView } from "./views";
 
 export type App = {
   store: ReturnType<typeof createStore>;
@@ -12,7 +17,7 @@ export type App = {
   editor: ReturnType<typeof createEditor>;
   runtime: {
     editor: ReturnType<typeof createEditor>;
-    eval: ReturnType<typeof createEvaluator>;
+    evaluator: ReturnType<typeof createEvaluator>;
   };
   rootId: ItemId;
   dispose(): void;
@@ -20,7 +25,7 @@ export type App = {
 
 export type CreateAppOpts = {
   host?: HTMLElement;
-  rootView?: "tree" | "table" | "slider";
+  rootView?: ViewName;
   demo?: boolean;
 };
 
@@ -49,7 +54,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   const evaluator = createEvaluator({ store, interpret: interpretExpr });
   const editor = createEditor(store);
-  const runtime = { editor, eval: evaluator } as const;
+  const runtime = { editor, evaluator } as const;
 
   const view = createView(runtime, rootView, rootId, {
     scopeId: rootId,
@@ -91,17 +96,13 @@ export function seedDemo(app: App) {
 
   const id = () => store.createId();
 
-  const mkGroup = (
-    owner: ItemId,
-    label: string,
-    view: "" | "tree" | "table" | "slider" = "",
-  ) => {
+  const mkGroup = (owner: ItemId, label: string, view: ViewKind = null) => {
     const gid = id();
     store.apply(
       store.op.transaction([
         store.op.create(store.create.group(gid)),
         store.op.patchLabel(gid, label),
-        ...(view ? [store.op.patchView(gid, view)] : []),
+        ...(view != null ? [store.op.patchView(gid, view)] : []),
         store.op.reparent({ childId: gid, toOwnerId: owner }),
       ]),
     );
@@ -170,7 +171,7 @@ export function seedDemo(app: App) {
   const rows = mkGroup(demo, "rows", "tree");
 
   const mkRow = (label: string, score: number, note: string) => {
-    const row = mkGroup(rows, label, "");
+    const row = mkGroup(rows, label);
     mkScalar(row, "score", score);
     mkScalar(row, "note", note);
     return row;

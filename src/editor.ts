@@ -1,6 +1,6 @@
 import { signal, type Signal } from "@preact/signals-core";
 import { DEV, devWarn } from "./dev";
-import type { Store, ItemId, Transaction, ApplyResult } from "./store";
+import type { ItemId, Transaction, ApplyResult, Store } from "./store";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
 

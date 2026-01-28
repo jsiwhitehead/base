@@ -1,41 +1,45 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Store, ItemId, Transaction, Op, ViewKind } from "../store";
-import { canEditTextContent, isGroupContent } from "../store";
-import type {
-  Editor,
-  View,
-  Selection,
-  Focus,
-  EditorEffect,
-  ViewKeyResult,
-  Caret,
-  NavDir,
-  NavMode,
-  CmdResult,
-} from "../editor";
 import {
-  focusSelection,
+  type ItemId,
+  type ViewKind,
+  type Op,
+  type Transaction,
+  type Store,
+  isGroupContent,
+  canEditTextContent,
+} from "../store";
+import { isItemGroupValue, type Evaluator } from "../eval";
+import {
+  type Focus,
+  type Caret,
   caret0,
+  type Selection,
+  type EditorEffect,
   withSelection,
+  type Editor,
+  type NavDir,
+  type NavMode,
+  type ViewKeyResult,
+  type View,
+  focusSelection,
+  type CmdResult,
   tryCmd,
   applyCmd,
   setIdle,
 } from "../editor";
-import type { Evaluator } from "../eval";
-import { isItemGroupValue } from "../eval";
 import {
-  createComponent,
+  type Component,
+  defaultTextNav,
   el,
+  ensureTabbable,
   reconcileChildren,
-  parseScalar,
   stopEvent,
   bindTextControlKeys,
+  createComponent,
+  mountViewInto,
+  parseScalar,
   textField,
   contentField,
-  ensureTabbable,
-  defaultTextNav,
-  mountViewInto,
-  type Component,
 } from "../dom";
 import type { Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
@@ -193,7 +197,7 @@ function tableNavMove(
 }
 
 export const tableCommands = {
-  commitRowLabel(
+  setLabel(
     editor: Editor,
     tableId: ItemId,
     rowId: ItemId,
@@ -207,13 +211,9 @@ export const tableCommands = {
     });
   },
 
-  commitCellText(
-    editor: Editor,
-    store: Store,
-    cellId: ItemId,
-    raw: string,
-  ): CmdResult {
+  setScalarValue(editor: Editor, cellId: ItemId, raw: string): CmdResult {
     return tryCmd(() => {
+      const store = editor.store;
       if (!canEditTextContent(store, cellId)) return { didChange: false };
 
       editor.commit(
@@ -387,20 +387,19 @@ type TableMountCtx = {
   runtime: Runtime;
   editor: Editor;
   evaluator: Evaluator;
-  store: Store;
   tableId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   columnsSignal: { value: string[] };
   dispatch: (intent: TableIntent) => ViewKeyResult;
 };
 
-function mountTableHeader(ctx0: TableMountCtx): Component {
-  return createComponent((ctx) => {
+function mountTableHeader(mountCtx: TableMountCtx): Component {
+  return createComponent((componentCtx) => {
     const headerRow = el("div", "row table-header");
 
-    ctx.watch(() => {
+    componentCtx.watch(() => {
       const cells: HTMLElement[] = [el("div", "label")];
-      for (const c of ctx0.columnsSignal.value)
+      for (const c of mountCtx.columnsSignal.value)
         cells.push(el("div", "item", c));
       reconcileChildren(headerRow, cells);
     });
@@ -409,28 +408,28 @@ function mountTableHeader(ctx0: TableMountCtx): Component {
   });
 }
 
-function mountTableCellContent(ctx: {
+function mountTableCellContent(cellCtx: {
   runtime: Runtime;
   editor: Editor;
   evaluator: Evaluator;
-  store: Store;
   tableId: ItemId;
   rowId: ItemId;
   cellId: ItemId;
   dispatch: (intent: TableIntent) => ViewKeyResult;
 }): Component {
-  const { runtime, editor, evaluator, store, rowId, cellId, dispatch } = ctx;
+  const { runtime, editor, evaluator, rowId, cellId, dispatch } = cellCtx;
+  const store = editor.store;
   const focus: Focus = { scopeId: rowId, id: cellId };
   const viewKind = store.readItem(cellId).view as ViewKind;
 
   if (viewWantsChildView(viewKind)) {
     const child = createView(runtime, viewKind, cellId, focus);
     if (child) {
-      return createComponent((cctx) => {
+      return createComponent((componentCtx) => {
         const host = el("div");
         ensureTabbable(host);
 
-        cctx.focusable({
+        componentCtx.focusable({
           editor,
           focus,
           elementFor: () => child.root,
@@ -446,7 +445,7 @@ function mountTableCellContent(ctx: {
         });
 
         ensureTabbable(child.root);
-        cctx.use(mountViewInto(editor, host, child));
+        componentCtx.use(mountViewInto(editor, host, child));
         return host;
       });
     }
@@ -458,10 +457,7 @@ function mountTableCellContent(ctx: {
     focus,
     id: cellId,
     commitScalarText: (text) =>
-      applyCmd(
-        editor,
-        tableCommands.commitCellText(editor, store, cellId, text),
-      ),
+      applyCmd(editor, tableCommands.setScalarValue(editor, cellId, text)),
     textKeys: (inp) =>
       bindTextControlKeys(inp, {
         nav: defaultTextNav,
@@ -473,11 +469,11 @@ function mountTableCellContent(ctx: {
 }
 
 function mountTableCell(
-  ctx0: TableMountCtx,
+  mountCtx: TableMountCtx,
   rowId: ItemId,
   col: string,
 ): Component {
-  return createComponent((cctx) => {
+  return createComponent((componentCtx) => {
     const host = el("div", "item cell");
     const inner = el("div");
     host.append(inner);
@@ -497,36 +493,36 @@ function mountTableCell(
     const mountPresent = (cellId: ItemId) => {
       cur?.dispose();
       cur = mountTableCellContent({
-        runtime: ctx0.runtime,
-        editor: ctx0.editor,
-        evaluator: ctx0.evaluator,
-        store: ctx0.store,
-        tableId: ctx0.tableId,
+        runtime: mountCtx.runtime,
+        editor: mountCtx.editor,
+        evaluator: mountCtx.evaluator,
+        tableId: mountCtx.tableId,
         rowId,
         cellId,
-        dispatch: ctx0.dispatch,
+        dispatch: mountCtx.dispatch,
       });
       curCellId = cellId;
       setInner(cur.el);
-      cctx.use(cur);
+      componentCtx.use(cur);
     };
 
-    const getCellId = () => ctx0.store.findChildByLabel(rowId, col) ?? null;
+    const getCellId = () =>
+      mountCtx.editor.store.findChildByLabel(rowId, col) ?? null;
 
-    cctx.watch(() => {
+    componentCtx.watch(() => {
       const nextCellId = getCellId();
       if (nextCellId === curCellId) return;
       nextCellId == null ? mountMissing() : mountPresent(nextCellId);
     });
 
-    cctx.on(host, "pointerdown", (e) => {
+    componentCtx.on(host, "pointerdown", (e) => {
       const nextCellId = getCellId();
       const res =
         nextCellId == null
-          ? focusRowLabel(ctx0.tableId, rowId)
+          ? focusRowLabel(mountCtx.tableId, rowId)
           : focusCell(rowId, nextCellId);
 
-      ctx0.editor.setSelection(res.selection);
+      mountCtx.editor.setSelection(res.selection);
       e.stopPropagation();
     });
 
@@ -534,8 +530,8 @@ function mountTableCell(
   });
 }
 
-function mountTableRow(ctx0: TableMountCtx, rowId: ItemId): Component {
-  return createComponent((cctx) => {
+function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
+  return createComponent((componentCtx) => {
     const rowEl = el("div", "row");
     const labelCell = el("div", "label");
     const labelHost = el("div", "row-label");
@@ -544,10 +540,12 @@ function mountTableRow(ctx0: TableMountCtx, rowId: ItemId): Component {
     const cellsHost = el("div", "row-cells");
     rowEl.append(labelCell, cellsHost);
 
-    const labelFocus: Focus = { scopeId: ctx0.tableId, id: rowId };
+    const labelFocus: Focus = { scopeId: mountCtx.tableId, id: rowId };
+
+    const store = mountCtx.editor.store;
 
     const labelComp = textField({
-      editor: ctx0.editor,
+      editor: mountCtx.editor,
       focus: labelFocus,
       target: { kind: "header", index: 0 },
       multiline: false,
@@ -556,47 +554,52 @@ function mountTableRow(ctx0: TableMountCtx, rowId: ItemId): Component {
       onCommitEvents: ["input", "blur"],
       commit: (text) =>
         applyCmd(
-          ctx0.editor,
-          tableCommands.commitRowLabel(ctx0.editor, ctx0.tableId, rowId, text),
+          mountCtx.editor,
+          tableCommands.setLabel(
+            mountCtx.editor,
+            mountCtx.tableId,
+            rowId,
+            text,
+          ),
         ),
       getState: () => {
-        const sel = ctx0.editor.runtime.selection.value;
+        const sel = mountCtx.editor.runtime.selection.value;
         const editing =
-          isRowLabelSelection(sel, ctx0.tableId) &&
+          isRowLabelSelection(sel, mountCtx.tableId) &&
           isFocused(sel) &&
           sel.focus.id === rowId;
-        const label = ctx0.store.readItem(rowId).label ?? "";
+        const label = store.readItem(rowId).label ?? "";
         return { text: label, readOnly: !editing, isIssue: false };
       },
       textKeys: (inp) =>
         bindTextControlKeys(inp, {
           nav: defaultTextNav,
-          onNav: (dir, mode) => ctx0.dispatch({ type: "NAV", dir, mode }),
+          onNav: (dir, mode) => mountCtx.dispatch({ type: "NAV", dir, mode }),
           onEnter: () => {
-            const first = ctx0.columnsSignal.value[0];
+            const first = mountCtx.columnsSignal.value[0];
             if (!first) return;
 
-            const cid = ctx0.store.findChildByLabel(rowId, first);
+            const cid = store.findChildByLabel(rowId, first);
             if (!cid) return;
 
             const res = focusCell(rowId, cid);
-            ctx0.editor.setSelection(res.selection);
+            mountCtx.editor.setSelection(res.selection);
           },
-          onEscape: () => ctx0.dispatch({ type: "CANCEL" }),
+          onEscape: () => mountCtx.dispatch({ type: "CANCEL" }),
         }),
     });
 
     labelHost.replaceChildren(labelComp.el);
-    cctx.use(labelComp);
+    componentCtx.use(labelComp);
 
-    const cellList = cctx.list(cellsHost, (col: string) =>
-      mountTableCell(ctx0, rowId, col),
+    const cellList = componentCtx.list(cellsHost, (col: string) =>
+      mountTableCell(mountCtx, rowId, col),
     );
-    cctx.watch(() => cellList.update(ctx0.columnsSignal.value));
+    componentCtx.watch(() => cellList.update(mountCtx.columnsSignal.value));
 
-    cctx.on(labelCell, "pointerdown", (e) => {
-      const res = focusRowLabel(ctx0.tableId, rowId);
-      ctx0.editor.setSelection(res.selection);
+    componentCtx.on(labelCell, "pointerdown", (e) => {
+      const res = focusRowLabel(mountCtx.tableId, rowId);
+      mountCtx.editor.setSelection(res.selection);
       e.stopPropagation();
     });
 
@@ -604,15 +607,15 @@ function mountTableRow(ctx0: TableMountCtx, rowId: ItemId): Component {
   });
 }
 
-function mountTableBody(ctx0: TableMountCtx): Component {
-  return createComponent((ctx) => {
+function mountTableBody(mountCtx: TableMountCtx): Component {
+  return createComponent((componentCtx) => {
     const body = el("div", "table-body");
-    const rowList = ctx.list(body, (rowId: ItemId) =>
-      mountTableRow(ctx0, rowId),
+    const rowList = componentCtx.list(body, (rowId: ItemId) =>
+      mountTableRow(mountCtx, rowId),
     );
 
-    ctx.watch(() => {
-      rowList.update(ctx0.evaluator.items(ctx0.tableId));
+    componentCtx.watch(() => {
+      rowList.update(mountCtx.evaluator.items(mountCtx.tableId));
     });
 
     return body;
@@ -623,7 +626,7 @@ export function createTableView({
   runtime,
   id: tableId,
 }: ViewFactoryArgs): View {
-  const { editor, eval: evaluator } = runtime;
+  const { editor, evaluator } = runtime;
   const store = editor.store;
 
   const root = el("div", "view table");
@@ -667,7 +670,6 @@ export function createTableView({
     runtime,
     editor,
     evaluator,
-    store,
     tableId,
     navMove,
     columnsSignal,

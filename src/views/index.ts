@@ -1,18 +1,23 @@
-import type { ItemId, ViewKind } from "../store";
-import type { Editor, View, Focus } from "../editor";
-import type { Component } from "../dom";
-import { el, ensureTabbable, contentField, mountViewInto } from "../dom";
+import type { ItemId, ViewName, ViewKind } from "../store";
 import type { Evaluator } from "../eval";
+import type { Focus, Editor, View } from "../editor";
+import {
+  type Component,
+  el,
+  ensureTabbable,
+  mountViewInto,
+  contentField,
+} from "../dom";
 import { createTreeView } from "./tree";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type Runtime = { editor: Editor; eval: Evaluator };
+export type Runtime = { editor: Editor; evaluator: Evaluator };
 
 export type ViewFactoryArgs = { runtime: Runtime; id: ItemId; focus?: Focus };
 export type ViewFactory = (args: ViewFactoryArgs) => View;
 
-const factories: Record<Exclude<ViewKind, "">, ViewFactory> = {
+const factories: Record<ViewName, ViewFactory> = {
   tree: createTreeView,
   table: createTableView,
   slider: createSliderView,
@@ -24,12 +29,12 @@ export function createView(
   id: ItemId,
   focus?: Focus,
 ): View | null {
-  if (!viewKind) return null;
+  if (viewKind == null) return null;
   return factories[viewKind]?.({ runtime, id, focus }) ?? null;
 }
 
 export function hasView(viewKind: ViewKind): boolean {
-  return !!viewKind && viewKind in factories;
+  return viewKind != null && viewKind in factories;
 }
 
 export function viewWantsChildView(viewKind: ViewKind): boolean {
@@ -48,7 +53,7 @@ export function mountItemBody(
     commitScalarText?: (text: string) => void;
   } = {},
 ): Component {
-  const { editor, eval: evaluator } = runtime;
+  const { editor, evaluator } = runtime;
   const viewKind = editor.store.readItem(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {

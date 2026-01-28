@@ -2,30 +2,26 @@ import {
   type ItemId,
   type Scalar,
   type StoredContentSettable,
-  type Transaction,
   isDerivedContent,
   isLensContent,
+  type Transaction,
 } from "../store";
-import type {
-  Editor,
-  View,
-  Focus,
-  FocusTarget,
-  ViewKeyResult,
-  CmdResult,
-  NavMode,
-} from "../editor";
+import { isScalarValue, type Evaluator } from "../eval";
 import {
-  focusSelection,
+  type Focus,
   caret0,
   withSelection,
+  type Editor,
+  type NavMode,
+  type ViewKeyResult,
+  type View,
+  focusSelection,
+  type CmdResult,
   tryCmd,
   applyCmd,
   setIdle,
 } from "../editor";
-import type { Evaluator } from "../eval";
-import { isScalarValue } from "../eval";
-import { createComponent, el, clamp, stopEvent, type Component } from "../dom";
+import { type Component, el, clamp, stopEvent, createComponent } from "../dom";
 import type { ViewFactoryArgs } from "./index";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
@@ -75,13 +71,18 @@ const getScalarOr = (
 };
 
 export const sliderCommands = {
-  setNumber(editor: Editor, focus: Focus, id: ItemId, n: number): CmdResult {
+  setScalarValue(
+    editor: Editor,
+    focus: Focus,
+    id: ItemId,
+    value: number,
+  ): CmdResult {
     return tryCmd(() => {
       const store = editor.store;
-      if (!Number.isFinite(n) || !canSetContent(editor, id))
+      if (!Number.isFinite(value) || !canSetContent(editor, id))
         return { didChange: false };
 
-      const content: StoredContentSettable = { kind: "scalar", value: n };
+      const content: StoredContentSettable = { kind: "scalar", value };
       const txn: Transaction = store.op.transaction([
         store.op.patchContent(id, content),
       ]);
@@ -93,7 +94,7 @@ export const sliderCommands = {
     });
   },
 
-  nudge(
+  nudgeScalarValue(
     editor: Editor,
     evaluator: Evaluator,
     focus: Focus,
@@ -107,7 +108,7 @@ export const sliderCommands = {
       const cur = getScalarOr(evaluator, id, opts.min);
       const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
 
-      return sliderCommands.setNumber(editor, focus, id, next);
+      return sliderCommands.setScalarValue(editor, focus, id, next);
     });
   },
 } as const;
@@ -134,7 +135,7 @@ function mountSlider({
   opts,
   dispatch,
 }: SliderMountCtx): Component {
-  return createComponent((cctx) => {
+  return createComponent((componentCtx) => {
     const root = el("div", "view slider");
     root.tabIndex = 0;
 
@@ -147,7 +148,7 @@ function mountSlider({
     const valueEl = el("div", "slider-value");
     root.append(input, valueEl);
 
-    cctx.focusable({
+    componentCtx.focusable({
       editor,
       focus,
       elementFor: () => input,
@@ -162,13 +163,13 @@ function mountSlider({
       ],
     });
 
-    cctx.on(input, "input", () => {
+    componentCtx.on(input, "input", () => {
       const n = Number(input.value);
       if (Number.isFinite(n))
-        applyCmd(editor, sliderCommands.setNumber(editor, focus, id, n));
+        applyCmd(editor, sliderCommands.setScalarValue(editor, focus, id, n));
     });
 
-    cctx.on(root, "keydown", (e: KeyboardEvent) => {
+    componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey) return;
 
       let mul = 1;
@@ -208,7 +209,7 @@ function mountSlider({
       }
     });
 
-    cctx.watch(() => {
+    componentCtx.watch(() => {
       const contentSettable = canSetContent(editor, id);
 
       const cur = getScalarOr(evaluator, id, opts.min);
@@ -231,7 +232,7 @@ export function createSliderView({
   id,
   focus,
 }: ViewFactoryArgs): View {
-  const { editor, eval: evaluator } = runtime;
+  const { editor, evaluator } = runtime;
   const safeFocus: Focus = focus ?? { scopeId: id, id };
 
   const resolved: SliderResolvedOpts = {
@@ -245,7 +246,7 @@ export function createSliderView({
       case "NUDGE":
         applyCmd(
           editor,
-          sliderCommands.nudge(
+          sliderCommands.nudgeScalarValue(
             editor,
             evaluator,
             safeFocus,
@@ -259,7 +260,7 @@ export function createSliderView({
       case "SET":
         applyCmd(
           editor,
-          sliderCommands.setNumber(
+          sliderCommands.setScalarValue(
             editor,
             safeFocus,
             id,

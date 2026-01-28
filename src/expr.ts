@@ -1,9 +1,7 @@
 import * as ohm from "ohm-js";
 import type { Scalar } from "./store";
 import {
-  type LabeledValue,
   type Value,
-  type EvalEnv,
   V,
   isPresent,
   isTrue,
@@ -12,6 +10,7 @@ import {
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
+  type EvalEnv,
 } from "./eval";
 
 const ISSUE = {

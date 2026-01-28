@@ -1,28 +1,32 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Store, ItemId, Scalar, StoredContent } from "./store";
 import {
-  canEditTextContent,
+  type ItemId,
+  type Scalar,
+  type Store,
   isBlankContent,
   isScalarContent,
+  canEditTextContent,
 } from "./store";
-import type {
-  Editor,
-  Focus,
-  FocusTarget,
-  Binding,
-  Caret,
-  View,
-  NavDir,
-  NavMode,
-} from "./editor";
-import { focusSelection, caret0 } from "./editor";
-import type { Evaluator, Value, LabeledValue } from "./eval";
 import {
+  type Focus,
+  type FocusTarget,
+  type Caret,
+  caret0,
+  type Editor,
+  type NavDir,
+  type NavMode,
+  type View,
+  type Binding,
+  focusSelection,
+} from "./editor";
+import {
+  type Value,
   isBlankValue,
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
+  type Evaluator,
 } from "./eval";
 
 export type Component = { el: HTMLElement; dispose(): void };
