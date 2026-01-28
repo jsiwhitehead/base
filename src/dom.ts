@@ -937,26 +937,38 @@ export function contentField(opts: ContentFieldOpts): Component {
       return { el: wrap, dispose: () => wrap.replaceChildren() };
     };
 
-    ctx.watch(() => {
-      const v = opts.evaluator.value(opts.id);
+    let currentKind: "item-group" | "value-group" | "text" | "readonly" | null =
+      null;
 
-      host.classList.toggle("issue", isIssueValue(v));
+    ctx.watch(
+      () => opts.evaluator.value(opts.id),
+      (v) => {
+        host.classList.toggle("issue", isIssueValue(v));
 
-      let nextComp: Component;
+        const nextKind = isItemGroupValue(v)
+          ? "item-group"
+          : isValueGroupValue(v)
+            ? "value-group"
+            : canEditTextContent(opts.editor.store, opts.id)
+              ? "text"
+              : "readonly";
 
-      if (isItemGroupValue(v)) {
-        nextComp = mountItemGroup();
-      } else if (isValueGroupValue(v)) {
-        nextComp = mountValueGroup();
-      } else {
-        nextComp = canEditTextContent(opts.editor.store, opts.id)
-          ? mountText()
-          : mountReadonlyText();
-      }
+        if (nextKind === currentKind) return;
+        currentKind = nextKind;
 
-      slot.set(nextComp);
-      setFocusEl(nextComp);
-    });
+        const nextComp =
+          nextKind === "item-group"
+            ? mountItemGroup()
+            : nextKind === "value-group"
+              ? mountValueGroup()
+              : nextKind === "text"
+                ? mountText()
+                : mountReadonlyText();
+
+        slot.set(nextComp);
+        setFocusEl(nextComp);
+      },
+    );
 
     ctx.onCleanup(() => {
       if (opts.focusElRef) opts.focusElRef.current = host;

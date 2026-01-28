@@ -290,9 +290,13 @@ export class EditorRuntime {
     if (hitView) this.setActiveView(hitView);
 
     const caret = sel.caret;
-    if (caret && binding.setCaret && binding.getTextLength) {
-      const len = binding.getTextLength();
-      binding.setCaret(clamp(caret.end, 0, len));
+    const canSetCaret =
+      !!caret && !!binding.setCaret && !!binding.getTextLength;
+    const shouldUpdateCaret = canSetCaret && (!wasFocused || anchor);
+
+    if (shouldUpdateCaret) {
+      const len = binding.getTextLength!();
+      binding.setCaret!(clamp(caret!.end, 0, len));
       return;
     }
 

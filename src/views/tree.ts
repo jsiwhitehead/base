@@ -174,6 +174,8 @@ function treeNavMove(
   };
 
   let next: Focus | null = null;
+  let caret: Caret | null = null;
+  let targetOverride: FocusTarget | null = null;
 
   if (dir === "up") next = neighbor(-1);
   else if (dir === "down") next = neighbor(1);
@@ -181,13 +183,32 @@ function treeNavMove(
     next = firstChildStop(from.id) ?? neighbor(1);
     if (mode === "jump") next = neighbor(1) ?? next;
   } else if (dir === "left") {
-    next = parentFocus() ?? neighbor(-1);
-    if (mode === "jump") next = neighbor(-1) ?? next;
+    const prev = neighbor(-1);
+    const parent = parentFocus();
+    next = prev ?? parent;
+    if (mode === "jump") next = parent ?? prev ?? null;
+
+    if (prev && next && focusKey(prev) === focusKey(next)) {
+      const defs =
+        sel.target.kind === "content" ? headerFieldsForItem(store, prev.id) : [];
+
+      if (sel.target.kind === "content" && defs.length > 0) {
+        const lastDef = defs[defs.length - 1]!;
+        const text = headerFieldValue(store, prev.id, lastDef);
+        targetOverride = { kind: "header", index: defs.length };
+        caret = caretAt(text.length);
+      } else if (canEditTextContent(store, prev.id)) {
+        const text = getEditableText(store, evaluator, prev.id).text;
+        caret = caretAt(text.length);
+      }
+    }
   }
 
   if (!next) return null;
 
-  const res = focusSelection(next, defaultTargetFor(store, next.id), caret0());
+  const target = targetOverride ?? defaultTargetFor(store, next.id);
+  const outCaret = caret ?? caret0();
+  const res = focusSelection(next, target, outCaret);
   return { selection: res.selection, effects: res.effects };
 }
 
@@ -436,10 +457,20 @@ export const treeCommands = {
         ? { scopeId: f.scopeId, id: chosen as ItemId }
         : { scopeId: loc.ownerId, id: chosen as ItemId };
 
+      const shouldPlaceCaretAtEnd =
+        prefer === "prev" &&
+        chosen != null &&
+        containerKids.includes(chosen as ItemId) &&
+        canEditTextContent(store, chosen as ItemId);
+
+      const caret = shouldPlaceCaretAtEnd
+        ? caretAt(getEditableText(store, evaluator, chosen as ItemId).text.length)
+        : caret0();
+
       const nextSel = focusSelection(
         nextFocus,
         defaultTargetFor(store, nextFocus.id),
-        caret0(),
+        caret,
       );
 
       editor.commit(
@@ -599,7 +630,7 @@ function mountTreeHeader(
   defs: readonly HeaderFieldDef[],
   onTargets: (targets: HTMLElement[]) => void,
 ): Component {
-  const { editor } = mountCtx;
+  const { editor, dispatch } = mountCtx;
   const store = editor.store;
 
   return createComponent((componentCtx) => {
@@ -614,13 +645,18 @@ function mountTreeHeader(
       );
     };
 
+    const commitLabel = (text: string) => {
+      const current = store.readItem(focus.id).label ?? "";
+      if (current === text) return;
+      applyCmd(editor, treeCommands.setLabel(editor, focus, text));
+    };
+
     const labelComp = autosizeTextField({
       editor,
       focus,
       target: { kind: "header", index: 0 },
       registerFocus: false,
-      commit: (text) =>
-        applyCmd(editor, treeCommands.setLabel(editor, focus, text)),
+      commit: commitLabel,
       getState: () => ({
         text: store.readItem(focus.id).label ?? "",
         readOnly: false,
@@ -628,7 +664,7 @@ function mountTreeHeader(
       }),
       caret: "fromTarget",
       stopPropagation: true,
-      onCommitEvents: ["input", "blur"],
+      onCommitEvents: ["blur"],
       wrapClassName: "autosize label",
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement;
@@ -637,9 +673,14 @@ function mountTreeHeader(
             e.preventDefault();
             return;
           }
-          if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
+          if (
+            e.key === "Enter" ||
+            e.key === "Escape" ||
+            e.key === "Tab"
+          ) {
             e.preventDefault();
             e.stopPropagation();
+            if (e.key === "Enter") commitLabel(inputEl.value);
             toContent();
           }
         });
@@ -661,6 +702,15 @@ function mountTreeHeader(
       fieldsHost.append(row);
       const headerIndex = i + 1;
 
+      const commitField = (text: string) => {
+        const current = headerFieldValue(store, focus.id, d);
+        if (current === text) return;
+        applyCmd(
+          editor,
+          treeCommands.commitHeaderField(editor, focus, d, text),
+        );
+      };
+
       const fc = textField({
         editor,
         focus,
@@ -669,21 +719,75 @@ function mountTreeHeader(
         caret: "fromTarget",
         stopPropagation: true,
         registerFocus: false,
-        commit: (text) =>
-          applyCmd(
-            editor,
-            treeCommands.commitHeaderField(editor, focus, d, text),
-          ),
+        commit: commitField,
         getState: () => ({
           text: headerFieldValue(store, focus.id, d),
           readOnly: false,
           isIssue: false,
         }),
-        onCommitEvents: ["input", "blur"],
+        onCommitEvents: ["blur"],
         textKeys: (inp) => {
           const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
+
+          const moveToHeaderField = (
+            index: number,
+            caretPos: "start" | "end",
+          ): boolean => {
+            const def = defs[index - 1];
+            if (!def) return false;
+            const text = headerFieldValue(store, focus.id, def);
+            const caret =
+              caretPos === "end" ? caretAt(text.length) : caret0();
+            const { selection } = focusSelection(
+              focus,
+              { kind: "header", index },
+              caret,
+            );
+            editor.setSelection(selection);
+            return true;
+          };
+
+          const boundaryNav = (dir: "left" | "right") => {
+            dispatch({ type: "NAV", dir, mode: "step" });
+          };
+
           return on(inputEl, "keydown", (e: KeyboardEvent) => {
-            if ((e.key === "Enter" && !e.shiftKey) || e.key === "Escape") {
+            const noModifiers = !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+            if (noModifiers && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+              const start = inputEl.selectionStart ?? 0;
+              const end = inputEl.selectionEnd ?? start;
+              const hasSel = start !== end;
+              const len = inputEl.value.length;
+
+              if (!hasSel && e.key === "ArrowLeft" && start === 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (headerIndex > 1 ? moveToHeaderField(headerIndex - 1, "end") : false) {
+                  return;
+                }
+                boundaryNav("left");
+                return;
+              }
+
+              if (!hasSel && e.key === "ArrowRight" && end === len) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (headerIndex < defs.length ? moveToHeaderField(headerIndex + 1, "start") : false) {
+                  return;
+                }
+                boundaryNav("right");
+                return;
+              }
+            }
+
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              commitField(inputEl.value);
+              return;
+            }
+
+            if (e.key === "Escape") {
               e.preventDefault();
               e.stopPropagation();
               toContent();
