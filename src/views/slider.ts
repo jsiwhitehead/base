@@ -1,13 +1,13 @@
-import type { Core, ItemId, Scalar } from "../core";
 import {
+  type Core,
+  type ItemId,
+  type Scalar,
   type Focus,
   caret0,
-  type Editor,
-  type ViewKeyResult,
   focusSelection,
-  setIdle,
+  isScalarValue,
 } from "../core";
-import { isScalarValue, type Evaluator } from "../core";
+import { type DomHost, type ViewKeyResult } from "../ui/host";
 import {
   type Component,
   el,
@@ -137,8 +137,7 @@ type SliderIntent =
 
 type SliderMountCtx = {
   core: Core;
-  editor: Editor;
-  evaluator: Evaluator;
+  host: DomHost;
   id: ItemId;
   focus: Focus;
   opts: SliderResolvedOpts;
@@ -147,8 +146,7 @@ type SliderMountCtx = {
 
 function mountSlider({
   core,
-  editor,
-  evaluator,
+  host,
   id,
   focus,
   opts,
@@ -168,7 +166,8 @@ function mountSlider({
     root.append(input, valueEl);
 
     componentCtx.focusable({
-      editor,
+      core,
+      host,
       focus,
       elementFor: () => input,
       targets: [
@@ -215,8 +214,6 @@ function mountSlider({
       },
     );
 
-    void evaluator;
-
     return root;
   });
 }
@@ -226,9 +223,8 @@ export function createSliderView({
   id,
   focus,
 }: ViewFactoryArgs): DomView {
-  const core = (runtime as any).core as Core;
-  const editor = core.host.editor;
-  const evaluator = core.unsafe.evaluator;
+  const core = runtime.core as Core;
+  const host = runtime.host as DomHost;
 
   const safeFocus: Focus = focus ?? { scopeId: id, id };
   const resolved = DEFAULT_SLIDER_OPTS;
@@ -255,15 +251,14 @@ export function createSliderView({
         return;
 
       case "CANCEL":
-        setIdle(editor);
+        core.setSelection({ kind: "idle" });
         return;
     }
   };
 
   const mountCtx: SliderMountCtx = {
     core,
-    editor,
-    evaluator,
+    host,
     id,
     focus: safeFocus,
     opts: resolved,
@@ -280,20 +275,20 @@ export function createSliderView({
     },
 
     onActivate() {
-      const sel = editor.runtime.selection.value;
+      const sel = core.getSelection();
       const focused =
         sel.kind === "focused" &&
         sel.focus.id === safeFocus.id &&
         sel.focus.scopeId === safeFocus.scopeId;
 
       if (!focused) {
-        editor.setSelection(
+        core.setSelection(
           focusSelection(safeFocus, { kind: "content" }, caret0()).selection,
         );
         return;
       }
 
-      editor.setSelection(sel, [
+      core.setSelection(sel, [
         { type: "FOCUS", focus: safeFocus, target: { kind: "content" } },
       ]);
     },

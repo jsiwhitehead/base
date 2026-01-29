@@ -2,10 +2,16 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import { createCore } from "../src/core";
-import type { ItemId, SnapshotContent, Model } from "../src/core/model";
+import {
+  createModel,
+  type ItemId,
+  type SnapshotContent,
+  type Model,
+} from "../src/core/model";
 import {
   V,
   type Value,
+  createEvaluator,
   isBlankValue,
   isIssueValue,
   isScalarValue,
@@ -13,9 +19,13 @@ import {
   isValueGroupValue,
 } from "../src/core/compute";
 import { interpretExpr } from "../src/core/lang";
-import type { Editor, Selection } from "../src/core";
-import { repairSelection } from "../src/core";
-import { installDomRuntime } from "../src/ui/dom";
+import type { Editor, Selection } from "../src/core/runtime";
+import {
+  createEditor,
+  EditorRuntime,
+  repairSelection,
+} from "../src/core/runtime";
+import { createDomHost } from "../src/ui/host";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
 import { createOutlineView } from "../src/views/outline";
@@ -48,9 +58,7 @@ async function tick() {
 }
 
 function makeRuntime() {
-  const core = createCore();
-  const { model, evaluator } = core.unsafe;
-  const { editor, runtime } = core.host;
+  const model = createModel();
 
   const rootId = model.createId();
   model.setRoot(rootId);
@@ -61,9 +69,19 @@ function makeRuntime() {
     ]),
   );
 
-  runtimeCleanups.add(installDomRuntime(runtime));
+  const runtime = new EditorRuntime({ kind: "idle" });
+  const core = createCore({ model, runtime, interpreter: interpretExpr });
+  const host = createDomHost({ runtime });
+  const evaluator = createEvaluator({ model, interpret: interpretExpr });
+  const editor = createEditor(model, { runtime });
 
-  return { core, model, evaluator, editor, rootId };
+  runtimeCleanups.add(() => {
+    host.dispose();
+    evaluator.dispose();
+    core.dispose();
+  });
+
+  return { core, model, evaluator, editor, host, runtime, rootId };
 }
 
 function addBlankChild(model: Model, ownerId: ItemId, label = "") {
@@ -224,7 +242,7 @@ function assertPublicModelContracts(model: Model) {
 }
 
 async function mountAndActivateView(
-  editor: Editor,
+  host: ReturnType<typeof createDomHost>,
   view: {
     id: string;
     root: HTMLElement;
@@ -232,21 +250,16 @@ async function mountAndActivateView(
     dispose(): void;
   },
 ) {
-  document.body.append(view.root);
-
+  const unmount = host.mountViewInto(document.body, view as any);
   await tick();
 
-  editor.runtime.registerView(view as any);
-  editor.runtime.setActiveView(view.id);
-
+  host.setActiveView(view.id);
   view.onActivate?.();
 
   await tick();
 
   return () => {
-    editor.runtime.unregisterView(view.id);
-    view.dispose();
-    view.root.remove();
+    unmount();
   };
 }
 
@@ -669,7 +682,7 @@ describe("editor contract (no DOM)", () => {
 
 describe("views contract (selection transitions via onKeyDown)", () => {
   test("table arrow navigation: row label -> right -> cell; left -> row label; down -> next row", async () => {
-    const { core, model, editor, rootId } = makeRuntime();
+    const { core, model, editor, host, rootId } = makeRuntime();
 
     const tableId = addGroupChild(model, rootId, "table");
     setView(model, tableId, "table");
@@ -683,10 +696,10 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     patchScalar(model, bScore, 6);
 
     const view = createTableView({
-      runtime: { core, editor },
+      runtime: { core, host },
       id: tableId,
     });
-    const unmount = await mountAndActivateView(editor, view);
+    const unmount = await mountAndActivateView(host, view);
 
     let sel = editor.getSelection();
     expectFocusedSelection(sel);
@@ -719,7 +732,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
   });
 
   test("outline onActivate picks first nav stop; arrows keep focused selection", async () => {
-    const { core, model, editor, rootId } = makeRuntime();
+    const { core, model, editor, host, rootId } = makeRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     patchScalar(model, a, 1);
@@ -732,10 +745,10 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     patchScalar(model, b, 3);
 
     const view = createOutlineView({
-      runtime: { core, editor },
+      runtime: { core, host },
       id: rootId,
     });
-    const unmount = await mountAndActivateView(editor, view);
+    const unmount = await mountAndActivateView(host, view);
 
     let sel = editor.getSelection();
     expectFocusedSelection(sel);
@@ -757,14 +770,14 @@ describe("views contract (selection transitions via onKeyDown)", () => {
 
 describe("DOM smoke", () => {
   test("slider range input updates scalar content", async () => {
-    const { core, model, editor, rootId } = makeRuntime();
+    const { core, model, host, rootId } = makeRuntime();
     const sliderId = addBlankChild(model, rootId, "slider");
 
     setView(model, sliderId, "slider");
     patchScalar(model, sliderId, 10);
 
     const view = createSliderView({
-      runtime: { core, editor },
+      runtime: { core, host },
       id: sliderId,
     });
 
@@ -792,7 +805,7 @@ describe("DOM smoke", () => {
   });
 
   test("reactivity updates derived display text", async () => {
-    const { core, model, editor, rootId } = makeRuntime();
+    const { core, model, host, rootId } = makeRuntime();
 
     const x = addBlankChild(model, rootId, "x");
     patchScalar(model, x, 1);
@@ -801,10 +814,10 @@ describe("DOM smoke", () => {
     patchDerived(model, d, "x + 1");
 
     const view = createOutlineView({
-      runtime: { core, editor },
+      runtime: { core, host },
       id: rootId,
     });
-    const unmount = await mountAndActivateView(editor, view);
+    const unmount = await mountAndActivateView(host, view);
 
     const getDerivedText = () => {
       const nodes = Array.from(view.root.querySelectorAll(".item.readonly"));
@@ -827,16 +840,16 @@ describe("DOM smoke", () => {
   });
 
   test("dispose safety: disposing view does not crash on subsequent model updates", async () => {
-    const { core, model, editor, rootId } = makeRuntime();
+    const { core, model, host, rootId } = makeRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     patchScalar(model, a, 1);
 
     const view = createOutlineView({
-      runtime: { core, editor },
+      runtime: { core, host },
       id: rootId,
     });
-    const unmount = await mountAndActivateView(editor, view);
+    const unmount = await mountAndActivateView(host, view);
 
     expect(() => unmount()).not.toThrow();
     expect(() => patchScalar(model, a, 2)).not.toThrow();
@@ -846,16 +859,16 @@ describe("DOM smoke", () => {
 });
 
 test("outline: clicking editable content focuses the text input element", async () => {
-  const { core, model, editor, rootId } = makeRuntime();
+  const { core, model, editor, host, rootId } = makeRuntime();
 
   const x = addBlankChild(model, rootId, "x");
   patchScalar(model, x, 10);
 
   const view = createOutlineView({
-    runtime: { core, editor },
+    runtime: { core, host },
     id: rootId,
   });
-  const unmount = await mountAndActivateView(editor, view);
+  const unmount = await mountAndActivateView(host, view);
 
   const labelInputs = Array.from(
     view.root.querySelectorAll(".autosize.label input"),

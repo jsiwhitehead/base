@@ -1,6 +1,9 @@
 import { computed } from "@preact/signals-core";
-import type { ItemId, ViewKind, Core, Header } from "../core";
 import {
+  type ItemId,
+  type ViewKind,
+  type Core,
+  type Header,
   type Focus,
   type FocusTarget,
   type Caret,
@@ -8,16 +11,12 @@ import {
   caretAt,
   type Selection,
   type EditorEffect,
-  type Editor,
-  type NavDir,
-  type NavMode,
-  type ViewKeyResult,
   focusSelection,
-  setIdle,
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
 } from "../core";
+import { type NavDir, type NavMode, type ViewKeyResult } from "../ui/host";
 import {
   type Component,
   defaultTextNav,
@@ -28,13 +27,17 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
-  mountViewInto,
   textField,
   autosizeTextField,
   contentField,
 } from "../ui/dom";
-import type { DomView, Runtime, ViewFactoryArgs } from "./index";
-import { createView, viewWantsChildView } from "./index";
+import {
+  type DomView,
+  type Runtime,
+  type ViewFactoryArgs,
+  createView,
+  viewWantsChildView,
+} from "./index";
 
 type HeaderKind = Header["kind"];
 
@@ -181,10 +184,10 @@ export const outlineCommands = {
     core.edit.setText(id, text);
   },
 
-  setDerived(core: Core, editor: Editor, f: Focus): void {
+  setDerived(core: Core, f: Focus): void {
     core.edit.setDerived(f.id, "");
     const nextSel = focusSelection(f, { kind: "header", index: 1 }, caret0());
-    editor.setSelection(nextSel.selection);
+    core.setSelection(nextSel.selection);
   },
 
   commitHeaderField(
@@ -210,12 +213,7 @@ export const outlineCommands = {
     });
   },
 
-  insertSibling(
-    core: Core,
-    editor: Editor,
-    sel: Selection,
-    side: "before" | "after",
-  ): void {
+  insertSibling(core: Core, sel: Selection, side: "before" | "after"): void {
     if (sel.kind !== "focused") return;
 
     const loc = core.locate(sel.focus.id);
@@ -233,12 +231,11 @@ export const outlineCommands = {
       { kind: "content" },
       caret0(),
     );
-    editor.setSelection(nextSel.selection);
+    core.setSelection(nextSel.selection);
   },
 
   splitAt(
     core: Core,
-    editor: Editor,
     sel: Selection,
     caretStart: number,
     caretEnd = caretStart,
@@ -249,7 +246,7 @@ export const outlineCommands = {
 
     const t0 = core.text(f.id);
     if (t0.kind !== "editable") {
-      outlineCommands.insertSibling(core, editor, sel, "after");
+      outlineCommands.insertSibling(core, sel, "after");
       return;
     }
 
@@ -277,15 +274,10 @@ export const outlineCommands = {
       { kind: "content" },
       caret0(),
     );
-    editor.setSelection(nextSel.selection);
+    core.setSelection(nextSel.selection);
   },
 
-  joinBoundary(
-    core: Core,
-    editor: Editor,
-    sel: Selection,
-    dir: "backward" | "forward",
-  ): void {
+  joinBoundary(core: Core, sel: Selection, dir: "backward" | "forward"): void {
     if (sel.kind !== "focused") return;
 
     const f = sel.focus;
@@ -315,15 +307,10 @@ export const outlineCommands = {
       { kind: "content" },
       caretAt(a.text.length),
     );
-    editor.setSelection(nextSel.selection);
+    core.setSelection(nextSel.selection);
   },
 
-  removeItem(
-    core: Core,
-    editor: Editor,
-    sel: Selection,
-    prefer: "prev" | "next",
-  ): void {
+  removeItem(core: Core, sel: Selection, prefer: "prev" | "next"): void {
     if (sel.kind !== "focused") return;
 
     const f = sel.focus;
@@ -360,15 +347,10 @@ export const outlineCommands = {
       defaultTargetFor(core, nextFocus.id),
       caret,
     );
-    editor.setSelection(nextSel.selection);
+    core.setSelection(nextSel.selection);
   },
 
-  changeNesting(
-    core: Core,
-    editor: Editor,
-    sel: Selection,
-    dir: "in" | "out",
-  ): void {
+  changeNesting(core: Core, sel: Selection, dir: "in" | "out"): void {
     if (sel.kind !== "focused") return;
 
     const f = sel.focus;
@@ -392,7 +374,7 @@ export const outlineCommands = {
         defaultTargetFor(core, f.id),
         caret0(),
       );
-      editor.setSelection(nextSel.selection);
+      core.setSelection(nextSel.selection);
       return;
     }
 
@@ -422,32 +404,31 @@ export const outlineCommands = {
       defaultTargetFor(core, f.id),
       caret0(),
     );
-    editor.setSelection(nextSel.selection);
+    core.setSelection(nextSel.selection);
   },
 
-  confirm(core: Core, editor: Editor, sel: Selection): void {
+  confirm(core: Core, sel: Selection): void {
     if (sel.kind !== "focused") return;
 
     const f = sel.focus;
 
     if (sel.target.kind === "header") {
       const nextSel = focusSelection(f, { kind: "content" }, caret0());
-      editor.setSelection(nextSel.selection);
+      core.setSelection(nextSel.selection);
       return;
     }
 
     const t = core.text(f.id);
     if (t.kind === "editable") {
-      outlineCommands.splitAt(core, editor, sel, 0, 0);
+      outlineCommands.splitAt(core, sel, 0, 0);
       return;
     }
 
-    outlineCommands.insertSibling(core, editor, sel, "after");
+    outlineCommands.insertSibling(core, sel, "after");
   },
 
   deleteBoundary(
     core: Core,
-    editor: Editor,
     sel: Selection,
     dir: "backward" | "forward",
   ): void {
@@ -458,23 +439,22 @@ export const outlineCommands = {
 
     const t = core.text(f.id);
     if (t.kind !== "editable") {
-      outlineCommands.removeItem(core, editor, sel, prefer);
+      outlineCommands.removeItem(core, sel, prefer);
       return;
     }
 
     if (t.text.length === 0) {
-      outlineCommands.removeItem(core, editor, sel, prefer);
+      outlineCommands.removeItem(core, sel, prefer);
       return;
     }
 
-    outlineCommands.joinBoundary(core, editor, sel, dir);
+    outlineCommands.joinBoundary(core, sel, dir);
   },
 } as const;
 
 type OutlineMountCtx = {
   runtime: Runtime;
   core: Core;
-  editor: Editor;
   rootId: ItemId;
   navMove: (
     sel: Selection,
@@ -504,7 +484,7 @@ function mountOutlineHeader(
   defs: readonly HeaderFieldDef[],
   onTargets: (targets: HTMLElement[]) => void,
 ): Component {
-  const { editor, core, dispatch } = mountCtx;
+  const { core, dispatch, runtime } = mountCtx;
 
   return createComponent((componentCtx) => {
     const wrap = el("div");
@@ -513,7 +493,7 @@ function mountOutlineHeader(
     wrap.append(labelHost, fieldsHost);
 
     const toContent = () => {
-      editor.setSelection(
+      core.setSelection(
         focusSelection(focus, { kind: "content" }, caret0()).selection,
       );
     };
@@ -525,7 +505,8 @@ function mountOutlineHeader(
     };
 
     const labelComp = autosizeTextField({
-      editor,
+      core,
+      host: runtime.host,
       focus,
       target: { kind: "header", index: 0 },
       registerFocus: false,
@@ -578,7 +559,8 @@ function mountOutlineHeader(
       };
 
       const fc = textField({
-        editor,
+        core,
+        host: runtime.host,
         focus,
         target: { kind: "header", index: headerIndex },
         multiline: d.multiline,
@@ -608,7 +590,7 @@ function mountOutlineHeader(
               { kind: "header", index },
               caret,
             );
-            editor.setSelection(selection);
+            core.setSelection(selection);
             return true;
           };
 
@@ -689,7 +671,7 @@ function mountOutlineChildren(
   mountCtx: OutlineMountCtx,
   focus: Focus,
 ): Component {
-  const { editor, core } = mountCtx;
+  const { core } = mountCtx;
 
   return createComponent((componentCtx) => {
     const container = el("div", "group");
@@ -716,7 +698,7 @@ function mountOutlineChildren(
       ) {
         return;
       }
-      editor.setSelection(
+      core.setSelection(
         focusSelection(focus, { kind: "content" }, caret0()).selection,
       );
       e.stopPropagation();
@@ -733,10 +715,10 @@ function mountOutlineBody(
   focus: Focus,
   contentTargetRef: ContentTargetRef,
 ): Component {
-  const { editor, core, dispatch, runtime } = mountCtx;
+  const { core, dispatch, runtime } = mountCtx;
 
   return createComponent((componentCtx) => {
-    const host = el("div");
+    const hostEl = el("div");
     const viewKind = core.get(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
@@ -744,13 +726,14 @@ function mountOutlineBody(
       if (childView) {
         ensureTabbable(childView.root);
         contentTargetRef.current = childView.root;
-        componentCtx.use(mountViewInto(editor, host, childView));
-        return host;
+        componentCtx.use(runtime.host.mountViewInto(hostEl, childView));
+        return hostEl;
       }
     }
 
     const vf = contentField({
       core,
+      host: runtime.host,
       focus,
       id: focus.id,
       registerFocus: false,
@@ -812,14 +795,14 @@ function mountOutlineBody(
       },
     });
 
-    host.replaceChildren(vf.el);
+    hostEl.replaceChildren(vf.el);
     componentCtx.use(vf);
 
     componentCtx.onCleanup(() => {
-      contentTargetRef.current = host;
+      contentTargetRef.current = hostEl;
     });
 
-    return host;
+    return hostEl;
   });
 }
 
@@ -827,7 +810,7 @@ function mountOutlineNode(
   mountCtx: OutlineMountCtx,
   spec: OutlineNodeSpec,
 ): Component {
-  const { editor, core } = mountCtx;
+  const { core, runtime } = mountCtx;
   const { focus } = spec;
 
   return createComponent((componentCtx) => {
@@ -843,7 +826,8 @@ function mountOutlineNode(
     const contentTargetRef: ContentTargetRef = { current: contentContainer };
 
     componentCtx.focusable({
-      editor,
+      core,
+      host: runtime.host,
       focus,
       elementFor: (target) =>
         target.kind === "content"
@@ -857,7 +841,7 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        const sel = editor.runtime.selection.value;
+        const sel = core.getSelection();
         return (
           sel.kind === "focused" && focusKey(sel.focus) === focusKey(focus)
         );
@@ -886,7 +870,7 @@ function mountOutlineNode(
             ? "children"
             : "body";
 
-        const sel = editor.runtime.selection.value;
+        const sel = core.getSelection();
         const labelFocused =
           sel.kind === "focused" &&
           focusKey(sel.focus) === focusKey(focus) &&
@@ -952,8 +936,7 @@ export function createOutlineView({
   runtime,
   id: rootId,
 }: ViewFactoryArgs): DomView {
-  const core = (runtime as any).core as Core;
-  const editor = core.host.editor;
+  const core = runtime.core as Core;
 
   const root = el("div", "view outline");
   const viewId = `outline:${String(rootId)}`;
@@ -964,39 +947,38 @@ export function createOutlineView({
     outlineNavMove(core, navStopsSignal.value, sel, dir, mode);
 
   const dispatch = (intent: OutlineIntent): ViewKeyResult => {
-    const sel = editor.runtime.selection.value;
+    const sel = core.getSelection();
 
     switch (intent.type) {
       case "NAV": {
         const res = navMove(sel, intent.dir, intent.mode);
-        if (res) editor.setSelection(res.selection);
+        if (res) core.setSelection(res.selection, res.effects);
         return;
       }
 
       case "CONFIRM": {
-        outlineCommands.confirm(core, editor, sel);
+        outlineCommands.confirm(core, sel);
         return;
       }
 
       case "CANCEL": {
-        setIdle(editor);
+        core.setSelection({ kind: "idle" });
         return;
       }
 
       case "INDENT": {
-        outlineCommands.changeNesting(core, editor, sel, intent.dir);
+        outlineCommands.changeNesting(core, sel, intent.dir);
         return;
       }
 
       case "DELETE_BOUNDARY": {
-        outlineCommands.deleteBoundary(core, editor, sel, intent.dir);
+        outlineCommands.deleteBoundary(core, sel, intent.dir);
         return;
       }
 
       case "SPLIT": {
         outlineCommands.splitAt(
           core,
-          editor,
           sel,
           intent.caret.start,
           intent.caret.end,
@@ -1006,7 +988,7 @@ export function createOutlineView({
 
       case "SET_DERIVED": {
         if (sel.kind !== "focused") return;
-        outlineCommands.setDerived(core, editor, sel.focus);
+        outlineCommands.setDerived(core, sel.focus);
         return;
       }
     }
@@ -1015,7 +997,6 @@ export function createOutlineView({
   const mountCtx: OutlineMountCtx = {
     runtime: runtime as Runtime,
     core,
-    editor,
     rootId,
     navMove,
     dispatch,
@@ -1049,12 +1030,12 @@ export function createOutlineView({
     },
 
     onActivate() {
-      if (editor.runtime.selection.value.kind !== "idle") return;
+      if (core.getSelection().kind !== "idle") return;
 
       const first = navStopsSignal.value[0];
       if (!first) return;
 
-      editor.setSelection(
+      core.setSelection(
         focusSelection(first, defaultTargetFor(core, first.id), caret0())
           .selection,
       );

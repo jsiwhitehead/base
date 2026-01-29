@@ -1,10 +1,13 @@
 import { DEV, devAssert, devWarn } from "./dev";
 import { type ItemId, type ViewKind, type ViewName, createCore } from "./core";
-import { installDomRuntime, mountViewInto } from "./ui/dom";
+import { createModel } from "./core/model";
+import { EditorRuntime } from "./core/runtime";
+import { createDomHost } from "./ui/host";
 import { createView } from "./views";
 
 export type App = {
   core: ReturnType<typeof createCore>;
+  host: ReturnType<typeof createDomHost>;
   rootId: ItemId;
   dispose(): void;
 };
@@ -19,45 +22,46 @@ export function createApp(opts: CreateAppOpts = {}): App {
   const rootView = opts.rootView ?? "outline";
   const demo = opts.demo ?? DEV;
 
-  const host =
+  const hostEl =
     opts.host ??
     (typeof document !== "undefined"
       ? (document.getElementById("root") as HTMLElement | null)
       : null);
 
-  devAssert(host, "Missing app root element (#root)");
+  devAssert(hostEl, "Missing app root element (#root)");
 
-  const core = createCore();
+  const model = createModel();
+  const rootId = model.createId();
+  model.setRoot(rootId);
+  model.apply(
+    model.op.transaction([model.op.create(model.createItem.group(rootId))]),
+  );
 
-  const rootId = core.unsafe.model.createId();
-  const rootItem = core.unsafe.model.createItem.group(rootId);
-  core.unsafe.model.setRoot(rootId);
-
-  const createRootOp = core.unsafe.model.op.create(rootItem);
-  const rootTxn = core.unsafe.model.op.transaction([createRootOp]);
-  core.unsafe.model.apply(rootTxn);
+  const runtime = new EditorRuntime({ kind: "idle" });
+  const core = createCore({ model, runtime });
+  const host = createDomHost({ runtime });
 
   core.commit((t) => {
     t.setView(rootId, rootView as ViewKind);
   });
 
-  const view = createView(
-    { core, editor: core.host.editor },
-    rootView,
-    rootId,
-    { scopeId: rootId, id: rootId },
-  );
+  const view = createView({ core, host }, rootView, rootId, {
+    scopeId: rootId,
+    id: rootId,
+  });
   devAssert(view, `No view factory for rootView='${rootView}'`);
 
-  const uninstallListeners = installDomRuntime(core.host.runtime);
-  const unmount = mountViewInto(core.host.editor, host!, view!);
+  const uninstallListeners = host.installGlobalListeners(window);
+  const unmount = host.mountViewInto(hostEl!, view);
 
   const app: App = {
     core,
+    host,
     rootId,
     dispose() {
       uninstallListeners();
       unmount();
+      host.dispose();
       core.dispose();
     },
   };

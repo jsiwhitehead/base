@@ -1,12 +1,18 @@
+import type {
+  Value,
+  Evaluator,
+  Interpreter,
+  EvalEnv,
+  LabeledValue,
+} from "./compute";
 import {
-  type Value,
+  createEvaluator,
   isBlankValue,
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
 } from "./compute";
-import { createEvaluator, type Evaluator, type Interpreter } from "./compute";
 import { interpretExpr } from "./lang";
 import {
   createModel,
@@ -28,7 +34,6 @@ import {
   type EditorEffect,
   type EditorRuntime,
   type Selection,
-  type NavOut,
 } from "./runtime";
 
 export type StoredKind = "blank" | "scalar" | "group" | "derived" | "lens";
@@ -124,31 +129,17 @@ export type Core = {
   locate(id: ItemId): Locate;
 
   commit(run: (t: Tx) => void, hints?: CommitHints): ApplyResult;
-
   edit: Tx;
 
   getSelection(): Selection;
   setSelection(next: Selection, effects?: EditorEffect[]): void;
-
-  host: {
-    editor: Editor;
-    runtime: EditorRuntime;
-    setNavOutHandler(
-      fn: ((fromViewId: string, navOut: NavOut) => void) | null,
-    ): void;
-  };
-
-  unsafe: {
-    model: Model;
-    evaluator: Evaluator;
-  };
 };
 
 export function createCore(
   opts: {
     model?: Model;
     interpreter?: Interpreter;
-    editor?: { runtime?: EditorRuntime };
+    runtime?: EditorRuntime;
   } = {},
 ): Core {
   const model = opts.model ?? createModel();
@@ -156,7 +147,7 @@ export function createCore(
     model,
     interpret: opts.interpreter ?? interpretExpr,
   });
-  const editor = createEditor(model, { runtime: opts.editor?.runtime });
+  const editor = createEditor(model, { runtime: opts.runtime });
 
   const has = (id: ItemId): boolean => model.hasItem(id);
 
@@ -393,19 +384,6 @@ export function createCore(
     setSelection(next, effects) {
       editor.setSelection(next, effects ?? []);
     },
-
-    host: {
-      editor,
-      runtime: editor.runtime,
-      setNavOutHandler(fn) {
-        editor.runtime.setNavOutHandler(fn);
-      },
-    },
-
-    unsafe: {
-      model,
-      evaluator,
-    },
   };
 }
 
@@ -419,6 +397,8 @@ export type {
   Scalar,
   ItemId,
   Value,
+  LabeledValue,
+  EvalEnv,
 };
 
 export {
@@ -432,15 +412,12 @@ export {
 export type {
   Selection,
   EditorEffect,
-  Editor,
-  NavDir,
-  NavMode,
-  ViewKeyResult,
   CommitHints,
   Focus,
   FocusTarget,
   Caret,
-  View,
+  Anchor,
+  EditorRuntime,
 } from "./runtime";
 
 export {
@@ -448,6 +425,12 @@ export {
   caretAt,
   caretRange,
   focusSelection,
-  setIdle,
+  ensureSelection,
   repairSelection,
+  withSelection,
+  createEditor,
+  safeIssue,
+  tryCmd,
+  applyCmd,
+  setIdle,
 } from "./runtime";

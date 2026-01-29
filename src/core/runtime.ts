@@ -53,50 +53,7 @@ export function withSelection(proposal: NextSelection): CommitHints {
       };
 }
 
-export type Editor = {
-  model: Model;
-  runtime: EditorRuntime;
-  getSelection(): Selection;
-  setSelection(next: Selection, effects?: EditorEffect[]): void;
-  commit(txn: Transaction, hints?: CommitHints): ApplyResult;
-};
-
-export type ViewId = string;
-
-export type NavDir = "left" | "right" | "up" | "down";
-export type NavMode = "step" | "jump";
-export type NavOut = { dir: NavDir; mode: NavMode };
-export type ViewKeyResult = void | { navOut: NavOut };
-
-export type View = {
-  id: ViewId;
-  onKeyDown?: (e: unknown) => ViewKeyResult;
-  onActivate?(): void;
-  onDeactivate?(): void;
-  normalizeTarget?: (
-    ctx: { model: Model },
-    focus: Focus,
-    target: FocusTarget,
-  ) => FocusTarget;
-  dispose(): void;
-};
-
-export type BindingHandle = unknown;
-
-export type Binding = {
-  focus: Focus;
-  elementFor(target: FocusTarget): BindingHandle | null;
-  setCaret?: (pos: number) => void;
-  getTextLength?: () => number;
-};
-
 export type EffectsApplier = (sel: Selection, effects: EditorEffect[]) => void;
-
-const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
-
-function fallbackNormalizeTarget(target: FocusTarget): FocusTarget {
-  return target.kind === "header" ? { kind: "content" } : target;
-}
 
 function normalizeEffectsForSelection(
   sel: Selection,
@@ -124,14 +81,6 @@ export class EditorRuntime {
 
   private effectsApplier: EffectsApplier;
 
-  private bindings = new Map<string, Binding>();
-
-  private views = new Map<ViewId, View>();
-  private activeViewId: ViewId | null = null;
-
-  private navOutHandler: ((fromViewId: ViewId, navOut: NavOut) => void) | null =
-    null;
-
   constructor(
     initialSelection: Selection = { kind: "idle" },
     effectsApplier: EffectsApplier = () => {},
@@ -142,71 +91,6 @@ export class EditorRuntime {
 
   setEffectsApplier(applier: EffectsApplier): void {
     this.effectsApplier = applier;
-  }
-
-  getActiveViewId(): ViewId | null {
-    return this.activeViewId;
-  }
-
-  getActiveView(): View | null {
-    const id = this.activeViewId;
-    return id ? (this.views.get(id) ?? null) : null;
-  }
-
-  setNavOutHandler(
-    fn: ((fromViewId: ViewId, navOut: NavOut) => void) | null,
-  ): void {
-    this.navOutHandler = fn;
-  }
-
-  registerView(view: View): void {
-    this.views.set(view.id, view);
-  }
-
-  unregisterView(viewId: ViewId): void {
-    if (this.activeViewId === viewId) this.setActiveView(null);
-    this.views.delete(viewId);
-  }
-
-  setActiveView(viewId: ViewId | null): void {
-    if (viewId === this.activeViewId) return;
-
-    const prevId = this.activeViewId;
-    const prev = prevId ? this.views.get(prevId) : null;
-    const next = viewId ? this.views.get(viewId) : null;
-
-    prev?.onDeactivate?.();
-    this.activeViewId = viewId;
-    next?.onActivate?.();
-  }
-
-  dispatchKeyDown(e: unknown): void {
-    const viewId = this.activeViewId;
-    if (!viewId) return;
-
-    const res = this.views.get(viewId)?.onKeyDown?.(e);
-    if (res && "navOut" in res && res.navOut) {
-      this.navOutHandler?.(viewId, res.navOut);
-    }
-  }
-
-  registerBinding(binding: Binding): void {
-    const k = keyOf(binding.focus);
-    this.bindings.set(k, binding);
-  }
-
-  unregisterBinding(focus: Focus): void {
-    const k = keyOf(focus);
-    this.bindings.delete(k);
-
-    const sel = this.selection.peek();
-    if (sel.kind !== "focused" || keyOf(sel.focus) !== k) return;
-
-    this.scheduleEffects(sel, [{ type: "CLEAR_FOCUS" }]);
-  }
-
-  getBinding(focus: Focus): Binding | null {
-    return this.bindings.get(keyOf(focus)) ?? null;
   }
 
   scheduleEffects(sel: Selection, effects: EditorEffect[]): void {
@@ -232,6 +116,14 @@ export class EditorRuntime {
   }
 }
 
+export type Editor = {
+  model: Model;
+  runtime: EditorRuntime;
+  getSelection(): Selection;
+  setSelection(next: Selection, effects?: EditorEffect[]): void;
+  commit(txn: Transaction, hints?: CommitHints): ApplyResult;
+};
+
 export function focusSelection(
   focus: Focus,
   target: FocusTarget,
@@ -253,14 +145,8 @@ export function repairSelection(editor: Editor, sel: Selection): Selection {
 
   try {
     model.peekItem(sel.focus.id);
-
-    const active = editor.runtime.getActiveView();
-    const normalized =
-      active?.normalizeTarget?.({ model }, sel.focus, sel.target) ??
-      fallbackNormalizeTarget(sel.target);
-
-    if (normalized === sel.target) return sel;
-    return { ...sel, target: normalized };
+    // Selection is valid, return as-is
+    return sel;
   } catch {
     try {
       const rootId = model.rootId();

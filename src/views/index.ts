@@ -1,24 +1,11 @@
-import type {
-  Core,
-  ItemId,
-  ViewKind,
-  ViewName,
-  Editor,
-  Focus,
-  View,
-} from "../core";
-import {
-  type Component,
-  el,
-  ensureTabbable,
-  mountViewInto,
-  contentField,
-} from "../ui/dom";
+import type { Core, ItemId, ViewKind, ViewName, Focus } from "../core";
+import type { DomHost, View } from "../ui/host";
+import { type Component, el, ensureTabbable, contentField } from "../ui/dom";
 import { createOutlineView } from "./outline";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type Runtime = { core: Core; editor: Editor };
+export type Runtime = { core: Core; host: DomHost };
 
 export type DomView = View & { root: HTMLElement };
 
@@ -61,12 +48,13 @@ export function mountItemBody(
     commitText?: (text: string) => void;
   } = {},
 ): Component {
-  const { core, editor } = runtime;
+  const { core, host } = runtime;
   const viewKind = core.get(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return contentField({
       core,
+      host,
       focus,
       id,
       textKeys: opts.textKeys,
@@ -79,6 +67,7 @@ export function mountItemBody(
   if (!child) {
     return contentField({
       core,
+      host,
       focus,
       id,
       textKeys: opts.textKeys,
@@ -87,19 +76,19 @@ export function mountItemBody(
     });
   }
 
-  const host = el("div") as HTMLElement & { __unmount?: () => void };
-  ensureTabbable(host);
+  const hostEl = el("div") as HTMLElement & { __unmount?: () => void };
+  ensureTabbable(hostEl);
   ensureTabbable(child.root);
 
-  host.__unmount = mountViewInto(editor, host, child);
-  host.replaceChildren(child.root);
+  hostEl.__unmount = host.mountViewInto(hostEl, child);
+  hostEl.replaceChildren(child.root);
 
   return {
-    el: host,
+    el: hostEl,
     dispose() {
-      host.__unmount?.();
-      host.__unmount = undefined;
-      host.replaceChildren();
+      hostEl.__unmount?.();
+      hostEl.__unmount = undefined;
+      hostEl.replaceChildren();
     },
   };
 }

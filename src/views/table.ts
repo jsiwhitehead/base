@@ -1,19 +1,17 @@
 import { computed } from "@preact/signals-core";
-import type { Core, ItemId, ViewKind } from "../core";
 import {
+  type Core,
+  type ItemId,
+  type ViewKind,
   type Caret,
   caret0,
-  type Editor,
   type EditorEffect,
   type Focus,
-  type NavDir,
-  type NavMode,
   type Selection,
-  type ViewKeyResult,
   focusSelection,
-  setIdle,
   isItemGroupValue,
 } from "../core";
+import { type NavDir, type NavMode, type ViewKeyResult } from "../ui/host";
 import {
   type Component,
   defaultTextNav,
@@ -23,12 +21,16 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
-  mountViewInto,
   textField,
   contentField,
 } from "../ui/dom";
-import type { DomView, Runtime, ViewFactoryArgs } from "./index";
-import { createView, viewWantsChildView } from "./index";
+import {
+  type DomView,
+  type Runtime,
+  type ViewFactoryArgs,
+  createView,
+  viewWantsChildView,
+} from "./index";
 
 type NavResult = { selection: Selection; effects: EditorEffect[] };
 
@@ -198,12 +200,7 @@ export const tableCommands = {
     core.edit.setText(cellId, raw);
   },
 
-  addRowAfter(
-    core: Core,
-    editor: Editor,
-    tableId: ItemId,
-    afterRowId: ItemId | null,
-  ): void {
+  addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {
     const rows = rowIds(core, tableId);
     const afterIdx =
       afterRowId == null ? rows.length - 1 : rows.indexOf(afterRowId);
@@ -215,10 +212,10 @@ export const tableCommands = {
     });
 
     const next = focusRowLabel(tableId, rowId);
-    editor.setSelection(next.selection);
+    core.setSelection(next.selection, next.effects);
   },
 
-  removeRow(core: Core, editor: Editor, tableId: ItemId, rowId: ItemId): void {
+  removeRow(core: Core, tableId: ItemId, rowId: ItemId): void {
     const rows = rowIds(core, tableId);
     const idx = rows.indexOf(rowId);
     const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
@@ -230,7 +227,7 @@ export const tableCommands = {
         ? focusRowLabel(tableId, nextRow)
         : { selection: { kind: "idle" }, effects: [] };
 
-    editor.setSelection(next.selection);
+    core.setSelection(next.selection, next.effects);
   },
 
   addColumn(core: Core, tableId: ItemId, label: string): void {
@@ -267,21 +264,21 @@ export const tableCommands = {
     });
   },
 
-  confirm(core: Core, editor: Editor, tableId: ItemId, sel: Selection): void {
+  confirm(core: Core, tableId: ItemId, sel: Selection): void {
     if (!isFocused(sel)) return;
 
     if (sel.target.kind === "header") {
-      tableCommands.addRowAfter(core, editor, tableId, sel.focus.id);
+      tableCommands.addRowAfter(core, tableId, sel.focus.id);
       return;
     }
 
     const move = tableNavMove(core, tableId, sel, "down", "step");
     if (move) {
-      editor.setSelection(move.selection);
+      core.setSelection(move.selection, move.effects);
       return;
     }
 
-    tableCommands.addRowAfter(core, editor, tableId, sel.focus.scopeId);
+    tableCommands.addRowAfter(core, tableId, sel.focus.scopeId);
   },
 } as const;
 
@@ -293,7 +290,6 @@ type TableIntent =
 type TableMountCtx = {
   runtime: Runtime;
   core: Core;
-  editor: Editor;
   tableId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   columnsSignal: { value: string[] };
@@ -346,13 +342,12 @@ function mountTableHeader(mountCtx: TableMountCtx): Component {
 function mountTableCellContent(cellCtx: {
   runtime: Runtime;
   core: Core;
-  editor: Editor;
   tableId: ItemId;
   rowId: ItemId;
   cellId: ItemId;
   dispatch: (intent: TableIntent) => ViewKeyResult;
 }): Component {
-  const { runtime, core, editor, rowId, cellId, dispatch } = cellCtx;
+  const { runtime, core, rowId, cellId, dispatch } = cellCtx;
   const focus: Focus = { scopeId: rowId, id: cellId };
   const viewKind = core.get(cellId).view as ViewKind;
 
@@ -360,18 +355,19 @@ function mountTableCellContent(cellCtx: {
     const child = createView(runtime, viewKind, cellId, focus);
     if (child) {
       return createComponent((componentCtx) => {
-        const host = el("div");
-        ensureTabbable(host);
+        const hostEl = el("div");
+        ensureTabbable(hostEl);
 
         componentCtx.focusable({
-          editor,
+          core,
+          host: runtime.host,
           focus,
           elementFor: () => child.root,
           targets: [
             {
               target: { kind: "content" },
               getEl: () => child.root,
-              pointerHost: () => host,
+              pointerHost: () => hostEl,
               caret: "zero",
               stopPropagation: true,
             },
@@ -379,14 +375,15 @@ function mountTableCellContent(cellCtx: {
         });
 
         ensureTabbable(child.root);
-        componentCtx.use(mountViewInto(editor, host, child));
-        return host;
+        componentCtx.use(runtime.host.mountViewInto(hostEl, child));
+        return hostEl;
       });
     }
   }
 
   return contentField({
     core,
+    host: runtime.host,
     focus,
     id: cellId,
     commitText: (text) => tableCommands.setText(core, cellId, text),
@@ -406,9 +403,9 @@ function mountTableCell(
   col: string,
 ): Component {
   return createComponent((componentCtx) => {
-    const host = el("div", "item cell");
+    const hostEl = el("div", "item cell");
     const inner = el("div");
-    host.append(inner);
+    hostEl.append(inner);
 
     let cur: Component | null = null;
     let curCellId: ItemId | null = null;
@@ -427,7 +424,6 @@ function mountTableCell(
       cur = mountTableCellContent({
         runtime: mountCtx.runtime,
         core: mountCtx.core,
-        editor: mountCtx.editor,
         tableId: mountCtx.tableId,
         rowId,
         cellId,
@@ -448,18 +444,18 @@ function mountTableCell(
       },
     );
 
-    componentCtx.on(host, "pointerdown", (e: PointerEvent) => {
+    componentCtx.on(hostEl, "pointerdown", (e: PointerEvent) => {
       const nextCellId = getCellId();
       const res =
         nextCellId == null
           ? focusRowLabel(mountCtx.tableId, rowId)
           : focusCell(rowId, nextCellId);
 
-      mountCtx.editor.setSelection(res.selection);
+      mountCtx.core.setSelection(res.selection, res.effects);
       e.stopPropagation();
     });
 
-    return host;
+    return hostEl;
   });
 }
 
@@ -476,7 +472,8 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
     const labelFocus: Focus = { scopeId: mountCtx.tableId, id: rowId };
 
     const labelComp = textField({
-      editor: mountCtx.editor,
+      core: mountCtx.core,
+      host: mountCtx.runtime.host,
       focus: labelFocus,
       target: { kind: "header", index: 0 },
       multiline: false,
@@ -485,7 +482,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       onCommitEvents: ["input", "blur"],
       commit: (text) => tableCommands.setLabel(mountCtx.core, rowId, text),
       getState: () => {
-        const sel = mountCtx.editor.runtime.selection.value;
+        const sel = mountCtx.core.getSelection();
         const editing =
           isRowLabelSelection(sel, mountCtx.tableId) && sel.focus.id === rowId;
         const label = mountCtx.core.get(rowId).label ?? "";
@@ -503,7 +500,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
             if (!cid) return;
 
             const res = focusCell(rowId, cid);
-            mountCtx.editor.setSelection(res.selection);
+            mountCtx.core.setSelection(res.selection, res.effects);
           },
           onEscape: () => mountCtx.dispatch({ type: "CANCEL" }),
         }),
@@ -524,7 +521,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
     componentCtx.on(labelCell, "pointerdown", (e: PointerEvent) => {
       const res = focusRowLabel(mountCtx.tableId, rowId);
-      mountCtx.editor.setSelection(res.selection);
+      mountCtx.core.setSelection(res.selection, res.effects);
       e.stopPropagation();
     });
 
@@ -554,8 +551,7 @@ export function createTableView({
   runtime,
   id: tableId,
 }: ViewFactoryArgs): DomView {
-  const core = (runtime as any).core as Core;
-  const editor = core.host.editor;
+  const core = runtime.core as Core;
 
   const root = el("div", "view table");
   root.tabIndex = 0;
@@ -570,20 +566,20 @@ export function createTableView({
     tableNavMove(core, tableId, sel, dir, mode);
 
   const dispatch = (intent: TableIntent): ViewKeyResult => {
-    const sel = editor.runtime.selection.value;
+    const sel = core.getSelection();
 
     switch (intent.type) {
       case "NAV": {
         const res = navMove(sel, intent.dir, intent.mode);
-        if (res) editor.setSelection(res.selection);
+        if (res) core.setSelection(res.selection, res.effects);
         return;
       }
       case "CONFIRM": {
-        tableCommands.confirm(core, editor, tableId, sel);
+        tableCommands.confirm(core, tableId, sel);
         return;
       }
       case "CANCEL": {
-        setIdle(editor);
+        core.setSelection({ kind: "idle" });
         return;
       }
     }
@@ -592,7 +588,6 @@ export function createTableView({
   const mountCtx: TableMountCtx = {
     runtime: runtime as Runtime,
     core,
-    editor,
     tableId,
     navMove,
     columnsSignal,
@@ -617,7 +612,7 @@ export function createTableView({
     },
 
     onActivate() {
-      const sel = editor.runtime.selection.value;
+      const sel = core.getSelection();
       if (sel.kind !== "idle") return;
 
       const rows = core.children(tableId);
@@ -625,7 +620,7 @@ export function createTableView({
 
       const firstRowId = rows[0]!;
       const res = focusRowLabel(tableId, firstRowId);
-      editor.setSelection(res.selection);
+      core.setSelection(res.selection, res.effects);
     },
 
     onKeyDown(e): ViewKeyResult {

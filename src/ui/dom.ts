@@ -1,20 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Core, ItemId } from "../core";
-import type {
-  Anchor,
-  Binding,
-  Caret,
-  Editor,
-  EditorEffect,
-  EditorRuntime,
-  Focus,
-  FocusTarget,
-  NavDir,
-  NavMode,
-  View,
-  ViewId,
-  Value,
-} from "../core";
+import type { Caret, Focus, FocusTarget, Value } from "../core";
 import {
   caret0,
   focusSelection,
@@ -24,6 +10,7 @@ import {
   isScalarValue,
   isValueGroupValue,
 } from "../core";
+import type { DomHost, NavDir, NavMode, Binding } from "./host";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -332,7 +319,8 @@ export type Ctx = {
   ): { update(ids: readonly Id[]): void };
 
   focusable(opts: {
-    editor: Editor;
+    core: Core;
+    host: DomHost;
     focus: Focus;
     elementFor: (target: FocusTarget) => HTMLElement | null;
     targets?: readonly FocusableTargetSpec[];
@@ -342,7 +330,7 @@ export type Ctx = {
 export function installFocusableTargets(
   ctx: Ctx,
   opts: {
-    editor: Editor;
+    core: Core;
     focus: Focus;
     targets: readonly FocusableTargetSpec[];
   },
@@ -361,7 +349,7 @@ export function installFocusableTargets(
           : caret0();
 
       const out = focusSelection(opts.focus, t.target, c);
-      opts.editor.setSelection(out.selection);
+      opts.core.setSelection(out.selection);
 
       if (t.stopPropagation ?? true) e.stopPropagation();
     });
@@ -440,8 +428,6 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
     },
 
     focusable(opts) {
-      const runtime = opts.editor.runtime;
-
       const binding: Binding = {
         focus: opts.focus,
         elementFor: (t: FocusTarget) => opts.elementFor(t),
@@ -459,11 +445,11 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
         },
       };
 
-      runtime.registerBinding(binding);
-      bag.add(() => runtime.unregisterBinding(opts.focus));
+      opts.host.registerBinding(binding);
+      bag.add(() => opts.host.unregisterBinding(opts.focus));
 
       installFocusableTargets(ctx, {
-        editor: opts.editor,
+        core: opts.core,
         focus: opts.focus,
         targets: opts.targets ?? [],
       });
@@ -478,160 +464,6 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       bag.run();
       el0.replaceChildren();
     },
-  };
-}
-
-type DomRuntimeState = {
-  viewRoots: WeakMap<HTMLElement, ViewId>;
-};
-
-const DOM_RUNTIME_STATE = new WeakMap<EditorRuntime, DomRuntimeState>();
-
-function domState(runtime: EditorRuntime): DomRuntimeState {
-  let s = DOM_RUNTIME_STATE.get(runtime);
-  if (!s) {
-    s = { viewRoots: new WeakMap<HTMLElement, ViewId>() };
-    DOM_RUNTIME_STATE.set(runtime, s);
-  }
-  return s;
-}
-
-function isTextInput(
-  el: HTMLElement,
-): el is HTMLInputElement | HTMLTextAreaElement {
-  return (
-    (el instanceof HTMLInputElement && el.type === "text") ||
-    el instanceof HTMLTextAreaElement
-  );
-}
-
-function computeAnchoredPos(
-  text: string,
-  column: number,
-  anchor: Anchor,
-): number {
-  const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
-  if (nl === -1) return clamp(column, 0, text.length);
-  const lineStart = anchor === "top" ? 0 : nl + 1;
-  return lineStart + clamp(column, 0, text.length - lineStart);
-}
-
-function shouldBypassGlobalKeydown(): boolean {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return false;
-  if (active.isContentEditable) return true;
-  return (
-    active instanceof HTMLTextAreaElement ||
-    (active instanceof HTMLInputElement && active.type === "text")
-  );
-}
-
-function viewAtTarget(
-  runtime: EditorRuntime,
-  target: EventTarget | null,
-): ViewId | null {
-  const { viewRoots } = domState(runtime);
-  for (
-    let el0 = target instanceof HTMLElement ? target : null;
-    el0;
-    el0 = el0.parentElement
-  ) {
-    const hit = viewRoots.get(el0);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function updateDOMFocus(
-  runtime: EditorRuntime,
-  sel: any,
-  anchor?: Anchor,
-): void {
-  if (sel.kind !== "focused") return;
-
-  const binding = runtime.getBinding(sel.focus);
-  const targetEl = binding?.elementFor(sel.target) as HTMLElement | null;
-  if (!binding || !targetEl) return;
-
-  const wasFocused = document.activeElement === targetEl;
-  if (!wasFocused) targetEl.focus({ preventScroll: true });
-
-  const hitView = viewAtTarget(runtime, targetEl);
-  if (hitView) runtime.setActiveView(hitView);
-
-  const caret = sel.caret as Caret | undefined;
-  const canSetCaret = !!caret && !!binding.setCaret && !!binding.getTextLength;
-  const shouldUpdateCaret = canSetCaret && (!wasFocused || anchor);
-
-  if (shouldUpdateCaret) {
-    const len = binding.getTextLength!();
-    binding.setCaret!(clamp(caret!.end, 0, len));
-    return;
-  }
-
-  if (!isTextInput(targetEl) || wasFocused) return;
-
-  const pos = anchor
-    ? computeAnchoredPos(targetEl.value, targetEl.value.length, anchor)
-    : targetEl.value.length;
-
-  targetEl.setSelectionRange(pos, pos);
-}
-
-function applyDomEffects(
-  runtime: EditorRuntime,
-  sel: any,
-  effects: EditorEffect[],
-): void {
-  for (const eff of effects) {
-    if (eff.type === "FOCUS") {
-      updateDOMFocus(runtime, sel, eff.anchor);
-    } else {
-      const active = document.activeElement;
-      if (active instanceof HTMLElement) active.blur();
-    }
-  }
-}
-
-export function installDomRuntime(runtime: EditorRuntime): () => void {
-  runtime.setEffectsApplier((sel, effects) =>
-    applyDomEffects(runtime, sel as any, effects),
-  );
-
-  const onPointerDown = (e: PointerEvent) =>
-    runtime.setActiveView(viewAtTarget(runtime, e.target));
-
-  const pointerOptions = { capture: true } as const;
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    const viewId = runtime.getActiveViewId();
-    if (!viewId || shouldBypassGlobalKeydown()) return;
-    runtime.dispatchKeyDown(e);
-  };
-
-  window.addEventListener("pointerdown", onPointerDown, pointerOptions);
-  window.addEventListener("keydown", onKeyDown);
-
-  return () => {
-    window.removeEventListener("pointerdown", onPointerDown, pointerOptions);
-    window.removeEventListener("keydown", onKeyDown);
-  };
-}
-
-export function mountViewInto(
-  editor: Editor,
-  host: HTMLElement,
-  view: View & { root: HTMLElement },
-): () => void {
-  const runtime = editor.runtime;
-  domState(runtime).viewRoots.set(view.root, view.id);
-
-  runtime.registerView(view);
-  host.replaceChildren(view.root);
-  return () => {
-    runtime.unregisterView(view.id);
-    view.dispose();
-    host.replaceChildren();
   };
 }
 
@@ -694,7 +526,8 @@ export type TextFieldState = {
 };
 
 export type TextFieldOpts = {
-  editor: Editor;
+  core: Core;
+  host: DomHost;
   focus: Focus;
   target: FocusTarget;
   multiline: boolean;
@@ -725,14 +558,15 @@ export function textField(opts: TextFieldOpts): InputComponent {
 
     if (opts.registerFocus !== false) {
       ctx.focusable({
-        editor: opts.editor,
+        core: opts.core,
+        host: opts.host,
         focus: opts.focus,
         elementFor: () => inp,
         targets,
       });
     } else {
       installFocusableTargets(ctx, {
-        editor: opts.editor,
+        core: opts.core,
         focus: opts.focus,
         targets,
       });
@@ -797,14 +631,15 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): InputComponent {
 
     if (opts.registerFocus !== false) {
       ctx.focusable({
-        editor: opts.editor,
+        core: opts.core,
+        host: opts.host,
         focus: opts.focus,
         elementFor: () => inp,
         targets,
       });
     } else {
       installFocusableTargets(ctx, {
-        editor: opts.editor,
+        core: opts.core,
         focus: opts.focus,
         targets,
       });
@@ -863,6 +698,7 @@ export function renderLabeledValueReadonly(
 
 export type ContentFieldOpts = {
   core: Core;
+  host: DomHost;
   focus: Focus;
   id: ItemId;
   className?: string;
@@ -898,17 +734,16 @@ function readonlyItemText(core: Core, id: ItemId): Component {
 
 export function contentField(opts: ContentFieldOpts): Component {
   return createComponent((ctx) => {
-    const host = el("div");
-    if (opts.className) host.className = opts.className;
+    const hostEl = el("div");
+    if (opts.className) hostEl.className = opts.className;
 
     const core = opts.core;
-    const editor = core.host.editor;
 
-    const slot = ctx.slot(host);
+    const slot = ctx.slot(hostEl);
 
     const register = opts.registerFocus !== false;
     const setFocusEl = (comp: Component | null) => {
-      const next = comp ? focusElOf(comp) : host;
+      const next = comp ? focusElOf(comp) : hostEl;
       if (opts.focusElRef) opts.focusElRef.current = next;
     };
     setFocusEl(null);
@@ -926,14 +761,15 @@ export function contentField(opts: ContentFieldOpts): Component {
 
       if (register) {
         ctx.focusable({
-          editor,
+          core,
+          host: opts.host,
           focus: opts.focus,
           elementFor: () => wrap,
           targets,
         });
       } else {
         installFocusableTargets(ctx, {
-          editor,
+          core,
           focus: opts.focus,
           targets,
         });
@@ -943,7 +779,8 @@ export function contentField(opts: ContentFieldOpts): Component {
     const mountText = (): Component => {
       const { focus, id } = opts;
       return textField({
-        editor,
+        core,
+        host: opts.host,
         focus,
         target: { kind: "content" },
         multiline: true,
@@ -1028,7 +865,7 @@ export function contentField(opts: ContentFieldOpts): Component {
     ctx.watch(
       () => core.value(opts.id),
       (v) => {
-        host.classList.toggle("issue", isIssueValue(v));
+        hostEl.classList.toggle("issue", isIssueValue(v));
 
         const t = core.text(opts.id);
         const nextKind = isItemGroupValue(v)
@@ -1057,9 +894,9 @@ export function contentField(opts: ContentFieldOpts): Component {
     );
 
     ctx.onCleanup(() => {
-      if (opts.focusElRef) opts.focusElRef.current = host;
+      if (opts.focusElRef) opts.focusElRef.current = hostEl;
     });
 
-    return host;
+    return hostEl;
   });
 }
