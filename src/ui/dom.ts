@@ -6,7 +6,7 @@ import {
   isBlankContent,
   isScalarContent,
   canEditTextContent,
-} from "./store";
+} from "../core/store";
 import {
   type Focus,
   type FocusTarget,
@@ -22,7 +22,7 @@ import {
   type EditorEffect,
   focusSelection,
   EditorRuntime,
-} from "./editor";
+} from "../core/editor";
 import {
   type Value,
   isBlankValue,
@@ -31,7 +31,7 @@ import {
   isItemGroupValue,
   isValueGroupValue,
   type Evaluator,
-} from "./eval";
+} from "../core/eval";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 

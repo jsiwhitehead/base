@@ -1,13 +1,13 @@
-import type { ItemId, ViewName, ViewKind } from "../store";
-import type { Evaluator } from "../eval";
-import type { Focus, Editor, View } from "../editor";
+import type { ItemId, ViewName, ViewKind } from "../core/store";
+import type { Evaluator } from "../core/eval";
+import type { Focus, Editor, View } from "../core/editor";
 import {
   type Component,
   el,
   ensureTabbable,
   mountViewInto,
   contentField,
-} from "../dom";
+} from "../ui/dom";
 import { createTreeView } from "./tree";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";

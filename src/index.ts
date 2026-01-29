@@ -4,11 +4,11 @@ import {
   type ViewName,
   type ViewKind,
   createStore,
-} from "./store";
-import { createEvaluator } from "./eval";
-import { interpretExpr } from "./expr";
-import { createEditor } from "./editor";
-import { mountViewInto, installDomRuntime } from "./dom";
+} from "./core/store";
+import { createEvaluator } from "./core/eval";
+import { interpretExpr } from "./core/expr";
+import { createEditor } from "./core/editor";
+import { mountViewInto, installDomRuntime } from "./ui/dom";
 import { createView } from "./views";
 
 export type App = {

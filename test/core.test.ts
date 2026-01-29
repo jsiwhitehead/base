@@ -1,7 +1,11 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
-import { createStore, type ItemId, type SnapshotContent } from "../src/store";
+import {
+  createStore,
+  type ItemId,
+  type SnapshotContent,
+} from "../src/core/store";
 import {
   createEvaluator,
   V,
@@ -11,10 +15,14 @@ import {
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
-} from "../src/eval";
-import { interpretExpr } from "../src/expr";
-import { createEditor, repairSelection, type Selection } from "../src/editor";
-import { installDomRuntime } from "../src/dom";
+} from "../src/core/eval";
+import { interpretExpr } from "../src/core/expr";
+import {
+  createEditor,
+  repairSelection,
+  type Selection,
+} from "../src/core/editor";
+import { installDomRuntime } from "../src/ui/dom";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
 import { createTreeView } from "../src/views/tree";

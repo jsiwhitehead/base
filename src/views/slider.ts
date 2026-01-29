@@ -3,8 +3,8 @@ import {
   type Scalar,
   type StoredContentSettable,
   type Transaction,
-} from "../store";
-import { isScalarValue, type Evaluator } from "../eval";
+} from "../core/store";
+import { isScalarValue, type Evaluator } from "../core/eval";
 import {
   type Focus,
   caret0,
@@ -16,8 +16,14 @@ import {
   tryCmd,
   applyCmd,
   setIdle,
-} from "../editor";
-import { type Component, el, clamp, stopEvent, createComponent } from "../dom";
+} from "../core/editor";
+import {
+  type Component,
+  el,
+  clamp,
+  stopEvent,
+  createComponent,
+} from "../ui/dom";
 import type { DomView, ViewFactoryArgs } from "./index";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };

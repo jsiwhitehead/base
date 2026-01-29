@@ -8,13 +8,13 @@ import {
   isDerivedContent,
   isLensContent,
   canEditTextContent,
-} from "../store";
+} from "../core/store";
 import {
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
   type Evaluator,
-} from "../eval";
+} from "../core/eval";
 import {
   type Focus,
   type FocusTarget,
@@ -33,7 +33,7 @@ import {
   tryCmd,
   applyCmd,
   setIdle,
-} from "../editor";
+} from "../core/editor";
 import {
   type Component,
   defaultTextNav,
@@ -50,7 +50,7 @@ import {
   textField,
   autosizeTextField,
   contentField,
-} from "../dom";
+} from "../ui/dom";
 import type { DomView, Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
 
@@ -1084,7 +1084,10 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
   });
 }
 
-export function createTreeView({ runtime, id: rootId }: ViewFactoryArgs): DomView {
+export function createTreeView({
+  runtime,
+  id: rootId,
+}: ViewFactoryArgs): DomView {
   const { editor, evaluator } = runtime;
   const store = editor.store;
 

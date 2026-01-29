@@ -6,7 +6,7 @@ import {
   type Signal,
 } from "@preact/signals-core";
 
-import { DEV, devAssert } from "./dev";
+import { DEV, devAssert } from "../dev";
 
 export type ItemId = number;
 export type Scalar = true | number | string;

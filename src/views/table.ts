@@ -7,8 +7,8 @@ import {
   type Store,
   isGroupContent,
   canEditTextContent,
-} from "../store";
-import { isItemGroupValue, type Evaluator } from "../eval";
+} from "../core/store";
+import { isItemGroupValue, type Evaluator } from "../core/eval";
 import {
   type Focus,
   type Caret,
@@ -25,7 +25,7 @@ import {
   tryCmd,
   applyCmd,
   setIdle,
-} from "../editor";
+} from "../core/editor";
 import {
   type Component,
   defaultTextNav,
@@ -39,7 +39,7 @@ import {
   parseScalar,
   textField,
   contentField,
-} from "../dom";
+} from "../ui/dom";
 import type { DomView, Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
 
