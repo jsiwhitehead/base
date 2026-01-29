@@ -1,5 +1,5 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { ItemId, Transaction, ApplyResult, Store } from "./store";
+import type { ItemId, Transaction, ApplyResult, Model } from "./model";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
 
@@ -28,7 +28,7 @@ export type EditorEffect =
 
 export type CommitHints = {
   propose?: (ctx: {
-    store: Store;
+    model: Model;
     prevSelection: Selection;
     result: ApplyResult;
   }) => { selection?: Selection; effects?: EditorEffect[] };
@@ -37,7 +37,7 @@ export type CommitHints = {
 
 export type NextSelection =
   | { selection: Selection; effects?: EditorEffect[] }
-  | ((ctx: { store: Store; prevSelection: Selection; result: ApplyResult }) => {
+  | ((ctx: { model: Model; prevSelection: Selection; result: ApplyResult }) => {
       selection?: Selection;
       effects?: EditorEffect[];
     });
@@ -54,7 +54,7 @@ export function withSelection(proposal: NextSelection): CommitHints {
 }
 
 export type Editor = {
-  store: Store;
+  model: Model;
   runtime: EditorRuntime;
   getSelection(): Selection;
   setSelection(next: Selection, effects?: EditorEffect[]): void;
@@ -74,7 +74,7 @@ export type View = {
   onActivate?(): void;
   onDeactivate?(): void;
   normalizeTarget?: (
-    ctx: { store: Store },
+    ctx: { model: Model },
     focus: Focus,
     target: FocusTarget,
   ) => FocusTarget;
@@ -247,27 +247,27 @@ export function focusSelection(
 }
 
 export function repairSelection(editor: Editor, sel: Selection): Selection {
-  const store = editor.store;
+  const model = editor.model;
 
   if (sel.kind === "idle") return sel;
 
   try {
-    store.peekItem(sel.focus.id);
+    model.peekItem(sel.focus.id);
 
     const active = editor.runtime.getActiveView();
     const normalized =
-      active?.normalizeTarget?.({ store }, sel.focus, sel.target) ??
+      active?.normalizeTarget?.({ model }, sel.focus, sel.target) ??
       fallbackNormalizeTarget(sel.target);
 
     if (normalized === sel.target) return sel;
     return { ...sel, target: normalized };
   } catch {
     try {
-      const root = store.getRoot();
-      store.peekItem(root);
+      const rootId = model.rootId();
+      model.peekItem(rootId);
       return {
         kind: "focused",
-        focus: { scopeId: root, id: root },
+        focus: { scopeId: rootId, id: rootId },
         target: { kind: "content" },
       };
     } catch {
@@ -290,7 +290,7 @@ export function ensureSelection(
 }
 
 export function createEditor(
-  store: Store,
+  model: Model,
   opts: { runtime?: EditorRuntime } = {},
 ): Editor {
   const runtime = opts.runtime ?? new EditorRuntime({ kind: "idle" });
@@ -312,9 +312,9 @@ export function createEditor(
 
   const commit = (txn: Transaction, hints: CommitHints = {}): ApplyResult => {
     const prevSelection = getSelection();
-    const result = store.apply(txn);
+    const result = model.apply(txn);
 
-    const proposed = hints.propose?.({ store, prevSelection, result });
+    const proposed = hints.propose?.({ model, prevSelection, result });
     const editor = api;
     const repaired = repairSelection(
       editor,
@@ -336,7 +336,7 @@ export function createEditor(
     return result;
   };
 
-  const api: Editor = { store, runtime, getSelection, setSelection, commit };
+  const api: Editor = { model, runtime, getSelection, setSelection, commit };
   return api;
 }
 

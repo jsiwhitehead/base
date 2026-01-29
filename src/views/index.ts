@@ -1,6 +1,12 @@
-import type { ItemId, ViewName, ViewKind } from "../core/store";
-import type { Evaluator } from "../core/eval";
-import type { Focus, Editor, View } from "../core/editor";
+import type {
+  ItemId,
+  ViewName,
+  ViewKind,
+  Evaluator,
+  Focus,
+  Editor,
+  View,
+} from "../core";
 import {
   type Component,
   el,
@@ -8,7 +14,7 @@ import {
   mountViewInto,
   contentField,
 } from "../ui/dom";
-import { createTreeView } from "./tree";
+import { createOutlineView } from "./outline";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
@@ -20,7 +26,7 @@ export type ViewFactoryArgs = { runtime: Runtime; id: ItemId; focus?: Focus };
 export type ViewFactory = (args: ViewFactoryArgs) => DomView;
 
 const factories: Record<ViewName, ViewFactory> = {
-  tree: createTreeView,
+  outline: createOutlineView,
   table: createTableView,
   slider: createSliderView,
 };
@@ -56,7 +62,7 @@ export function mountItemBody(
   } = {},
 ): Component {
   const { editor, evaluator } = runtime;
-  const viewKind = editor.store.readItem(id).view as ViewKind;
+  const viewKind = editor.model.readItem(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return contentField({

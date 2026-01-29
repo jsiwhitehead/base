@@ -3,9 +3,8 @@ import {
   type Scalar,
   type StoredContentSettable,
   type Transaction,
-} from "../core/store";
-import { isScalarValue, type Evaluator } from "../core/eval";
-import {
+  isScalarValue,
+  type Evaluator,
   type Focus,
   caret0,
   withSelection,
@@ -16,7 +15,7 @@ import {
   tryCmd,
   applyCmd,
   setIdle,
-} from "../core/editor";
+} from "../core";
 import {
   type Component,
   el,
@@ -107,7 +106,7 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetContent = (editor: Editor, id: ItemId) => {
-  const kind = editor.store.getContentKind(id);
+  const kind = editor.model.contentKindOf(id);
   return kind !== "derived" && kind !== "lens";
 };
 
@@ -128,13 +127,13 @@ export const sliderCommands = {
     value: number,
   ): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
+      const model = editor.model;
       if (!Number.isFinite(value) || !canSetContent(editor, id))
         return { didChange: false };
 
       const content: StoredContentSettable = { kind: "scalar", value };
-      const txn: Transaction = store.op.transaction([
-        store.op.patchContent(id, content),
+      const txn: Transaction = model.op.transaction([
+        model.op.patchContent(id, content),
       ]);
 
       const next = focusSelection(focus, { kind: "content" }, caret0());

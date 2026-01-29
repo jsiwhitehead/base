@@ -2,12 +2,7 @@ import { computed, effect } from "@preact/signals-core";
 import {
   type ItemId,
   type Scalar,
-  type Store,
-  isBlankContent,
-  isScalarContent,
-  canEditTextContent,
-} from "../core/store";
-import {
+  type Model,
   type Focus,
   type FocusTarget,
   type Caret,
@@ -21,17 +16,17 @@ import {
   type Binding,
   type EditorEffect,
   focusSelection,
-  EditorRuntime,
-} from "../core/editor";
-import {
+  type EditorRuntime,
   type Value,
+  type Evaluator,
+  isBlankContent,
+  isScalarContent,
   isBlankValue,
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
-  type Evaluator,
-} from "../core/eval";
+} from "../core";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -725,12 +720,12 @@ export type EditableText =
   | { kind: "readonly"; text: string };
 
 function storedScalarTextForEdit(
-  store: Store,
+  model: Model,
   id: ItemId,
 ): EditableText | null {
-  if (!canEditTextContent(store, id)) return null;
+  if (!model.canEditScalarText(id)) return null;
 
-  const content = store.readItem(id).content;
+  const content = model.readItem(id).content;
   if (isBlankContent(content)) return { kind: "editable", text: "" } as const;
   if (isScalarContent(content))
     return { kind: "editable", text: String(content.value) } as const;
@@ -738,12 +733,12 @@ function storedScalarTextForEdit(
 }
 
 export function getEditableText(
-  store: Store,
+  model: Model,
   evaluator: Evaluator,
   id: ItemId,
 ): EditableText {
   return (
-    storedScalarTextForEdit(store, id) ?? {
+    storedScalarTextForEdit(model, id) ?? {
       kind: "readonly",
       text: getDisplayText(evaluator.value(id)).text,
     }
@@ -1010,8 +1005,8 @@ export function contentField(opts: ContentFieldOpts): Component {
           opts.commitScalarText?.(text);
         },
         getState: () => {
-          const store = editor.store;
-          const editable = getEditableText(store, evaluator, id);
+          const model = editor.model;
+          const editable = getEditableText(model, evaluator, id);
           const display = getDisplayText(evaluator.value(id));
           return {
             text: editable.kind === "editable" ? editable.text : display.text,
@@ -1075,7 +1070,7 @@ export function contentField(opts: ContentFieldOpts): Component {
 
       ctx.watch(() => {
         const v = opts.evaluator.value(opts.id);
-        children.update(isItemGroupValue(v) ? v.items : []);
+        children.update(isItemGroupValue(v) ? v.itemIds : []);
       });
 
       return { el: wrap, dispose: () => wrap.replaceChildren() };
@@ -1093,7 +1088,7 @@ export function contentField(opts: ContentFieldOpts): Component {
           ? "item-group"
           : isValueGroupValue(v)
             ? "value-group"
-            : canEditTextContent(opts.editor.store, opts.id)
+            : opts.editor.model.canEditScalarText(opts.id)
               ? "text"
               : "readonly";
 

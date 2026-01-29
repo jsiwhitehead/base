@@ -3,19 +3,14 @@ import {
   type ItemId,
   type ViewKind,
   type Transaction,
-  type Store,
+  type Model,
   isGroupContent,
   isDerivedContent,
   isLensContent,
-  canEditTextContent,
-} from "../core/store";
-import {
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
   type Evaluator,
-} from "../core/eval";
-import {
   type Focus,
   type FocusTarget,
   type Caret,
@@ -33,7 +28,7 @@ import {
   tryCmd,
   applyCmd,
   setIdle,
-} from "../core/editor";
+} from "../core";
 import {
   type Component,
   defaultTextNav,
@@ -73,21 +68,21 @@ const HEADER_FIELDS: Record<HeaderKind, readonly HeaderFieldDef[]> = {
 } as const;
 
 function headerFieldsForItem(
-  store: Store,
+  model: Model,
   id: ItemId,
 ): readonly HeaderFieldDef[] {
-  const content = store.readItem(id).content;
+  const content = model.readItem(id).content;
   if (isDerivedContent(content)) return HEADER_FIELDS.derived;
   if (isLensContent(content)) return HEADER_FIELDS.lens;
   return HEADER_FIELDS.none;
 }
 
 function headerFieldValue(
-  store: Store,
+  model: Model,
   id: ItemId,
   def: HeaderFieldDef,
 ): string {
-  const c = store.readItem(id).content;
+  const c = model.readItem(id).content;
   if (isDerivedContent(c)) {
     return def.field === "expr" ? (c.expr ?? "") : "";
   }
@@ -108,28 +103,28 @@ function headerFieldValue(
 
 const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 
-const hasHeaderFields = (store: Store, id: ItemId) =>
-  headerFieldsForItem(store, id).length > 0;
+const hasHeaderFields = (model: Model, id: ItemId) =>
+  headerFieldsForItem(model, id).length > 0;
 
-const isNavStop = (store: Store, evaluator: Evaluator, id: ItemId) => {
-  const kids = evaluator.items(id);
-  return kids.length === 0 || hasHeaderFields(store, id);
+const isNavStop = (model: Model, evaluator: Evaluator, id: ItemId) => {
+  const kids = evaluator.itemIds(id);
+  return kids.length === 0 || hasHeaderFields(model, id);
 };
 
-const defaultTargetFor = (store: Store, id: ItemId): FocusTarget =>
-  hasHeaderFields(store, id)
+const defaultTargetFor = (model: Model, id: ItemId): FocusTarget =>
+  hasHeaderFields(model, id)
     ? { kind: "header", index: 1 }
     : { kind: "content" };
 
 function collectNavStopsFrom(
-  store: Store,
+  model: Model,
   evaluator: Evaluator,
   rootId: ItemId,
 ): Focus[] {
   const out: Focus[] = [];
   const walk = (ownerId: ItemId) => {
-    for (const id of evaluator.items(ownerId)) {
-      if (isNavStop(store, evaluator, id)) out.push({ scopeId: ownerId, id });
+    for (const id of evaluator.itemIds(ownerId)) {
+      if (isNavStop(model, evaluator, id)) out.push({ scopeId: ownerId, id });
       walk(id);
     }
   };
@@ -137,8 +132,8 @@ function collectNavStopsFrom(
   return out;
 }
 
-function treeNavMove(
-  store: Store,
+function outlineNavMove(
+  model: Model,
   evaluator: Evaluator,
   stops: Focus[],
   sel: Selection,
@@ -159,13 +154,13 @@ function treeNavMove(
   };
 
   const parentFocus = (): Focus | null => {
-    const ownerId = store.readItem(from.scopeId).ownerId;
+    const ownerId = model.readItem(from.scopeId).ownerId;
     return ownerId == null ? null : { scopeId: ownerId, id: from.scopeId };
   };
 
   const firstChildStop = (id: ItemId): Focus | null => {
-    for (const cid of evaluator.items(id)) {
-      if (isNavStop(store, evaluator, cid)) return { scopeId: id, id: cid };
+    for (const cid of evaluator.itemIds(id)) {
+      if (isNavStop(model, evaluator, cid)) return { scopeId: id, id: cid };
       const deeper = firstChildStop(cid);
       if (deeper) return deeper;
     }
@@ -190,16 +185,16 @@ function treeNavMove(
     if (prev && next && focusKey(prev) === focusKey(next)) {
       const defs =
         sel.target.kind === "content"
-          ? headerFieldsForItem(store, prev.id)
+          ? headerFieldsForItem(model, prev.id)
           : [];
 
       if (sel.target.kind === "content" && defs.length > 0) {
         const lastDef = defs[defs.length - 1]!;
-        const text = headerFieldValue(store, prev.id, lastDef);
+        const text = headerFieldValue(model, prev.id, lastDef);
         targetOverride = { kind: "header", index: defs.length };
         caret = caretAt(text.length);
-      } else if (canEditTextContent(store, prev.id)) {
-        const text = getEditableText(store, evaluator, prev.id).text;
+      } else if (model.canEditScalarText(prev.id)) {
+        const text = getEditableText(model, evaluator, prev.id).text;
         caret = caretAt(text.length);
       }
     }
@@ -207,28 +202,28 @@ function treeNavMove(
 
   if (!next) return null;
 
-  const target = targetOverride ?? defaultTargetFor(store, next.id);
+  const target = targetOverride ?? defaultTargetFor(model, next.id);
   const outCaret = caret ?? caret0();
   const res = focusSelection(next, target, outCaret);
   return { selection: res.selection, effects: res.effects };
 }
 
-export const treeCommands = {
+export const outlineCommands = {
   setLabel(editor: Editor, f: Focus, text: string): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
-      editor.commit(store.op.transaction([store.op.patchLabel(f.id, text)]));
+      const model = editor.model;
+      editor.commit(model.op.transaction([model.op.patchLabel(f.id, text)]));
       return { didChange: true };
     });
   },
 
   setScalarValue(editor: Editor, id: ItemId, text: string): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
-      if (!canEditTextContent(store, id)) return { didChange: false };
+      const model = editor.model;
+      if (!model.canEditScalarText(id)) return { didChange: false };
       editor.commit(
-        store.op.transaction([
-          store.op.patchContent(id, {
+        model.op.transaction([
+          model.op.patchContent(id, {
             kind: "scalar",
             value: parseScalar(text),
           }),
@@ -240,12 +235,12 @@ export const treeCommands = {
 
   setDerived(editor: Editor, f: Focus): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
+      const model = editor.model;
       const nextSel = focusSelection(f, { kind: "header", index: 1 }, caret0());
 
       editor.commit(
-        store.op.transaction([
-          store.op.patchContent(f.id, { kind: "derived", expr: "" }),
+        model.op.transaction([
+          model.op.patchContent(f.id, { kind: "derived", expr: "" }),
         ]),
         withSelection({ selection: nextSel.selection }),
       );
@@ -261,15 +256,15 @@ export const treeCommands = {
     text: string,
   ): CmdResult {
     return tryCmd(() => {
-      const store = editor.store;
-      const it = store.readItem(f.id);
+      const model = editor.model;
+      const it = model.readItem(f.id);
       const c = it.content;
 
       if (isDerivedContent(c)) {
         if (def.field !== "expr") return { didChange: false };
         editor.commit(
-          store.op.transaction([
-            store.op.patchContent(f.id, { kind: "derived", expr: text }),
+          model.op.transaction([
+            model.op.patchContent(f.id, { kind: "derived", expr: text }),
           ]),
         );
         return { didChange: true };
@@ -278,8 +273,8 @@ export const treeCommands = {
       if (!isLensContent(c)) return { didChange: false };
 
       editor.commit(
-        store.op.transaction([
-          store.op.patchContent(f.id, {
+        model.op.transaction([
+          model.op.patchContent(f.id, {
             kind: "lens",
             from: def.field === "from" ? text : c.from,
             where: def.field === "where" ? text : c.where,
@@ -298,19 +293,19 @@ export const treeCommands = {
     side: "before" | "after",
   ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     return tryCmd(() => {
-      const loc = store.locateInOwner(f.id);
+      const loc = model.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
       const at = side === "before" ? loc.index : loc.index + 1;
-      const id = store.createId();
+      const id = model.createId();
 
-      const txn: Transaction = store.op.transaction([
-        store.op.create(store.create.blank(id)),
-        store.op.reparent({ childId: id, toOwnerId: loc.ownerId, toIndex: at }),
+      const txn: Transaction = model.op.transaction([
+        model.op.create(model.createItem.blank(id)),
+        model.op.reparent({ childId: id, toOwnerId: loc.ownerId, toIndex: at }),
       ]);
 
       const nextSel = focusSelection(
@@ -332,17 +327,17 @@ export const treeCommands = {
     caretEnd = caretStart,
   ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     return tryCmd(() => {
-      if (!canEditTextContent(store, f.id))
-        return treeCommands.insertSibling(editor, sel, "after");
+      if (!model.canEditScalarText(f.id))
+        return outlineCommands.insertSibling(editor, sel, "after");
 
-      const loc = store.locateInOwner(f.id);
+      const loc = model.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
-      const curText = getEditableText(store, evaluator, f.id).text;
+      const curText = getEditableText(model, evaluator, f.id).text;
       const len = curText.length;
       const start = clamp(caretStart, 0, len);
       const end = clamp(caretEnd, 0, len);
@@ -350,20 +345,20 @@ export const treeCommands = {
       const left = curText.slice(0, start);
       const right = curText.slice(end);
 
-      const rightId = store.createId();
+      const rightId = model.createId();
 
-      const txn: Transaction = store.op.transaction([
-        store.op.patchContent(f.id, {
+      const txn: Transaction = model.op.transaction([
+        model.op.patchContent(f.id, {
           kind: "scalar",
           value: parseScalar(left),
         }),
-        store.op.create(store.create.blank(rightId)),
-        store.op.reparent({
+        model.op.create(model.createItem.blank(rightId)),
+        model.op.reparent({
           childId: rightId,
           toOwnerId: loc.ownerId,
           toIndex: loc.index + 1,
         }),
-        store.op.patchContent(rightId, {
+        model.op.patchContent(rightId, {
           kind: "scalar",
           value: parseScalar(right),
         }),
@@ -387,37 +382,37 @@ export const treeCommands = {
     dir: "backward" | "forward",
   ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     return tryCmd(() => {
-      if (!canEditTextContent(store, f.id)) return { didChange: false };
+      if (!model.canEditScalarText(f.id)) return { didChange: false };
 
-      const loc = store.locateInOwner(f.id);
+      const loc = model.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
       const neighborId =
         dir === "backward"
-          ? loc.items[loc.index - 1]
-          : loc.items[loc.index + 1];
-      if (neighborId == null || !canEditTextContent(store, neighborId))
+          ? loc.childIds[loc.index - 1]
+          : loc.childIds[loc.index + 1];
+      if (neighborId == null || !model.canEditScalarText(neighborId))
         return { didChange: false };
 
       const leftId = dir === "backward" ? neighborId : f.id;
       const rightId = dir === "backward" ? f.id : neighborId;
 
-      const a = getEditableText(store, evaluator, leftId).text;
-      const b = getEditableText(store, evaluator, rightId).text;
+      const a = getEditableText(model, evaluator, leftId).text;
+      const b = getEditableText(model, evaluator, rightId).text;
 
       const survivorId = leftId;
       const removedId = rightId;
 
-      const txn: Transaction = store.op.transaction([
-        store.op.patchContent(survivorId, {
+      const txn: Transaction = model.op.transaction([
+        model.op.patchContent(survivorId, {
           kind: "scalar",
           value: parseScalar(a + b),
         }),
-        store.op.detach(removedId),
+        model.op.detach(removedId),
       ]);
 
       const nextSel = focusSelection(
@@ -438,22 +433,22 @@ export const treeCommands = {
     prefer: "prev" | "next",
   ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     return tryCmd(() => {
-      const loc = store.locateInOwner(f.id);
+      const loc = model.locateInOwner(f.id);
       if (!loc) return { didChange: false };
 
-      const prevId = loc.items[loc.index - 1] ?? null;
-      const nextId = loc.items[loc.index + 1] ?? null;
+      const prevId = loc.childIds[loc.index - 1] ?? null;
+      const nextId = loc.childIds[loc.index + 1] ?? null;
 
       const chosen =
         prefer === "prev"
           ? (prevId ?? nextId ?? loc.ownerId)
           : (nextId ?? prevId ?? loc.ownerId);
 
-      const containerKids = evaluator.items(f.scopeId);
+      const containerKids = evaluator.itemIds(f.scopeId);
       const nextFocus: Focus = containerKids.includes(chosen as ItemId)
         ? { scopeId: f.scopeId, id: chosen as ItemId }
         : { scopeId: loc.ownerId, id: chosen as ItemId };
@@ -462,22 +457,22 @@ export const treeCommands = {
         prefer === "prev" &&
         chosen != null &&
         containerKids.includes(chosen as ItemId) &&
-        canEditTextContent(store, chosen as ItemId);
+        model.canEditScalarText(chosen as ItemId);
 
       const caret = shouldPlaceCaretAtEnd
         ? caretAt(
-            getEditableText(store, evaluator, chosen as ItemId).text.length,
+            getEditableText(model, evaluator, chosen as ItemId).text.length,
           )
         : caret0();
 
       const nextSel = focusSelection(
         nextFocus,
-        defaultTargetFor(store, nextFocus.id),
+        defaultTargetFor(model, nextFocus.id),
         caret,
       );
 
       editor.commit(
-        store.op.transaction([store.op.detach(f.id)]),
+        model.op.transaction([model.op.detach(f.id)]),
         withSelection({ selection: nextSel.selection }),
       );
 
@@ -492,27 +487,27 @@ export const treeCommands = {
     dir: "in" | "out",
   ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     return tryCmd(() => {
       if (dir === "in") {
-        const loc = store.locateInOwner(f.id);
+        const loc = model.locateInOwner(f.id);
         if (!loc) return { didChange: false };
 
-        const childInfo = store.readItem(f.id);
-        const wrapperId = store.createId();
-        const wrapper = store.create.group(wrapperId);
+        const childInfo = model.readItem(f.id);
+        const wrapperId = model.createId();
+        const wrapper = model.createItem.group(wrapperId);
 
-        const txn: Transaction = store.op.transaction([
-          store.op.create({ ...wrapper, label: childInfo.label }),
-          store.op.reparent({
+        const txn: Transaction = model.op.transaction([
+          model.op.create({ ...wrapper, label: childInfo.label }),
+          model.op.reparent({
             childId: wrapperId,
             toOwnerId: loc.ownerId,
             toIndex: loc.index,
           }),
-          store.op.patchLabel(f.id, ""),
-          store.op.reparent({
+          model.op.patchLabel(f.id, ""),
+          model.op.reparent({
             childId: f.id,
             toOwnerId: wrapperId,
             toIndex: 0,
@@ -521,7 +516,7 @@ export const treeCommands = {
 
         const nextSel = focusSelection(
           { scopeId: wrapperId, id: f.id },
-          defaultTargetFor(store, f.id),
+          defaultTargetFor(model, f.id),
           caret0(),
         );
 
@@ -529,31 +524,31 @@ export const treeCommands = {
         return { didChange: true };
       }
 
-      const child = store.readItem(f.id);
+      const child = model.readItem(f.id);
       const wrapperId = child.ownerId;
       if (wrapperId == null) return { didChange: false };
 
-      const wrapper = store.readItem(wrapperId);
+      const wrapper = model.readItem(wrapperId);
       if (!isGroupContent(wrapper.content)) return { didChange: false };
 
-      const kids = evaluator.items(wrapperId);
+      const kids = evaluator.itemIds(wrapperId);
       if (kids.length !== 1 || kids[0] !== f.id) return { didChange: false };
 
       const ownerId = wrapper.ownerId;
       if (ownerId == null) return { didChange: false };
 
-      const idx = evaluator.items(ownerId).indexOf(wrapperId);
+      const idx = evaluator.itemIds(ownerId).indexOf(wrapperId);
       if (idx < 0) return { didChange: false };
 
-      const txn: Transaction = store.op.transaction([
-        store.op.reparent({ childId: f.id, toOwnerId: ownerId, toIndex: idx }),
-        store.op.detach(wrapperId),
-        store.op.patchLabel(f.id, wrapper.label),
+      const txn: Transaction = model.op.transaction([
+        model.op.reparent({ childId: f.id, toOwnerId: ownerId, toIndex: idx }),
+        model.op.detach(wrapperId),
+        model.op.patchLabel(f.id, wrapper.label),
       ]);
 
       const nextSel = focusSelection(
         { scopeId: ownerId, id: f.id },
-        defaultTargetFor(store, f.id),
+        defaultTargetFor(model, f.id),
         caret0(),
       );
 
@@ -564,7 +559,7 @@ export const treeCommands = {
 
   confirm(editor: Editor, evaluator: Evaluator, sel: Selection): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     if (sel.target.kind === "header") {
@@ -572,9 +567,9 @@ export const treeCommands = {
       return { didChange: false, selection: nextSel.selection };
     }
 
-    return canEditTextContent(store, f.id)
-      ? treeCommands.splitAt(editor, evaluator, sel, 0, 0)
-      : treeCommands.insertSibling(editor, sel, "after");
+    return model.canEditScalarText(f.id)
+      ? outlineCommands.splitAt(editor, evaluator, sel, 0, 0)
+      : outlineCommands.insertSibling(editor, sel, "after");
   },
 
   deleteBoundary(
@@ -584,23 +579,23 @@ export const treeCommands = {
     dir: "backward" | "forward",
   ): CmdResult {
     if (sel.kind !== "focused") return { didChange: false };
-    const store = editor.store;
+    const model = editor.model;
     const f = sel.focus;
 
     const prefer = dir === "backward" ? "prev" : "next";
 
-    if (!canEditTextContent(store, f.id))
-      return treeCommands.removeItem(editor, evaluator, sel, prefer);
+    if (!model.canEditScalarText(f.id))
+      return outlineCommands.removeItem(editor, evaluator, sel, prefer);
 
-    const txt = getEditableText(store, evaluator, f.id).text;
+    const txt = getEditableText(model, evaluator, f.id).text;
     if (txt.length === 0)
-      return treeCommands.removeItem(editor, evaluator, sel, prefer);
+      return outlineCommands.removeItem(editor, evaluator, sel, prefer);
 
-    return treeCommands.joinBoundary(editor, evaluator, sel, dir);
+    return outlineCommands.joinBoundary(editor, evaluator, sel, dir);
   },
 } as const;
 
-type TreeMountCtx = {
+type OutlineMountCtx = {
   runtime: Runtime;
   editor: Editor;
   evaluator: Evaluator;
@@ -610,15 +605,15 @@ type TreeMountCtx = {
     dir: NavDir,
     mode: NavMode,
   ) => { selection: Selection; effects: EditorEffect[] } | null;
-  dispatch: (intent: TreeIntent) => ViewKeyResult;
+  dispatch: (intent: OutlineIntent) => ViewKeyResult;
 };
 
-type TreeNodeSpec = {
+type OutlineNodeSpec = {
   focus: Focus;
   showHeader: boolean;
 };
 
-type TreeIntent =
+type OutlineIntent =
   | { type: "NAV"; dir: NavDir; mode: NavMode }
   | { type: "CONFIRM" }
   | { type: "CANCEL" }
@@ -627,14 +622,14 @@ type TreeIntent =
   | { type: "SPLIT"; caret: Caret }
   | { type: "SET_DERIVED" };
 
-function mountTreeHeader(
-  mountCtx: TreeMountCtx,
+function mountOutlineHeader(
+  mountCtx: OutlineMountCtx,
   focus: Focus,
   defs: readonly HeaderFieldDef[],
   onTargets: (targets: HTMLElement[]) => void,
 ): Component {
   const { editor, dispatch } = mountCtx;
-  const store = editor.store;
+  const model = editor.model;
 
   return createComponent((componentCtx) => {
     const wrap = el("div");
@@ -649,9 +644,9 @@ function mountTreeHeader(
     };
 
     const commitLabel = (text: string) => {
-      const current = store.readItem(focus.id).label ?? "";
+      const current = model.readItem(focus.id).label ?? "";
       if (current === text) return;
-      applyCmd(editor, treeCommands.setLabel(editor, focus, text));
+      applyCmd(editor, outlineCommands.setLabel(editor, focus, text));
     };
 
     const labelComp = autosizeTextField({
@@ -661,7 +656,7 @@ function mountTreeHeader(
       registerFocus: false,
       commit: commitLabel,
       getState: () => ({
-        text: store.readItem(focus.id).label ?? "",
+        text: model.readItem(focus.id).label ?? "",
         readOnly: false,
         isIssue: false,
       }),
@@ -702,11 +697,11 @@ function mountTreeHeader(
       const headerIndex = i + 1;
 
       const commitField = (text: string) => {
-        const current = headerFieldValue(store, focus.id, d);
+        const current = headerFieldValue(model, focus.id, d);
         if (current === text) return;
         applyCmd(
           editor,
-          treeCommands.commitHeaderField(editor, focus, d, text),
+          outlineCommands.commitHeaderField(editor, focus, d, text),
         );
       };
 
@@ -720,7 +715,7 @@ function mountTreeHeader(
         registerFocus: false,
         commit: commitField,
         getState: () => ({
-          text: headerFieldValue(store, focus.id, d),
+          text: headerFieldValue(model, focus.id, d),
           readOnly: false,
           isIssue: false,
         }),
@@ -734,7 +729,7 @@ function mountTreeHeader(
           ): boolean => {
             const def = defs[index - 1];
             if (!def) return false;
-            const text = headerFieldValue(store, focus.id, def);
+            const text = headerFieldValue(model, focus.id, def);
             const caret = caretPos === "end" ? caretAt(text.length) : caret0();
             const { selection } = focusSelection(
               focus,
@@ -818,7 +813,10 @@ function mountTreeHeader(
   });
 }
 
-function mountTreeChildren(mountCtx: TreeMountCtx, focus: Focus): Component {
+function mountOutlineChildren(
+  mountCtx: OutlineMountCtx,
+  focus: Focus,
+): Component {
   const { editor, evaluator } = mountCtx;
 
   return createComponent((componentCtx) => {
@@ -826,14 +824,14 @@ function mountTreeChildren(mountCtx: TreeMountCtx, focus: Focus): Component {
     ensureTabbable(container);
 
     const mgr = componentCtx.list(container, (childId: ItemId) =>
-      mountTreeNode(mountCtx, {
+      mountOutlineNode(mountCtx, {
         focus: { scopeId: focus.id, id: childId },
         showHeader: true,
       }),
     );
 
     componentCtx.watch(
-      () => evaluator.items(focus.id),
+      () => evaluator.itemIds(focus.id),
       (items) => {
         mgr.update(items);
       },
@@ -858,17 +856,17 @@ function mountTreeChildren(mountCtx: TreeMountCtx, focus: Focus): Component {
 
 type ContentTargetRef = { current: HTMLElement | null };
 
-function mountTreeBody(
-  mountCtx: TreeMountCtx,
+function mountOutlineBody(
+  mountCtx: OutlineMountCtx,
   focus: Focus,
   contentTargetRef: ContentTargetRef,
 ): Component {
   const { editor, evaluator, dispatch, runtime } = mountCtx;
-  const store = editor.store;
+  const model = editor.model;
 
   return createComponent((componentCtx) => {
     const host = el("div");
-    const viewKind = store.readItem(focus.id).view as ViewKind;
+    const viewKind = model.readItem(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
       const childView = createView(runtime, viewKind, focus.id, focus);
@@ -888,7 +886,10 @@ function mountTreeBody(
       registerFocus: false,
       focusElRef: contentTargetRef,
       commitScalarText: (text) =>
-        applyCmd(editor, treeCommands.setScalarValue(editor, focus.id, text)),
+        applyCmd(
+          editor,
+          outlineCommands.setScalarValue(editor, focus.id, text),
+        ),
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
         const stops: Array<() => void> = [];
@@ -956,9 +957,12 @@ function mountTreeBody(
   });
 }
 
-function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
+function mountOutlineNode(
+  mountCtx: OutlineMountCtx,
+  spec: OutlineNodeSpec,
+): Component {
   const { editor, evaluator } = mountCtx;
-  const store = editor.store;
+  const model = editor.model;
   const { focus } = spec;
 
   return createComponent((componentCtx) => {
@@ -1004,8 +1008,8 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
     let lastContentMode: "children" | "body" | null = null;
     componentCtx.watch(
       () => {
-        const info = store.readItem(focus.id);
-        const defs = headerFieldsForItem(store, focus.id);
+        const info = model.readItem(focus.id);
+        const defs = headerFieldsForItem(model, focus.id);
         const label = (info.label ?? "").trim();
         const contentKind = info.content.kind;
         const headerKind =
@@ -1053,7 +1057,7 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
               root.insertBefore(headerContainer, contentContainer);
 
             headerSlot.set(
-              mountTreeHeader(mountCtx, focus, defs, setHeaderTargets),
+              mountOutlineHeader(mountCtx, focus, defs, setHeaderTargets),
             );
           } else {
             headerSlot.set(null);
@@ -1069,12 +1073,14 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
           lastContentMode = mode;
 
           if (mode === "children") {
-            const kids = mountTreeChildren(mountCtx, focus);
+            const kids = mountOutlineChildren(mountCtx, focus);
             contentSlot.set(kids);
             ensureTabbable(kids.el);
             contentTargetRef.current = kids.el;
           } else {
-            contentSlot.set(mountTreeBody(mountCtx, focus, contentTargetRef));
+            contentSlot.set(
+              mountOutlineBody(mountCtx, focus, contentTargetRef),
+            );
           }
         }
       },
@@ -1084,24 +1090,24 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
   });
 }
 
-export function createTreeView({
+export function createOutlineView({
   runtime,
   id: rootId,
 }: ViewFactoryArgs): DomView {
   const { editor, evaluator } = runtime;
-  const store = editor.store;
+  const model = editor.model;
 
-  const root = el("div", "view tree");
-  const viewId = `tree:${String(rootId)}`;
+  const root = el("div", "view outline");
+  const viewId = `outline:${String(rootId)}`;
 
   const navStopsSignal = computed(() =>
-    collectNavStopsFrom(store, evaluator, rootId),
+    collectNavStopsFrom(model, evaluator, rootId),
   );
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    treeNavMove(store, evaluator, navStopsSignal.value, sel, dir, mode);
+    outlineNavMove(model, evaluator, navStopsSignal.value, sel, dir, mode);
 
-  const dispatch = (intent: TreeIntent): ViewKeyResult => {
+  const dispatch = (intent: OutlineIntent): ViewKeyResult => {
     const sel = editor.runtime.selection.value;
 
     switch (intent.type) {
@@ -1112,7 +1118,7 @@ export function createTreeView({
       }
 
       case "CONFIRM": {
-        applyCmd(editor, treeCommands.confirm(editor, evaluator, sel));
+        applyCmd(editor, outlineCommands.confirm(editor, evaluator, sel));
         return;
       }
 
@@ -1124,7 +1130,7 @@ export function createTreeView({
       case "INDENT": {
         applyCmd(
           editor,
-          treeCommands.changeNesting(editor, evaluator, sel, intent.dir),
+          outlineCommands.changeNesting(editor, evaluator, sel, intent.dir),
         );
         return;
       }
@@ -1132,7 +1138,7 @@ export function createTreeView({
       case "DELETE_BOUNDARY": {
         applyCmd(
           editor,
-          treeCommands.deleteBoundary(editor, evaluator, sel, intent.dir),
+          outlineCommands.deleteBoundary(editor, evaluator, sel, intent.dir),
         );
         return;
       }
@@ -1140,7 +1146,7 @@ export function createTreeView({
       case "SPLIT": {
         applyCmd(
           editor,
-          treeCommands.splitAt(
+          outlineCommands.splitAt(
             editor,
             evaluator,
             sel,
@@ -1153,13 +1159,13 @@ export function createTreeView({
 
       case "SET_DERIVED": {
         if (sel.kind !== "focused") return;
-        applyCmd(editor, treeCommands.setDerived(editor, sel.focus));
+        applyCmd(editor, outlineCommands.setDerived(editor, sel.focus));
         return;
       }
     }
   };
 
-  const node = mountTreeNode(
+  const node = mountOutlineNode(
     { runtime, editor, evaluator, rootId, navMove, dispatch },
     { focus: { scopeId: rootId, id: rootId }, showHeader: false },
   );
@@ -1170,14 +1176,14 @@ export function createTreeView({
     id: viewId,
     root,
 
-    normalizeTarget({ store: contextStore }, focus, target) {
-      const activeStore = contextStore ?? store;
+    normalizeTarget({ model: contextModel }, focus, target) {
+      const activeModel = contextModel ?? model;
 
       if (target.kind !== "header") return target;
 
       if (focus.id === rootId) return { kind: "content" };
 
-      const defs = headerFieldsForItem(activeStore, focus.id);
+      const defs = headerFieldsForItem(activeModel, focus.id);
 
       if (target.index === 0) return { kind: "header", index: 0 };
 
@@ -1195,7 +1201,7 @@ export function createTreeView({
       if (!first) return;
 
       editor.setSelection(
-        focusSelection(first, defaultTargetFor(store, first.id), caret0())
+        focusSelection(first, defaultTargetFor(model, first.id), caret0())
           .selection,
       );
     },

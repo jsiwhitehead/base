@@ -1,5 +1,4 @@
 import * as ohm from "ohm-js";
-import type { Scalar } from "./store";
 import {
   type Value,
   V,
@@ -11,7 +10,7 @@ import {
   isItemGroupValue,
   isValueGroupValue,
   type EvalEnv,
-} from "./eval";
+} from "./compute";
 
 const ISSUE = {
   literal: "Expected literal value",
@@ -299,7 +298,7 @@ function ensureNotIssue(v: Value): Value {
   return v;
 }
 
-function primExpect(v: Value): Scalar {
+function primExpect(v: Value): true | number | string {
   if (isScalarValue(v)) return v.value;
   throw new TypeError(ISSUE.literal);
 }
@@ -381,7 +380,7 @@ function getItemGroupByLabel(group: Value, label: string, env: EvalEnv): Value {
     return V.issue(ISSUE.labelOnNonItemGroup(label));
 
   const want = label;
-  const id = group.items.find((cid) => env.getLabel(cid) === want);
+  const id = group.itemIds.find((cid) => env.getLabel(cid) === want);
   if (id == null) return V.issue(ISSUE.unknownLabel(label));
   return env.resolve(id);
 }
@@ -405,9 +404,9 @@ function getItemGroupByPosition(
 
   if (!isItemGroupValue(group)) return V.issue(ISSUE.selectPosNonItemGroup);
 
-  const id = group.items[norm.index];
+  const id = group.itemIds[norm.index];
   if (id == null)
-    return V.issue(ISSUE.positionOutOfRange(position, group.items.length));
+    return V.issue(ISSUE.positionOutOfRange(position, group.itemIds.length));
   return env.resolve(id);
 }
 
@@ -522,7 +521,7 @@ function typedFn<A extends unknown[]>(
 
 function iterGroupValues(g: Value, env: EvalEnv): Value[] {
   if (isIssueValue(g)) throw new TypeError(g.message);
-  if (isItemGroupValue(g)) return g.items.map((id) => env.resolve(id));
+  if (isItemGroupValue(g)) return g.itemIds.map((id) => env.resolve(id));
   if (isValueGroupValue(g)) return g.items.map((it) => it.value);
   throw new TypeError(ISSUE.group);
 }
@@ -564,7 +563,7 @@ const groupSpec = {
     isItemGroupValue(v) || isValueGroupValue(v) ? v : null,
 } as const;
 
-export const library: Record<string, Builtin> = {
+export const builtins: Record<string, Builtin> = {
   is_blank: contentFn((_env, v) => primitiveToValue(isBlankValue(v))),
   is_present: contentFn((_env, v) => primitiveToValue(isPresent(v))),
   is_true: contentFn((_env, v) => primitiveToValue(isTrue(v))),
@@ -722,7 +721,7 @@ export const library: Record<string, Builtin> = {
 };
 
 function callBuiltin(env: EvalEnv, name: string, args: Value[]): Value {
-  const fn = library[name] ?? library[name.toLowerCase()];
+  const fn = builtins[name] ?? builtins[name.toLowerCase()];
   if (!fn) throw new TypeError(`Unknown function: ${name}`);
   return fn(env, ...args);
 }
