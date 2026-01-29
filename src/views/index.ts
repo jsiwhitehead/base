@@ -14,8 +14,10 @@ import { createSliderView } from "./slider";
 
 export type Runtime = { editor: Editor; evaluator: Evaluator };
 
+export type DomView = View & { root: HTMLElement };
+
 export type ViewFactoryArgs = { runtime: Runtime; id: ItemId; focus?: Focus };
-export type ViewFactory = (args: ViewFactoryArgs) => View;
+export type ViewFactory = (args: ViewFactoryArgs) => DomView;
 
 const factories: Record<ViewName, ViewFactory> = {
   tree: createTreeView,
@@ -28,7 +30,7 @@ export function createView(
   viewKind: ViewKind,
   id: ItemId,
   focus?: Focus,
-): View | null {
+): DomView | null {
   if (viewKind == null) return null;
   return factories[viewKind]?.({ runtime, id, focus }) ?? null;
 }

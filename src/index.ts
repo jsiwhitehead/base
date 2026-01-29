@@ -8,7 +8,7 @@ import {
 import { createEvaluator } from "./eval";
 import { interpretExpr } from "./expr";
 import { createEditor } from "./editor";
-import { mountViewInto } from "./dom";
+import { mountViewInto, installDomRuntime } from "./dom";
 import { createView } from "./views";
 
 export type App = {
@@ -62,7 +62,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
   });
   devAssert(view, `No view factory for rootView='${rootView}'`);
 
-  const uninstallListeners = editor.runtime.installViewListeners();
+  const uninstallListeners = installDomRuntime(editor.runtime);
   const unmount = mountViewInto(editor, host!, view!);
 
   const app: App = {

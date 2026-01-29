@@ -1,5 +1,4 @@
 import { signal, type Signal } from "@preact/signals-core";
-import { DEV, devWarn } from "./dev";
 import type { ItemId, Transaction, ApplyResult, Store } from "./store";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
@@ -24,8 +23,8 @@ export type Selection =
 export type Anchor = "top" | "bottom";
 
 export type EditorEffect =
-  | { type: "DOM_FOCUS"; focus: Focus; target: FocusTarget; anchor?: Anchor }
-  | { type: "CLEAR_DOM_FOCUS" };
+  | { type: "FOCUS"; focus: Focus; target: FocusTarget; anchor?: Anchor }
+  | { type: "CLEAR_FOCUS" };
 
 export type CommitHints = {
   propose?: (ctx: {
@@ -71,8 +70,7 @@ export type ViewKeyResult = void | { navOut: NavOut };
 
 export type View = {
   id: ViewId;
-  root: HTMLElement;
-  onKeyDown(e: KeyboardEvent): ViewKeyResult;
+  onKeyDown?: (e: unknown) => ViewKeyResult;
   onActivate?(): void;
   onDeactivate?(): void;
   normalizeTarget?: (
@@ -83,89 +81,67 @@ export type View = {
   dispose(): void;
 };
 
+export type BindingHandle = unknown;
+
 export type Binding = {
   focus: Focus;
-  elementFor(target: FocusTarget): HTMLElement | null;
+  elementFor(target: FocusTarget): BindingHandle | null;
   setCaret?: (pos: number) => void;
   getTextLength?: () => number;
 };
 
-const clamp = (n: number, lo: number, hi: number): number =>
-  Math.max(lo, Math.min(hi, n));
+export type EffectsApplier = (sel: Selection, effects: EditorEffect[]) => void;
+
 const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
 
-function isTextInput(
-  el: HTMLElement,
-): el is HTMLInputElement | HTMLTextAreaElement {
-  return (
-    (el instanceof HTMLInputElement && el.type === "text") ||
-    el instanceof HTMLTextAreaElement
-  );
-}
-
-function computeAnchoredPos(
-  text: string,
-  column: number,
-  anchor: Anchor,
-): number {
-  const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
-  if (nl === -1) return clamp(column, 0, text.length);
-  const lineStart = anchor === "top" ? 0 : nl + 1;
-  return lineStart + clamp(column, 0, text.length - lineStart);
-}
-
-function shouldBypassGlobalKeydown(): boolean {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return false;
-  if (active.isContentEditable) return true;
-  return (
-    active instanceof HTMLTextAreaElement ||
-    (active instanceof HTMLInputElement && active.type === "text")
-  );
+function fallbackNormalizeTarget(target: FocusTarget): FocusTarget {
+  return target.kind === "header" ? { kind: "content" } : target;
 }
 
 function normalizeEffectsForSelection(
   sel: Selection,
   effects: EditorEffect[],
 ): EditorEffect[] {
-  const hasClear = effects.some((e) => e.type === "CLEAR_DOM_FOCUS");
-  const hasFocus = effects.some((e) => e.type === "DOM_FOCUS");
+  const hasClear = effects.some((e) => e.type === "CLEAR_FOCUS");
+  const hasFocus = effects.some((e) => e.type === "FOCUS");
 
   if (sel.kind === "idle") {
     if (hasClear) return effects;
-    return [...effects, { type: "CLEAR_DOM_FOCUS" }];
+    return [...effects, { type: "CLEAR_FOCUS" }];
   }
 
   if (hasClear) return effects;
   if (hasFocus) return effects;
 
-  return [
-    ...effects,
-    { type: "DOM_FOCUS", focus: sel.focus, target: sel.target },
-  ];
-}
-
-function fallbackNormalizeTarget(target: FocusTarget): FocusTarget {
-  return target.kind === "header" ? { kind: "content" } : target;
+  return [...effects, { type: "FOCUS", focus: sel.focus, target: sel.target }];
 }
 
 export class EditorRuntime {
   selection: Signal<Selection>;
 
-  private rafHandle: number | null = null;
   private pending: { sel: Selection; effects: EditorEffect[] } | null = null;
+  private flushScheduled = false;
+
+  private effectsApplier: EffectsApplier;
 
   private bindings = new Map<string, Binding>();
 
   private views = new Map<ViewId, View>();
-  private viewRoots = new WeakMap<HTMLElement, ViewId>();
   private activeViewId: ViewId | null = null;
 
   private navOutHandler: ((fromViewId: ViewId, navOut: NavOut) => void) | null =
     null;
 
-  constructor(initialSelection: Selection = { kind: "idle" }) {
+  constructor(
+    initialSelection: Selection = { kind: "idle" },
+    effectsApplier: EffectsApplier = () => {},
+  ) {
     this.selection = signal(initialSelection);
+    this.effectsApplier = effectsApplier;
+  }
+
+  setEffectsApplier(applier: EffectsApplier): void {
+    this.effectsApplier = applier;
   }
 
   getActiveViewId(): ViewId | null {
@@ -185,7 +161,6 @@ export class EditorRuntime {
 
   registerView(view: View): void {
     this.views.set(view.id, view);
-    this.viewRoots.set(view.root, view.id);
   }
 
   unregisterView(viewId: ViewId): void {
@@ -205,30 +180,19 @@ export class EditorRuntime {
     next?.onActivate?.();
   }
 
-  installViewListeners(): () => void {
-    const onPointerDown = (e: PointerEvent) =>
-      this.setActiveView(this.viewAtTarget(e.target));
-    const pointerOptions = { capture: true } as const;
-    const onKeyDown = (e: KeyboardEvent) => {
-      const viewId = this.activeViewId;
-      if (!viewId || shouldBypassGlobalKeydown()) return;
-      const res = this.views.get(viewId)?.onKeyDown(e);
-      if (res?.navOut) this.navOutHandler?.(viewId, res.navOut);
-    };
+  dispatchKeyDown(e: unknown): void {
+    const viewId = this.activeViewId;
+    if (!viewId) return;
 
-    window.addEventListener("pointerdown", onPointerDown, pointerOptions);
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown, pointerOptions);
-      window.removeEventListener("keydown", onKeyDown);
-    };
+    const res = this.views.get(viewId)?.onKeyDown?.(e);
+    if (res && "navOut" in res && res.navOut) {
+      this.navOutHandler?.(viewId, res.navOut);
+    }
   }
 
   registerBinding(binding: Binding): void {
     const k = keyOf(binding.focus);
     this.bindings.set(k, binding);
-    this.updateDOMFocus(this.selection.peek());
   }
 
   unregisterBinding(focus: Focus): void {
@@ -238,7 +202,11 @@ export class EditorRuntime {
     const sel = this.selection.peek();
     if (sel.kind !== "focused" || keyOf(sel.focus) !== k) return;
 
-    this.scheduleEffects(sel, [{ type: "CLEAR_DOM_FOCUS" }]);
+    this.scheduleEffects(sel, [{ type: "CLEAR_FOCUS" }]);
+  }
+
+  getBinding(focus: Focus): Binding | null {
+    return this.bindings.get(keyOf(focus)) ?? null;
   }
 
   scheduleEffects(sel: Selection, effects: EditorEffect[]): void {
@@ -248,16 +216,11 @@ export class EditorRuntime {
       ? { sel, effects: [...this.pending.effects, ...effects] }
       : { sel, effects };
 
-    if (this.rafHandle != null) return;
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
 
-    if (DEV && typeof requestAnimationFrame !== "function") {
-      devWarn(
-        "requestAnimationFrame is not defined; EditorRuntime effects won't schedule (tests should shim it).",
-      );
-    }
-
-    this.rafHandle = requestAnimationFrame(() => {
-      this.rafHandle = null;
+    queueMicrotask(() => {
+      this.flushScheduled = false;
       const next = this.pending;
       this.pending = null;
       if (next) this.applyEffects(next.sel, next.effects);
@@ -265,60 +228,7 @@ export class EditorRuntime {
   }
 
   applyEffects(sel: Selection, effects: EditorEffect[]): void {
-    for (const eff of effects) {
-      if (eff.type === "DOM_FOCUS") {
-        this.updateDOMFocus(sel, eff.anchor);
-      } else {
-        const active = document.activeElement;
-        if (active instanceof HTMLElement) active.blur();
-      }
-    }
-  }
-
-  updateDOMFocus(sel: Selection, anchor?: Anchor): void {
-    if (sel.kind !== "focused") return;
-
-    const binding = this.bindings.get(keyOf(sel.focus));
-    if (DEV && !binding) devWarn("No binding for focus", sel.focus);
-    const targetEl = binding?.elementFor(sel.target);
-    if (!binding || !targetEl) return;
-
-    const wasFocused = document.activeElement === targetEl;
-    if (!wasFocused) targetEl.focus({ preventScroll: true });
-
-    const hitView = this.viewAtTarget(targetEl);
-    if (hitView) this.setActiveView(hitView);
-
-    const caret = sel.caret;
-    const canSetCaret =
-      !!caret && !!binding.setCaret && !!binding.getTextLength;
-    const shouldUpdateCaret = canSetCaret && (!wasFocused || anchor);
-
-    if (shouldUpdateCaret) {
-      const len = binding.getTextLength!();
-      binding.setCaret!(clamp(caret!.end, 0, len));
-      return;
-    }
-
-    if (!isTextInput(targetEl) || wasFocused) return;
-
-    const pos = anchor
-      ? computeAnchoredPos(targetEl.value, targetEl.value.length, anchor)
-      : targetEl.value.length;
-
-    targetEl.setSelectionRange(pos, pos);
-  }
-
-  private viewAtTarget(target: EventTarget | null): ViewId | null {
-    for (
-      let el = target instanceof HTMLElement ? target : null;
-      el;
-      el = el.parentElement
-    ) {
-      const hit = this.viewRoots.get(el);
-      if (hit) return hit;
-    }
-    return null;
+    this.effectsApplier(sel, effects);
   }
 }
 
@@ -333,7 +243,7 @@ export function focusSelection(
     target,
     ...(caret ? { caret } : {}),
   };
-  return { selection, effects: [{ type: "DOM_FOCUS", focus, target }] };
+  return { selection, effects: [{ type: "FOCUS", focus, target }] };
 }
 
 export function repairSelection(editor: Editor, sel: Selection): Selection {
@@ -379,8 +289,11 @@ export function ensureSelection(
   );
 }
 
-export function createEditor(store: Store): Editor {
-  const runtime = new EditorRuntime({ kind: "idle" });
+export function createEditor(
+  store: Store,
+  opts: { runtime?: EditorRuntime } = {},
+): Editor {
+  const runtime = opts.runtime ?? new EditorRuntime({ kind: "idle" });
 
   const getSelection = (): Selection => runtime.selection.value;
 

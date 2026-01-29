@@ -11,7 +11,6 @@ import {
   withSelection,
   type Editor,
   type ViewKeyResult,
-  type View,
   focusSelection,
   type CmdResult,
   tryCmd,
@@ -19,7 +18,7 @@ import {
   setIdle,
 } from "../editor";
 import { type Component, el, clamp, stopEvent, createComponent } from "../dom";
-import type { ViewFactoryArgs } from "./index";
+import type { DomView, ViewFactoryArgs } from "./index";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -249,7 +248,7 @@ export function createSliderView({
   runtime,
   id,
   focus,
-}: ViewFactoryArgs): View {
+}: ViewFactoryArgs): DomView {
   const { editor, evaluator } = runtime;
   const safeFocus: Focus = focus ?? { scopeId: id, id };
 
@@ -322,12 +321,12 @@ export function createSliderView({
       }
 
       editor.setSelection(sel, [
-        { type: "DOM_FOCUS", focus: safeFocus, target: { kind: "content" } },
+        { type: "FOCUS", focus: safeFocus, target: { kind: "content" } },
       ]);
     },
 
     onKeyDown(e) {
-      handleSliderKey(e, dispatch);
+      handleSliderKey(e as KeyboardEvent, dispatch);
     },
 
     dispose() {

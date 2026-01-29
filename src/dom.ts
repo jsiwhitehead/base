@@ -12,12 +12,16 @@ import {
   type FocusTarget,
   type Caret,
   caret0,
+  type Anchor,
   type Editor,
   type NavDir,
   type NavMode,
   type View,
+  type ViewId,
   type Binding,
+  type EditorEffect,
   focusSelection,
+  EditorRuntime,
 } from "./editor";
 import {
   type Value,
@@ -485,15 +489,155 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
   };
 }
 
+type DomRuntimeState = {
+  viewRoots: WeakMap<HTMLElement, ViewId>;
+};
+
+const DOM_RUNTIME_STATE = new WeakMap<EditorRuntime, DomRuntimeState>();
+
+function domState(runtime: EditorRuntime): DomRuntimeState {
+  let s = DOM_RUNTIME_STATE.get(runtime);
+  if (!s) {
+    s = { viewRoots: new WeakMap<HTMLElement, ViewId>() };
+    DOM_RUNTIME_STATE.set(runtime, s);
+  }
+  return s;
+}
+
+function isTextInput(
+  el: HTMLElement,
+): el is HTMLInputElement | HTMLTextAreaElement {
+  return (
+    (el instanceof HTMLInputElement && el.type === "text") ||
+    el instanceof HTMLTextAreaElement
+  );
+}
+
+function computeAnchoredPos(
+  text: string,
+  column: number,
+  anchor: Anchor,
+): number {
+  const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
+  if (nl === -1) return clamp(column, 0, text.length);
+  const lineStart = anchor === "top" ? 0 : nl + 1;
+  return lineStart + clamp(column, 0, text.length - lineStart);
+}
+
+function shouldBypassGlobalKeydown(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return false;
+  if (active.isContentEditable) return true;
+  return (
+    active instanceof HTMLTextAreaElement ||
+    (active instanceof HTMLInputElement && active.type === "text")
+  );
+}
+
+function viewAtTarget(
+  runtime: EditorRuntime,
+  target: EventTarget | null,
+): ViewId | null {
+  const { viewRoots } = domState(runtime);
+  for (
+    let el0 = target instanceof HTMLElement ? target : null;
+    el0;
+    el0 = el0.parentElement
+  ) {
+    const hit = viewRoots.get(el0);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function updateDOMFocus(
+  runtime: EditorRuntime,
+  sel: any,
+  anchor?: Anchor,
+): void {
+  if (sel.kind !== "focused") return;
+
+  const binding = runtime.getBinding(sel.focus);
+  const targetEl = binding?.elementFor(sel.target) as HTMLElement | null;
+  if (!binding || !targetEl) return;
+
+  const wasFocused = document.activeElement === targetEl;
+  if (!wasFocused) targetEl.focus({ preventScroll: true });
+
+  const hitView = viewAtTarget(runtime, targetEl);
+  if (hitView) runtime.setActiveView(hitView);
+
+  const caret = sel.caret as Caret | undefined;
+  const canSetCaret = !!caret && !!binding.setCaret && !!binding.getTextLength;
+  const shouldUpdateCaret = canSetCaret && (!wasFocused || anchor);
+
+  if (shouldUpdateCaret) {
+    const len = binding.getTextLength!();
+    binding.setCaret!(clamp(caret!.end, 0, len));
+    return;
+  }
+
+  if (!isTextInput(targetEl) || wasFocused) return;
+
+  const pos = anchor
+    ? computeAnchoredPos(targetEl.value, targetEl.value.length, anchor)
+    : targetEl.value.length;
+
+  targetEl.setSelectionRange(pos, pos);
+}
+
+function applyDomEffects(
+  runtime: EditorRuntime,
+  sel: any,
+  effects: EditorEffect[],
+): void {
+  for (const eff of effects) {
+    if (eff.type === "FOCUS") {
+      updateDOMFocus(runtime, sel, eff.anchor);
+    } else {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+    }
+  }
+}
+
+export function installDomRuntime(runtime: EditorRuntime): () => void {
+  runtime.setEffectsApplier((sel, effects) =>
+    applyDomEffects(runtime, sel as any, effects),
+  );
+
+  const onPointerDown = (e: PointerEvent) =>
+    runtime.setActiveView(viewAtTarget(runtime, e.target));
+
+  const pointerOptions = { capture: true } as const;
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const viewId = runtime.getActiveViewId();
+    if (!viewId || shouldBypassGlobalKeydown()) return;
+    runtime.dispatchKeyDown(e);
+  };
+
+  window.addEventListener("pointerdown", onPointerDown, pointerOptions);
+  window.addEventListener("keydown", onKeyDown);
+
+  return () => {
+    window.removeEventListener("pointerdown", onPointerDown, pointerOptions);
+    window.removeEventListener("keydown", onKeyDown);
+  };
+}
+
 export function mountViewInto(
   editor: Editor,
   host: HTMLElement,
-  view: View,
+  view: View & { root: HTMLElement },
 ): () => void {
-  editor.runtime.registerView(view);
+  const runtime = editor.runtime;
+  domState(runtime).viewRoots.set(view.root, view.id);
+
+  runtime.registerView(view);
   host.replaceChildren(view.root);
   return () => {
-    editor.runtime.unregisterView(view.id);
+    runtime.unregisterView(view.id);
     view.dispose();
     host.replaceChildren();
   };

@@ -14,6 +14,7 @@ import {
 } from "../src/eval";
 import { interpretExpr } from "../src/expr";
 import { createEditor, repairSelection, type Selection } from "../src/editor";
+import { installDomRuntime } from "../src/dom";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
 import { createTreeView } from "../src/views/tree";
@@ -33,8 +34,12 @@ function installRafShim() {
 
 installRafShim();
 
+const runtimeCleanups = new Set<() => void>();
+
 afterEach(() => {
   document.body.innerHTML = "";
+  for (const cleanup of runtimeCleanups) cleanup();
+  runtimeCleanups.clear();
 });
 
 async function tick() {
@@ -55,6 +60,7 @@ function makeRuntime() {
 
   const evaluator = createEvaluator({ store, interpret: interpretExpr });
   const editor = createEditor(store);
+  runtimeCleanups.add(installDomRuntime(editor.runtime));
 
   return { store, evaluator, editor, rootId };
 }
@@ -705,21 +711,21 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     expect(sel.target.kind).toBe("header");
     if (sel.target.kind === "header") expect(sel.target.index).toBe(0);
 
-    view.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowRight" }) as any);
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     await tick();
     sel = editor.getSelection();
     expectFocusedSelection(sel);
     expect(sel.target.kind).toBe("content");
 
-    view.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowLeft" }) as any);
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     await tick();
     sel = editor.getSelection();
     expectFocusedSelection(sel);
     expect(sel.target.kind).toBe("header");
     if (sel.target.kind === "header") expect(sel.target.index).toBe(0);
 
-    view.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowRight" }) as any);
-    view.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowDown" }) as any);
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
     sel = editor.getSelection();
     expectFocusedSelection(sel);
@@ -749,12 +755,12 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     let sel = editor.getSelection();
     expectFocusedSelection(sel);
 
-    view.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowDown" }) as any);
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
     sel = editor.getSelection();
     expectFocusedSelection(sel);
 
-    view.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowRight" }) as any);
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     await tick();
     sel = editor.getSelection();
     expectFocusedSelection(sel);

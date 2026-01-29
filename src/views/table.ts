@@ -20,7 +20,6 @@ import {
   type NavDir,
   type NavMode,
   type ViewKeyResult,
-  type View,
   focusSelection,
   type CmdResult,
   tryCmd,
@@ -41,7 +40,7 @@ import {
   textField,
   contentField,
 } from "../dom";
-import type { Runtime, ViewFactoryArgs } from "./index";
+import type { DomView, Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
 
 type NavResult = { selection: Selection; effects: EditorEffect[] };
@@ -662,7 +661,7 @@ function mountTableBody(mountCtx: TableMountCtx): Component {
 export function createTableView({
   runtime,
   id: tableId,
-}: ViewFactoryArgs): View {
+}: ViewFactoryArgs): DomView {
   const { editor, evaluator } = runtime;
   const store = editor.store;
 
@@ -743,6 +742,8 @@ export function createTableView({
     },
 
     onKeyDown(e): ViewKeyResult {
+      if (!(e instanceof KeyboardEvent)) return;
+
       const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
 
       const arrowDir: Record<string, NavDir | undefined> = {

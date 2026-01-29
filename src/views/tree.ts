@@ -28,7 +28,6 @@ import {
   type NavDir,
   type NavMode,
   type ViewKeyResult,
-  type View,
   focusSelection,
   type CmdResult,
   tryCmd,
@@ -52,7 +51,7 @@ import {
   autosizeTextField,
   contentField,
 } from "../dom";
-import type { Runtime, ViewFactoryArgs } from "./index";
+import type { DomView, Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
 
 type HeaderKind = "derived" | "lens" | "none";
@@ -190,7 +189,9 @@ function treeNavMove(
 
     if (prev && next && focusKey(prev) === focusKey(next)) {
       const defs =
-        sel.target.kind === "content" ? headerFieldsForItem(store, prev.id) : [];
+        sel.target.kind === "content"
+          ? headerFieldsForItem(store, prev.id)
+          : [];
 
       if (sel.target.kind === "content" && defs.length > 0) {
         const lastDef = defs[defs.length - 1]!;
@@ -464,7 +465,9 @@ export const treeCommands = {
         canEditTextContent(store, chosen as ItemId);
 
       const caret = shouldPlaceCaretAtEnd
-        ? caretAt(getEditableText(store, evaluator, chosen as ItemId).text.length)
+        ? caretAt(
+            getEditableText(store, evaluator, chosen as ItemId).text.length,
+          )
         : caret0();
 
       const nextSel = focusSelection(
@@ -673,11 +676,7 @@ function mountTreeHeader(
             e.preventDefault();
             return;
           }
-          if (
-            e.key === "Enter" ||
-            e.key === "Escape" ||
-            e.key === "Tab"
-          ) {
+          if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
             e.preventDefault();
             e.stopPropagation();
             if (e.key === "Enter") commitLabel(inputEl.value);
@@ -736,8 +735,7 @@ function mountTreeHeader(
             const def = defs[index - 1];
             if (!def) return false;
             const text = headerFieldValue(store, focus.id, def);
-            const caret =
-              caretPos === "end" ? caretAt(text.length) : caret0();
+            const caret = caretPos === "end" ? caretAt(text.length) : caret0();
             const { selection } = focusSelection(
               focus,
               { kind: "header", index },
@@ -752,8 +750,12 @@ function mountTreeHeader(
           };
 
           return on(inputEl, "keydown", (e: KeyboardEvent) => {
-            const noModifiers = !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
-            if (noModifiers && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+            const noModifiers =
+              !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+            if (
+              noModifiers &&
+              (e.key === "ArrowLeft" || e.key === "ArrowRight")
+            ) {
               const start = inputEl.selectionStart ?? 0;
               const end = inputEl.selectionEnd ?? start;
               const hasSel = start !== end;
@@ -762,7 +764,11 @@ function mountTreeHeader(
               if (!hasSel && e.key === "ArrowLeft" && start === 0) {
                 e.preventDefault();
                 e.stopPropagation();
-                if (headerIndex > 1 ? moveToHeaderField(headerIndex - 1, "end") : false) {
+                if (
+                  headerIndex > 1
+                    ? moveToHeaderField(headerIndex - 1, "end")
+                    : false
+                ) {
                   return;
                 }
                 boundaryNav("left");
@@ -772,7 +778,11 @@ function mountTreeHeader(
               if (!hasSel && e.key === "ArrowRight" && end === len) {
                 e.preventDefault();
                 e.stopPropagation();
-                if (headerIndex < defs.length ? moveToHeaderField(headerIndex + 1, "start") : false) {
+                if (
+                  headerIndex < defs.length
+                    ? moveToHeaderField(headerIndex + 1, "start")
+                    : false
+                ) {
                   return;
                 }
                 boundaryNav("right");
@@ -970,7 +980,7 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
       focus,
       elementFor: (target) =>
         target.kind === "content"
-          ? contentTargetRef.current ?? contentContainer
+          ? (contentTargetRef.current ?? contentContainer)
           : (headerTargets[target.index] ?? null),
     });
 
@@ -1064,9 +1074,7 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
             ensureTabbable(kids.el);
             contentTargetRef.current = kids.el;
           } else {
-            contentSlot.set(
-              mountTreeBody(mountCtx, focus, contentTargetRef),
-            );
+            contentSlot.set(mountTreeBody(mountCtx, focus, contentTargetRef));
           }
         }
       },
@@ -1076,7 +1084,7 @@ function mountTreeNode(mountCtx: TreeMountCtx, spec: TreeNodeSpec): Component {
   });
 }
 
-export function createTreeView({ runtime, id: rootId }: ViewFactoryArgs): View {
+export function createTreeView({ runtime, id: rootId }: ViewFactoryArgs): DomView {
   const { editor, evaluator } = runtime;
   const store = editor.store;
 
@@ -1190,6 +1198,8 @@ export function createTreeView({ runtime, id: rootId }: ViewFactoryArgs): View {
     },
 
     onKeyDown(e): ViewKeyResult {
+      if (!(e instanceof KeyboardEvent)) return;
+
       const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
 
       const arrowDir: Record<string, NavDir> = {
