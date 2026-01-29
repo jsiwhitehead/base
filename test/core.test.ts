@@ -2,7 +2,7 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import { createCore } from "../src/core";
-import { type ItemId, type SnapshotContent, type Model } from "../src/core/model";
+import type { ItemId, SnapshotContent, Model } from "../src/core/model";
 import {
   V,
   type Value,
@@ -13,7 +13,8 @@ import {
   isValueGroupValue,
 } from "../src/core/compute";
 import { interpretExpr } from "../src/core/lang";
-import { type Editor, type Selection, repairSelection } from "../src/core/runtime";
+import type { Editor, Selection } from "../src/core";
+import { repairSelection } from "../src/core";
 import { installDomRuntime } from "../src/ui/dom";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
@@ -48,7 +49,8 @@ async function tick() {
 
 function makeRuntime() {
   const core = createCore();
-  const { model, evaluator, editor, runtime } = core.advanced;
+  const { model, evaluator } = core.unsafe;
+  const { editor, runtime } = core.host;
 
   const rootId = model.createId();
   model.setRoot(rootId);
@@ -121,7 +123,11 @@ function patchLens(
   );
 }
 
-function setView(model: Model, id: ItemId, view: "outline" | "table" | "slider") {
+function setView(
+  model: Model,
+  id: ItemId,
+  view: "outline" | "table" | "slider",
+) {
   model.apply(model.op.transaction([model.op.patchView(id, view)]));
 }
 
@@ -663,7 +669,7 @@ describe("editor contract (no DOM)", () => {
 
 describe("views contract (selection transitions via onKeyDown)", () => {
   test("table arrow navigation: row label -> right -> cell; left -> row label; down -> next row", async () => {
-    const { core, model, evaluator, editor, rootId } = makeRuntime();
+    const { core, model, editor, rootId } = makeRuntime();
 
     const tableId = addGroupChild(model, rootId, "table");
     setView(model, tableId, "table");
@@ -677,7 +683,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     patchScalar(model, bScore, 6);
 
     const view = createTableView({
-      runtime: { core, editor, evaluator },
+      runtime: { core, editor },
       id: tableId,
     });
     const unmount = await mountAndActivateView(editor, view);
@@ -713,7 +719,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
   });
 
   test("outline onActivate picks first nav stop; arrows keep focused selection", async () => {
-    const { core, model, evaluator, editor, rootId } = makeRuntime();
+    const { core, model, editor, rootId } = makeRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     patchScalar(model, a, 1);
@@ -726,7 +732,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     patchScalar(model, b, 3);
 
     const view = createOutlineView({
-      runtime: { core, editor, evaluator },
+      runtime: { core, editor },
       id: rootId,
     });
     const unmount = await mountAndActivateView(editor, view);
@@ -751,14 +757,14 @@ describe("views contract (selection transitions via onKeyDown)", () => {
 
 describe("DOM smoke", () => {
   test("slider range input updates scalar content", async () => {
-    const { core, model, evaluator, editor, rootId } = makeRuntime();
+    const { core, model, editor, rootId } = makeRuntime();
     const sliderId = addBlankChild(model, rootId, "slider");
 
     setView(model, sliderId, "slider");
     patchScalar(model, sliderId, 10);
 
     const view = createSliderView({
-      runtime: { core, editor, evaluator },
+      runtime: { core, editor },
       id: sliderId,
     });
 
@@ -786,7 +792,7 @@ describe("DOM smoke", () => {
   });
 
   test("reactivity updates derived display text", async () => {
-    const { core, model, evaluator, editor, rootId } = makeRuntime();
+    const { core, model, editor, rootId } = makeRuntime();
 
     const x = addBlankChild(model, rootId, "x");
     patchScalar(model, x, 1);
@@ -795,7 +801,7 @@ describe("DOM smoke", () => {
     patchDerived(model, d, "x + 1");
 
     const view = createOutlineView({
-      runtime: { core, editor, evaluator },
+      runtime: { core, editor },
       id: rootId,
     });
     const unmount = await mountAndActivateView(editor, view);
@@ -821,13 +827,13 @@ describe("DOM smoke", () => {
   });
 
   test("dispose safety: disposing view does not crash on subsequent model updates", async () => {
-    const { core, model, evaluator, editor, rootId } = makeRuntime();
+    const { core, model, editor, rootId } = makeRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     patchScalar(model, a, 1);
 
     const view = createOutlineView({
-      runtime: { core, editor, evaluator },
+      runtime: { core, editor },
       id: rootId,
     });
     const unmount = await mountAndActivateView(editor, view);
@@ -840,13 +846,13 @@ describe("DOM smoke", () => {
 });
 
 test("outline: clicking editable content focuses the text input element", async () => {
-  const { core, model, evaluator, editor, rootId } = makeRuntime();
+  const { core, model, editor, rootId } = makeRuntime();
 
   const x = addBlankChild(model, rootId, "x");
   patchScalar(model, x, 10);
 
   const view = createOutlineView({
-    runtime: { core, editor, evaluator },
+    runtime: { core, editor },
     id: rootId,
   });
   const unmount = await mountAndActivateView(editor, view);

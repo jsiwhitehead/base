@@ -13,16 +13,17 @@ import type {
   NavMode,
   View,
   ViewId,
-} from "../core/runtime";
-import { caret0, focusSelection } from "../core/runtime";
-import type { Value } from "../core/compute";
+  Value,
+} from "../core";
 import {
+  caret0,
+  focusSelection,
   isBlankValue,
   isIssueValue,
   isItemGroupValue,
   isScalarValue,
   isValueGroupValue,
-} from "../core/compute";
+} from "../core";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -901,7 +902,7 @@ export function contentField(opts: ContentFieldOpts): Component {
     if (opts.className) host.className = opts.className;
 
     const core = opts.core;
-    const editor = core.advanced.editor;
+    const editor = core.host.editor;
 
     const slot = ctx.slot(host);
 

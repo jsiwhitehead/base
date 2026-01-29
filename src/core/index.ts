@@ -4,6 +4,7 @@ import {
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
+  isValueGroupValue,
 } from "./compute";
 import { createEvaluator, type Evaluator, type Interpreter } from "./compute";
 import { interpretExpr } from "./lang";
@@ -20,7 +21,15 @@ import {
   type ViewKind,
   type ViewName,
 } from "./model";
-import { createEditor, type Editor, type EditorRuntime } from "./runtime";
+import {
+  createEditor,
+  type CommitHints,
+  type Editor,
+  type EditorEffect,
+  type EditorRuntime,
+  type Selection,
+  type NavOut,
+} from "./runtime";
 
 export type StoredKind = "blank" | "scalar" | "group" | "derived" | "lens";
 
@@ -36,10 +45,6 @@ export type Header =
   | { kind: "none" }
   | { kind: "derived"; expr: string }
   | { kind: "lens"; from: string; where: string; orderBy: string };
-
-export type Children =
-  | { kind: "none" }
-  | { kind: "items"; itemIds: readonly ItemId[] };
 
 export type TextState =
   | { kind: "editable"; text: string }
@@ -113,19 +118,29 @@ export type Core = {
 
   header(id: ItemId): Header;
   value(id: ItemId): Value;
-  children(id: ItemId): Children;
+  children(id: ItemId): readonly ItemId[];
+  findChild(ownerId: ItemId, label: string): ItemId | null;
   text(id: ItemId): TextState;
   locate(id: ItemId): Locate;
 
-  tx(run: (t: Tx) => void): ApplyResult;
+  commit(run: (t: Tx) => void, hints?: CommitHints): ApplyResult;
 
   edit: Tx;
 
-  advanced: {
-    model: Model;
-    evaluator: Evaluator;
+  getSelection(): Selection;
+  setSelection(next: Selection, effects?: EditorEffect[]): void;
+
+  host: {
     editor: Editor;
     runtime: EditorRuntime;
+    setNavOutHandler(
+      fn: ((fromViewId: string, navOut: NavOut) => void) | null,
+    ): void;
+  };
+
+  unsafe: {
+    model: Model;
+    evaluator: Evaluator;
   };
 };
 
@@ -171,12 +186,13 @@ export function createCore(
 
   const value = (id: ItemId): Value => evaluator.value(id);
 
-  const children = (id: ItemId): Children => {
+  const children = (id: ItemId): readonly ItemId[] => {
     const v = evaluator.value(id);
-    return isItemGroupValue(v)
-      ? { kind: "items", itemIds: v.itemIds }
-      : { kind: "none" };
+    return isItemGroupValue(v) ? v.itemIds : [];
   };
+
+  const findChild = (ownerId: ItemId, label: string): ItemId | null =>
+    model.findChildIdByLabel(ownerId, label);
 
   const text = (id: ItemId): TextState => {
     if (model.canEditScalarText(id)) {
@@ -200,7 +216,7 @@ export function createCore(
     return { ownerId: loc.ownerId, index: loc.index, siblingIds: loc.childIds };
   };
 
-  const tx = (run: (t: Tx) => void): ApplyResult => {
+  const commit = (run: (t: Tx) => void, hints?: CommitHints): ApplyResult => {
     const ops: Array<
       | { kind: "create"; item: Item }
       | {
@@ -316,40 +332,40 @@ export function createCore(
       }),
     );
 
-    return editor.commit(txn) as ApplyResult;
+    return editor.commit(txn, hints) as ApplyResult;
   };
 
   const edit: Tx = {
     setLabel: (id, label) => {
-      tx((t) => t.setLabel(id, label));
+      commit((t) => t.setLabel(id, label));
     },
     setView: (id, view) => {
-      tx((t) => t.setView(id, view));
+      commit((t) => t.setView(id, view));
     },
     setText: (id, txt) => {
-      tx((t) => t.setText(id, txt));
+      commit((t) => t.setText(id, txt));
     },
     setScalar: (id, v) => {
-      tx((t) => t.setScalar(id, v));
+      commit((t) => t.setScalar(id, v));
     },
     setDerived: (id, expr) => {
-      tx((t) => t.setDerived(id, expr));
+      commit((t) => t.setDerived(id, expr));
     },
     setLens: (id, spec) => {
-      tx((t) => t.setLens(id, spec));
+      commit((t) => t.setLens(id, spec));
     },
     insert: (ownerId, opts) => {
       let out: ItemId = -1;
-      tx((t) => {
+      commit((t) => {
         out = t.insert(ownerId, opts);
       });
       return out;
     },
     move: (id, toOwnerId, opts) => {
-      tx((t) => t.move(id, toOwnerId, opts));
+      commit((t) => t.move(id, toOwnerId, opts));
     },
     remove: (id) => {
-      tx((t) => t.remove(id));
+      commit((t) => t.remove(id));
     },
   };
 
@@ -363,17 +379,32 @@ export function createCore(
     header,
     value,
     children,
+    findChild,
     text,
     locate,
 
-    tx,
+    commit,
     edit,
 
-    advanced: {
-      model,
-      evaluator,
+    getSelection() {
+      return editor.getSelection();
+    },
+
+    setSelection(next, effects) {
+      editor.setSelection(next, effects ?? []);
+    },
+
+    host: {
       editor,
       runtime: editor.runtime,
+      setNavOutHandler(fn) {
+        editor.runtime.setNavOutHandler(fn);
+      },
+    },
+
+    unsafe: {
+      model,
+      evaluator,
     },
   };
 }
@@ -389,3 +420,34 @@ export type {
   ItemId,
   Value,
 };
+
+export {
+  isBlankValue,
+  isIssueValue,
+  isScalarValue,
+  isItemGroupValue,
+  isValueGroupValue,
+};
+
+export type {
+  Selection,
+  EditorEffect,
+  Editor,
+  NavDir,
+  NavMode,
+  ViewKeyResult,
+  CommitHints,
+  Focus,
+  FocusTarget,
+  Caret,
+  View,
+} from "./runtime";
+
+export {
+  caret0,
+  caretAt,
+  caretRange,
+  focusSelection,
+  setIdle,
+  repairSelection,
+} from "./runtime";

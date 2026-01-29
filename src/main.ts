@@ -29,31 +29,28 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   const core = createCore();
 
-  const model = core.advanced.model;
-  const rootId = model.createId();
-  model.setRoot(rootId);
+  const rootId = core.unsafe.model.createId();
+  const rootItem = core.unsafe.model.createItem.group(rootId);
+  core.unsafe.model.setRoot(rootId);
 
-  core.advanced.editor.commit(
-    model.op.transaction([
-      model.op.create(model.createItem.group(rootId)),
-      model.op.patchView(rootId, rootView),
-    ]),
-  );
+  const createRootOp = core.unsafe.model.op.create(rootItem);
+  const rootTxn = core.unsafe.model.op.transaction([createRootOp]);
+  core.unsafe.model.apply(rootTxn);
+
+  core.commit((t) => {
+    t.setView(rootId, rootView as ViewKind);
+  });
 
   const view = createView(
-    {
-      core,
-      editor: core.advanced.editor,
-      evaluator: core.advanced.evaluator,
-    },
+    { core, editor: core.host.editor },
     rootView,
     rootId,
     { scopeId: rootId, id: rootId },
   );
   devAssert(view, `No view factory for rootView='${rootView}'`);
 
-  const uninstallListeners = installDomRuntime(core.advanced.runtime);
-  const unmount = mountViewInto(core.advanced.editor, host!, view!);
+  const uninstallListeners = installDomRuntime(core.host.runtime);
+  const unmount = mountViewInto(core.host.editor, host!, view!);
 
   const app: App = {
     core,
@@ -78,13 +75,12 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
 export function seedDemo(app: App) {
   const { core, rootId } = app;
-  const model = core.advanced.model;
 
-  if (model.findChildIdByLabel(rootId, "Demo") != null) return;
+  if (core.findChild(rootId, "Demo") != null) return;
 
   const mkGroup = (owner: ItemId, label: string, view: ViewKind = null) => {
     let gid: ItemId = -1;
-    core.tx((t) => {
+    core.commit((t) => {
       gid = t.insert(owner, { kind: "group" });
       t.setLabel(gid, label);
       if (view != null) t.setView(gid, view);
@@ -98,7 +94,7 @@ export function seedDemo(app: App) {
     value: true | number | string,
   ) => {
     let cid: ItemId = -1;
-    core.tx((t) => {
+    core.commit((t) => {
       cid = t.insert(owner, { kind: "blank" });
       t.setLabel(cid, label);
       t.setScalar(cid, value);
@@ -108,7 +104,7 @@ export function seedDemo(app: App) {
 
   const mkDerived = (owner: ItemId, label: string, expr: string) => {
     let cid: ItemId = -1;
-    core.tx((t) => {
+    core.commit((t) => {
       cid = t.insert(owner, { kind: "blank" });
       t.setLabel(cid, label);
       t.setDerived(cid, expr);
@@ -122,7 +118,7 @@ export function seedDemo(app: App) {
     spec: { from: string; where?: string; orderBy?: string },
   ) => {
     let cid: ItemId = -1;
-    core.tx((t) => {
+    core.commit((t) => {
       cid = t.insert(owner, { kind: "blank" });
       t.setLabel(cid, label);
       t.setLens(cid, spec);

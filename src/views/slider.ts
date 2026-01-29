@@ -6,9 +6,8 @@ import {
   type ViewKeyResult,
   focusSelection,
   setIdle,
-} from "../core/runtime";
-import { isScalarValue, type Evaluator } from "../core/compute";
-import { isDerivedContent, isLensContent } from "../core/model";
+} from "../core";
+import { isScalarValue, type Evaluator } from "../core";
 import {
   type Component,
   el,
@@ -99,8 +98,8 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetContent = (core: Core, id: ItemId) => {
-  const c = core.advanced.model.readItem(id).content;
-  return !isDerivedContent(c) && !isLensContent(c);
+  const k = core.get(id).storedKind;
+  return k !== "derived" && k !== "lens";
 };
 
 const getScalarOr = (core: Core, id: ItemId, fallback: number): number => {
@@ -112,7 +111,7 @@ export const sliderCommands = {
   setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetContent(core, id)) return;
     core.edit.setScalar(id, value);
-    core.advanced.editor.setSelection(
+    core.setSelection(
       focusSelection(focus, { kind: "content" }, caret0()).selection,
     );
   },
@@ -228,8 +227,8 @@ export function createSliderView({
   focus,
 }: ViewFactoryArgs): DomView {
   const core = (runtime as any).core as Core;
-  const editor = core.advanced.editor;
-  const evaluator = core.advanced.evaluator;
+  const editor = core.host.editor;
+  const evaluator = core.unsafe.evaluator;
 
   const safeFocus: Focus = focus ?? { scopeId: id, id };
   const resolved = DEFAULT_SLIDER_OPTS;

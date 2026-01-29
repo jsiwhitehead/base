@@ -14,14 +14,10 @@ import {
   type ViewKeyResult,
   focusSelection,
   setIdle,
-} from "../core/runtime";
-import { isGroupContent } from "../core/model";
-import {
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
-  type Evaluator,
-} from "../core/compute";
+} from "../core";
 import {
   type Component,
   defaultTextNav,
@@ -81,8 +77,8 @@ const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 const hasHeaderFields = (core: Core, id: ItemId) =>
   core.header(id).kind !== "none";
 
-const isNavStop = (core: Core, evaluator: Evaluator, id: ItemId) => {
-  const kids = evaluator.itemIds(id);
+const isNavStop = (core: Core, id: ItemId) => {
+  const kids = core.children(id);
   return kids.length === 0 || hasHeaderFields(core, id);
 };
 
@@ -91,15 +87,11 @@ const defaultTargetFor = (core: Core, id: ItemId): FocusTarget =>
     ? { kind: "header", index: 1 }
     : { kind: "content" };
 
-function collectNavStopsFrom(
-  core: Core,
-  evaluator: Evaluator,
-  rootId: ItemId,
-): Focus[] {
+function collectNavStopsFrom(core: Core, rootId: ItemId): Focus[] {
   const out: Focus[] = [];
   const walk = (ownerId: ItemId) => {
-    for (const id of evaluator.itemIds(ownerId)) {
-      if (isNavStop(core, evaluator, id)) out.push({ scopeId: ownerId, id });
+    for (const id of core.children(ownerId)) {
+      if (isNavStop(core, id)) out.push({ scopeId: ownerId, id });
       walk(id);
     }
   };
@@ -109,7 +101,6 @@ function collectNavStopsFrom(
 
 function outlineNavMove(
   core: Core,
-  evaluator: Evaluator,
   stops: Focus[],
   sel: Selection,
   dir: NavDir,
@@ -117,7 +108,6 @@ function outlineNavMove(
 ): { selection: Selection; effects: EditorEffect[] } | null {
   if (sel.kind !== "focused") return null;
 
-  const model = core.advanced.model;
   const from = sel.focus;
   const at = Math.max(
     0,
@@ -130,13 +120,13 @@ function outlineNavMove(
   };
 
   const parentFocus = (): Focus | null => {
-    const ownerId = model.readItem(from.scopeId).ownerId;
+    const ownerId = core.get(from.scopeId).ownerId;
     return ownerId == null ? null : { scopeId: ownerId, id: from.scopeId };
   };
 
   const firstChildStop = (id: ItemId): Focus | null => {
-    for (const cid of evaluator.itemIds(id)) {
-      if (isNavStop(core, evaluator, cid)) return { scopeId: id, id: cid };
+    for (const cid of core.children(id)) {
+      if (isNavStop(core, cid)) return { scopeId: id, id: cid };
       const deeper = firstChildStop(cid);
       if (deeper) return deeper;
     }
@@ -234,7 +224,7 @@ export const outlineCommands = {
     const at = side === "before" ? loc.index : loc.index + 1;
 
     let id: ItemId = -1;
-    core.tx((t) => {
+    core.commit((t) => {
       id = t.insert(loc.ownerId, { at, kind: "blank" });
     });
 
@@ -248,7 +238,6 @@ export const outlineCommands = {
 
   splitAt(
     core: Core,
-    evaluator: Evaluator,
     editor: Editor,
     sel: Selection,
     caretStart: number,
@@ -256,7 +245,6 @@ export const outlineCommands = {
   ): void {
     if (sel.kind !== "focused") return;
 
-    const model = core.advanced.model;
     const f = sel.focus;
 
     const t0 = core.text(f.id);
@@ -278,7 +266,7 @@ export const outlineCommands = {
 
     let rightId: ItemId = -1;
 
-    core.tx((t) => {
+    core.commit((t) => {
       t.setText(f.id, left);
       rightId = t.insert(loc.ownerId, { at: loc.index + 1, kind: "blank" });
       t.setText(rightId, right);
@@ -290,9 +278,6 @@ export const outlineCommands = {
       caret0(),
     );
     editor.setSelection(nextSel.selection);
-
-    void evaluator;
-    void model;
   },
 
   joinBoundary(
@@ -320,7 +305,7 @@ export const outlineCommands = {
     const b = core.text(rightId);
     if (a.kind !== "editable" || b.kind !== "editable") return;
 
-    core.tx((t) => {
+    core.commit((t) => {
       t.setText(leftId, a.text + b.text);
       t.remove(rightId);
     });
@@ -335,7 +320,6 @@ export const outlineCommands = {
 
   removeItem(
     core: Core,
-    evaluator: Evaluator,
     editor: Editor,
     sel: Selection,
     prefer: "prev" | "next",
@@ -354,7 +338,7 @@ export const outlineCommands = {
         ? (prevId ?? nextId ?? loc.ownerId)
         : (nextId ?? prevId ?? loc.ownerId);
 
-    const containerKids = evaluator.itemIds(f.scopeId);
+    const containerKids = core.children(f.scopeId);
     const nextFocus: Focus = containerKids.includes(chosen as ItemId)
       ? { scopeId: f.scopeId, id: chosen as ItemId }
       : { scopeId: loc.ownerId, id: chosen as ItemId };
@@ -381,26 +365,24 @@ export const outlineCommands = {
 
   changeNesting(
     core: Core,
-    evaluator: Evaluator,
     editor: Editor,
     sel: Selection,
     dir: "in" | "out",
   ): void {
     if (sel.kind !== "focused") return;
 
-    const model = core.advanced.model;
     const f = sel.focus;
 
     if (dir === "in") {
       const loc = core.locate(f.id);
       if (!loc) return;
 
-      const childInfo = model.readItem(f.id);
+      const childLabel = core.get(f.id).label;
       let wrapperId: ItemId = -1;
 
-      core.tx((t) => {
+      core.commit((t) => {
         wrapperId = t.insert(loc.ownerId, { at: loc.index, kind: "group" });
-        t.setLabel(wrapperId, childInfo.label);
+        t.setLabel(wrapperId, childLabel);
         t.setLabel(f.id, "");
         t.move(f.id, wrapperId, { at: 0 });
       });
@@ -414,26 +396,25 @@ export const outlineCommands = {
       return;
     }
 
-    const child = model.readItem(f.id);
-    const wrapperId = child.ownerId;
+    const wrapperId = core.get(f.id).ownerId;
     if (wrapperId == null) return;
 
-    const wrapper = model.readItem(wrapperId);
-    if (!isGroupContent(wrapper.content)) return;
+    const wrapperMeta = core.get(wrapperId);
+    if (wrapperMeta.storedKind !== "group") return;
 
-    const kids = evaluator.itemIds(wrapperId);
+    const kids = core.children(wrapperId);
     if (kids.length !== 1 || kids[0] !== f.id) return;
 
-    const ownerId = wrapper.ownerId;
+    const ownerId = wrapperMeta.ownerId;
     if (ownerId == null) return;
 
-    const idx = evaluator.itemIds(ownerId).indexOf(wrapperId);
+    const idx = core.children(ownerId).indexOf(wrapperId);
     if (idx < 0) return;
 
-    core.tx((t) => {
+    core.commit((t) => {
       t.move(f.id, ownerId, { at: idx });
       t.remove(wrapperId);
-      t.setLabel(f.id, wrapper.label);
+      t.setLabel(f.id, wrapperMeta.label);
     });
 
     const nextSel = focusSelection(
@@ -444,12 +425,7 @@ export const outlineCommands = {
     editor.setSelection(nextSel.selection);
   },
 
-  confirm(
-    core: Core,
-    evaluator: Evaluator,
-    editor: Editor,
-    sel: Selection,
-  ): void {
+  confirm(core: Core, editor: Editor, sel: Selection): void {
     if (sel.kind !== "focused") return;
 
     const f = sel.focus;
@@ -462,7 +438,7 @@ export const outlineCommands = {
 
     const t = core.text(f.id);
     if (t.kind === "editable") {
-      outlineCommands.splitAt(core, evaluator, editor, sel, 0, 0);
+      outlineCommands.splitAt(core, editor, sel, 0, 0);
       return;
     }
 
@@ -471,7 +447,6 @@ export const outlineCommands = {
 
   deleteBoundary(
     core: Core,
-    evaluator: Evaluator,
     editor: Editor,
     sel: Selection,
     dir: "backward" | "forward",
@@ -483,12 +458,12 @@ export const outlineCommands = {
 
     const t = core.text(f.id);
     if (t.kind !== "editable") {
-      outlineCommands.removeItem(core, evaluator, editor, sel, prefer);
+      outlineCommands.removeItem(core, editor, sel, prefer);
       return;
     }
 
     if (t.text.length === 0) {
-      outlineCommands.removeItem(core, evaluator, editor, sel, prefer);
+      outlineCommands.removeItem(core, editor, sel, prefer);
       return;
     }
 
@@ -500,7 +475,6 @@ type OutlineMountCtx = {
   runtime: Runtime;
   core: Core;
   editor: Editor;
-  evaluator: Evaluator;
   rootId: ItemId;
   navMove: (
     sel: Selection,
@@ -531,7 +505,6 @@ function mountOutlineHeader(
   onTargets: (targets: HTMLElement[]) => void,
 ): Component {
   const { editor, core, dispatch } = mountCtx;
-  const model = core.advanced.model;
 
   return createComponent((componentCtx) => {
     const wrap = el("div");
@@ -546,7 +519,7 @@ function mountOutlineHeader(
     };
 
     const commitLabel = (text: string) => {
-      const current = model.readItem(focus.id).label ?? "";
+      const current = core.get(focus.id).label ?? "";
       if (current === text) return;
       outlineCommands.setLabel(core, focus, text);
     };
@@ -558,7 +531,7 @@ function mountOutlineHeader(
       registerFocus: false,
       commit: commitLabel,
       getState: () => ({
-        text: model.readItem(focus.id).label ?? "",
+        text: core.get(focus.id).label ?? "",
         readOnly: false,
         isIssue: false,
       }),
@@ -716,7 +689,7 @@ function mountOutlineChildren(
   mountCtx: OutlineMountCtx,
   focus: Focus,
 ): Component {
-  const { editor, evaluator } = mountCtx;
+  const { editor, core } = mountCtx;
 
   return createComponent((componentCtx) => {
     const container = el("div", "group");
@@ -730,7 +703,7 @@ function mountOutlineChildren(
     );
 
     componentCtx.watch(
-      () => evaluator.itemIds(focus.id),
+      () => core.children(focus.id),
       (items) => {
         mgr.update(items);
       },
@@ -761,11 +734,10 @@ function mountOutlineBody(
   contentTargetRef: ContentTargetRef,
 ): Component {
   const { editor, core, dispatch, runtime } = mountCtx;
-  const model = core.advanced.model;
 
   return createComponent((componentCtx) => {
     const host = el("div");
-    const viewKind = model.readItem(focus.id).view as ViewKind;
+    const viewKind = core.get(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
       const childView = createView(runtime, viewKind, focus.id, focus);
@@ -855,8 +827,7 @@ function mountOutlineNode(
   mountCtx: OutlineMountCtx,
   spec: OutlineNodeSpec,
 ): Component {
-  const { editor, evaluator, core } = mountCtx;
-  const model = core.advanced.model;
+  const { editor, core } = mountCtx;
   const { focus } = spec;
 
   return createComponent((componentCtx) => {
@@ -901,13 +872,13 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        const info = model.readItem(focus.id);
+        const meta = core.get(focus.id);
         const defs = headerFieldsForItem(core, focus.id);
-        const label = (info.label ?? "").trim();
+        const label = (meta.label ?? "").trim();
         const headerKind = core.header(focus.id).kind;
 
         const v = core.value(focus.id);
-        const viewKind = info.view as ViewKind;
+        const viewKind = meta.view as ViewKind;
         const wantsChildView = viewWantsChildView(viewKind);
         const mode: "children" | "body" = wantsChildView
           ? "body"
@@ -982,19 +953,15 @@ export function createOutlineView({
   id: rootId,
 }: ViewFactoryArgs): DomView {
   const core = (runtime as any).core as Core;
-  const editor = core.advanced.editor;
-  const evaluator = core.advanced.evaluator;
-  const model = core.advanced.model;
+  const editor = core.host.editor;
 
   const root = el("div", "view outline");
   const viewId = `outline:${String(rootId)}`;
 
-  const navStopsSignal = computed(() =>
-    collectNavStopsFrom(core, evaluator, rootId),
-  );
+  const navStopsSignal = computed(() => collectNavStopsFrom(core, rootId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    outlineNavMove(core, evaluator, navStopsSignal.value, sel, dir, mode);
+    outlineNavMove(core, navStopsSignal.value, sel, dir, mode);
 
   const dispatch = (intent: OutlineIntent): ViewKeyResult => {
     const sel = editor.runtime.selection.value;
@@ -1007,7 +974,7 @@ export function createOutlineView({
       }
 
       case "CONFIRM": {
-        outlineCommands.confirm(core, evaluator, editor, sel);
+        outlineCommands.confirm(core, editor, sel);
         return;
       }
 
@@ -1017,25 +984,18 @@ export function createOutlineView({
       }
 
       case "INDENT": {
-        outlineCommands.changeNesting(core, evaluator, editor, sel, intent.dir);
+        outlineCommands.changeNesting(core, editor, sel, intent.dir);
         return;
       }
 
       case "DELETE_BOUNDARY": {
-        outlineCommands.deleteBoundary(
-          core,
-          evaluator,
-          editor,
-          sel,
-          intent.dir,
-        );
+        outlineCommands.deleteBoundary(core, editor, sel, intent.dir);
         return;
       }
 
       case "SPLIT": {
         outlineCommands.splitAt(
           core,
-          evaluator,
           editor,
           sel,
           intent.caret.start,
@@ -1053,10 +1013,9 @@ export function createOutlineView({
   };
 
   const mountCtx: OutlineMountCtx = {
-    runtime,
+    runtime: runtime as Runtime,
     core,
     editor,
-    evaluator,
     rootId,
     navMove,
     dispatch,
@@ -1073,9 +1032,7 @@ export function createOutlineView({
     id: viewId,
     root,
 
-    normalizeTarget({ model: contextModel }, focus, target) {
-      const activeModel = contextModel ?? model;
-
+    normalizeTarget(_ctx2, focus, target) {
       if (target.kind !== "header") return target;
 
       if (focus.id === rootId) return { kind: "content" };

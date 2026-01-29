@@ -1,6 +1,12 @@
-import type { Core, ItemId, ViewKind, ViewName } from "../core";
-import type { Editor, Focus, View } from "../core/runtime";
-import type { Evaluator } from "../core/compute";
+import type {
+  Core,
+  ItemId,
+  ViewKind,
+  ViewName,
+  Editor,
+  Focus,
+  View,
+} from "../core";
 import {
   type Component,
   el,
@@ -12,7 +18,7 @@ import { createOutlineView } from "./outline";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type Runtime = { core: Core; editor: Editor; evaluator: Evaluator };
+export type Runtime = { core: Core; editor: Editor };
 
 export type DomView = View & { root: HTMLElement };
 
@@ -56,7 +62,7 @@ export function mountItemBody(
   } = {},
 ): Component {
   const { core, editor } = runtime;
-  const viewKind = core.advanced.model.readItem(id).view as ViewKind;
+  const viewKind = core.get(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return contentField({

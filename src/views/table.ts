@@ -12,10 +12,8 @@ import {
   type ViewKeyResult,
   focusSelection,
   setIdle,
-} from "../core/runtime";
-import type { Evaluator } from "../core/compute";
-import { isItemGroupValue } from "../core/compute";
-import { isGroupContent } from "../core/model";
+  isItemGroupValue,
+} from "../core";
 import {
   type Component,
   defaultTextNav,
@@ -53,8 +51,6 @@ const focusCell = (
   focusSelection({ scopeId: rowId, id: cellId }, { kind: "content" }, caret);
 
 function deriveColumns(core: Core, tableId: ItemId): string[] {
-  const model = core.advanced.model;
-
   const tableV = core.value(tableId);
   if (!isItemGroupValue(tableV)) return [];
 
@@ -67,7 +63,7 @@ function deriveColumns(core: Core, tableId: ItemId): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const cid of rowV.itemIds) {
-    const nm = model.readItem(cid).label;
+    const nm = core.get(cid).label;
     if (!nm || seen.has(nm)) continue;
     seen.add(nm);
     out.push(nm);
@@ -101,12 +97,12 @@ const isCellSelection = (
   sel.target.kind === "content" &&
   sel.focus.scopeId !== tableId;
 
-const rowIds = (evaluator: Evaluator, tableId: ItemId): ItemId[] =>
-  evaluator.itemIds(tableId);
+const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
+  ...core.children(tableId),
+];
 
 function tableNavMove(
   core: Core,
-  evaluator: Evaluator,
   tableId: ItemId,
   sel: Selection,
   dir: NavDir,
@@ -114,9 +110,8 @@ function tableNavMove(
 ): NavResult | null {
   if (!isFocused(sel)) return null;
 
-  const model = core.advanced.model;
   const cols = deriveColumns(core, tableId);
-  const rows = rowIds(evaluator, tableId);
+  const rows = rowIds(core, tableId);
   if (rows.length === 0) return null;
 
   const moveRowLabel = (rowId: ItemId, delta: number) => {
@@ -137,7 +132,7 @@ function tableNavMove(
     const nextCol = cols[nc];
     if (!nextCol) return null;
 
-    const nextCell = model.findChildIdByLabel(rowId, nextCol);
+    const nextCell = core.findChild(rowId, nextCol);
     return nextCell ? focusCell(rowId, nextCell) : null;
   };
 
@@ -152,7 +147,7 @@ function tableNavMove(
     const col = cols[colIdx];
     if (!col) return null;
 
-    const nextCell = model.findChildIdByLabel(nextRowId, col);
+    const nextCell = core.findChild(nextRowId, col);
     return nextCell
       ? focusCell(nextRowId, nextCell)
       : focusRowLabel(tableId, nextRowId);
@@ -168,7 +163,7 @@ function tableNavMove(
       const firstCol = cols[0];
       if (!firstCol) return null;
 
-      const cid = model.findChildIdByLabel(rowId, firstCol);
+      const cid = core.findChild(rowId, firstCol);
       return cid ? focusCell(rowId, cid) : null;
     }
 
@@ -183,7 +178,7 @@ function tableNavMove(
   const rowIdx = rows.indexOf(rowId);
   if (rowIdx < 0) return null;
 
-  const colLabel = model.readItem(cellId).label || "";
+  const colLabel = core.get(cellId).label || "";
   const colIdx = Math.max(0, cols.indexOf(colLabel));
 
   if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
@@ -206,17 +201,16 @@ export const tableCommands = {
   addRowAfter(
     core: Core,
     editor: Editor,
-    evaluator: Evaluator,
     tableId: ItemId,
     afterRowId: ItemId | null,
   ): void {
-    const rows = evaluator.itemIds(tableId);
+    const rows = rowIds(core, tableId);
     const afterIdx =
       afterRowId == null ? rows.length - 1 : rows.indexOf(afterRowId);
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
 
     let rowId: ItemId = -1;
-    core.tx((t) => {
+    core.commit((t) => {
       rowId = t.insert(tableId, { at, kind: "group" });
     });
 
@@ -224,14 +218,8 @@ export const tableCommands = {
     editor.setSelection(next.selection);
   },
 
-  removeRow(
-    core: Core,
-    editor: Editor,
-    evaluator: Evaluator,
-    tableId: ItemId,
-    rowId: ItemId,
-  ): void {
-    const rows = evaluator.itemIds(tableId);
+  removeRow(core: Core, editor: Editor, tableId: ItemId, rowId: ItemId): void {
+    const rows = rowIds(core, tableId);
     const idx = rows.indexOf(rowId);
     const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
 
@@ -245,24 +233,17 @@ export const tableCommands = {
     editor.setSelection(next.selection);
   },
 
-  addColumn(
-    core: Core,
-    evaluator: Evaluator,
-    tableId: ItemId,
-    label: string,
-  ): void {
-    const model = core.advanced.model;
+  addColumn(core: Core, tableId: ItemId, label: string): void {
     const name = label.trim();
     if (!name) return;
 
-    const rows = evaluator.itemIds(tableId);
+    const rows = rowIds(core, tableId);
     if (rows.length === 0) return;
 
-    core.tx((t) => {
+    core.commit((t) => {
       for (const rowId of rows) {
-        const row = model.readItem(rowId);
-        if (!isGroupContent(row.content)) continue;
-        if (model.findChildIdByLabel(rowId, name) != null) continue;
+        if (core.get(rowId).storedKind !== "group") continue;
+        if (core.findChild(rowId, name) != null) continue;
 
         const cellId = t.insert(rowId, { kind: "blank" });
         t.setLabel(cellId, name);
@@ -270,55 +251,37 @@ export const tableCommands = {
     });
   },
 
-  removeColumn(
-    core: Core,
-    evaluator: Evaluator,
-    tableId: ItemId,
-    label: string,
-  ): void {
-    const model = core.advanced.model;
+  removeColumn(core: Core, tableId: ItemId, label: string): void {
     const name = label.trim();
     if (!name) return;
 
-    const rows = evaluator.itemIds(tableId);
+    const rows = rowIds(core, tableId);
     if (rows.length === 0) return;
 
-    core.tx((t) => {
+    core.commit((t) => {
       for (const rowId of rows) {
-        const cellId = model.findChildIdByLabel(rowId, name);
+        const cellId = core.findChild(rowId, name);
         if (cellId == null) continue;
         t.remove(cellId);
       }
     });
   },
 
-  confirm(
-    core: Core,
-    editor: Editor,
-    evaluator: Evaluator,
-    tableId: ItemId,
-    sel: Selection,
-  ): void {
+  confirm(core: Core, editor: Editor, tableId: ItemId, sel: Selection): void {
     if (!isFocused(sel)) return;
 
     if (sel.target.kind === "header") {
-      tableCommands.addRowAfter(core, editor, evaluator, tableId, sel.focus.id);
+      tableCommands.addRowAfter(core, editor, tableId, sel.focus.id);
       return;
     }
 
-    const move = tableNavMove(core, evaluator, tableId, sel, "down", "step");
+    const move = tableNavMove(core, tableId, sel, "down", "step");
     if (move) {
       editor.setSelection(move.selection);
       return;
     }
 
-    tableCommands.addRowAfter(
-      core,
-      editor,
-      evaluator,
-      tableId,
-      sel.focus.scopeId,
-    );
+    tableCommands.addRowAfter(core, editor, tableId, sel.focus.scopeId);
   },
 } as const;
 
@@ -331,7 +294,6 @@ type TableMountCtx = {
   runtime: Runtime;
   core: Core;
   editor: Editor;
-  evaluator: Evaluator;
   tableId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   columnsSignal: { value: string[] };
@@ -385,16 +347,14 @@ function mountTableCellContent(cellCtx: {
   runtime: Runtime;
   core: Core;
   editor: Editor;
-  evaluator: Evaluator;
   tableId: ItemId;
   rowId: ItemId;
   cellId: ItemId;
   dispatch: (intent: TableIntent) => ViewKeyResult;
 }): Component {
-  const { runtime, core, editor, evaluator, rowId, cellId, dispatch } = cellCtx;
-  const model = core.advanced.model;
+  const { runtime, core, editor, rowId, cellId, dispatch } = cellCtx;
   const focus: Focus = { scopeId: rowId, id: cellId };
-  const viewKind = model.readItem(cellId).view as ViewKind;
+  const viewKind = core.get(cellId).view as ViewKind;
 
   if (viewWantsChildView(viewKind)) {
     const child = createView(runtime, viewKind, cellId, focus);
@@ -468,7 +428,6 @@ function mountTableCell(
         runtime: mountCtx.runtime,
         core: mountCtx.core,
         editor: mountCtx.editor,
-        evaluator: mountCtx.evaluator,
         tableId: mountCtx.tableId,
         rowId,
         cellId,
@@ -479,8 +438,7 @@ function mountTableCell(
       componentCtx.use(cur);
     };
 
-    const getCellId = () =>
-      mountCtx.core.advanced.model.findChildIdByLabel(rowId, col) ?? null;
+    const getCellId = () => mountCtx.core.findChild(rowId, col) ?? null;
 
     componentCtx.watch(
       () => getCellId(),
@@ -517,8 +475,6 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
     const labelFocus: Focus = { scopeId: mountCtx.tableId, id: rowId };
 
-    const model = mountCtx.core.advanced.model;
-
     const labelComp = textField({
       editor: mountCtx.editor,
       focus: labelFocus,
@@ -532,7 +488,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
         const sel = mountCtx.editor.runtime.selection.value;
         const editing =
           isRowLabelSelection(sel, mountCtx.tableId) && sel.focus.id === rowId;
-        const label = model.readItem(rowId).label ?? "";
+        const label = mountCtx.core.get(rowId).label ?? "";
         return { text: label, readOnly: !editing, isIssue: false };
       },
       textKeys: (inp) =>
@@ -543,7 +499,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
             const first = mountCtx.columnsSignal.value[0];
             if (!first) return;
 
-            const cid = model.findChildIdByLabel(rowId, first);
+            const cid = mountCtx.core.findChild(rowId, first);
             if (!cid) return;
 
             const res = focusCell(rowId, cid);
@@ -584,7 +540,7 @@ function mountTableBody(mountCtx: TableMountCtx): Component {
     );
 
     componentCtx.watch(
-      () => mountCtx.evaluator.itemIds(mountCtx.tableId),
+      () => mountCtx.core.children(mountCtx.tableId),
       (rows) => {
         rowList.update(rows);
       },
@@ -599,9 +555,7 @@ export function createTableView({
   id: tableId,
 }: ViewFactoryArgs): DomView {
   const core = (runtime as any).core as Core;
-  const editor = core.advanced.editor;
-  const evaluator = core.advanced.evaluator;
-  const model = core.advanced.model;
+  const editor = core.host.editor;
 
   const root = el("div", "view table");
   root.tabIndex = 0;
@@ -613,7 +567,7 @@ export function createTableView({
   const columnsSignal = computed(() => deriveColumns(core, tableId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    tableNavMove(core, evaluator, tableId, sel, dir, mode);
+    tableNavMove(core, tableId, sel, dir, mode);
 
   const dispatch = (intent: TableIntent): ViewKeyResult => {
     const sel = editor.runtime.selection.value;
@@ -625,7 +579,7 @@ export function createTableView({
         return;
       }
       case "CONFIRM": {
-        tableCommands.confirm(core, editor, evaluator, tableId, sel);
+        tableCommands.confirm(core, editor, tableId, sel);
         return;
       }
       case "CANCEL": {
@@ -636,10 +590,9 @@ export function createTableView({
   };
 
   const mountCtx: TableMountCtx = {
-    runtime,
+    runtime: runtime as Runtime,
     core,
     editor,
-    evaluator,
     tableId,
     navMove,
     columnsSignal,
@@ -667,7 +620,7 @@ export function createTableView({
       const sel = editor.runtime.selection.value;
       if (sel.kind !== "idle") return;
 
-      const rows = evaluator.itemIds(tableId);
+      const rows = core.children(tableId);
       if (rows.length === 0) return;
 
       const firstRowId = rows[0]!;
