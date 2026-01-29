@@ -1,16 +1,6 @@
 import { computed } from "@preact/signals-core";
+import type { ItemId, ViewKind, Core, Header } from "../core";
 import {
-  type ItemId,
-  type ViewKind,
-  type Transaction,
-  type Model,
-  isGroupContent,
-  isDerivedContent,
-  isLensContent,
-  isIssueValue,
-  isScalarValue,
-  isItemGroupValue,
-  type Evaluator,
   type Focus,
   type FocusTarget,
   type Caret,
@@ -18,17 +8,20 @@ import {
   caretAt,
   type Selection,
   type EditorEffect,
-  withSelection,
   type Editor,
   type NavDir,
   type NavMode,
   type ViewKeyResult,
   focusSelection,
-  type CmdResult,
-  tryCmd,
-  applyCmd,
   setIdle,
-} from "../core";
+} from "../core/runtime";
+import { isGroupContent } from "../core/model";
+import {
+  isIssueValue,
+  isScalarValue,
+  isItemGroupValue,
+  type Evaluator,
+} from "../core/compute";
 import {
   type Component,
   defaultTextNav,
@@ -40,8 +33,6 @@ import {
   bindTextControlKeys,
   createComponent,
   mountViewInto,
-  parseScalar,
-  getEditableText,
   textField,
   autosizeTextField,
   contentField,
@@ -49,7 +40,7 @@ import {
 import type { DomView, Runtime, ViewFactoryArgs } from "./index";
 import { createView, viewWantsChildView } from "./index";
 
-type HeaderKind = "derived" | "lens" | "none";
+type HeaderKind = Header["kind"];
 
 type HeaderFieldDef = Readonly<{
   field: "expr" | "from" | "where" | "orderBy";
@@ -68,63 +59,47 @@ const HEADER_FIELDS: Record<HeaderKind, readonly HeaderFieldDef[]> = {
 } as const;
 
 function headerFieldsForItem(
-  model: Model,
+  core: Core,
   id: ItemId,
 ): readonly HeaderFieldDef[] {
-  const content = model.readItem(id).content;
-  if (isDerivedContent(content)) return HEADER_FIELDS.derived;
-  if (isLensContent(content)) return HEADER_FIELDS.lens;
-  return HEADER_FIELDS.none;
+  return HEADER_FIELDS[core.header(id).kind] ?? HEADER_FIELDS.none;
 }
 
-function headerFieldValue(
-  model: Model,
-  id: ItemId,
-  def: HeaderFieldDef,
-): string {
-  const c = model.readItem(id).content;
-  if (isDerivedContent(c)) {
-    return def.field === "expr" ? (c.expr ?? "") : "";
-  }
-  if (isLensContent(c)) {
-    switch (def.field) {
-      case "from":
-        return c.from ?? "";
-      case "where":
-        return c.where ?? "";
-      case "orderBy":
-        return c.orderBy ?? "";
-      default:
-        return "";
-    }
+function headerFieldValue(core: Core, id: ItemId, def: HeaderFieldDef): string {
+  const h = core.header(id);
+  if (h.kind === "derived") return def.field === "expr" ? (h.expr ?? "") : "";
+  if (h.kind === "lens") {
+    if (def.field === "from") return h.from ?? "";
+    if (def.field === "where") return h.where ?? "";
+    if (def.field === "orderBy") return h.orderBy ?? "";
   }
   return "";
 }
 
 const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 
-const hasHeaderFields = (model: Model, id: ItemId) =>
-  headerFieldsForItem(model, id).length > 0;
+const hasHeaderFields = (core: Core, id: ItemId) =>
+  core.header(id).kind !== "none";
 
-const isNavStop = (model: Model, evaluator: Evaluator, id: ItemId) => {
+const isNavStop = (core: Core, evaluator: Evaluator, id: ItemId) => {
   const kids = evaluator.itemIds(id);
-  return kids.length === 0 || hasHeaderFields(model, id);
+  return kids.length === 0 || hasHeaderFields(core, id);
 };
 
-const defaultTargetFor = (model: Model, id: ItemId): FocusTarget =>
-  hasHeaderFields(model, id)
+const defaultTargetFor = (core: Core, id: ItemId): FocusTarget =>
+  hasHeaderFields(core, id)
     ? { kind: "header", index: 1 }
     : { kind: "content" };
 
 function collectNavStopsFrom(
-  model: Model,
+  core: Core,
   evaluator: Evaluator,
   rootId: ItemId,
 ): Focus[] {
   const out: Focus[] = [];
   const walk = (ownerId: ItemId) => {
     for (const id of evaluator.itemIds(ownerId)) {
-      if (isNavStop(model, evaluator, id)) out.push({ scopeId: ownerId, id });
+      if (isNavStop(core, evaluator, id)) out.push({ scopeId: ownerId, id });
       walk(id);
     }
   };
@@ -133,7 +108,7 @@ function collectNavStopsFrom(
 }
 
 function outlineNavMove(
-  model: Model,
+  core: Core,
   evaluator: Evaluator,
   stops: Focus[],
   sel: Selection,
@@ -142,6 +117,7 @@ function outlineNavMove(
 ): { selection: Selection; effects: EditorEffect[] } | null {
   if (sel.kind !== "focused") return null;
 
+  const model = core.advanced.model;
   const from = sel.focus;
   const at = Math.max(
     0,
@@ -160,7 +136,7 @@ function outlineNavMove(
 
   const firstChildStop = (id: ItemId): Focus | null => {
     for (const cid of evaluator.itemIds(id)) {
-      if (isNavStop(model, evaluator, cid)) return { scopeId: id, id: cid };
+      if (isNavStop(core, evaluator, cid)) return { scopeId: id, id: cid };
       const deeper = firstChildStop(cid);
       if (deeper) return deeper;
     }
@@ -184,419 +160,345 @@ function outlineNavMove(
 
     if (prev && next && focusKey(prev) === focusKey(next)) {
       const defs =
-        sel.target.kind === "content"
-          ? headerFieldsForItem(model, prev.id)
-          : [];
+        sel.target.kind === "content" ? headerFieldsForItem(core, prev.id) : [];
 
       if (sel.target.kind === "content" && defs.length > 0) {
         const lastDef = defs[defs.length - 1]!;
-        const text = headerFieldValue(model, prev.id, lastDef);
+        const text = headerFieldValue(core, prev.id, lastDef);
         targetOverride = { kind: "header", index: defs.length };
         caret = caretAt(text.length);
-      } else if (model.canEditScalarText(prev.id)) {
-        const text = getEditableText(model, evaluator, prev.id).text;
-        caret = caretAt(text.length);
+      } else {
+        const t = core.text(prev.id);
+        if (t.kind === "editable") caret = caretAt(t.text.length);
       }
     }
   }
 
   if (!next) return null;
 
-  const target = targetOverride ?? defaultTargetFor(model, next.id);
+  const target = targetOverride ?? defaultTargetFor(core, next.id);
   const outCaret = caret ?? caret0();
   const res = focusSelection(next, target, outCaret);
   return { selection: res.selection, effects: res.effects };
 }
 
 export const outlineCommands = {
-  setLabel(editor: Editor, f: Focus, text: string): CmdResult {
-    return tryCmd(() => {
-      const model = editor.model;
-      editor.commit(model.op.transaction([model.op.patchLabel(f.id, text)]));
-      return { didChange: true };
-    });
+  setLabel(core: Core, f: Focus, text: string): void {
+    core.edit.setLabel(f.id, text);
   },
 
-  setScalarValue(editor: Editor, id: ItemId, text: string): CmdResult {
-    return tryCmd(() => {
-      const model = editor.model;
-      if (!model.canEditScalarText(id)) return { didChange: false };
-      editor.commit(
-        model.op.transaction([
-          model.op.patchContent(id, {
-            kind: "scalar",
-            value: parseScalar(text),
-          }),
-        ]),
-      );
-      return { didChange: true };
-    });
+  setText(core: Core, id: ItemId, text: string): void {
+    core.edit.setText(id, text);
   },
 
-  setDerived(editor: Editor, f: Focus): CmdResult {
-    return tryCmd(() => {
-      const model = editor.model;
-      const nextSel = focusSelection(f, { kind: "header", index: 1 }, caret0());
-
-      editor.commit(
-        model.op.transaction([
-          model.op.patchContent(f.id, { kind: "derived", expr: "" }),
-        ]),
-        withSelection({ selection: nextSel.selection }),
-      );
-
-      return { didChange: true };
-    });
+  setDerived(core: Core, editor: Editor, f: Focus): void {
+    core.edit.setDerived(f.id, "");
+    const nextSel = focusSelection(f, { kind: "header", index: 1 }, caret0());
+    editor.setSelection(nextSel.selection);
   },
 
   commitHeaderField(
-    editor: Editor,
+    core: Core,
     f: Focus,
     def: HeaderFieldDef,
     text: string,
-  ): CmdResult {
-    return tryCmd(() => {
-      const model = editor.model;
-      const it = model.readItem(f.id);
-      const c = it.content;
+  ): void {
+    const h = core.header(f.id);
 
-      if (isDerivedContent(c)) {
-        if (def.field !== "expr") return { didChange: false };
-        editor.commit(
-          model.op.transaction([
-            model.op.patchContent(f.id, { kind: "derived", expr: text }),
-          ]),
-        );
-        return { didChange: true };
-      }
+    if (h.kind === "derived") {
+      if (def.field !== "expr") return;
+      core.edit.setDerived(f.id, text);
+      return;
+    }
 
-      if (!isLensContent(c)) return { didChange: false };
+    if (h.kind !== "lens") return;
 
-      editor.commit(
-        model.op.transaction([
-          model.op.patchContent(f.id, {
-            kind: "lens",
-            from: def.field === "from" ? text : c.from,
-            where: def.field === "where" ? text : c.where,
-            orderBy: def.field === "orderBy" ? text : c.orderBy,
-          }),
-        ]),
-      );
-
-      return { didChange: true };
+    core.edit.setLens(f.id, {
+      from: def.field === "from" ? text : h.from,
+      where: def.field === "where" ? text : h.where,
+      orderBy: def.field === "orderBy" ? text : h.orderBy,
     });
   },
 
   insertSibling(
+    core: Core,
     editor: Editor,
     sel: Selection,
     side: "before" | "after",
-  ): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
-    const f = sel.focus;
+  ): void {
+    if (sel.kind !== "focused") return;
 
-    return tryCmd(() => {
-      const loc = model.locateInOwner(f.id);
-      if (!loc) return { didChange: false };
+    const loc = core.locate(sel.focus.id);
+    if (!loc) return;
 
-      const at = side === "before" ? loc.index : loc.index + 1;
-      const id = model.createId();
+    const at = side === "before" ? loc.index : loc.index + 1;
 
-      const txn: Transaction = model.op.transaction([
-        model.op.create(model.createItem.blank(id)),
-        model.op.reparent({ childId: id, toOwnerId: loc.ownerId, toIndex: at }),
-      ]);
-
-      const nextSel = focusSelection(
-        { scopeId: f.scopeId, id },
-        { kind: "content" },
-        caret0(),
-      );
-
-      editor.commit(txn, withSelection({ selection: nextSel.selection }));
-      return { didChange: true };
+    let id: ItemId = -1;
+    core.tx((t) => {
+      id = t.insert(loc.ownerId, { at, kind: "blank" });
     });
+
+    const nextSel = focusSelection(
+      { scopeId: sel.focus.scopeId, id },
+      { kind: "content" },
+      caret0(),
+    );
+    editor.setSelection(nextSel.selection);
   },
 
   splitAt(
-    editor: Editor,
+    core: Core,
     evaluator: Evaluator,
+    editor: Editor,
     sel: Selection,
     caretStart: number,
     caretEnd = caretStart,
-  ): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
+  ): void {
+    if (sel.kind !== "focused") return;
+
+    const model = core.advanced.model;
     const f = sel.focus;
 
-    return tryCmd(() => {
-      if (!model.canEditScalarText(f.id))
-        return outlineCommands.insertSibling(editor, sel, "after");
+    const t0 = core.text(f.id);
+    if (t0.kind !== "editable") {
+      outlineCommands.insertSibling(core, editor, sel, "after");
+      return;
+    }
 
-      const loc = model.locateInOwner(f.id);
-      if (!loc) return { didChange: false };
+    const loc = core.locate(f.id);
+    if (!loc) return;
 
-      const curText = getEditableText(model, evaluator, f.id).text;
-      const len = curText.length;
-      const start = clamp(caretStart, 0, len);
-      const end = clamp(caretEnd, 0, len);
+    const curText = t0.text;
+    const len = curText.length;
+    const start = clamp(caretStart, 0, len);
+    const end = clamp(caretEnd, 0, len);
 
-      const left = curText.slice(0, start);
-      const right = curText.slice(end);
+    const left = curText.slice(0, start);
+    const right = curText.slice(end);
 
-      const rightId = model.createId();
+    let rightId: ItemId = -1;
 
-      const txn: Transaction = model.op.transaction([
-        model.op.patchContent(f.id, {
-          kind: "scalar",
-          value: parseScalar(left),
-        }),
-        model.op.create(model.createItem.blank(rightId)),
-        model.op.reparent({
-          childId: rightId,
-          toOwnerId: loc.ownerId,
-          toIndex: loc.index + 1,
-        }),
-        model.op.patchContent(rightId, {
-          kind: "scalar",
-          value: parseScalar(right),
-        }),
-      ]);
-
-      const nextSel = focusSelection(
-        { scopeId: f.scopeId, id: rightId },
-        { kind: "content" },
-        caret0(),
-      );
-
-      editor.commit(txn, withSelection({ selection: nextSel.selection }));
-      return { didChange: true };
+    core.tx((t) => {
+      t.setText(f.id, left);
+      rightId = t.insert(loc.ownerId, { at: loc.index + 1, kind: "blank" });
+      t.setText(rightId, right);
     });
+
+    const nextSel = focusSelection(
+      { scopeId: f.scopeId, id: rightId },
+      { kind: "content" },
+      caret0(),
+    );
+    editor.setSelection(nextSel.selection);
+
+    void evaluator;
+    void model;
   },
 
   joinBoundary(
+    core: Core,
     editor: Editor,
-    evaluator: Evaluator,
     sel: Selection,
     dir: "backward" | "forward",
-  ): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
+  ): void {
+    if (sel.kind !== "focused") return;
+
     const f = sel.focus;
+    const loc = core.locate(f.id);
+    if (!loc) return;
 
-    return tryCmd(() => {
-      if (!model.canEditScalarText(f.id)) return { didChange: false };
+    const neighborId =
+      dir === "backward"
+        ? (loc.siblingIds[loc.index - 1] ?? null)
+        : (loc.siblingIds[loc.index + 1] ?? null);
+    if (neighborId == null) return;
 
-      const loc = model.locateInOwner(f.id);
-      if (!loc) return { didChange: false };
+    const leftId = dir === "backward" ? neighborId : f.id;
+    const rightId = dir === "backward" ? f.id : neighborId;
 
-      const neighborId =
-        dir === "backward"
-          ? loc.childIds[loc.index - 1]
-          : loc.childIds[loc.index + 1];
-      if (neighborId == null || !model.canEditScalarText(neighborId))
-        return { didChange: false };
+    const a = core.text(leftId);
+    const b = core.text(rightId);
+    if (a.kind !== "editable" || b.kind !== "editable") return;
 
-      const leftId = dir === "backward" ? neighborId : f.id;
-      const rightId = dir === "backward" ? f.id : neighborId;
-
-      const a = getEditableText(model, evaluator, leftId).text;
-      const b = getEditableText(model, evaluator, rightId).text;
-
-      const survivorId = leftId;
-      const removedId = rightId;
-
-      const txn: Transaction = model.op.transaction([
-        model.op.patchContent(survivorId, {
-          kind: "scalar",
-          value: parseScalar(a + b),
-        }),
-        model.op.detach(removedId),
-      ]);
-
-      const nextSel = focusSelection(
-        { scopeId: f.scopeId, id: survivorId },
-        { kind: "content" },
-        caretAt(a.length),
-      );
-
-      editor.commit(txn, withSelection({ selection: nextSel.selection }));
-      return { didChange: true };
+    core.tx((t) => {
+      t.setText(leftId, a.text + b.text);
+      t.remove(rightId);
     });
+
+    const nextSel = focusSelection(
+      { scopeId: f.scopeId, id: leftId },
+      { kind: "content" },
+      caretAt(a.text.length),
+    );
+    editor.setSelection(nextSel.selection);
   },
 
   removeItem(
-    editor: Editor,
+    core: Core,
     evaluator: Evaluator,
+    editor: Editor,
     sel: Selection,
     prefer: "prev" | "next",
-  ): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
+  ): void {
+    if (sel.kind !== "focused") return;
+
     const f = sel.focus;
+    const loc = core.locate(f.id);
+    if (!loc) return;
 
-    return tryCmd(() => {
-      const loc = model.locateInOwner(f.id);
-      if (!loc) return { didChange: false };
+    const prevId = (loc.siblingIds[loc.index - 1] ?? null) as ItemId | null;
+    const nextId = (loc.siblingIds[loc.index + 1] ?? null) as ItemId | null;
 
-      const prevId = loc.childIds[loc.index - 1] ?? null;
-      const nextId = loc.childIds[loc.index + 1] ?? null;
+    const chosen =
+      prefer === "prev"
+        ? (prevId ?? nextId ?? loc.ownerId)
+        : (nextId ?? prevId ?? loc.ownerId);
 
-      const chosen =
-        prefer === "prev"
-          ? (prevId ?? nextId ?? loc.ownerId)
-          : (nextId ?? prevId ?? loc.ownerId);
+    const containerKids = evaluator.itemIds(f.scopeId);
+    const nextFocus: Focus = containerKids.includes(chosen as ItemId)
+      ? { scopeId: f.scopeId, id: chosen as ItemId }
+      : { scopeId: loc.ownerId, id: chosen as ItemId };
 
-      const containerKids = evaluator.itemIds(f.scopeId);
-      const nextFocus: Focus = containerKids.includes(chosen as ItemId)
-        ? { scopeId: f.scopeId, id: chosen as ItemId }
-        : { scopeId: loc.ownerId, id: chosen as ItemId };
+    const shouldPlaceCaretAtEnd =
+      prefer === "prev" &&
+      chosen != null &&
+      containerKids.includes(chosen as ItemId) &&
+      core.text(chosen as ItemId).kind === "editable";
 
-      const shouldPlaceCaretAtEnd =
-        prefer === "prev" &&
-        chosen != null &&
-        containerKids.includes(chosen as ItemId) &&
-        model.canEditScalarText(chosen as ItemId);
+    const caret = shouldPlaceCaretAtEnd
+      ? caretAt((core.text(chosen as ItemId) as any).text.length ?? 0)
+      : caret0();
 
-      const caret = shouldPlaceCaretAtEnd
-        ? caretAt(
-            getEditableText(model, evaluator, chosen as ItemId).text.length,
-          )
-        : caret0();
+    core.edit.remove(f.id);
 
-      const nextSel = focusSelection(
-        nextFocus,
-        defaultTargetFor(model, nextFocus.id),
-        caret,
-      );
-
-      editor.commit(
-        model.op.transaction([model.op.detach(f.id)]),
-        withSelection({ selection: nextSel.selection }),
-      );
-
-      return { didChange: true };
-    });
+    const nextSel = focusSelection(
+      nextFocus,
+      defaultTargetFor(core, nextFocus.id),
+      caret,
+    );
+    editor.setSelection(nextSel.selection);
   },
 
   changeNesting(
-    editor: Editor,
+    core: Core,
     evaluator: Evaluator,
+    editor: Editor,
     sel: Selection,
     dir: "in" | "out",
-  ): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
+  ): void {
+    if (sel.kind !== "focused") return;
+
+    const model = core.advanced.model;
     const f = sel.focus;
 
-    return tryCmd(() => {
-      if (dir === "in") {
-        const loc = model.locateInOwner(f.id);
-        if (!loc) return { didChange: false };
+    if (dir === "in") {
+      const loc = core.locate(f.id);
+      if (!loc) return;
 
-        const childInfo = model.readItem(f.id);
-        const wrapperId = model.createId();
-        const wrapper = model.createItem.group(wrapperId);
+      const childInfo = model.readItem(f.id);
+      let wrapperId: ItemId = -1;
 
-        const txn: Transaction = model.op.transaction([
-          model.op.create({ ...wrapper, label: childInfo.label }),
-          model.op.reparent({
-            childId: wrapperId,
-            toOwnerId: loc.ownerId,
-            toIndex: loc.index,
-          }),
-          model.op.patchLabel(f.id, ""),
-          model.op.reparent({
-            childId: f.id,
-            toOwnerId: wrapperId,
-            toIndex: 0,
-          }),
-        ]);
-
-        const nextSel = focusSelection(
-          { scopeId: wrapperId, id: f.id },
-          defaultTargetFor(model, f.id),
-          caret0(),
-        );
-
-        editor.commit(txn, withSelection({ selection: nextSel.selection }));
-        return { didChange: true };
-      }
-
-      const child = model.readItem(f.id);
-      const wrapperId = child.ownerId;
-      if (wrapperId == null) return { didChange: false };
-
-      const wrapper = model.readItem(wrapperId);
-      if (!isGroupContent(wrapper.content)) return { didChange: false };
-
-      const kids = evaluator.itemIds(wrapperId);
-      if (kids.length !== 1 || kids[0] !== f.id) return { didChange: false };
-
-      const ownerId = wrapper.ownerId;
-      if (ownerId == null) return { didChange: false };
-
-      const idx = evaluator.itemIds(ownerId).indexOf(wrapperId);
-      if (idx < 0) return { didChange: false };
-
-      const txn: Transaction = model.op.transaction([
-        model.op.reparent({ childId: f.id, toOwnerId: ownerId, toIndex: idx }),
-        model.op.detach(wrapperId),
-        model.op.patchLabel(f.id, wrapper.label),
-      ]);
+      core.tx((t) => {
+        wrapperId = t.insert(loc.ownerId, { at: loc.index, kind: "group" });
+        t.setLabel(wrapperId, childInfo.label);
+        t.setLabel(f.id, "");
+        t.move(f.id, wrapperId, { at: 0 });
+      });
 
       const nextSel = focusSelection(
-        { scopeId: ownerId, id: f.id },
-        defaultTargetFor(model, f.id),
+        { scopeId: wrapperId, id: f.id },
+        defaultTargetFor(core, f.id),
         caret0(),
       );
+      editor.setSelection(nextSel.selection);
+      return;
+    }
 
-      editor.commit(txn, withSelection({ selection: nextSel.selection }));
-      return { didChange: true };
+    const child = model.readItem(f.id);
+    const wrapperId = child.ownerId;
+    if (wrapperId == null) return;
+
+    const wrapper = model.readItem(wrapperId);
+    if (!isGroupContent(wrapper.content)) return;
+
+    const kids = evaluator.itemIds(wrapperId);
+    if (kids.length !== 1 || kids[0] !== f.id) return;
+
+    const ownerId = wrapper.ownerId;
+    if (ownerId == null) return;
+
+    const idx = evaluator.itemIds(ownerId).indexOf(wrapperId);
+    if (idx < 0) return;
+
+    core.tx((t) => {
+      t.move(f.id, ownerId, { at: idx });
+      t.remove(wrapperId);
+      t.setLabel(f.id, wrapper.label);
     });
+
+    const nextSel = focusSelection(
+      { scopeId: ownerId, id: f.id },
+      defaultTargetFor(core, f.id),
+      caret0(),
+    );
+    editor.setSelection(nextSel.selection);
   },
 
-  confirm(editor: Editor, evaluator: Evaluator, sel: Selection): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
+  confirm(
+    core: Core,
+    evaluator: Evaluator,
+    editor: Editor,
+    sel: Selection,
+  ): void {
+    if (sel.kind !== "focused") return;
+
     const f = sel.focus;
 
     if (sel.target.kind === "header") {
       const nextSel = focusSelection(f, { kind: "content" }, caret0());
-      return { didChange: false, selection: nextSel.selection };
+      editor.setSelection(nextSel.selection);
+      return;
     }
 
-    return model.canEditScalarText(f.id)
-      ? outlineCommands.splitAt(editor, evaluator, sel, 0, 0)
-      : outlineCommands.insertSibling(editor, sel, "after");
+    const t = core.text(f.id);
+    if (t.kind === "editable") {
+      outlineCommands.splitAt(core, evaluator, editor, sel, 0, 0);
+      return;
+    }
+
+    outlineCommands.insertSibling(core, editor, sel, "after");
   },
 
   deleteBoundary(
-    editor: Editor,
+    core: Core,
     evaluator: Evaluator,
+    editor: Editor,
     sel: Selection,
     dir: "backward" | "forward",
-  ): CmdResult {
-    if (sel.kind !== "focused") return { didChange: false };
-    const model = editor.model;
-    const f = sel.focus;
+  ): void {
+    if (sel.kind !== "focused") return;
 
+    const f = sel.focus;
     const prefer = dir === "backward" ? "prev" : "next";
 
-    if (!model.canEditScalarText(f.id))
-      return outlineCommands.removeItem(editor, evaluator, sel, prefer);
+    const t = core.text(f.id);
+    if (t.kind !== "editable") {
+      outlineCommands.removeItem(core, evaluator, editor, sel, prefer);
+      return;
+    }
 
-    const txt = getEditableText(model, evaluator, f.id).text;
-    if (txt.length === 0)
-      return outlineCommands.removeItem(editor, evaluator, sel, prefer);
+    if (t.text.length === 0) {
+      outlineCommands.removeItem(core, evaluator, editor, sel, prefer);
+      return;
+    }
 
-    return outlineCommands.joinBoundary(editor, evaluator, sel, dir);
+    outlineCommands.joinBoundary(core, editor, sel, dir);
   },
 } as const;
 
 type OutlineMountCtx = {
   runtime: Runtime;
+  core: Core;
   editor: Editor;
   evaluator: Evaluator;
   rootId: ItemId;
@@ -628,8 +530,8 @@ function mountOutlineHeader(
   defs: readonly HeaderFieldDef[],
   onTargets: (targets: HTMLElement[]) => void,
 ): Component {
-  const { editor, dispatch } = mountCtx;
-  const model = editor.model;
+  const { editor, core, dispatch } = mountCtx;
+  const model = core.advanced.model;
 
   return createComponent((componentCtx) => {
     const wrap = el("div");
@@ -646,7 +548,7 @@ function mountOutlineHeader(
     const commitLabel = (text: string) => {
       const current = model.readItem(focus.id).label ?? "";
       if (current === text) return;
-      applyCmd(editor, outlineCommands.setLabel(editor, focus, text));
+      outlineCommands.setLabel(core, focus, text);
     };
 
     const labelComp = autosizeTextField({
@@ -697,12 +599,9 @@ function mountOutlineHeader(
       const headerIndex = i + 1;
 
       const commitField = (text: string) => {
-        const current = headerFieldValue(model, focus.id, d);
+        const current = headerFieldValue(core, focus.id, d);
         if (current === text) return;
-        applyCmd(
-          editor,
-          outlineCommands.commitHeaderField(editor, focus, d, text),
-        );
+        outlineCommands.commitHeaderField(core, focus, d, text);
       };
 
       const fc = textField({
@@ -715,7 +614,7 @@ function mountOutlineHeader(
         registerFocus: false,
         commit: commitField,
         getState: () => ({
-          text: headerFieldValue(model, focus.id, d),
+          text: headerFieldValue(core, focus.id, d),
           readOnly: false,
           isIssue: false,
         }),
@@ -729,7 +628,7 @@ function mountOutlineHeader(
           ): boolean => {
             const def = defs[index - 1];
             if (!def) return false;
-            const text = headerFieldValue(model, focus.id, def);
+            const text = headerFieldValue(core, focus.id, def);
             const caret = caretPos === "end" ? caretAt(text.length) : caret0();
             const { selection } = focusSelection(
               focus,
@@ -861,8 +760,8 @@ function mountOutlineBody(
   focus: Focus,
   contentTargetRef: ContentTargetRef,
 ): Component {
-  const { editor, evaluator, dispatch, runtime } = mountCtx;
-  const model = editor.model;
+  const { editor, core, dispatch, runtime } = mountCtx;
+  const model = core.advanced.model;
 
   return createComponent((componentCtx) => {
     const host = el("div");
@@ -879,17 +778,12 @@ function mountOutlineBody(
     }
 
     const vf = contentField({
-      editor,
-      evaluator,
+      core,
       focus,
       id: focus.id,
       registerFocus: false,
       focusElRef: contentTargetRef,
-      commitScalarText: (text) =>
-        applyCmd(
-          editor,
-          outlineCommands.setScalarValue(editor, focus.id, text),
-        ),
+      commitText: (text) => outlineCommands.setText(core, focus.id, text),
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
         const stops: Array<() => void> = [];
@@ -927,7 +821,7 @@ function mountOutlineBody(
         return createComponent((componentCtx) => {
           componentCtx.watch(
             () => {
-              const v = evaluator.value(childId);
+              const v = core.value(childId);
               const isIssue = isIssueValue(v);
               const text = isIssue
                 ? v.message
@@ -961,8 +855,8 @@ function mountOutlineNode(
   mountCtx: OutlineMountCtx,
   spec: OutlineNodeSpec,
 ): Component {
-  const { editor, evaluator } = mountCtx;
-  const model = editor.model;
+  const { editor, evaluator, core } = mountCtx;
+  const model = core.advanced.model;
   const { focus } = spec;
 
   return createComponent((componentCtx) => {
@@ -975,9 +869,7 @@ function mountOutlineNode(
     const contentSlot = componentCtx.slot(contentContainer);
 
     let headerTargets: HTMLElement[] = [];
-    const contentTargetRef: ContentTargetRef = {
-      current: contentContainer,
-    };
+    const contentTargetRef: ContentTargetRef = { current: contentContainer };
 
     componentCtx.focusable({
       editor,
@@ -1006,20 +898,15 @@ function mountOutlineNode(
 
     let lastHeaderKey: string | null = null;
     let lastContentMode: "children" | "body" | null = null;
+
     componentCtx.watch(
       () => {
         const info = model.readItem(focus.id);
-        const defs = headerFieldsForItem(model, focus.id);
+        const defs = headerFieldsForItem(core, focus.id);
         const label = (info.label ?? "").trim();
-        const contentKind = info.content.kind;
-        const headerKind =
-          contentKind === "derived"
-            ? "derived"
-            : contentKind === "lens"
-              ? "lens"
-              : "none";
+        const headerKind = core.header(focus.id).kind;
 
-        const v = evaluator.value(focus.id);
+        const v = core.value(focus.id);
         const viewKind = info.view as ViewKind;
         const wantsChildView = viewWantsChildView(viewKind);
         const mode: "children" | "body" = wantsChildView
@@ -1094,18 +981,20 @@ export function createOutlineView({
   runtime,
   id: rootId,
 }: ViewFactoryArgs): DomView {
-  const { editor, evaluator } = runtime;
-  const model = editor.model;
+  const core = (runtime as any).core as Core;
+  const editor = core.advanced.editor;
+  const evaluator = core.advanced.evaluator;
+  const model = core.advanced.model;
 
   const root = el("div", "view outline");
   const viewId = `outline:${String(rootId)}`;
 
   const navStopsSignal = computed(() =>
-    collectNavStopsFrom(model, evaluator, rootId),
+    collectNavStopsFrom(core, evaluator, rootId),
   );
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    outlineNavMove(model, evaluator, navStopsSignal.value, sel, dir, mode);
+    outlineNavMove(core, evaluator, navStopsSignal.value, sel, dir, mode);
 
   const dispatch = (intent: OutlineIntent): ViewKeyResult => {
     const sel = editor.runtime.selection.value;
@@ -1118,7 +1007,7 @@ export function createOutlineView({
       }
 
       case "CONFIRM": {
-        applyCmd(editor, outlineCommands.confirm(editor, evaluator, sel));
+        outlineCommands.confirm(core, evaluator, editor, sel);
         return;
       }
 
@@ -1128,47 +1017,55 @@ export function createOutlineView({
       }
 
       case "INDENT": {
-        applyCmd(
-          editor,
-          outlineCommands.changeNesting(editor, evaluator, sel, intent.dir),
-        );
+        outlineCommands.changeNesting(core, evaluator, editor, sel, intent.dir);
         return;
       }
 
       case "DELETE_BOUNDARY": {
-        applyCmd(
+        outlineCommands.deleteBoundary(
+          core,
+          evaluator,
           editor,
-          outlineCommands.deleteBoundary(editor, evaluator, sel, intent.dir),
+          sel,
+          intent.dir,
         );
         return;
       }
 
       case "SPLIT": {
-        applyCmd(
+        outlineCommands.splitAt(
+          core,
+          evaluator,
           editor,
-          outlineCommands.splitAt(
-            editor,
-            evaluator,
-            sel,
-            intent.caret.start,
-            intent.caret.end,
-          ),
+          sel,
+          intent.caret.start,
+          intent.caret.end,
         );
         return;
       }
 
       case "SET_DERIVED": {
         if (sel.kind !== "focused") return;
-        applyCmd(editor, outlineCommands.setDerived(editor, sel.focus));
+        outlineCommands.setDerived(core, editor, sel.focus);
         return;
       }
     }
   };
 
-  const node = mountOutlineNode(
-    { runtime, editor, evaluator, rootId, navMove, dispatch },
-    { focus: { scopeId: rootId, id: rootId }, showHeader: false },
-  );
+  const mountCtx: OutlineMountCtx = {
+    runtime,
+    core,
+    editor,
+    evaluator,
+    rootId,
+    navMove,
+    dispatch,
+  };
+
+  const node = mountOutlineNode(mountCtx, {
+    focus: { scopeId: rootId, id: rootId },
+    showHeader: false,
+  });
 
   root.append(node.el);
 
@@ -1183,7 +1080,7 @@ export function createOutlineView({
 
       if (focus.id === rootId) return { kind: "content" };
 
-      const defs = headerFieldsForItem(activeModel, focus.id);
+      const defs = headerFieldsForItem(core, focus.id);
 
       if (target.index === 0) return { kind: "header", index: 0 };
 
@@ -1201,7 +1098,7 @@ export function createOutlineView({
       if (!first) return;
 
       editor.setSelection(
-        focusSelection(first, defaultTargetFor(model, first.id), caret0())
+        focusSelection(first, defaultTargetFor(core, first.id), caret0())
           .selection,
       );
     },

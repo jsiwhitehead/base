@@ -1,6 +1,6 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import { type ItemId, type ViewName, type ViewKind, createCore } from "./core";
-import { mountViewInto, installDomRuntime } from "./ui/dom";
+import { type ItemId, type ViewKind, type ViewName, createCore } from "./core";
+import { installDomRuntime, mountViewInto } from "./ui/dom";
 import { createView } from "./views";
 
 export type App = {
@@ -28,18 +28,24 @@ export function createApp(opts: CreateAppOpts = {}): App {
   devAssert(host, "Missing app root element (#root)");
 
   const core = createCore();
-  const rootId = core.createId();
-  core.advanced.model.setRoot(rootId);
 
-  core.commit(
-    core.txn([
-      core.op.create(core.item.group(rootId)),
-      core.op.patchView(rootId, rootView),
+  const model = core.advanced.model;
+  const rootId = model.createId();
+  model.setRoot(rootId);
+
+  core.advanced.editor.commit(
+    model.op.transaction([
+      model.op.create(model.createItem.group(rootId)),
+      model.op.patchView(rootId, rootView),
     ]),
   );
 
   const view = createView(
-    { editor: core.advanced.editor, evaluator: core.advanced.evaluator },
+    {
+      core,
+      editor: core.advanced.editor,
+      evaluator: core.advanced.evaluator,
+    },
     rootView,
     rootId,
     { scopeId: rootId, id: rootId },
@@ -76,18 +82,13 @@ export function seedDemo(app: App) {
 
   if (model.findChildIdByLabel(rootId, "Demo") != null) return;
 
-  const id = () => core.createId();
-
   const mkGroup = (owner: ItemId, label: string, view: ViewKind = null) => {
-    const gid = id();
-    core.commit(
-      core.txn([
-        core.op.create(core.item.group(gid)),
-        core.op.patchLabel(gid, label),
-        ...(view != null ? [core.op.patchView(gid, view)] : []),
-        core.op.reparent({ childId: gid, toOwnerId: owner }),
-      ]),
-    );
+    let gid: ItemId = -1;
+    core.tx((t) => {
+      gid = t.insert(owner, { kind: "group" });
+      t.setLabel(gid, label);
+      if (view != null) t.setView(gid, view);
+    });
     return gid;
   };
 
@@ -96,28 +97,22 @@ export function seedDemo(app: App) {
     label: string,
     value: true | number | string,
   ) => {
-    const cid = id();
-    core.commit(
-      core.txn([
-        core.op.create(core.item.blank(cid)),
-        core.op.patchLabel(cid, label),
-        core.op.patchContent(cid, { kind: "scalar", value }),
-        core.op.reparent({ childId: cid, toOwnerId: owner }),
-      ]),
-    );
+    let cid: ItemId = -1;
+    core.tx((t) => {
+      cid = t.insert(owner, { kind: "blank" });
+      t.setLabel(cid, label);
+      t.setScalar(cid, value);
+    });
     return cid;
   };
 
   const mkDerived = (owner: ItemId, label: string, expr: string) => {
-    const cid = id();
-    core.commit(
-      core.txn([
-        core.op.create(core.item.blank(cid)),
-        core.op.patchLabel(cid, label),
-        core.op.patchContent(cid, { kind: "derived", expr }),
-        core.op.reparent({ childId: cid, toOwnerId: owner }),
-      ]),
-    );
+    let cid: ItemId = -1;
+    core.tx((t) => {
+      cid = t.insert(owner, { kind: "blank" });
+      t.setLabel(cid, label);
+      t.setDerived(cid, expr);
+    });
     return cid;
   };
 
@@ -126,20 +121,12 @@ export function seedDemo(app: App) {
     label: string,
     spec: { from: string; where?: string; orderBy?: string },
   ) => {
-    const cid = id();
-    core.commit(
-      core.txn([
-        core.op.create(core.item.blank(cid)),
-        core.op.patchLabel(cid, label),
-        core.op.patchContent(cid, {
-          kind: "lens",
-          from: spec.from,
-          where: spec.where ?? "",
-          orderBy: spec.orderBy ?? "",
-        }),
-        core.op.reparent({ childId: cid, toOwnerId: owner }),
-      ]),
-    );
+    let cid: ItemId = -1;
+    core.tx((t) => {
+      cid = t.insert(owner, { kind: "blank" });
+      t.setLabel(cid, label);
+      t.setLens(cid, spec);
+    });
     return cid;
   };
 
@@ -163,16 +150,7 @@ export function seedDemo(app: App) {
   mkRow("b", 1, "low");
   mkRow("c", 3, "high");
 
-  const table = id();
-  core.commit(
-    core.txn([
-      core.op.create(core.item.blank(table)),
-      core.op.patchLabel(table, "Table"),
-      core.op.patchView(table, "outline"),
-      core.op.patchContent(table, { kind: "derived", expr: "rows" }),
-      core.op.reparent({ childId: table, toOwnerId: demo }),
-    ]),
-  );
+  mkLens(demo, "Table", { from: "rows" });
 }
 
 function autoMount(): void {

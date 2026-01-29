@@ -1,32 +1,28 @@
 import { computed, effect } from "@preact/signals-core";
+import type { Core, ItemId } from "../core";
+import type {
+  Anchor,
+  Binding,
+  Caret,
+  Editor,
+  EditorEffect,
+  EditorRuntime,
+  Focus,
+  FocusTarget,
+  NavDir,
+  NavMode,
+  View,
+  ViewId,
+} from "../core/runtime";
+import { caret0, focusSelection } from "../core/runtime";
+import type { Value } from "../core/compute";
 import {
-  type ItemId,
-  type Scalar,
-  type Model,
-  type Focus,
-  type FocusTarget,
-  type Caret,
-  caret0,
-  type Anchor,
-  type Editor,
-  type NavDir,
-  type NavMode,
-  type View,
-  type ViewId,
-  type Binding,
-  type EditorEffect,
-  focusSelection,
-  type EditorRuntime,
-  type Value,
-  type Evaluator,
-  isBlankContent,
-  isScalarContent,
   isBlankValue,
   isIssueValue,
-  isScalarValue,
   isItemGroupValue,
+  isScalarValue,
   isValueGroupValue,
-} from "../core";
+} from "../core/compute";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -690,90 +686,6 @@ export function syncValue(inp: TextInputElement, next: string) {
   inp.setSelectionRange(Math.min(start, len), Math.min(end, len));
 }
 
-const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
-
-export function parseScalar(text: string): Scalar {
-  const t = text.trim();
-  if (NUM_RE.test(t)) {
-    const n = Number(t);
-    if (Number.isFinite(n)) return n;
-  }
-  if (t === "true") return true;
-  return text;
-}
-
-export type DisplayText =
-  | { kind: "blank"; text: "" }
-  | { kind: "issue"; text: string }
-  | { kind: "scalar"; text: string }
-  | { kind: "other"; text: string };
-
-export function getDisplayText(v: Value): DisplayText {
-  if (isBlankValue(v)) return { kind: "blank", text: "" };
-  if (isIssueValue(v)) return { kind: "issue", text: v.message };
-  if (isScalarValue(v)) return { kind: "scalar", text: String(v.value) };
-  return { kind: "other", text: "" };
-}
-
-export type EditableText =
-  | { kind: "editable"; text: string }
-  | { kind: "readonly"; text: string };
-
-function storedScalarTextForEdit(
-  model: Model,
-  id: ItemId,
-): EditableText | null {
-  if (!model.canEditScalarText(id)) return null;
-
-  const content = model.readItem(id).content;
-  if (isBlankContent(content)) return { kind: "editable", text: "" } as const;
-  if (isScalarContent(content))
-    return { kind: "editable", text: String(content.value) } as const;
-  return null;
-}
-
-export function getEditableText(
-  model: Model,
-  evaluator: Evaluator,
-  id: ItemId,
-): EditableText {
-  return (
-    storedScalarTextForEdit(model, id) ?? {
-      kind: "readonly",
-      text: getDisplayText(evaluator.value(id)).text,
-    }
-  );
-}
-
-export function renderValueReadonly(v: Value): HTMLElement {
-  if (isBlankValue(v)) return el("div", "item readonly");
-
-  if (isIssueValue(v)) return el("div", "item readonly issue", v.message);
-
-  if (isScalarValue(v)) return el("div", "item readonly", String(v.value));
-
-  if (isItemGroupValue(v))
-    return el("div", "item readonly issue", "[item-group]");
-
-  const wrap = el("div", "group readonly");
-  for (const it of v.items)
-    wrap.append(renderLabeledValueReadonly(it.label, it.value));
-  return wrap;
-}
-
-export function renderLabeledValueReadonly(
-  label: string | undefined,
-  v: Value,
-): HTMLElement {
-  if (!label) return renderValueReadonly(v);
-  const row = el("div", "row readonly");
-  const lab = el("div", "label", label);
-  const val = renderValueReadonly(v);
-  val.classList.add("item");
-  row.append(lab, val);
-  return row;
-}
-
 export type TextFieldState = {
   text: string;
   readOnly: boolean;
@@ -919,26 +831,60 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): InputComponent {
   return { ...c, focusEl };
 }
 
+export function renderValueReadonly(v: Value): HTMLElement {
+  if (isBlankValue(v)) return el("div", "item readonly");
+
+  if (isIssueValue(v)) return el("div", "item readonly issue", v.message);
+
+  if (isScalarValue(v)) return el("div", "item readonly", String(v.value));
+
+  if (isItemGroupValue(v))
+    return el("div", "item readonly issue", "[item-group]");
+
+  const wrap = el("div", "group readonly");
+  for (const it of v.items)
+    wrap.append(renderLabeledValueReadonly(it.label, it.value));
+  return wrap;
+}
+
+export function renderLabeledValueReadonly(
+  label: string | undefined,
+  v: Value,
+): HTMLElement {
+  if (!label) return renderValueReadonly(v);
+  const row = el("div", "row readonly");
+  const lab = el("div", "label", label);
+  const val = renderValueReadonly(v);
+  val.classList.add("item");
+  row.append(lab, val);
+  return row;
+}
+
 export type ContentFieldOpts = {
-  editor: Editor;
-  evaluator: Evaluator;
+  core: Core;
   focus: Focus;
   id: ItemId;
   className?: string;
   registerFocus?: boolean;
   textKeys?: (inp: TextInputElement) => (() => void) | void;
   renderItemGroupChild?: (childId: ItemId) => Component;
-  commitScalarText?: (text: string) => void;
+  commitText?: (text: string) => void;
   focusElRef?: { current: HTMLElement | null };
 };
 
-function readonlyItemText(evaluator: Evaluator, id: ItemId): Component {
+function readonlyItemText(core: Core, id: ItemId): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
     ctx.watch(
       () => {
-        const v = evaluator.value(id);
-        return { text: getDisplayText(v).text, isIssue: isIssueValue(v) };
+        const v = core.value(id);
+        const text = isIssueValue(v)
+          ? v.message
+          : isScalarValue(v)
+            ? String(v.value)
+            : "";
+        const isIssue = isIssueValue(v);
+        return { text, isIssue };
       },
       ({ text, isIssue }) => {
         d.textContent = text;
@@ -953,6 +899,9 @@ export function contentField(opts: ContentFieldOpts): Component {
   return createComponent((ctx) => {
     const host = el("div");
     if (opts.className) host.className = opts.className;
+
+    const core = opts.core;
+    const editor = core.advanced.editor;
 
     const slot = ctx.slot(host);
 
@@ -976,14 +925,14 @@ export function contentField(opts: ContentFieldOpts): Component {
 
       if (register) {
         ctx.focusable({
-          editor: opts.editor,
+          editor,
           focus: opts.focus,
           elementFor: () => wrap,
           targets,
         });
       } else {
         installFocusableTargets(ctx, {
-          editor: opts.editor,
+          editor,
           focus: opts.focus,
           targets,
         });
@@ -991,7 +940,7 @@ export function contentField(opts: ContentFieldOpts): Component {
     };
 
     const mountText = (): Component => {
-      const { editor, id, focus, evaluator } = opts;
+      const { focus, id } = opts;
       return textField({
         editor,
         focus,
@@ -1002,17 +951,13 @@ export function contentField(opts: ContentFieldOpts): Component {
         stopPropagation: true,
         registerFocus: register,
         commit: (text) => {
-          opts.commitScalarText?.(text);
+          opts.commitText?.(text);
         },
         getState: () => {
-          const model = editor.model;
-          const editable = getEditableText(model, evaluator, id);
-          const display = getDisplayText(evaluator.value(id));
-          return {
-            text: editable.kind === "editable" ? editable.text : display.text,
-            readOnly: editable.kind !== "editable",
-            isIssue: display.kind === "issue",
-          };
+          const t = core.text(id);
+          if (t.kind === "editable")
+            return { text: t.text, readOnly: false, isIssue: false };
+          return { text: t.text, readOnly: true, isIssue: !!t.issue };
         },
         textKeys: opts.textKeys,
       });
@@ -1022,7 +967,7 @@ export function contentField(opts: ContentFieldOpts): Component {
       const d = el("div", "item readonly");
       installContentClickTarget(d);
 
-      const inner = readonlyItemText(opts.evaluator, opts.id);
+      const inner = readonlyItemText(core, opts.id);
       d.replaceChildren(inner.el);
       ctx.use(inner);
 
@@ -1040,7 +985,7 @@ export function contentField(opts: ContentFieldOpts): Component {
       installContentClickTarget(wrap);
 
       ctx.watch(() => {
-        const v = opts.evaluator.value(opts.id);
+        const v = core.value(opts.id);
         if (!isValueGroupValue(v)) {
           wrap.replaceChildren();
           return;
@@ -1063,13 +1008,13 @@ export function contentField(opts: ContentFieldOpts): Component {
       const children = ctx.list(wrap, (childId: ItemId) => {
         const c =
           opts.renderItemGroupChild?.(childId) ??
-          readonlyItemText(opts.evaluator, childId);
+          readonlyItemText(core, childId);
         c.el.classList.add("item");
         return c;
       });
 
       ctx.watch(() => {
-        const v = opts.evaluator.value(opts.id);
+        const v = core.value(opts.id);
         children.update(isItemGroupValue(v) ? v.itemIds : []);
       });
 
@@ -1080,15 +1025,16 @@ export function contentField(opts: ContentFieldOpts): Component {
       null;
 
     ctx.watch(
-      () => opts.evaluator.value(opts.id),
+      () => core.value(opts.id),
       (v) => {
         host.classList.toggle("issue", isIssueValue(v));
 
+        const t = core.text(opts.id);
         const nextKind = isItemGroupValue(v)
           ? "item-group"
           : isValueGroupValue(v)
             ? "value-group"
-            : opts.editor.model.canEditScalarText(opts.id)
+            : t.kind === "editable"
               ? "text"
               : "readonly";
 

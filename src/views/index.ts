@@ -1,12 +1,6 @@
-import type {
-  ItemId,
-  ViewName,
-  ViewKind,
-  Evaluator,
-  Focus,
-  Editor,
-  View,
-} from "../core";
+import type { Core, ItemId, ViewKind, ViewName } from "../core";
+import type { Editor, Focus, View } from "../core/runtime";
+import type { Evaluator } from "../core/compute";
 import {
   type Component,
   el,
@@ -18,7 +12,7 @@ import { createOutlineView } from "./outline";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type Runtime = { editor: Editor; evaluator: Evaluator };
+export type Runtime = { core: Core; editor: Editor; evaluator: Evaluator };
 
 export type DomView = View & { root: HTMLElement };
 
@@ -58,34 +52,32 @@ export function mountItemBody(
       inp: HTMLInputElement | HTMLTextAreaElement,
     ) => (() => void) | void;
     renderItemGroupChild?: (childId: ItemId) => Component;
-    commitScalarText?: (text: string) => void;
+    commitText?: (text: string) => void;
   } = {},
 ): Component {
-  const { editor, evaluator } = runtime;
-  const viewKind = editor.model.readItem(id).view as ViewKind;
+  const { core, editor } = runtime;
+  const viewKind = core.advanced.model.readItem(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return contentField({
-      editor,
-      evaluator,
+      core,
       focus,
       id,
       textKeys: opts.textKeys,
       renderItemGroupChild: opts.renderItemGroupChild,
-      commitScalarText: opts.commitScalarText,
+      commitText: opts.commitText,
     });
   }
 
   const child = createView(runtime, viewKind, id, focus);
   if (!child) {
     return contentField({
-      editor,
-      evaluator,
+      core,
       focus,
       id,
       textKeys: opts.textKeys,
       renderItemGroupChild: opts.renderItemGroupChild,
-      commitScalarText: opts.commitScalarText,
+      commitText: opts.commitText,
     });
   }
 

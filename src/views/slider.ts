@@ -1,21 +1,14 @@
+import type { Core, ItemId, Scalar } from "../core";
 import {
-  type ItemId,
-  type Scalar,
-  type StoredContentSettable,
-  type Transaction,
-  isScalarValue,
-  type Evaluator,
   type Focus,
   caret0,
-  withSelection,
   type Editor,
   type ViewKeyResult,
   focusSelection,
-  type CmdResult,
-  tryCmd,
-  applyCmd,
   setIdle,
-} from "../core";
+} from "../core/runtime";
+import { isScalarValue, type Evaluator } from "../core/compute";
+import { isDerivedContent, isLensContent } from "../core/model";
 import {
   type Component,
   el,
@@ -105,60 +98,36 @@ function formatNumberForStep(n: number, step: number): string {
   return p <= 0 ? String(Math.trunc(n)) : n.toFixed(p);
 }
 
-const canSetContent = (editor: Editor, id: ItemId) => {
-  const kind = editor.model.contentKindOf(id);
-  return kind !== "derived" && kind !== "lens";
+const canSetContent = (core: Core, id: ItemId) => {
+  const c = core.advanced.model.readItem(id).content;
+  return !isDerivedContent(c) && !isLensContent(c);
 };
 
-const getScalarOr = (
-  evaluator: Evaluator,
-  id: ItemId,
-  fallback: number,
-): number => {
-  const v = evaluator.value(id);
+const getScalarOr = (core: Core, id: ItemId, fallback: number): number => {
+  const v = core.value(id);
   return isScalarValue(v) ? toNumberOr(v.value, fallback) : fallback;
 };
 
 export const sliderCommands = {
-  setScalarValue(
-    editor: Editor,
-    focus: Focus,
-    id: ItemId,
-    value: number,
-  ): CmdResult {
-    return tryCmd(() => {
-      const model = editor.model;
-      if (!Number.isFinite(value) || !canSetContent(editor, id))
-        return { didChange: false };
-
-      const content: StoredContentSettable = { kind: "scalar", value };
-      const txn: Transaction = model.op.transaction([
-        model.op.patchContent(id, content),
-      ]);
-
-      const next = focusSelection(focus, { kind: "content" }, caret0());
-      editor.commit(txn, withSelection({ selection: next.selection }));
-
-      return { didChange: true };
-    });
+  setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
+    if (!Number.isFinite(value) || !canSetContent(core, id)) return;
+    core.edit.setScalar(id, value);
+    core.advanced.editor.setSelection(
+      focusSelection(focus, { kind: "content" }, caret0()).selection,
+    );
   },
 
   nudgeScalarValue(
-    editor: Editor,
-    evaluator: Evaluator,
+    core: Core,
     focus: Focus,
     id: ItemId,
     deltaSteps: number,
     opts: SliderResolvedOpts,
-  ): CmdResult {
-    return tryCmd(() => {
-      if (!canSetContent(editor, id)) return { didChange: false };
-
-      const cur = getScalarOr(evaluator, id, opts.min);
-      const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
-
-      return sliderCommands.setScalarValue(editor, focus, id, next);
-    });
+  ): void {
+    if (!canSetContent(core, id)) return;
+    const cur = getScalarOr(core, id, opts.min);
+    const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
+    sliderCommands.setScalarValue(core, focus, id, next);
   },
 } as const;
 
@@ -168,6 +137,7 @@ type SliderIntent =
   | { type: "CANCEL" };
 
 type SliderMountCtx = {
+  core: Core;
   editor: Editor;
   evaluator: Evaluator;
   id: ItemId;
@@ -177,6 +147,7 @@ type SliderMountCtx = {
 };
 
 function mountSlider({
+  core,
   editor,
   evaluator,
   id,
@@ -214,7 +185,7 @@ function mountSlider({
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
-      applyCmd(editor, sliderCommands.setScalarValue(editor, focus, id, next));
+      sliderCommands.setScalarValue(core, focus, id, next);
     };
 
     componentCtx.on(input, "input", () => {
@@ -227,7 +198,7 @@ function mountSlider({
 
     componentCtx.watch(
       () => {
-        const cur = getScalarOr(evaluator, id, opts.min);
+        const cur = getScalarOr(core, id, opts.min);
         const clamped = clamp(cur, opts.min, opts.max);
         return formatNumberForStep(clamped, opts.step);
       },
@@ -238,12 +209,14 @@ function mountSlider({
     );
 
     componentCtx.watch(
-      () => !canSetContent(editor, id),
+      () => !canSetContent(core, id),
       (shouldDisable) => {
         if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
         root.classList.toggle("readonly", shouldDisable);
       },
     );
+
+    void evaluator;
 
     return root;
   });
@@ -254,36 +227,31 @@ export function createSliderView({
   id,
   focus,
 }: ViewFactoryArgs): DomView {
-  const { editor, evaluator } = runtime;
-  const safeFocus: Focus = focus ?? { scopeId: id, id };
+  const core = (runtime as any).core as Core;
+  const editor = core.advanced.editor;
+  const evaluator = core.advanced.evaluator;
 
+  const safeFocus: Focus = focus ?? { scopeId: id, id };
   const resolved = DEFAULT_SLIDER_OPTS;
 
   const dispatch = (intent: SliderIntent): ViewKeyResult => {
     switch (intent.type) {
       case "NUDGE":
-        applyCmd(
-          editor,
-          sliderCommands.nudgeScalarValue(
-            editor,
-            evaluator,
-            safeFocus,
-            id,
-            intent.dir * intent.mul,
-            resolved,
-          ),
+        sliderCommands.nudgeScalarValue(
+          core,
+          safeFocus,
+          id,
+          intent.dir * intent.mul,
+          resolved,
         );
         return;
 
       case "SET":
-        applyCmd(
-          editor,
-          sliderCommands.setScalarValue(
-            editor,
-            safeFocus,
-            id,
-            intent.kind === "min" ? resolved.min : resolved.max,
-          ),
+        sliderCommands.setScalarValue(
+          core,
+          safeFocus,
+          id,
+          intent.kind === "min" ? resolved.min : resolved.max,
         );
         return;
 
@@ -294,6 +262,7 @@ export function createSliderView({
   };
 
   const mountCtx: SliderMountCtx = {
+    core,
     editor,
     evaluator,
     id,
