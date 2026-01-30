@@ -10,6 +10,7 @@ import {
   type ViewKind,
   type ViewName,
 } from "./model";
+
 import {
   type Value,
   type LabeledValue,
@@ -19,15 +20,17 @@ import {
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
-} from "./compute";
+} from "./eval";
+
 import { interpretExpr } from "./lang";
+
 import {
-  createShell,
+  createEditor,
   type Selection,
   type Focus,
   type Caret,
   type EditorEffect,
-} from "./runtime";
+} from "./editor";
 
 export type CaretSpec = number | Caret;
 
@@ -125,16 +128,15 @@ export type Core = {
   edit: Tx;
 
   selection(): Selection;
-  setSelection(next: Selection, effects?: EditorEffect[]): void;
   focus(focus: Focus, target?: string, opts?: { caret?: CaretSpec }): void;
-  blur(effects?: EditorEffect[]): void;
+  blur(): void;
 
-  mountViewRoot(opts: {
+  attachView(opts: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
   }): () => void;
 
-  bindFocus(opts: {
+  attachFocusable(opts: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
@@ -146,12 +148,12 @@ export function createCore(): { core: Core; rootId: ItemId } {
   const rootId = model.createId();
   model.setRoot(rootId);
   model.apply(
-    model.op.transaction([model.op.create(model.createItem.group(rootId))]),
+    model.ops.transaction([model.ops.create(model.createItem.group(rootId))]),
   );
 
   const evaluator = createEvaluator({ model, interpret: interpretExpr });
-  const shell = createShell({ model, initialSelection: { kind: "idle" } });
-  const uninstallGlobal = shell.installGlobalListeners(window);
+  const editor = createEditor({ model, initialSelection: { kind: "idle" } });
+  const uninstallGlobal = editor.installGlobalListeners(window);
 
   const has = (id: ItemId): boolean => model.hasItem(id);
 
@@ -170,13 +172,14 @@ export function createCore(): { core: Core; rootId: ItemId } {
     if (!model.hasItem(id)) return { kind: "none" };
     const c = model.readItem(id).content;
     if (isDerivedContent(c)) return { kind: "derived", expr: c.expr ?? "" };
-    if (isLensContent(c))
+    if (isLensContent(c)) {
       return {
         kind: "lens",
         from: c.from ?? "",
         where: c.where ?? "",
         orderBy: c.orderBy ?? "",
       };
+    }
     return { kind: "none" };
   };
 
@@ -198,6 +201,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
         return { kind: "editable", text: String(c.value) };
       return { kind: "editable", text: "" };
     }
+
     const disp = valueToDisplayText(evaluator.value(id));
     return {
       kind: "readonly",
@@ -222,7 +226,11 @@ export function createCore(): { core: Core; rootId: ItemId } {
         }
       | {
           kind: "reparent";
-          spec: { childId: ItemId; toOwnerId: ItemId | null; toIndex?: number };
+          spec: {
+            childId: ItemId;
+            toOwnerId: ItemId | null;
+            toIndex?: number;
+          };
         }
     > = [];
 
@@ -297,6 +305,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
           kind === "group"
             ? model.createItem.group(id)
             : model.createItem.blank(id);
+
         ops.push({ kind: "create", item });
         ops.push({
           kind: "reparent",
@@ -328,16 +337,18 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
     if (!ops.length) return { created: [], touched: [], reparented: [] };
 
-    const txn = model.op.transaction(
+    const txn = model.ops.transaction(
       ops.map((o) => {
-        if (o.kind === "create") return model.op.create(o.item);
-        if (o.kind === "patch") return model.op.patch(o.id, o.next);
-        return model.op.reparent(o.spec);
+        if (o.kind === "create") return model.ops.create(o.item);
+        if (o.kind === "patch") return model.ops.patch(o.id, o.next);
+        return model.ops.reparent(o.spec);
       }),
     );
 
     const result = model.apply(txn) as ApplyResult;
-    shell.setSelection(shell.selectionSignal.peek());
+
+    editor.setSelection(editor.selectionSignal.peek());
+
     return result;
   };
 
@@ -358,11 +369,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
     remove: (id) => commit((t) => t.remove(id)),
   };
 
-  const selection = (): Selection => shell.selectionSignal.value;
-
-  const setSelection = (next: Selection, effects: EditorEffect[] = []) => {
-    shell.setSelection(next, effects);
-  };
+  const selection = (): Selection => editor.selection();
 
   const normalizeCaret = (spec: CaretSpec | undefined): Caret | undefined => {
     if (spec == null) return undefined;
@@ -376,29 +383,37 @@ export function createCore(): { core: Core; rootId: ItemId } {
     opts2: { caret?: CaretSpec } = {},
   ): void => {
     const caret = normalizeCaret(opts2.caret);
-    shell.focus(f, target, caret ? { caret } : {});
+    editor.setSelection(
+      {
+        kind: "focused",
+        focus: f,
+        target,
+        ...(caret ? { caret } : {}),
+      },
+      [],
+    );
   };
 
-  const blur = (effects: EditorEffect[] = []): void => {
-    shell.setSelection({ kind: "idle" }, effects);
+  const blur = (): void => {
+    editor.setSelection({ kind: "idle" });
   };
 
-  const mountViewRoot = (opts2: {
+  const attachView = (opts2: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
-  }): (() => void) => shell.mountViewRoot(opts2);
+  }): (() => void) => editor.attachView(opts2);
 
-  const bindFocus = (opts2: {
+  const attachFocusable = (opts2: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
-  }): (() => void) => shell.bindFocus(opts2);
+  }): (() => void) => editor.attachFocusable(opts2);
 
   const core: Core = {
     dispose() {
       uninstallGlobal();
       evaluator.dispose();
-      shell.dispose();
+      editor.dispose();
     },
 
     has,
@@ -417,12 +432,11 @@ export function createCore(): { core: Core; rootId: ItemId } {
     edit,
 
     selection,
-    setSelection,
     focus,
     blur,
 
-    mountViewRoot,
-    bindFocus,
+    attachView,
+    attachFocusable,
   };
 
   return { core, rootId };

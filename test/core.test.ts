@@ -17,9 +17,9 @@ import {
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
-} from "../src/core/compute";
+} from "../src/core/eval";
 import { interpretExpr } from "../src/core/lang";
-import type { Selection } from "../src/core/runtime";
+import type { Selection } from "../src/core/editor";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
 import { createOutlineView } from "../src/views/outline";
@@ -148,7 +148,7 @@ async function mountView(
   },
 ) {
   document.body.replaceChildren(view.root);
-  const unmountRoot = core.mountViewRoot({
+  const unmountRoot = core.attachView({
     root: view.root,
     onKeyDown: view.onKeyDown,
   });
@@ -167,9 +167,9 @@ describe("model contract", () => {
     const rootId = model.createId();
     model.setRoot(rootId);
     model.apply(
-      model.op.transaction([
-        model.op.create(model.createItem.group(rootId)),
-        model.op.patchView(rootId, "outline"),
+      model.ops.transaction([
+        model.ops.create(model.createItem.group(rootId)),
+        model.ops.patchView(rootId, "outline"),
       ]),
     );
 
@@ -183,10 +183,10 @@ describe("model contract", () => {
   function addBlankChild(model: Model, ownerId: ItemId, label = "") {
     const id = model.createId();
     model.apply(
-      model.op.transaction([
-        model.op.create(model.createItem.blank(id)),
-        ...(label ? [model.op.patchLabel(id, label)] : []),
-        model.op.reparent({ childId: id, toOwnerId: ownerId }),
+      model.ops.transaction([
+        model.ops.create(model.createItem.blank(id)),
+        ...(label ? [model.ops.patchLabel(id, label)] : []),
+        model.ops.reparent({ childId: id, toOwnerId: ownerId }),
       ]),
     );
     return id;
@@ -195,10 +195,10 @@ describe("model contract", () => {
   function addGroupChild(model: Model, ownerId: ItemId, label = "") {
     const id = model.createId();
     model.apply(
-      model.op.transaction([
-        model.op.create(model.createItem.group(id)),
-        ...(label ? [model.op.patchLabel(id, label)] : []),
-        model.op.reparent({ childId: id, toOwnerId: ownerId }),
+      model.ops.transaction([
+        model.ops.create(model.createItem.group(id)),
+        ...(label ? [model.ops.patchLabel(id, label)] : []),
+        model.ops.reparent({ childId: id, toOwnerId: ownerId }),
       ]),
     );
     return id;
@@ -210,16 +210,16 @@ describe("model contract", () => {
     value: true | number | string,
   ) {
     model.apply(
-      model.op.transaction([
-        model.op.patchContent(id, { kind: "scalar", value }),
+      model.ops.transaction([
+        model.ops.patchContent(id, { kind: "scalar", value }),
       ]),
     );
   }
 
   function patchDerived(model: Model, id: ItemId, expr: string) {
     model.apply(
-      model.op.transaction([
-        model.op.patchContent(id, { kind: "derived", expr }),
+      model.ops.transaction([
+        model.ops.patchContent(id, { kind: "derived", expr }),
       ]),
     );
   }
@@ -230,8 +230,8 @@ describe("model contract", () => {
     spec: { from: string; where: string; orderBy: string },
   ) {
     model.apply(
-      model.op.transaction([
-        model.op.patchContent(id, {
+      model.ops.transaction([
+        model.ops.patchContent(id, {
           kind: "lens",
           from: spec.from,
           where: spec.where,
@@ -259,7 +259,7 @@ describe("model contract", () => {
     expect(model.readItem(b).ownerId).toBe(rootId);
     expect(model.childIdsOf(rootId)).toEqual([a, b]);
 
-    model.apply(model.op.transaction([model.op.detach(b)]));
+    model.apply(model.ops.transaction([model.ops.detach(b)]));
     expect(model.readItem(b).ownerId).toBe(null);
     expect(model.childIdsOf(rootId)).toEqual([a]);
 
@@ -274,15 +274,15 @@ describe("model contract", () => {
     const c = addBlankChild(model, rootId, "c");
 
     model.apply(
-      model.op.transaction([
-        model.op.reparent({ childId: a, toOwnerId: rootId, toIndex: 3 }),
+      model.ops.transaction([
+        model.ops.reparent({ childId: a, toOwnerId: rootId, toIndex: 3 }),
       ]),
     );
     expect(model.childIdsOf(rootId)).toEqual([b, c, a]);
 
     model.apply(
-      model.op.transaction([
-        model.op.reparent({ childId: c, toOwnerId: rootId, toIndex: 0 }),
+      model.ops.transaction([
+        model.ops.reparent({ childId: c, toOwnerId: rootId, toIndex: 0 }),
       ]),
     );
     expect(model.childIdsOf(rootId)).toEqual([c, b, a]);
@@ -298,7 +298,7 @@ describe("model contract", () => {
 
     addBlankChild(model, rootId, "b");
     expect(() => {
-      model.apply(model.op.transaction([model.op.patchLabel(a, "b")]));
+      model.apply(model.ops.transaction([model.ops.patchLabel(a, "b")]));
     }).toThrow();
 
     const g1 = addGroupChild(model, rootId, "g1");
@@ -309,8 +309,8 @@ describe("model contract", () => {
 
     expect(() => {
       model.apply(
-        model.op.transaction([
-          model.op.reparent({ childId: y, toOwnerId: g1 }),
+        model.ops.transaction([
+          model.ops.reparent({ childId: y, toOwnerId: g1 }),
         ]),
       );
     }).toThrow();
@@ -329,7 +329,7 @@ describe("model contract", () => {
     expect(locB.index).toBe(1);
     expect(locB.childIds).toEqual([a, b]);
 
-    model.apply(model.op.transaction([model.op.detach(b)]));
+    model.apply(model.ops.transaction([model.ops.detach(b)]));
     expect(model.locateInOwner(b)).toBe(null);
 
     assertPublicModelContracts(model);
@@ -365,15 +365,15 @@ describe("model contract", () => {
     assertPublicModelContracts(model);
   });
 
-  test("compactUnreachable removes detached subtrees", () => {
+  test("pruneUnreachable removes detached subtrees", () => {
     const { model, rootId } = makeModelRuntime();
 
     const a = addGroupChild(model, rootId, "A");
     const x = addBlankChild(model, a, "x");
     patchScalar(model, x, 123);
 
-    model.apply(model.op.transaction([model.op.detach(a)]));
-    const res = model.compactUnreachable();
+    model.apply(model.ops.transaction([model.ops.detach(a)]));
+    const res = model.pruneUnreachable();
 
     expect(res.removed).toBeGreaterThanOrEqual(1);
     expect(res.removedIds).toContain(a);
@@ -402,7 +402,7 @@ describe("expr contract", () => {
     const rootId = model.createId();
     model.setRoot(rootId);
     model.apply(
-      model.op.transaction([model.op.create(model.createItem.group(rootId))]),
+      model.ops.transaction([model.ops.create(model.createItem.group(rootId))]),
     );
     const evaluator = createEvaluator({ model, interpret: interpretExpr });
 
@@ -411,20 +411,20 @@ describe("expr contract", () => {
     const b = model.createId();
 
     model.apply(
-      model.op.transaction([
-        model.op.create(model.createItem.group(g)),
-        model.op.patchLabel(g, "g"),
-        model.op.reparent({ childId: g, toOwnerId: rootId }),
+      model.ops.transaction([
+        model.ops.create(model.createItem.group(g)),
+        model.ops.patchLabel(g, "g"),
+        model.ops.reparent({ childId: g, toOwnerId: rootId }),
 
-        model.op.create(model.createItem.blank(a)),
-        model.op.patchLabel(a, "a"),
-        model.op.patchContent(a, { kind: "scalar", value: 10 }),
-        model.op.reparent({ childId: a, toOwnerId: g }),
+        model.ops.create(model.createItem.blank(a)),
+        model.ops.patchLabel(a, "a"),
+        model.ops.patchContent(a, { kind: "scalar", value: 10 }),
+        model.ops.reparent({ childId: a, toOwnerId: g }),
 
-        model.op.create(model.createItem.blank(b)),
-        model.op.patchLabel(b, "b"),
-        model.op.patchContent(b, { kind: "scalar", value: 20 }),
-        model.op.reparent({ childId: b, toOwnerId: g }),
+        model.ops.create(model.createItem.blank(b)),
+        model.ops.patchLabel(b, "b"),
+        model.ops.patchContent(b, { kind: "scalar", value: 20 }),
+        model.ops.reparent({ childId: b, toOwnerId: g }),
       ]),
     );
 
@@ -590,7 +590,6 @@ describe("selection contract", () => {
     });
 
     await tick();
-    core.setSelection(core.selection());
 
     const sel = core.selection();
     if (sel.kind === "focused") {

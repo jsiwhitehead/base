@@ -671,7 +671,7 @@ function mountOutlineBody(
         ensureTabbable(childView.root);
         contentTargetRef.current = childView.root;
         componentCtx.use(
-          core.mountViewRoot({
+          core.attachView({
             root: childView.root,
             onKeyDown: childView.onKeyDown,
           }),
@@ -993,7 +993,7 @@ export function createOutlineView(args: { core: Core; id: ItemId }): DomView {
     }
   };
 
-  const unmountRoot = core.mountViewRoot({ root, onKeyDown });
+  const unmountRoot = core.attachView({ root, onKeyDown });
 
   if (core.selection().kind === "idle") {
     const first = navStopsSignal.value[0];

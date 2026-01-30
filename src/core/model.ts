@@ -140,7 +140,7 @@ export type Model = {
     group(id: ItemId): Item;
   };
 
-  op: {
+  ops: {
     create(item: Item): Op;
 
     patch(id: ItemId, next: ItemPatch): Op;
@@ -170,7 +170,7 @@ export type Model = {
   apply(txn: Transaction): ApplyResult;
 
   snapshot(id: ItemId): SnapshotItem;
-  compactUnreachable(): { removed: number; removedIds: ItemId[] };
+  pruneUnreachable(): { removed: number; removedIds: ItemId[] };
 
   normalizeLabel(s: string): string;
 };
@@ -296,7 +296,7 @@ export function createModel(): Model {
     }),
   } as const;
 
-  const op = {
+  const ops = {
     create: (item: Item): Op => ({ kind: "create", item }),
     patch: (id: ItemId, next: ItemPatch): Op => ({ kind: "patch", id, next }),
     patchLabel: (id: ItemId, label: string): Op => ({
@@ -545,7 +545,7 @@ export function createModel(): Model {
     return seen;
   };
 
-  const compactUnreachable = (): { removed: number; removedIds: ItemId[] } => {
+  const pruneUnreachable = (): { removed: number; removedIds: ItemId[] } => {
     const keep = collectReachableFrom(rootId());
     const removedIds: ItemId[] = [];
 
@@ -670,7 +670,7 @@ export function createModel(): Model {
     setNextId,
 
     createItem,
-    op,
+    ops,
 
     itemSignal,
 
@@ -688,7 +688,7 @@ export function createModel(): Model {
     apply,
 
     snapshot,
-    compactUnreachable,
+    pruneUnreachable,
 
     normalizeLabel,
   };

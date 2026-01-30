@@ -44,7 +44,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
   });
   devAssert(view, `No view factory for rootView='${rootView}'`);
 
-  const unmountRoot = core.mountViewRoot({
+  const unmountRoot = core.attachView({
     root: view.root,
     onKeyDown: view.onKeyDown,
   });

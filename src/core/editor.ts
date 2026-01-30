@@ -20,11 +20,9 @@ export type ViewHandle = {
   onKeyDown?: (e: KeyboardEvent) => void;
 };
 
-export type BindingHandle = unknown;
-
 export type Binding = {
   focus: Focus;
-  elementFor(target: string): BindingHandle | null;
+  elementFor(target: string): HTMLElement | null;
   caret?: { set(pos: number): void; getLength(): number };
 };
 
@@ -91,21 +89,19 @@ function computeAnchoredPos(
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
 
-export type Shell = {
+export type Editor = {
   selectionSignal: Signal<Selection>;
 
   selection(): Selection;
 
   setSelection(next: Selection, effects?: EditorEffect[]): void;
-  focus(focus: Focus, target: string, opts?: { caret?: Caret }): void;
-  blur(): void;
 
-  mountViewRoot(opts: {
+  attachView(opts: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
   }): () => void;
 
-  bindFocus(opts: {
+  attachFocusable(opts: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
@@ -116,10 +112,10 @@ export type Shell = {
   dispose(): void;
 };
 
-export function createShell(opts: {
+export function createEditor(opts: {
   model: Model;
   initialSelection?: Selection;
-}): Shell {
+}): Editor {
   const { model } = opts;
 
   const selectionSignal = signal<Selection>(
@@ -240,25 +236,7 @@ export function createShell(opts: {
     scheduleEffects(repaired, normalizeEffectsForSelection(repaired, effects));
   };
 
-  const focus = (
-    focus0: Focus,
-    target: string,
-    opts2: { caret?: Caret } = {},
-  ) => {
-    const next: Selection = {
-      kind: "focused",
-      focus: focus0,
-      target,
-      ...(opts2.caret ? { caret: opts2.caret } : {}),
-    };
-    setSelection(next);
-  };
-
-  const blur = (): void => {
-    setSelection({ kind: "idle" });
-  };
-
-  const mountViewRoot = (v: {
+  const attachView = (v: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
   }): (() => void) => {
@@ -293,7 +271,7 @@ export function createShell(opts: {
     };
   };
 
-  const bindFocus = (b: {
+  const attachFocusable = (b: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
@@ -346,10 +324,8 @@ export function createShell(opts: {
     selectionSignal,
     selection,
     setSelection,
-    focus,
-    blur,
-    mountViewRoot,
-    bindFocus,
+    attachView,
+    attachFocusable,
     installGlobalListeners,
     dispose,
   };

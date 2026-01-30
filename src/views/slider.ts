@@ -259,7 +259,7 @@ export function createSliderView(args: {
     handleSliderKey(e, dispatch);
   };
 
-  const unmountRoot = core.mountViewRoot({ root: comp.el, onKeyDown });
+  const unmountRoot = core.attachView({ root: comp.el, onKeyDown });
 
   if (core.selection().kind === "idle") {
     core.focus(safeFocus, "content");

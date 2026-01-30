@@ -426,7 +426,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
     },
 
     focusable(opts) {
-      const unbind = opts.core.bindFocus({
+      const unbind = opts.core.attachFocusable({
         focus: opts.focus,
         elementFor: (t) => opts.elementFor(t),
         caret:

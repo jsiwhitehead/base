@@ -10,7 +10,7 @@ import {
   isItemGroupValue,
   isValueGroupValue,
   type EvalEnv,
-} from "./compute";
+} from "./eval";
 
 const ISSUE = {
   literal: "Expected literal value",

@@ -83,7 +83,7 @@ export function mountItemBody(
   ensureTabbable(hostEl);
   ensureTabbable(child.root);
 
-  const unmountRoot = core.mountViewRoot({
+  const unmountRoot = core.attachView({
     root: child.root,
     onKeyDown: child.onKeyDown,
   });

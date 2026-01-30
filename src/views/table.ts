@@ -342,7 +342,7 @@ function mountTableCellContent(cellCtx: {
         const hostEl = el("div");
         ensureTabbable(hostEl);
 
-        const unmount = core.mountViewRoot({
+        const unmount = core.attachView({
           root: child.root,
           onKeyDown: child.onKeyDown,
         });
@@ -614,7 +614,7 @@ export function createTableView(args: { core: Core; id: ItemId }): DomView {
     }
   };
 
-  const unmountRoot = core.mountViewRoot({ root, onKeyDown });
+  const unmountRoot = core.attachView({ root, onKeyDown });
 
   if (core.selection().kind === "idle") {
     const rows = core.childIds(tableId);
