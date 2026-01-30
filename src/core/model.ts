@@ -10,6 +10,19 @@ import { DEV, devAssert } from "../dev";
 export type ItemId = number;
 export type Scalar = true | number | string;
 
+const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+export function parseScalar(text: string): Scalar | null {
+  const t = text.trim();
+  if (!t) return null;
+  if (NUM_RE.test(t)) {
+    const n = Number(t);
+    if (Number.isFinite(n)) return n;
+  }
+  if (t === "true") return true;
+  return text;
+}
+
 export type ViewName = "outline" | "table" | "slider";
 export type ViewKind = ViewName | null;
 
@@ -246,33 +259,31 @@ export function createModel(): Model {
     }));
   };
 
-  function assertSiblingLabelUniqueInOwner(
+  function assertUniqueChildLabels(
     ownerId: ItemId,
-    childId: ItemId,
-    nextLabel: string,
+    opts: {
+      childIds?: readonly ItemId[];
+      override?: { childId: ItemId; label: string };
+    } = {},
   ) {
-    const nm = normalizeLabel(nextLabel);
-    if (!nm) return;
-
     const owner = itemSignal(ownerId).peek();
     if (!isGroupItem(owner)) throw new Error("Owner is not a group");
 
-    for (const sid of owner.content.childIds) {
-      if (sid === childId) continue;
-      if (!items.has(sid)) continue;
-      const sib = itemSignal(sid).peek();
-      if (normalizeLabel(sib.label) === nm) {
-        throw new Error(`Duplicate label '${nm}' in group`);
-      }
-    }
-  }
+    const childIds = opts.childIds ?? owner.content.childIds;
 
-  function assertGroupContentHasUniqueChildLabels(childIds: readonly ItemId[]) {
     const seen = new Set<string>();
     for (const cid of childIds) {
       if (!items.has(cid)) continue;
-      const nm = normalizeLabel(itemSignal(cid).peek().label);
+
+      const it = itemSignal(cid).peek();
+      const raw =
+        opts.override && opts.override.childId === cid
+          ? opts.override.label
+          : it.label;
+
+      const nm = normalizeLabel(raw);
       if (!nm) continue;
+
       if (seen.has(nm)) throw new Error(`Duplicate label '${nm}' in group`);
       seen.add(nm);
     }
@@ -361,7 +372,9 @@ export function createModel(): Model {
     if (toOwnerId != null) {
       if (!toOwner) throw new Error("Owner is not a group");
 
-      assertSiblingLabelUniqueInOwner(toOwnerId, childId, child.label);
+      assertUniqueChildLabels(toOwnerId, {
+        override: { childId, label: child.label },
+      });
 
       const len = toOwner.content.childIds.length;
       const rawAt = spec.toIndex == null ? len : clampIndex(spec.toIndex, len);
@@ -407,7 +420,8 @@ export function createModel(): Model {
           childId,
           ...before.slice(at),
         ];
-        assertGroupContentHasUniqueChildLabels(nextChildIds);
+
+        assertUniqueChildLabels(toOwnerId, { childIds: nextChildIds });
 
         ownerSignal.value = {
           ...owner,
@@ -431,8 +445,11 @@ export function createModel(): Model {
 
     if (next.label !== undefined) {
       const ownerId = cur.ownerId;
-      if (ownerId != null)
-        assertSiblingLabelUniqueInOwner(ownerId, id, next.label);
+      if (ownerId != null) {
+        assertUniqueChildLabels(ownerId, {
+          override: { childId: id, label: next.label },
+        });
+      }
     }
 
     if (next.content !== undefined) {

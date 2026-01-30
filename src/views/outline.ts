@@ -13,6 +13,7 @@ import {
   isScalarValue,
   isItemGroupValue,
   clamp,
+  parseScalar,
 } from "../core";
 import {
   type NavDir,
@@ -187,7 +188,8 @@ export const outlineCommands = {
   },
 
   setText(core: Core, id: ItemId, text: string): void {
-    core.edit.setText(id, text);
+    const value = parseScalar(text);
+    core.edit.setScalar(id, value);
   },
 
   setDerived(core: Core, f: Focus): void {
@@ -267,9 +269,9 @@ export const outlineCommands = {
     let rightId: ItemId = -1;
 
     core.commit((t) => {
-      t.setText(f.id, left);
+      t.setScalar(f.id, parseScalar(left));
       rightId = t.insert(loc.ownerId, { at: loc.index + 1, kind: "blank" });
-      t.setText(rightId, right);
+      t.setScalar(rightId, parseScalar(right));
     });
 
     core.focus({ scopeId: f.scopeId, id: rightId }, "content", {
@@ -298,7 +300,7 @@ export const outlineCommands = {
     if (a.kind !== "editable" || b.kind !== "editable") return;
 
     core.commit((t) => {
-      t.setText(leftId, a.text + b.text);
+      t.setScalar(leftId, parseScalar(a.text + b.text));
       t.remove(rightId);
     });
 

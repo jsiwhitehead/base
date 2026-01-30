@@ -1,13 +1,14 @@
 import { computed } from "@preact/signals-core";
-import type {
-  Core,
-  ItemId,
-  ViewKind,
-  Component,
-  Caret,
-  Focus,
-  Selection,
-  DomView,
+import {
+  type Core,
+  type ItemId,
+  type ViewKind,
+  type Component,
+  type Caret,
+  type Focus,
+  type Selection,
+  type DomView,
+  parseScalar,
 } from "../core";
 import {
   type NavDir,
@@ -189,7 +190,8 @@ export const tableCommands = {
   },
 
   setText(core: Core, cellId: ItemId, raw: string): void {
-    core.edit.setText(cellId, raw);
+    const value = parseScalar(raw);
+    core.edit.setScalar(cellId, value);
   },
 
   addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {

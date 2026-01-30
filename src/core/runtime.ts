@@ -256,6 +256,13 @@ export function createRuntime<C>(opts: {
     });
   };
 
+  const enqueueDomEffects = (
+    sel: Selection,
+    effects: RuntimeEffect[],
+  ): void => {
+    scheduleEffects(sel, normalizeEffectsForSelection(sel, effects));
+  };
+
   const repairSelection = (sel: Selection): Selection => {
     if (sel.kind === "idle") return sel;
 
@@ -285,7 +292,7 @@ export function createRuntime<C>(opts: {
   ): void => {
     const repaired = repairSelection(next);
     selectionSignal.value = repaired;
-    scheduleEffects(repaired, normalizeEffectsForSelection(repaired, effects));
+    enqueueDomEffects(repaired, effects);
   };
 
   const registerViewRoot = (v: {

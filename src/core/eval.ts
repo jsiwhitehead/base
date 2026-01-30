@@ -66,6 +66,18 @@ export type Interpreter = (expr: string, env: EvalEnv) => Value;
 type EvalCtx = { visiting: Set<ItemId> };
 const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<ItemId>() });
 
+function withVisiting(ctx: EvalCtx, id: ItemId, run: () => Value): Value {
+  if (ctx.visiting.has(id)) return V.issue("Cyclic dependency");
+  ctx.visiting.add(id);
+  try {
+    return run();
+  } catch (err) {
+    return V.issue(err instanceof Error ? err.message : String(err));
+  } finally {
+    ctx.visiting.delete(id);
+  }
+}
+
 const collator = new Intl.Collator(undefined, { sensitivity: "base" });
 
 const sortRank = (v: Value): [number, unknown] => {
@@ -264,10 +276,7 @@ export function createEvaluator(opts: {
   }
 
   function evaluateValue(id: ItemId, ctx: EvalCtx): Value {
-    if (ctx.visiting.has(id)) return V.issue("Cyclic dependency");
-    ctx.visiting.add(id);
-
-    try {
+    return withVisiting(ctx, id, () => {
       const it = model.readItem(id);
       switch (it.content.kind) {
         case "blank":
@@ -285,11 +294,7 @@ export function createEvaluator(opts: {
         case "lens":
           return evaluateLens(id, it.content, ctx);
       }
-    } catch (err) {
-      return V.issue(err instanceof Error ? err.message : String(err));
-    } finally {
-      ctx.visiting.delete(id);
-    }
+    });
   }
 
   const valueSignal = (id: ItemId): ReadonlySignal<Value> => {

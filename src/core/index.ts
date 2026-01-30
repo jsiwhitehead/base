@@ -4,11 +4,15 @@ import {
   isDerivedContent,
   isLensContent,
   isScalarContent,
+  parseScalar,
   type Item,
   type ItemId,
   type Scalar,
+  type StoredContent,
+  type StoredContentSettable,
   type ViewKind,
   type ViewName,
+  type Op,
 } from "./model";
 import {
   type Value,
@@ -73,19 +77,6 @@ export type ApplyResult = {
   }[];
 };
 
-const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
-
-function parseScalar(text: string): Scalar | null {
-  const t = text.trim();
-  if (!t) return null;
-  if (NUM_RE.test(t)) {
-    const n = Number(t);
-    if (Number.isFinite(n)) return n;
-  }
-  if (t === "true") return true;
-  return text;
-}
-
 function valueToDisplayText(v: Value): { text: string; issue?: string } {
   if (isBlankValue(v)) return { text: "" };
   if (isIssueValue(v)) return { text: v.message, issue: v.message };
@@ -93,11 +84,41 @@ function valueToDisplayText(v: Value): { text: string; issue?: string } {
   return { text: "" };
 }
 
+function contentToSource(c: StoredContent): Source {
+  if (isDerivedContent(c)) return { kind: "derived", expr: c.expr ?? "" };
+  if (isLensContent(c))
+    return {
+      kind: "lens",
+      from: c.from ?? "",
+      where: c.where ?? "",
+      orderBy: c.orderBy ?? "",
+    };
+  return { kind: "none" };
+}
+
+function sourceToContent(prev: StoredContent, s: Source): StoredContent {
+  if (s.kind === "none") {
+    return prev.kind === "derived" || prev.kind === "lens"
+      ? ({ kind: "blank" } as StoredContentSettable)
+      : prev;
+  }
+  if (s.kind === "derived") return { kind: "derived", expr: s.expr };
+  return {
+    kind: "lens",
+    from: s.from,
+    where: s.where ?? "",
+    orderBy: s.orderBy ?? "",
+  };
+}
+
+function storedFromScalar(v: Scalar | null): StoredContentSettable {
+  return v === null ? { kind: "blank" } : { kind: "scalar", value: v };
+}
+
 export type Tx = {
   setLabel(id: ItemId, label: string): void;
   setView(id: ItemId, view: ViewKind): void;
 
-  setText(id: ItemId, text: string): void;
   setScalar(id: ItemId, value: Scalar | null): void;
 
   setSource(id: ItemId, source: Source): void;
@@ -134,18 +155,17 @@ export type Core = {
   focus(focus: Focus, target?: string, opts?: { caret?: CaretSpec }): void;
   blur(): void;
 
+  attachFocus(opts: {
+    focus: Focus;
+    elementFor: (target: string) => HTMLElement | null;
+    caret?: { set(pos: number): void; getLength(): number };
+  }): () => void;
   mountView(opts: { id: ItemId; focus?: Focus }): Component;
   mountView(opts: {
     id: ItemId;
     focus?: Focus;
     continueAs: ViewName;
   }): Component | null;
-
-  attachFocus(opts: {
-    focus: Focus;
-    elementFor: (target: string) => HTMLElement | null;
-    caret?: { set(pos: number): void; getLength(): number };
-  }): () => void;
 };
 
 export function createCore(opts: {
@@ -175,17 +195,7 @@ export function createCore(opts: {
 
   const source = (id: ItemId): Source => {
     if (!model.hasItem(id)) return { kind: "none" };
-    const c = model.readItem(id).content;
-    if (isDerivedContent(c)) return { kind: "derived", expr: c.expr ?? "" };
-    if (isLensContent(c)) {
-      return {
-        kind: "lens",
-        from: c.from ?? "",
-        where: c.where ?? "",
-        orderBy: c.orderBy ?? "",
-      };
-    }
-    return { kind: "none" };
+    return contentToSource(model.readItem(id).content);
   };
 
   const value = (id: ItemId): Value => evaluator.value(id);
@@ -222,134 +232,61 @@ export function createCore(opts: {
   };
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
-    const ops: Array<
-      | { kind: "create"; item: Item }
-      | {
-          kind: "patch";
-          id: ItemId;
-          next: { label?: string; view?: ViewKind; content?: any };
-        }
-      | {
-          kind: "reparent";
-          spec: {
-            childId: ItemId;
-            toOwnerId: ItemId | null;
-            toIndex?: number;
-          };
-        }
-    > = [];
+    const ops: Op[] = [];
 
     const t: Tx = {
-      setLabel: (id, label) => ops.push({ kind: "patch", id, next: { label } }),
-      setView: (id, view) => ops.push({ kind: "patch", id, next: { view } }),
-
-      setText: (id, txt) => {
-        const v = parseScalar(txt);
-        ops.push({
-          kind: "patch",
-          id,
-          next:
-            v === null
-              ? { content: { kind: "blank" } }
-              : { content: { kind: "scalar", value: v } },
-        });
-      },
+      setLabel: (id, label) => ops.push(model.ops.patchLabel(id, label)),
+      setView: (id, view) => ops.push(model.ops.patchView(id, view)),
 
       setScalar: (id, v) => {
-        ops.push({
-          kind: "patch",
-          id,
-          next:
-            v === null
-              ? { content: { kind: "blank" } }
-              : { content: { kind: "scalar", value: v } },
-        });
+        ops.push(model.ops.patchContent(id, storedFromScalar(v)));
       },
 
       setSource: (id, nextSource) => {
-        const cur = source(id);
-
-        if (nextSource.kind === "none") {
-          if (cur.kind === "derived" || cur.kind === "lens") {
-            ops.push({
-              kind: "patch",
-              id,
-              next: { content: { kind: "blank" } },
-            });
-          }
-          return;
-        }
-
-        if (nextSource.kind === "derived") {
-          ops.push({
-            kind: "patch",
-            id,
-            next: { content: { kind: "derived", expr: nextSource.expr } },
-          });
-          return;
-        }
-
-        ops.push({
-          kind: "patch",
-          id,
-          next: {
-            content: {
-              kind: "lens",
-              from: nextSource.from,
-              where: nextSource.where ?? "",
-              orderBy: nextSource.orderBy ?? "",
-            },
-          },
-        });
+        const prev = model.hasItem(id)
+          ? model.readItem(id).content
+          : ({ kind: "blank" } as StoredContentSettable); // allow setting source on newly inserted items
+        const next = sourceToContent(prev, nextSource);
+        if (next !== prev) ops.push(model.ops.patchContent(id, next));
       },
 
       insert: (ownerId, opts2) => {
         const id = model.createId();
         const kind = opts2?.kind ?? "blank";
-        const item =
+        const item: Item =
           kind === "group"
             ? model.createItem.group(id)
             : model.createItem.blank(id);
 
-        ops.push({ kind: "create", item });
-        ops.push({
-          kind: "reparent",
-          spec: {
+        ops.push(model.ops.create(item));
+        ops.push(
+          model.ops.reparent({
             childId: id,
             toOwnerId: ownerId,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
-          },
-        });
+          }),
+        );
         return id;
       },
 
       move: (id, toOwnerId, opts2) => {
-        ops.push({
-          kind: "reparent",
-          spec: {
+        ops.push(
+          model.ops.reparent({
             childId: id,
             toOwnerId,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
-          },
-        });
+          }),
+        );
       },
 
-      remove: (id) =>
-        ops.push({ kind: "reparent", spec: { childId: id, toOwnerId: null } }),
+      remove: (id) => ops.push(model.ops.detach(id)),
     };
 
     run(t);
 
     if (!ops.length) return { created: [], touched: [], reparented: [] };
 
-    const txn = model.ops.transaction(
-      ops.map((o) => {
-        if (o.kind === "create") return model.ops.create(o.item);
-        if (o.kind === "patch") return model.ops.patch(o.id, o.next);
-        return model.ops.reparent(o.spec);
-      }),
-    );
-
+    const txn = model.ops.transaction(ops);
     const result = model.apply(txn) as ApplyResult;
 
     runtime.setSelection(runtime.selectionSignal.peek());
@@ -360,7 +297,6 @@ export function createCore(opts: {
   const edit: Tx = {
     setLabel: (id, label) => commit((t) => t.setLabel(id, label)),
     setView: (id, view) => commit((t) => t.setView(id, view)),
-    setText: (id, txt) => commit((t) => t.setText(id, txt)),
     setScalar: (id, v) => commit((t) => t.setScalar(id, v)),
     setSource: (id, s) => commit((t) => t.setSource(id, s)),
     insert: (ownerId, opts2) => {
@@ -403,14 +339,20 @@ export function createCore(opts: {
 
   const selection = (): Selection => runtime.selection();
 
+  const attachFocus: Core["attachFocus"] = (args) => runtime.attachFocus(args);
+
   const mountView: Core["mountView"] = (args: any) =>
     (runtime.mountView as any)(args);
 
-  const attachFocus: Core["attachFocus"] = (args) => runtime.attachFocus(args);
+  const gc = (): void => {
+    const { removedIds } = model.pruneUnreachable();
+    evaluator.prune(removedIds);
+  };
 
   const core: Core = {
     dispose() {
       uninstallGlobal();
+      gc();
       evaluator.dispose();
       runtime.dispose();
     },
@@ -434,8 +376,8 @@ export function createCore(opts: {
     focus,
     blur,
 
-    mountView,
     attachFocus,
+    mountView,
   };
 
   const runtime = createRuntime<Core>({
@@ -454,6 +396,7 @@ export type { ItemId, ViewName, ViewKind, Scalar, Value, LabeledValue };
 export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
 export {
+  parseScalar,
   clamp,
   isTextInput,
   defaultTextCaret,

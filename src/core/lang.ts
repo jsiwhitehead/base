@@ -379,9 +379,9 @@ function getItemGroupByLabel(group: Value, label: string, env: EvalEnv): Value {
   if (!isItemGroupValue(group))
     return V.issue(ISSUE.labelOnNonItemGroup(label));
 
-  const want = label;
+  const want = label.trim();
   const id = group.itemIds.find((cid) => env.getLabel(cid) === want);
-  if (id == null) return V.issue(ISSUE.unknownLabel(label));
+  if (id == null) return V.issue(ISSUE.unknownLabel(want));
   return env.resolve(id);
 }
 
