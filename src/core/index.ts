@@ -1,19 +1,3 @@
-import type {
-  Value,
-  Evaluator,
-  Interpreter,
-  EvalEnv,
-  LabeledValue,
-} from "./compute";
-import {
-  createEvaluator,
-  isBlankValue,
-  isIssueValue,
-  isScalarValue,
-  isItemGroupValue,
-  isValueGroupValue,
-} from "./compute";
-import { interpretExpr } from "./lang";
 import {
   createModel,
   isBlankContent,
@@ -28,13 +12,25 @@ import {
   type ViewName,
 } from "./model";
 import {
+  type Value,
+  type LabeledValue,
+  createEvaluator,
+  isBlankValue,
+  isIssueValue,
+  isScalarValue,
+  isItemGroupValue,
+  isValueGroupValue,
+} from "./compute";
+import { interpretExpr } from "./lang";
+import {
   createEditor,
-  type CommitHints,
-  type Editor,
-  type EditorEffect,
-  type EditorRuntime,
   type Selection,
+  type Focus,
+  type FocusTarget,
+  type Caret,
 } from "./runtime";
+
+export type CaretSpec = number | Caret;
 
 export type StoredKind = "blank" | "scalar" | "group" | "derived" | "lens";
 
@@ -128,24 +124,25 @@ export type Core = {
   text(id: ItemId): TextState;
   locate(id: ItemId): Locate;
 
-  commit(run: (t: Tx) => void, hints?: CommitHints): ApplyResult;
+  commit(run: (t: Tx) => void): ApplyResult;
   edit: Tx;
 
-  getSelection(): Selection;
-  setSelection(next: Selection, effects?: EditorEffect[]): void;
+  selection(): Selection;
+  focus(focus: Focus, target?: FocusTarget, opts?: { caret?: CaretSpec }): void;
+  blur(): void;
 };
 
 export function createCore(
   opts: {
     model?: Model;
-    interpreter?: Interpreter;
-    runtime?: EditorRuntime;
+    interpreter?: (expr: string, env: any) => Value;
+    runtime?: any;
   } = {},
 ): Core {
   const model = opts.model ?? createModel();
   const evaluator = createEvaluator({
     model,
-    interpret: opts.interpreter ?? interpretExpr,
+    interpret: (opts.interpreter as any) ?? interpretExpr,
   });
   const editor = createEditor(model, { runtime: opts.runtime });
 
@@ -207,7 +204,7 @@ export function createCore(
     return { ownerId: loc.ownerId, index: loc.index, siblingIds: loc.childIds };
   };
 
-  const commit = (run: (t: Tx) => void, hints?: CommitHints): ApplyResult => {
+  const commit = (run: (t: Tx) => void): ApplyResult => {
     const ops: Array<
       | { kind: "create"; item: Item }
       | {
@@ -323,7 +320,7 @@ export function createCore(
       }),
     );
 
-    return editor.commit(txn, hints) as ApplyResult;
+    return editor.commit(txn) as ApplyResult;
   };
 
   const edit: Tx = {
@@ -360,6 +357,33 @@ export function createCore(
     },
   };
 
+  const selection = (): Selection => editor.getSelection() as Selection;
+
+  const blur = (): void => {
+    editor.setSelection({ kind: "idle" } as Selection);
+  };
+
+  const normalizeCaret = (spec: CaretSpec | undefined): Caret | undefined => {
+    if (spec == null) return undefined;
+    if (typeof spec === "number") return { start: spec, end: spec };
+    return spec;
+  };
+
+  const focus = (
+    f: Focus,
+    target: FocusTarget = { kind: "content" },
+    opts2: { caret?: CaretSpec } = {},
+  ): void => {
+    const caret = normalizeCaret(opts2.caret);
+    const sel: Selection = {
+      kind: "focused",
+      focus: f,
+      target,
+      ...(caret ? { caret } : {}),
+    };
+    editor.setSelection(sel);
+  };
+
   return {
     dispose() {
       evaluator.dispose();
@@ -377,28 +401,23 @@ export function createCore(
     commit,
     edit,
 
-    getSelection() {
-      return editor.getSelection();
-    },
-
-    setSelection(next, effects) {
-      editor.setSelection(next, effects ?? []);
-    },
+    selection,
+    focus,
+    blur,
   };
 }
 
 export type {
-  Item,
-  Evaluator,
-  Interpreter,
-  Model,
+  ItemId,
   ViewName,
   ViewKind,
   Scalar,
-  ItemId,
   Value,
   LabeledValue,
-  EvalEnv,
+  Selection,
+  Focus,
+  FocusTarget,
+  Caret,
 };
 
 export {
@@ -408,29 +427,3 @@ export {
   isItemGroupValue,
   isValueGroupValue,
 };
-
-export type {
-  Selection,
-  EditorEffect,
-  CommitHints,
-  Focus,
-  FocusTarget,
-  Caret,
-  Anchor,
-  EditorRuntime,
-} from "./runtime";
-
-export {
-  caret0,
-  caretAt,
-  caretRange,
-  focusSelection,
-  ensureSelection,
-  repairSelection,
-  withSelection,
-  createEditor,
-  safeIssue,
-  tryCmd,
-  applyCmd,
-  setIdle,
-} from "./runtime";

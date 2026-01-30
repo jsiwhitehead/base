@@ -7,11 +7,7 @@ import {
   type Focus,
   type FocusTarget,
   type Caret,
-  caret0,
-  caretAt,
   type Selection,
-  type EditorEffect,
-  focusSelection,
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
@@ -57,6 +53,12 @@ const HEADER_FIELDS: Record<HeaderKind, readonly HeaderFieldDef[]> = {
   none: [],
 } as const;
 
+const caret0 = (): Caret => ({ start: 0, end: 0 });
+const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+const sameFocus = (a: Focus, b: Focus) =>
+  a.scopeId === b.scopeId && a.id === b.id;
+
 function headerFieldsForItem(
   core: Core,
   id: ItemId,
@@ -74,8 +76,6 @@ function headerFieldValue(core: Core, id: ItemId, def: HeaderFieldDef): string {
   }
   return "";
 }
-
-const focusKey = (f: Focus) => `${String(f.scopeId)}::${String(f.id)}`;
 
 const hasHeaderFields = (core: Core, id: ItemId) =>
   core.header(id).kind !== "none";
@@ -102,19 +102,21 @@ function collectNavStopsFrom(core: Core, rootId: ItemId): Focus[] {
   return out;
 }
 
+type NavResult = { focus: Focus; target: FocusTarget; caret?: Caret };
+
 function outlineNavMove(
   core: Core,
   stops: Focus[],
   sel: Selection,
   dir: NavDir,
   mode: NavMode,
-): { selection: Selection; effects: EditorEffect[] } | null {
+): NavResult | null {
   if (sel.kind !== "focused") return null;
 
   const from = sel.focus;
   const at = Math.max(
     0,
-    stops.findIndex((s) => focusKey(s) === focusKey(from)),
+    stops.findIndex((s) => sameFocus(s, from)),
   );
 
   const neighbor = (delta: -1 | 1) => {
@@ -151,7 +153,7 @@ function outlineNavMove(
     next = prev ?? parent;
     if (mode === "jump") next = parent ?? prev ?? null;
 
-    if (prev && next && focusKey(prev) === focusKey(next)) {
+    if (prev && next && sameFocus(prev, next)) {
       const defs =
         sel.target.kind === "content" ? headerFieldsForItem(core, prev.id) : [];
 
@@ -171,8 +173,7 @@ function outlineNavMove(
 
   const target = targetOverride ?? defaultTargetFor(core, next.id);
   const outCaret = caret ?? caret0();
-  const res = focusSelection(next, target, outCaret);
-  return { selection: res.selection, effects: res.effects };
+  return { focus: next, target, caret: outCaret };
 }
 
 export const outlineCommands = {
@@ -186,8 +187,7 @@ export const outlineCommands = {
 
   setDerived(core: Core, f: Focus): void {
     core.edit.setDerived(f.id, "");
-    const nextSel = focusSelection(f, { kind: "header", index: 1 }, caret0());
-    core.setSelection(nextSel.selection);
+    core.focus(f, { kind: "header", index: 1 }, { caret: caret0() });
   },
 
   commitHeaderField(
@@ -226,12 +226,11 @@ export const outlineCommands = {
       id = t.insert(loc.ownerId, { at, kind: "blank" });
     });
 
-    const nextSel = focusSelection(
+    core.focus(
       { scopeId: sel.focus.scopeId, id },
       { kind: "content" },
-      caret0(),
+      { caret: caret0() },
     );
-    core.setSelection(nextSel.selection);
   },
 
   splitAt(
@@ -269,12 +268,11 @@ export const outlineCommands = {
       t.setText(rightId, right);
     });
 
-    const nextSel = focusSelection(
+    core.focus(
       { scopeId: f.scopeId, id: rightId },
       { kind: "content" },
-      caret0(),
+      { caret: caret0() },
     );
-    core.setSelection(nextSel.selection);
   },
 
   joinBoundary(core: Core, sel: Selection, dir: "backward" | "forward"): void {
@@ -302,12 +300,11 @@ export const outlineCommands = {
       t.remove(rightId);
     });
 
-    const nextSel = focusSelection(
+    core.focus(
       { scopeId: f.scopeId, id: leftId },
       { kind: "content" },
-      caretAt(a.text.length),
+      { caret: caretAt(a.text.length) },
     );
-    core.setSelection(nextSel.selection);
   },
 
   removeItem(core: Core, sel: Selection, prefer: "prev" | "next"): void {
@@ -336,18 +333,13 @@ export const outlineCommands = {
       containerKids.includes(chosen as ItemId) &&
       core.text(chosen as ItemId).kind === "editable";
 
-    const caret = shouldPlaceCaretAtEnd
+    const c = shouldPlaceCaretAtEnd
       ? caretAt((core.text(chosen as ItemId) as any).text.length ?? 0)
       : caret0();
 
     core.edit.remove(f.id);
 
-    const nextSel = focusSelection(
-      nextFocus,
-      defaultTargetFor(core, nextFocus.id),
-      caret,
-    );
-    core.setSelection(nextSel.selection);
+    core.focus(nextFocus, defaultTargetFor(core, nextFocus.id), { caret: c });
   },
 
   changeNesting(core: Core, sel: Selection, dir: "in" | "out"): void {
@@ -369,12 +361,11 @@ export const outlineCommands = {
         t.move(f.id, wrapperId, { at: 0 });
       });
 
-      const nextSel = focusSelection(
+      core.focus(
         { scopeId: wrapperId, id: f.id },
         defaultTargetFor(core, f.id),
-        caret0(),
+        { caret: caret0() },
       );
-      core.setSelection(nextSel.selection);
       return;
     }
 
@@ -399,12 +390,9 @@ export const outlineCommands = {
       t.setLabel(f.id, wrapperMeta.label);
     });
 
-    const nextSel = focusSelection(
-      { scopeId: ownerId, id: f.id },
-      defaultTargetFor(core, f.id),
-      caret0(),
-    );
-    core.setSelection(nextSel.selection);
+    core.focus({ scopeId: ownerId, id: f.id }, defaultTargetFor(core, f.id), {
+      caret: caret0(),
+    });
   },
 
   confirm(core: Core, sel: Selection): void {
@@ -413,8 +401,7 @@ export const outlineCommands = {
     const f = sel.focus;
 
     if (sel.target.kind === "header") {
-      const nextSel = focusSelection(f, { kind: "content" }, caret0());
-      core.setSelection(nextSel.selection);
+      core.focus(f, { kind: "content" }, { caret: caret0() });
       return;
     }
 
@@ -456,11 +443,7 @@ type OutlineMountCtx = {
   runtime: Runtime;
   core: Core;
   rootId: ItemId;
-  navMove: (
-    sel: Selection,
-    dir: NavDir,
-    mode: NavMode,
-  ) => { selection: Selection; effects: EditorEffect[] } | null;
+  navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   dispatch: (intent: OutlineIntent) => ViewKeyResult;
 };
 
@@ -493,9 +476,7 @@ function mountOutlineHeader(
     wrap.append(labelHost, fieldsHost);
 
     const toContent = () => {
-      core.setSelection(
-        focusSelection(focus, { kind: "content" }, caret0()).selection,
-      );
+      core.focus(focus, { kind: "content" }, { caret: caret0() });
     };
 
     const commitLabel = (text: string) => {
@@ -584,13 +565,8 @@ function mountOutlineHeader(
             const def = defs[index - 1];
             if (!def) return false;
             const text = headerFieldValue(core, focus.id, def);
-            const caret = caretPos === "end" ? caretAt(text.length) : caret0();
-            const { selection } = focusSelection(
-              focus,
-              { kind: "header", index },
-              caret,
-            );
-            core.setSelection(selection);
+            const c = caretPos === "end" ? caretAt(text.length) : caret0();
+            core.focus(focus, { kind: "header", index }, { caret: c });
             return true;
           };
 
@@ -617,9 +593,8 @@ function mountOutlineHeader(
                   headerIndex > 1
                     ? moveToHeaderField(headerIndex - 1, "end")
                     : false
-                ) {
+                )
                   return;
-                }
                 boundaryNav("left");
                 return;
               }
@@ -631,9 +606,8 @@ function mountOutlineHeader(
                   headerIndex < defs.length
                     ? moveToHeaderField(headerIndex + 1, "start")
                     : false
-                ) {
+                )
                   return;
-                }
                 boundaryNav("right");
                 return;
               }
@@ -695,12 +669,9 @@ function mountOutlineChildren(
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
-      ) {
+      )
         return;
-      }
-      core.setSelection(
-        focusSelection(focus, { kind: "content" }, caret0()).selection,
-      );
+      core.focus(focus, { kind: "content" }, { caret: caret0() });
       e.stopPropagation();
     });
 
@@ -841,10 +812,8 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        const sel = core.getSelection();
-        return (
-          sel.kind === "focused" && focusKey(sel.focus) === focusKey(focus)
-        );
+        const sel = core.selection();
+        return sel.kind === "focused" && sameFocus(sel.focus, focus);
       },
       (focused) => {
         root.classList.toggle("focused", focused);
@@ -870,10 +839,10 @@ function mountOutlineNode(
             ? "children"
             : "body";
 
-        const sel = core.getSelection();
+        const sel = core.selection();
         const labelFocused =
           sel.kind === "focused" &&
-          focusKey(sel.focus) === focusKey(focus) &&
+          sameFocus(sel.focus, focus) &&
           sel.target.kind === "header" &&
           sel.target.index === 0;
 
@@ -897,7 +866,6 @@ function mountOutlineNode(
           if (needHeader) {
             if (headerContainer.parentElement !== root)
               root.insertBefore(headerContainer, contentContainer);
-
             headerSlot.set(
               mountOutlineHeader(mountCtx, focus, defs, setHeaderTargets),
             );
@@ -947,12 +915,12 @@ export function createOutlineView({
     outlineNavMove(core, navStopsSignal.value, sel, dir, mode);
 
   const dispatch = (intent: OutlineIntent): ViewKeyResult => {
-    const sel = core.getSelection();
+    const sel = core.selection();
 
     switch (intent.type) {
       case "NAV": {
         const res = navMove(sel, intent.dir, intent.mode);
-        if (res) core.setSelection(res.selection, res.effects);
+        if (res) core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
 
@@ -962,7 +930,7 @@ export function createOutlineView({
       }
 
       case "CANCEL": {
-        core.setSelection({ kind: "idle" });
+        core.blur();
         return;
       }
 
@@ -1013,32 +981,13 @@ export function createOutlineView({
     id: viewId,
     root,
 
-    normalizeTarget(_ctx2, focus, target) {
-      if (target.kind !== "header") return target;
-
-      if (focus.id === rootId) return { kind: "content" };
-
-      const defs = headerFieldsForItem(core, focus.id);
-
-      if (target.index === 0) return { kind: "header", index: 0 };
-
-      if (defs.length === 0) return { kind: "content" };
-
-      const max = defs.length;
-      const idx = Math.max(1, Math.min(target.index, max));
-      return { kind: "header", index: idx };
-    },
-
     onActivate() {
-      if (core.getSelection().kind !== "idle") return;
+      if (core.selection().kind !== "idle") return;
 
       const first = navStopsSignal.value[0];
       if (!first) return;
 
-      core.setSelection(
-        focusSelection(first, defaultTargetFor(core, first.id), caret0())
-          .selection,
-      );
+      core.focus(first, defaultTargetFor(core, first.id), { caret: caret0() });
     },
 
     onKeyDown(e): ViewKeyResult {

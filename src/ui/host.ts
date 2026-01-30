@@ -1,5 +1,4 @@
 import type {
-  Model,
   Anchor,
   Caret,
   EditorEffect,
@@ -7,7 +6,7 @@ import type {
   Focus,
   FocusTarget,
   Selection,
-} from "../core";
+} from "../core/runtime";
 
 const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
 
@@ -23,11 +22,6 @@ export type View = {
   onKeyDown?: (e: unknown) => ViewKeyResult;
   onActivate?(): void;
   onDeactivate?(): void;
-  normalizeTarget?: (
-    ctx: { model: Model },
-    focus: Focus,
-    target: FocusTarget,
-  ) => FocusTarget;
   dispose(): void;
 };
 

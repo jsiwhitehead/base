@@ -1,16 +1,5 @@
 import { computed } from "@preact/signals-core";
-import {
-  type Core,
-  type ItemId,
-  type ViewKind,
-  type Caret,
-  caret0,
-  type EditorEffect,
-  type Focus,
-  type Selection,
-  focusSelection,
-  isItemGroupValue,
-} from "../core";
+import type { Core, ItemId, ViewKind, Caret, Focus, Selection } from "../core";
 import { type NavDir, type NavMode, type ViewKeyResult } from "../ui/host";
 import {
   type Component,
@@ -32,35 +21,41 @@ import {
   viewWantsChildView,
 } from "./index";
 
-type NavResult = { selection: Selection; effects: EditorEffect[] };
+type NavResult = {
+  focus: Focus;
+  target: { kind: "header"; index: 0 } | { kind: "content" };
+  caret?: Caret;
+};
 
 const focusRowLabel = (
   tableId: ItemId,
   rowId: ItemId,
-  caret: Caret = caret0(),
-): NavResult =>
-  focusSelection(
-    { scopeId: tableId, id: rowId },
-    { kind: "header", index: 0 },
-    caret,
-  );
+  caret: Caret = { start: 0, end: 0 },
+): NavResult => ({
+  focus: { scopeId: tableId, id: rowId },
+  target: { kind: "header", index: 0 },
+  caret,
+});
 
 const focusCell = (
   rowId: ItemId,
   cellId: ItemId,
-  caret: Caret = caret0(),
-): NavResult =>
-  focusSelection({ scopeId: rowId, id: cellId }, { kind: "content" }, caret);
+  caret: Caret = { start: 0, end: 0 },
+): NavResult => ({
+  focus: { scopeId: rowId, id: cellId },
+  target: { kind: "content" },
+  caret,
+});
 
 function deriveColumns(core: Core, tableId: ItemId): string[] {
   const tableV = core.value(tableId);
-  if (!isItemGroupValue(tableV)) return [];
+  if (tableV.kind !== "item-group") return [];
 
   const firstRowId = tableV.itemIds[0];
   if (!firstRowId) return [];
 
   const rowV = core.value(firstRowId);
-  if (!isItemGroupValue(rowV)) return [];
+  if (rowV.kind !== "item-group") return [];
 
   const seen = new Set<string>();
   const out: string[] = [];
@@ -212,7 +207,7 @@ export const tableCommands = {
     });
 
     const next = focusRowLabel(tableId, rowId);
-    core.setSelection(next.selection, next.effects);
+    core.focus(next.focus, next.target, { caret: next.caret });
   },
 
   removeRow(core: Core, tableId: ItemId, rowId: ItemId): void {
@@ -222,12 +217,12 @@ export const tableCommands = {
 
     core.edit.remove(rowId);
 
-    const next: NavResult =
-      nextRow != null
-        ? focusRowLabel(tableId, nextRow)
-        : { selection: { kind: "idle" }, effects: [] };
-
-    core.setSelection(next.selection, next.effects);
+    if (nextRow != null) {
+      const next = focusRowLabel(tableId, nextRow);
+      core.focus(next.focus, next.target, { caret: next.caret });
+    } else {
+      core.blur();
+    }
   },
 
   addColumn(core: Core, tableId: ItemId, label: string): void {
@@ -274,7 +269,7 @@ export const tableCommands = {
 
     const move = tableNavMove(core, tableId, sel, "down", "step");
     if (move) {
-      core.setSelection(move.selection, move.effects);
+      core.focus(move.focus, move.target, { caret: move.caret });
       return;
     }
 
@@ -450,8 +445,7 @@ function mountTableCell(
         nextCellId == null
           ? focusRowLabel(mountCtx.tableId, rowId)
           : focusCell(rowId, nextCellId);
-
-      mountCtx.core.setSelection(res.selection, res.effects);
+      mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
 
@@ -482,7 +476,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       onCommitEvents: ["input", "blur"],
       commit: (text) => tableCommands.setLabel(mountCtx.core, rowId, text),
       getState: () => {
-        const sel = mountCtx.core.getSelection();
+        const sel = mountCtx.core.selection();
         const editing =
           isRowLabelSelection(sel, mountCtx.tableId) && sel.focus.id === rowId;
         const label = mountCtx.core.get(rowId).label ?? "";
@@ -500,7 +494,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
             if (!cid) return;
 
             const res = focusCell(rowId, cid);
-            mountCtx.core.setSelection(res.selection, res.effects);
+            mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
           },
           onEscape: () => mountCtx.dispatch({ type: "CANCEL" }),
         }),
@@ -521,7 +515,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
     componentCtx.on(labelCell, "pointerdown", (e: PointerEvent) => {
       const res = focusRowLabel(mountCtx.tableId, rowId);
-      mountCtx.core.setSelection(res.selection, res.effects);
+      mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
 
@@ -566,12 +560,12 @@ export function createTableView({
     tableNavMove(core, tableId, sel, dir, mode);
 
   const dispatch = (intent: TableIntent): ViewKeyResult => {
-    const sel = core.getSelection();
+    const sel = core.selection();
 
     switch (intent.type) {
       case "NAV": {
         const res = navMove(sel, intent.dir, intent.mode);
-        if (res) core.setSelection(res.selection, res.effects);
+        if (res) core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
       case "CONFIRM": {
@@ -579,7 +573,7 @@ export function createTableView({
         return;
       }
       case "CANCEL": {
-        core.setSelection({ kind: "idle" });
+        core.blur();
         return;
       }
     }
@@ -604,15 +598,8 @@ export function createTableView({
     id: `table:${String(tableId)}`,
     root,
 
-    normalizeTarget(_ctx2, focus, target) {
-      if (target.kind !== "header") return target;
-      if (target.index !== 0) return { kind: "content" };
-      if (focus.scopeId !== tableId) return { kind: "content" };
-      return { kind: "header", index: 0 };
-    },
-
     onActivate() {
-      const sel = core.getSelection();
+      const sel = core.selection();
       if (sel.kind !== "idle") return;
 
       const rows = core.children(tableId);
@@ -620,7 +607,7 @@ export function createTableView({
 
       const firstRowId = rows[0]!;
       const res = focusRowLabel(tableId, firstRowId);
-      core.setSelection(res.selection, res.effects);
+      core.focus(res.focus, res.target, { caret: res.caret });
     },
 
     onKeyDown(e): ViewKeyResult {

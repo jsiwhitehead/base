@@ -19,7 +19,7 @@ import {
   isValueGroupValue,
 } from "../src/core/compute";
 import { interpretExpr } from "../src/core/lang";
-import type { Editor, Selection } from "../src/core/runtime";
+import type { Selection } from "../src/core/runtime";
 import {
   createEditor,
   EditorRuntime,

@@ -3,8 +3,6 @@ import {
   type ItemId,
   type Scalar,
   type Focus,
-  caret0,
-  focusSelection,
   isScalarValue,
 } from "../core";
 import { type DomHost, type ViewKeyResult } from "../ui/host";
@@ -111,9 +109,7 @@ export const sliderCommands = {
   setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetContent(core, id)) return;
     core.edit.setScalar(id, value);
-    core.setSelection(
-      focusSelection(focus, { kind: "content" }, caret0()).selection,
-    );
+    core.focus(focus, { kind: "content" });
   },
 
   nudgeScalarValue(
@@ -251,7 +247,7 @@ export function createSliderView({
         return;
 
       case "CANCEL":
-        core.setSelection({ kind: "idle" });
+        core.blur();
         return;
     }
   };
@@ -270,27 +266,14 @@ export function createSliderView({
     id: `slider:${String(id)}`,
     root: comp.el,
 
-    normalizeTarget(_ctx2, _focus, target) {
-      return target.kind === "header" ? { kind: "content" } : target;
-    },
-
     onActivate() {
-      const sel = core.getSelection();
+      const sel = core.selection();
       const focused =
         sel.kind === "focused" &&
         sel.focus.id === safeFocus.id &&
         sel.focus.scopeId === safeFocus.scopeId;
 
-      if (!focused) {
-        core.setSelection(
-          focusSelection(safeFocus, { kind: "content" }, caret0()).selection,
-        );
-        return;
-      }
-
-      core.setSelection(sel, [
-        { type: "FOCUS", focus: safeFocus, target: { kind: "content" } },
-      ]);
+      if (!focused) core.focus(safeFocus, { kind: "content" });
     },
 
     onKeyDown(e) {

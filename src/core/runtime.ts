@@ -9,13 +9,6 @@ export type FocusTarget =
 
 export type Caret = { start: number; end: number };
 
-export const caret0 = (): Caret => ({ start: 0, end: 0 });
-export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
-export const caretRange = (start: number, end: number): Caret => ({
-  start,
-  end,
-});
-
 export type Selection =
   | { kind: "idle" }
   | { kind: "focused"; focus: Focus; target: FocusTarget; caret?: Caret };

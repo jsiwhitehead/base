@@ -2,8 +2,6 @@ import { computed, effect } from "@preact/signals-core";
 import type { Core, ItemId } from "../core";
 import type { Caret, Focus, FocusTarget, Value } from "../core";
 import {
-  caret0,
-  focusSelection,
   isBlankValue,
   isIssueValue,
   isItemGroupValue,
@@ -164,7 +162,7 @@ function isTextInputEl(el0: HTMLElement | null): el0 is TextInputElement {
 }
 
 export function caretFromTarget(el0: HTMLElement | null): Caret {
-  if (!isTextInputEl(el0)) return caret0();
+  if (!isTextInputEl(el0)) return { start: 0, end: 0 };
   const start = el0.selectionStart ?? 0;
   const end = el0.selectionEnd ?? start;
   return { start, end };
@@ -343,13 +341,13 @@ export function installFocusableTargets(
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
       const pointerTarget =
         t.getEl() ?? (e.target instanceof HTMLElement ? e.target : null);
-      const c =
+
+      const caret =
         (t.caret ?? "zero") === "fromTarget"
           ? caretFromTarget(pointerTarget)
-          : caret0();
+          : undefined;
 
-      const out = focusSelection(opts.focus, t.target, c);
-      opts.core.setSelection(out.selection);
+      opts.core.focus(opts.focus, t.target, { caret });
 
       if (t.stopPropagation ?? true) e.stopPropagation();
     });
