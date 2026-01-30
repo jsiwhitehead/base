@@ -7,7 +7,7 @@ import {
   isBlankValue,
   isIssueValue,
   isScalarValue,
-  isItemGroupValue,
+  isEntryGroupValue,
   isValueGroupValue,
   type EvalEnv,
 } from "./eval";
@@ -21,13 +21,14 @@ const ISSUE = {
   group: "Expected group",
   posLabelMustBeTextOrNumber: "Label/position must be text or number",
   unknownLabel: (label: string) => `Unknown label '${label}'`,
-  labelOnNonItemGroup: (label: string) =>
-    `Cannot access label '${label}' of non-item-group content`,
+  labelOnNonEntryGroup: (label: string) =>
+    `Cannot access label '${label}' of non-entry-group content`,
   positionFinite: "Position must be a finite number",
   positionOneBased: "Position must be 1 or greater",
   positionOutOfRange: (position: number, len: number) =>
     `Position ${position} is out of range (length ${len})`,
-  selectPosNonItemGroup: "Cannot select a position from non-item-group content",
+  selectPosNonEntryGroup:
+    "Cannot select a position from non-entry-group content",
   selectPosNonValueGroup:
     "Cannot select a position from non-value-group content",
   selectPosNonGroup: "Cannot select a position from non-group content",
@@ -374,13 +375,17 @@ function numericOp(
   return map(...(nums as number[]));
 }
 
-function getItemGroupByLabel(group: Value, label: string, env: EvalEnv): Value {
+function getEntryGroupByLabel(
+  group: Value,
+  label: string,
+  env: EvalEnv,
+): Value {
   if (isIssueValue(group)) return group;
-  if (!isItemGroupValue(group))
-    return V.issue(ISSUE.labelOnNonItemGroup(label));
+  if (!isEntryGroupValue(group))
+    return V.issue(ISSUE.labelOnNonEntryGroup(label));
 
   const want = label.trim();
-  const id = group.itemIds.find((cid) => env.getLabel(cid) === want);
+  const id = group.entryIds.find((cid) => env.getLabel(cid) === want);
   if (id == null) return V.issue(ISSUE.unknownLabel(want));
   return env.resolve(id);
 }
@@ -392,7 +397,7 @@ function normalizePosition(position: number): { index: number } | Value {
   return { index };
 }
 
-function getItemGroupByPosition(
+function getEntryGroupByPosition(
   group: Value,
   position: number,
   env: EvalEnv,
@@ -402,11 +407,11 @@ function getItemGroupByPosition(
   const norm = normalizePosition(position);
   if ("kind" in norm) return norm;
 
-  if (!isItemGroupValue(group)) return V.issue(ISSUE.selectPosNonItemGroup);
+  if (!isEntryGroupValue(group)) return V.issue(ISSUE.selectPosNonEntryGroup);
 
-  const id = group.itemIds[norm.index];
+  const id = group.entryIds[norm.index];
   if (id == null)
-    return V.issue(ISSUE.positionOutOfRange(position, group.itemIds.length));
+    return V.issue(ISSUE.positionOutOfRange(position, group.entryIds.length));
   return env.resolve(id);
 }
 
@@ -431,12 +436,12 @@ function getByPositionOrLabel(group: Value, selV: Value, env: EvalEnv): Value {
   if (isScalarValue(selV)) {
     const lit = selV.value;
     if (typeof lit === "number") {
-      if (isItemGroupValue(group))
-        return getItemGroupByPosition(group, lit, env);
+      if (isEntryGroupValue(group))
+        return getEntryGroupByPosition(group, lit, env);
       if (isValueGroupValue(group)) return getValueGroupByPosition(group, lit);
       return V.issue(ISSUE.selectPosNonGroup);
     }
-    if (typeof lit === "string") return getItemGroupByLabel(group, lit, env);
+    if (typeof lit === "string") return getEntryGroupByLabel(group, lit, env);
   }
 
   return V.issue(ISSUE.posLabelMustBeTextOrNumber);
@@ -521,7 +526,7 @@ function typedFn<A extends unknown[]>(
 
 function iterGroupValues(g: Value, env: EvalEnv): Value[] {
   if (isIssueValue(g)) throw new TypeError(g.message);
-  if (isItemGroupValue(g)) return g.itemIds.map((id) => env.resolve(id));
+  if (isEntryGroupValue(g)) return g.entryIds.map((id) => env.resolve(id));
   if (isValueGroupValue(g)) return g.items.map((it) => it.value);
   throw new TypeError(ISSUE.group);
 }
@@ -560,7 +565,7 @@ function reduceNumbers(
 const groupSpec = {
   kind: "req",
   convert: (v: Value) =>
-    isItemGroupValue(v) || isValueGroupValue(v) ? v : null,
+    isEntryGroupValue(v) || isValueGroupValue(v) ? v : null,
 } as const;
 
 export const builtins: Record<string, Builtin> = {
@@ -769,7 +774,7 @@ function interpretAst(e: Expr, env: EvalEnv): Value {
       case "Member": {
         const target = interpretAst(e.group, env);
         if (isIssueValue(target)) return target;
-        return getItemGroupByLabel(target, e.label.label, env);
+        return getEntryGroupByLabel(target, e.label.label, env);
       }
 
       case "Lit":

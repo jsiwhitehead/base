@@ -1,16 +1,17 @@
 import { DEV, devAssert, devWarn } from "./dev";
 import {
-  type ItemId,
+  type EntryId,
+  type ItemRef,
   type ViewKind,
   type ViewName,
-  type Source,
   createCore,
+  parseScalar,
 } from "./core";
 import { viewFactories } from "./views";
 
 export type App = {
   core: ReturnType<typeof createCore>["core"];
-  rootId: ItemId;
+  rootId: EntryId;
   dispose(): void;
 };
 
@@ -19,6 +20,8 @@ export type CreateAppOpts = {
   rootView?: ViewName;
   demo?: boolean;
 };
+
+const refOf = (entryId: EntryId): ItemRef => ({ entryId, path: [] });
 
 export function createApp(opts: CreateAppOpts = {}): App {
   const rootView = opts.rootView ?? "outline";
@@ -39,7 +42,6 @@ export function createApp(opts: CreateAppOpts = {}): App {
   });
 
   const rootComp = core.mountView({ id: rootId });
-
   hostEl.replaceChildren(rootComp.el);
 
   const app: App = {
@@ -63,51 +65,86 @@ export function createApp(opts: CreateAppOpts = {}): App {
   return app;
 }
 
+function findChildByLabel(
+  core: App["core"],
+  owner: ItemRef,
+  label: string,
+): ItemRef | null {
+  const want = label.trim();
+  if (!want) return null;
+
+  const snap = core.item(owner);
+  if (snap.content.kind !== "group") return null;
+
+  for (const child of snap.content.children) {
+    const c = core.item(child);
+    if ((c.label ?? "").trim() === want) return child;
+  }
+  return null;
+}
+
 export function seedDemo(app: App) {
   const { core, rootId } = app;
+  const rootRef = refOf(rootId);
 
-  if (core.findChild(rootId, "Demo") != null) return;
+  if (findChildByLabel(core, rootRef, "Demo")) return;
 
-  const mkGroup = (owner: ItemId, label: string, view: ViewKind = null) => {
-    let gid: ItemId = -1;
+  const mkGroup = (owner: ItemRef, label: string, view: ViewKind = null) => {
+    let id: EntryId = -1;
     core.commit((t) => {
-      gid = t.insert(owner, { kind: "group" });
-      t.setLabel(gid, label);
-      if (view != null) t.setView(gid, view);
+      id = t.insertChild(owner, { kind: "group" });
+      t.setLabel(refOf(id), label);
+      if (view != null) t.setView(id, view);
     });
-    return gid;
+    return refOf(id);
   };
 
   const mkScalar = (
-    owner: ItemId,
+    owner: ItemRef,
     label: string,
     value: true | number | string,
   ) => {
-    let cid: ItemId = -1;
+    let id: EntryId = -1;
     core.commit((t) => {
-      cid = t.insert(owner, { kind: "blank" });
-      t.setLabel(cid, label);
-      t.setScalar(cid, value);
+      id = t.insertChild(owner, { kind: "blank" });
+      t.setLabel(refOf(id), label);
+      t.setContentScalar(refOf(id), value);
     });
-    return cid;
+    return refOf(id);
   };
 
-  const mkSource = (owner: ItemId, label: string, source: Source) => {
-    let cid: ItemId = -1;
+  const mkDerived = (owner: ItemRef, label: string, expr: string) => {
+    let id: EntryId = -1;
     core.commit((t) => {
-      cid = t.insert(owner, { kind: "blank" });
-      t.setLabel(cid, label);
-      t.setSource(cid, source);
+      id = t.insertChild(owner, { kind: "blank" });
+      t.setLabel(refOf(id), label);
+      t.setSourceField(refOf(id), "expr", expr);
     });
-    return cid;
+    return refOf(id);
   };
 
-  const demo = mkGroup(rootId, "Demo", "outline");
+  const mkLens = (
+    owner: ItemRef,
+    label: string,
+    spec: { from: string; where?: string; orderBy?: string },
+  ) => {
+    let id: EntryId = -1;
+    core.commit((t) => {
+      id = t.insertChild(owner, { kind: "blank" });
+      t.setLabel(refOf(id), label);
+      t.setSourceField(refOf(id), "from", spec.from);
+      t.setSourceField(refOf(id), "where", spec.where ?? "");
+      t.setSourceField(refOf(id), "orderBy", spec.orderBy ?? "");
+    });
+    return refOf(id);
+  };
+
+  const demo = mkGroup(rootRef, "Demo", "outline");
 
   mkScalar(demo, "x", 10);
   mkScalar(demo, "y", 2);
-  mkSource(demo, "x_plus_y", { kind: "derived", expr: "x + y" });
-  mkSource(demo, "x_times_y", { kind: "derived", expr: "x * y" });
+  mkDerived(demo, "x_plus_y", "x + y");
+  mkDerived(demo, "x_times_y", "x * y");
 
   const rows = mkGroup(demo, "rows", "table");
 
@@ -122,12 +159,7 @@ export function seedDemo(app: App) {
   mkRow("b", 1, "low");
   mkRow("c", 3, "high");
 
-  mkSource(demo, "Table", {
-    kind: "lens",
-    from: "rows",
-    where: "",
-    orderBy: "",
-  });
+  mkLens(demo, "Table", { from: "rows", where: "", orderBy: "" });
 }
 
 function autoMount(): void {

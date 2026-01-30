@@ -1,13 +1,13 @@
 import {
   type Core,
-  type ItemId,
+  type EntryId,
+  type ItemRef,
   type Scalar,
   type Component,
   type Focus,
   type DomView,
-  clamp,
-  isScalarValue,
 } from "../core";
+import { clamp } from "../core/runtime";
 import { el, stopEvent, createComponent } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
@@ -95,40 +95,44 @@ function formatNumberForStep(n: number, step: number): string {
   return p <= 0 ? String(Math.trunc(n)) : n.toFixed(p);
 }
 
-const canSetContent = (core: Core, id: ItemId) => {
-  const k = core.meta(id).storedKind;
-  return k !== "derived" && k !== "lens";
+const isEntryRef = (r: ItemRef) => r.path.length === 0;
+
+const canSetScalar = (core: Core, ref: ItemRef): boolean => {
+  const snap = core.item(ref);
+  return isEntryRef(ref) && snap.edit.kind === "scalar";
 };
 
-const getScalarOr = (core: Core, id: ItemId, fallback: number): number => {
-  const v = core.value(id);
-  return isScalarValue(v) ? toNumberOr(v.value, fallback) : fallback;
+const getScalarOr = (core: Core, ref: ItemRef, fallback: number): number => {
+  const c = core.item(ref).content;
+  if (c.kind === "scalar" && c.value != null)
+    return toNumberOr(c.value, fallback);
+  return fallback;
 };
 
 export const sliderCommands = {
-  setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
-    if (!Number.isFinite(value) || !canSetContent(core, id)) return;
-    core.edit.setScalar(id, value);
+  setScalarValue(core: Core, focus: Focus, ref: ItemRef, value: number): void {
+    if (!Number.isFinite(value) || !canSetScalar(core, ref)) return;
+    core.edit.setContentScalar(ref, value);
     core.focus(focus, "content");
   },
 
   nudgeScalarValue(
     core: Core,
     focus: Focus,
-    id: ItemId,
+    ref: ItemRef,
     deltaSteps: number,
     opts: SliderResolvedOpts,
   ): void {
-    if (!canSetContent(core, id)) return;
-    const cur = getScalarOr(core, id, opts.min);
+    if (!canSetScalar(core, ref)) return;
+    const cur = getScalarOr(core, ref, opts.min);
     const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
-    sliderCommands.setScalarValue(core, focus, id, next);
+    sliderCommands.setScalarValue(core, focus, ref, next);
   },
 } as const;
 
 type SliderMountCtx = {
   core: Core;
-  id: ItemId;
+  ref: ItemRef;
   focus: Focus;
   opts: SliderResolvedOpts;
   dispatch: (intent: SliderIntent) => void;
@@ -136,7 +140,7 @@ type SliderMountCtx = {
 
 function mountSlider({
   core,
-  id,
+  ref,
   focus,
   opts,
   dispatch,
@@ -171,7 +175,7 @@ function mountSlider({
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
-      sliderCommands.setScalarValue(core, focus, id, next);
+      sliderCommands.setScalarValue(core, focus, ref, next);
     };
 
     componentCtx.on(input, "input", () => {
@@ -180,7 +184,7 @@ function mountSlider({
 
     componentCtx.watch(
       () => {
-        const cur = getScalarOr(core, id, opts.min);
+        const cur = getScalarOr(core, ref, opts.min);
         const clamped = clamp(cur, opts.min, opts.max);
         return formatNumberForStep(clamped, opts.step);
       },
@@ -191,7 +195,7 @@ function mountSlider({
     );
 
     componentCtx.watch(
-      () => !canSetContent(core, id),
+      () => !canSetScalar(core, ref),
       (shouldDisable) => {
         if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
         root.classList.toggle("readonly", shouldDisable);
@@ -213,12 +217,13 @@ function mountSlider({
 
 export function createSliderView(args: {
   core: Core;
-  id: ItemId;
+  id: EntryId;
   focus?: Focus;
 }): DomView {
   const { core, id } = args;
 
-  const safeFocus: Focus = args.focus ?? { scopeId: id, id };
+  const ref: ItemRef = { entryId: id, path: [] };
+  const safeFocus: Focus = args.focus ?? { scope: ref, ref };
   const resolved = DEFAULT_SLIDER_OPTS;
 
   const dispatch = (intent: SliderIntent): void => {
@@ -227,7 +232,7 @@ export function createSliderView(args: {
         sliderCommands.nudgeScalarValue(
           core,
           safeFocus,
-          id,
+          ref,
           intent.dir * intent.mul,
           resolved,
         );
@@ -237,7 +242,7 @@ export function createSliderView(args: {
         sliderCommands.setScalarValue(
           core,
           safeFocus,
-          id,
+          ref,
           intent.kind === "min" ? resolved.min : resolved.max,
         );
         return;
@@ -250,7 +255,7 @@ export function createSliderView(args: {
 
   const comp = mountSlider({
     core,
-    id,
+    ref,
     focus: safeFocus,
     opts: resolved,
     dispatch,

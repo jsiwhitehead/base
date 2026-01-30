@@ -1,10 +1,10 @@
-import type { Core, ItemId, Caret, Focus, Value, Component } from "../core";
-import {
-  isBlankValue,
-  isIssueValue,
-  isItemGroupValue,
-  isScalarValue,
-  isValueGroupValue,
+import type {
+  Core,
+  ItemRef,
+  ItemContent,
+  Caret,
+  Focus,
+  Component,
 } from "../core";
 import {
   createComponent,
@@ -338,59 +338,33 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-export function renderValueReadonly(v: Value): HTMLElement {
-  if (isBlankValue(v)) return el("div", "item readonly");
-  if (isIssueValue(v)) return el("div", "item readonly issue", v.message);
-  if (isScalarValue(v)) return el("div", "item readonly", String(v.value));
-  if (isItemGroupValue(v))
-    return el("div", "item readonly issue", "[item-group]");
+const refKey = (r: ItemRef): string =>
+  `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
 
-  const wrap = el("div", "group readonly");
-  for (const it of v.items)
-    wrap.append(renderLabeledValueReadonly(it.label, it.value));
-  return wrap;
-}
-
-export function renderLabeledValueReadonly(
-  label: string | undefined,
-  v: Value,
-): HTMLElement {
-  if (!label) return renderValueReadonly(v);
-  const row = el("div", "row readonly");
-  const lab = el("div", "label", label);
-  const val = renderValueReadonly(v);
-  val.classList.add("item");
-  row.append(lab, val);
-  return row;
-}
-
-export type ContentFieldOpts = {
-  core: Core;
-  focus: Focus;
-  id: ItemId;
-  className?: string;
-  registerFocus?: boolean;
-  textKeys?: (inp: TextInputElement) => (() => void) | void;
-  renderItemGroupChild?: (childId: ItemId) => Component;
-  commitText?: (text: string) => void;
-  focusElRef?: { current: HTMLElement | null };
+const refFromKey = (key: string): ItemRef => {
+  const i = key.indexOf(":");
+  if (i === -1) return { entryId: Number(key), path: [] };
+  const entryId = Number(key.slice(0, i));
+  const rest = key.slice(i + 1);
+  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
+  return { entryId, path };
 };
 
-function readonlyItemText(core: Core, id: ItemId): Component {
+function readonlyItemText(core: Core, ref: ItemRef): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
     ctx.watch(
-      () => {
-        const v = core.value(id);
-        const text = isIssueValue(v)
-          ? v.message
-          : isScalarValue(v)
-            ? String(v.value)
-            : "";
-        const isIssue = isIssueValue(v);
-        return { text, isIssue };
-      },
-      ({ text, isIssue }) => {
+      () => core.item(ref).content,
+      (c) => {
+        const isIssue = c.kind === "issue";
+        const text =
+          c.kind === "issue"
+            ? c.message
+            : c.kind === "scalar"
+              ? c.value == null
+                ? ""
+                : String(c.value)
+              : "";
         d.textContent = text;
         d.classList.toggle("issue", isIssue);
       },
@@ -398,6 +372,18 @@ function readonlyItemText(core: Core, id: ItemId): Component {
     return d;
   });
 }
+
+export type ContentFieldOpts = {
+  core: Core;
+  focus: Focus;
+  ref: ItemRef;
+  className?: string;
+  registerFocus?: boolean;
+  textKeys?: (inp: TextInputElement) => (() => void) | void;
+  renderGroupChild?: (childRef: ItemRef) => Component;
+  commitText?: (text: string) => void;
+  focusElRef?: { current: HTMLElement | null };
+};
 
 export function contentField(opts: ContentFieldOpts): Component {
   return createComponent((ctx) => {
@@ -442,24 +428,32 @@ export function contentField(opts: ContentFieldOpts): Component {
     };
 
     const mountText = (): Component => {
-      const { focus, id } = opts;
       return textField({
         core,
-        focus,
+        focus: opts.focus,
         target: "content",
         multiline: true,
         className: "content",
         caret: "fromTarget",
         stopPropagation: true,
         registerFocus: register,
-        commit: (text) => {
-          opts.commitText?.(text);
-        },
+        commit: (text) => opts.commitText?.(text),
         getState: () => {
-          const t = core.text(id);
-          if (t.kind === "editable")
-            return { text: t.text, readOnly: false, isIssue: false };
-          return { text: t.text, readOnly: true, isIssue: !!t.issue };
+          const snap = core.item(opts.ref);
+          if (snap.edit.kind === "scalar")
+            return { text: snap.edit.text, readOnly: false, isIssue: false };
+
+          const c = snap.content;
+          const isIssue = c.kind === "issue";
+          const text =
+            c.kind === "issue"
+              ? c.message
+              : c.kind === "scalar"
+                ? c.value == null
+                  ? ""
+                  : String(c.value)
+                : "";
+          return { text, readOnly: true, isIssue };
         },
         textKeys: opts.textKeys,
       });
@@ -469,7 +463,7 @@ export function contentField(opts: ContentFieldOpts): Component {
       const d = el("div", "item readonly");
       installContentClickTarget(d);
 
-      const inner = readonlyItemText(core, opts.id);
+      const inner = readonlyItemText(core, opts.ref);
       d.replaceChildren(inner.el);
       ctx.use(inner);
 
@@ -482,61 +476,44 @@ export function contentField(opts: ContentFieldOpts): Component {
       };
     };
 
-    const mountValueGroup = (): Component => {
-      const wrap = el("div", "group readonly");
-      installContentClickTarget(wrap);
-
-      ctx.watch(() => {
-        const v = core.value(opts.id);
-        if (!isValueGroupValue(v)) {
-          wrap.replaceChildren();
-          return;
-        }
-
-        const nodes = v.items.map((it) =>
-          renderLabeledValueReadonly(it.label, it.value),
-        );
-        wrap.replaceChildren(...nodes);
-      });
-
-      return { el: wrap, dispose: () => wrap.replaceChildren() };
-    };
-
-    const mountItemGroup = (): Component => {
+    const mountGroup = (): Component => {
       const wrap = el("div", "group");
       ensureTabbable(wrap);
       installContentClickTarget(wrap);
 
-      const children = ctx.list(wrap, (childId: ItemId) => {
+      const children = ctx.list(wrap, (key: string) => {
+        const childRef = refFromKey(key);
         const c =
-          opts.renderItemGroupChild?.(childId) ??
-          readonlyItemText(core, childId);
+          opts.renderGroupChild?.(childRef) ?? readonlyItemText(core, childRef);
         c.el.classList.add("item");
         return c;
       });
 
-      ctx.watch(() => {
-        const v = core.value(opts.id);
-        children.update(isItemGroupValue(v) ? v.itemIds : []);
-      });
+      ctx.watch(
+        () => {
+          const c = core.item(opts.ref).content;
+          if (c.kind !== "group") return [] as string[];
+          return c.children.map(refKey);
+        },
+        (keys) => {
+          children.update(keys);
+        },
+      );
 
       return { el: wrap, dispose: () => wrap.replaceChildren() };
     };
 
-    let currentKind: "item-group" | "value-group" | "text" | "readonly" | null =
-      null;
+    let currentKind: "group" | "text" | "readonly" | null = null;
 
     ctx.watch(
-      () => core.value(opts.id),
-      (v) => {
-        hostEl.classList.toggle("issue", isIssueValue(v));
+      () => core.item(opts.ref),
+      (snap) => {
+        const c = snap.content;
 
-        const t = core.text(opts.id);
-        const nextKind = isItemGroupValue(v)
-          ? "item-group"
-          : isValueGroupValue(v)
-            ? "value-group"
-            : t.kind === "editable"
+        const nextKind =
+          c.kind === "group"
+            ? "group"
+            : snap.edit.kind === "scalar"
               ? "text"
               : "readonly";
 
@@ -544,13 +521,11 @@ export function contentField(opts: ContentFieldOpts): Component {
         currentKind = nextKind;
 
         const nextComp =
-          nextKind === "item-group"
-            ? mountItemGroup()
-            : nextKind === "value-group"
-              ? mountValueGroup()
-              : nextKind === "text"
-                ? mountText()
-                : mountReadonlyText();
+          nextKind === "group"
+            ? mountGroup()
+            : nextKind === "text"
+              ? mountText()
+              : mountReadonlyText();
 
         slot.set(nextComp);
         setFocusEl(nextComp);

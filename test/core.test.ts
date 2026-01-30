@@ -1,22 +1,27 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
-  type ItemId,
-  type Value,
+  type EntryId,
+  type ItemRef,
   type Selection,
   createCore,
-  isBlankValue,
-  isIssueValue,
-  isScalarValue,
-  isItemGroupValue,
-  isValueGroupValue,
+  parseScalar,
 } from "../src/core";
 import {
   createModel,
   type SnapshotContent,
   type Model,
 } from "../src/core/model";
-import { V, createEvaluator } from "../src/core/eval";
+import {
+  V,
+  createEvaluator,
+  type Value,
+  isBlankValue,
+  isIssueValue,
+  isScalarValue,
+  isEntryGroupValue,
+  isValueGroupValue,
+} from "../src/core/eval";
 import { interpretExpr } from "../src/core/lang";
 import { viewFactories } from "../src/views";
 
@@ -34,6 +39,18 @@ async function tick() {
   await new Promise<void>((r) => setTimeout(() => r(), 0));
 }
 
+function refOf(entryId: EntryId, path: readonly number[] = []): ItemRef {
+  return { entryId, path };
+}
+
+function sameRef(a: ItemRef, b: ItemRef): boolean {
+  return (
+    a.entryId === b.entryId &&
+    a.path.length === b.path.length &&
+    a.path.every((x, i) => x === b.path[i])
+  );
+}
+
 function makeCoreRuntime() {
   const { core, rootId } = createCore({ views: viewFactories as any });
 
@@ -44,24 +61,27 @@ function makeCoreRuntime() {
   return { core, rootId };
 }
 
-function asScalar(v: Value): true | number | string | null {
-  if (isBlankValue(v)) return null;
-  if (!isScalarValue(v)) throw new Error(`Expected scalar, got ${v.kind}`);
-  return v.value;
+function contentToScalar(
+  content: ReturnType<ReturnType<typeof createCore>["core"]["item"]>["content"],
+): true | number | string | null {
+  if (content.kind === "issue") throw new Error(`Issue: ${content.message}`);
+  if (content.kind === "group") throw new Error(`Expected scalar, got group`);
+  return content.value;
 }
 
-function expectBlank(v: Value) {
-  expect(isBlankValue(v)).toBe(true);
+function expectBlankContent(content: { kind: string } | any) {
+  expect(content.kind).toBe("scalar");
+  if (content.kind === "scalar") expect(content.value).toBeNull();
 }
 
-function expectIssue(v: Value, includes?: string) {
+function expectIssueValue(v: Value, includes?: string) {
   expect(isIssueValue(v)).toBe(true);
   if (includes && isIssueValue(v)) expect(v.message).toContain(includes);
 }
 
 type SnapshotGroupContent = Extract<SnapshotContent, { kind: "group" }>;
 type FocusedSelection = Extract<Selection, { kind: "focused" }>;
-type ItemGroupValue = Extract<Value, { kind: "item-group" }>;
+type EntryGroupValue = Extract<Value, { kind: "entry-group" }>;
 type ValueGroupValue = Extract<Value, { kind: "value-group" }>;
 
 function expectSnapshotGroup(content: SnapshotContent): SnapshotGroupContent {
@@ -83,9 +103,9 @@ function expectFocusedSelection(
   if (sel.kind !== "focused") throw new Error("expected focused selection");
 }
 
-function expectItemGroup(val: Value): ItemGroupValue {
-  expect(isItemGroupValue(val)).toBe(true);
-  if (!isItemGroupValue(val)) throw new Error("expected item-group value");
+function expectEntryGroup(val: Value): EntryGroupValue {
+  expect(isEntryGroupValue(val)).toBe(true);
+  if (!isEntryGroupValue(val)) throw new Error("expected entry-group value");
   return val;
 }
 
@@ -97,10 +117,10 @@ function expectValueGroup(val: Value): ValueGroupValue {
 
 function assertPublicModelContracts(model: Model) {
   const root = model.rootId();
-  expect(model.hasItem(root)).toBe(true);
+  expect(model.hasEntry(root)).toBe(true);
 
-  const seen = new Set<ItemId>();
-  const stack: ItemId[] = [root];
+  const seen = new Set<EntryId>();
+  const stack: EntryId[] = [root];
 
   while (stack.length) {
     const gid = stack.pop()!;
@@ -110,8 +130,8 @@ function assertPublicModelContracts(model: Model) {
     const kids = model.childIdsOf(gid);
 
     for (const cid of kids) {
-      expect(model.hasItem(cid)).toBe(true);
-      const child = model.readItem(cid);
+      expect(model.hasEntry(cid)).toBe(true);
+      const child = model.readEntry(cid);
       expect(child.ownerId).toBe(gid);
 
       const loc = model.locateInOwner(cid);
@@ -124,9 +144,9 @@ function assertPublicModelContracts(model: Model) {
       stack.push(cid);
     }
 
-    const labelToId = new Map<string, ItemId>();
+    const labelToId = new Map<string, EntryId>();
     for (const cid of kids) {
-      const nm = model.normalizeLabel(model.readItem(cid).label);
+      const nm = model.normalizeLabel(model.readEntry(cid).label);
       if (!nm) continue;
       const prev = labelToId.get(nm);
       expect(prev).toBeUndefined();
@@ -159,7 +179,7 @@ describe("model contract", () => {
     model.setRoot(rootId);
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createItem.group(rootId)),
+        model.ops.create(model.createEntry.group(rootId)),
         model.ops.patchView(rootId, "outline"),
       ]),
     );
@@ -171,11 +191,11 @@ describe("model contract", () => {
     return { model, rootId };
   }
 
-  function addBlankChild(model: Model, ownerId: ItemId, label = "") {
+  function addBlankChild(model: Model, ownerId: EntryId, label = "") {
     const id = model.createId();
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createItem.blank(id)),
+        model.ops.create(model.createEntry.blank(id)),
         ...(label ? [model.ops.patchLabel(id, label)] : []),
         model.ops.reparent({ childId: id, toOwnerId: ownerId }),
       ]),
@@ -183,11 +203,11 @@ describe("model contract", () => {
     return id;
   }
 
-  function addGroupChild(model: Model, ownerId: ItemId, label = "") {
+  function addGroupChild(model: Model, ownerId: EntryId, label = "") {
     const id = model.createId();
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createItem.group(id)),
+        model.ops.create(model.createEntry.group(id)),
         ...(label ? [model.ops.patchLabel(id, label)] : []),
         model.ops.reparent({ childId: id, toOwnerId: ownerId }),
       ]),
@@ -197,7 +217,7 @@ describe("model contract", () => {
 
   function patchScalar(
     model: Model,
-    id: ItemId,
+    id: EntryId,
     value: true | number | string,
   ) {
     model.apply(
@@ -207,7 +227,7 @@ describe("model contract", () => {
     );
   }
 
-  function patchDerived(model: Model, id: ItemId, expr: string) {
+  function patchDerived(model: Model, id: EntryId, expr: string) {
     model.apply(
       model.ops.transaction([
         model.ops.patchContent(id, { kind: "derived", expr }),
@@ -217,7 +237,7 @@ describe("model contract", () => {
 
   function patchLens(
     model: Model,
-    id: ItemId,
+    id: EntryId,
     spec: { from: string; where: string; orderBy: string },
   ) {
     model.apply(
@@ -235,7 +255,7 @@ describe("model contract", () => {
   test("root exists and is readable", () => {
     const { model, rootId } = makeModelRuntime();
     expect(model.rootId()).toBe(rootId);
-    expect(model.readItem(rootId).id).toBe(rootId);
+    expect(model.readEntry(rootId).id).toBe(rootId);
     expect(model.childIdsOf(rootId)).toEqual([]);
     assertPublicModelContracts(model);
   });
@@ -246,12 +266,12 @@ describe("model contract", () => {
     const a = addBlankChild(model, rootId, "a");
     const b = addBlankChild(model, rootId, "b");
 
-    expect(model.readItem(a).ownerId).toBe(rootId);
-    expect(model.readItem(b).ownerId).toBe(rootId);
+    expect(model.readEntry(a).ownerId).toBe(rootId);
+    expect(model.readEntry(b).ownerId).toBe(rootId);
     expect(model.childIdsOf(rootId)).toEqual([a, b]);
 
     model.apply(model.ops.transaction([model.ops.detach(b)]));
-    expect(model.readItem(b).ownerId).toBe(null);
+    expect(model.readEntry(b).ownerId).toBe(null);
     expect(model.childIdsOf(rootId)).toEqual([a]);
 
     assertPublicModelContracts(model);
@@ -368,24 +388,30 @@ describe("model contract", () => {
 
     expect(res.removed).toBeGreaterThanOrEqual(1);
     expect(res.removedIds).toContain(a);
-    expect(model.hasItem(a)).toBe(false);
+    expect(model.hasEntry(a)).toBe(false);
 
     assertPublicModelContracts(model);
   });
 });
 
 describe("expr contract", () => {
+  function asScalarValue(v: Value): true | number | string | null {
+    if (isBlankValue(v)) return null;
+    if (!isScalarValue(v)) throw new Error(`Expected scalar, got ${v.kind}`);
+    return v.value;
+  }
+
   test("parsing precedence, unary, blanks", () => {
     const env = {
       lookup: (_name: string) => V.issue("nope"),
-      resolve: (_id: ItemId) => V.issue("nope"),
-      getLabel: (_id: ItemId) => "",
+      resolve: (_id: EntryId) => V.issue("nope"),
+      getLabel: (_id: EntryId) => "",
     };
 
-    expect(asScalar(interpretExpr("1 + 2 * 3", env))).toBe(7);
-    expect(asScalar(interpretExpr("(1 + 2) * 3", env))).toBe(9);
-    expect(asScalar(interpretExpr("--1", env))).toBe(1);
-    expectBlank(interpretExpr("blank + 1", env));
+    expect(asScalarValue(interpretExpr("1 + 2 * 3", env))).toBe(7);
+    expect(asScalarValue(interpretExpr("(1 + 2) * 3", env))).toBe(9);
+    expect(asScalarValue(interpretExpr("--1", env))).toBe(1);
+    expect(isBlankValue(interpretExpr("blank + 1", env))).toBe(true);
   });
 
   test("path forms: member, select-by-label, implicit dot member", () => {
@@ -393,7 +419,9 @@ describe("expr contract", () => {
     const rootId = model.createId();
     model.setRoot(rootId);
     model.apply(
-      model.ops.transaction([model.ops.create(model.createItem.group(rootId))]),
+      model.ops.transaction([
+        model.ops.create(model.createEntry.group(rootId)),
+      ]),
     );
     const evaluator = createEvaluator({ model, interpret: interpretExpr });
 
@@ -403,16 +431,16 @@ describe("expr contract", () => {
 
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createItem.group(g)),
+        model.ops.create(model.createEntry.group(g)),
         model.ops.patchLabel(g, "g"),
         model.ops.reparent({ childId: g, toOwnerId: rootId }),
 
-        model.ops.create(model.createItem.blank(a)),
+        model.ops.create(model.createEntry.blank(a)),
         model.ops.patchLabel(a, "a"),
         model.ops.patchContent(a, { kind: "scalar", value: 10 }),
         model.ops.reparent({ childId: a, toOwnerId: g }),
 
-        model.ops.create(model.createItem.blank(b)),
+        model.ops.create(model.createEntry.blank(b)),
         model.ops.patchLabel(b, "b"),
         model.ops.patchContent(b, { kind: "scalar", value: 20 }),
         model.ops.reparent({ childId: b, toOwnerId: g }),
@@ -421,17 +449,18 @@ describe("expr contract", () => {
 
     const env = {
       lookup: (name: string) => {
-        if (name === "g") return V.itemGroup([a, b]);
-        if (name === "_") return V.itemGroup([a, b]);
+        if (name === "g") return V.entryGroup([a, b]);
+        if (name === "_") return V.entryGroup([a, b]);
         return V.issue(`unbound: ${name}`);
       },
-      resolve: (id: ItemId) => evaluator.value(id),
-      getLabel: (id: ItemId) => model.normalizeLabel(model.readItem(id).label),
+      resolve: (id: EntryId) => evaluator.value(id),
+      getLabel: (id: EntryId) =>
+        model.normalizeLabel(model.readEntry(id).label),
     };
 
-    expect(asScalar(interpretExpr("g.a", env))).toBe(10);
-    expect(asScalar(interpretExpr("g['b']", env))).toBe(20);
-    expect(asScalar(interpretExpr(".a", env))).toBe(10);
+    expect(asScalarValue(interpretExpr("g.a", env))).toBe(10);
+    expect(asScalarValue(interpretExpr("g['b']", env))).toBe(20);
+    expect(asScalarValue(interpretExpr(".a", env))).toBe(10);
 
     evaluator.dispose();
     assertPublicModelContracts(model);
@@ -440,152 +469,165 @@ describe("expr contract", () => {
   test("string escapes", () => {
     const env = {
       lookup: (_name: string) => V.issue("nope"),
-      resolve: (_id: ItemId) => V.issue("nope"),
-      getLabel: (_id: ItemId) => "",
+      resolve: (_id: EntryId) => V.issue("nope"),
+      getLabel: (_id: EntryId) => "",
     };
 
-    expect(asScalar(interpretExpr("'a\\nb'", env))).toBe("a\nb");
-    expect(asScalar(interpretExpr('"a\\"b"', env))).toBe('a"b');
-    expect(asScalar(interpretExpr("'\\u0041'", env))).toBe("A");
+    expect(asScalarValue(interpretExpr("'a\\nb'", env))).toBe("a\nb");
+    expect(asScalarValue(interpretExpr('"a\\"b"', env))).toBe('a"b');
+    expect(asScalarValue(interpretExpr("'\\u0041'", env))).toBe("A");
   });
 
   test("builtins typing rules", () => {
     const env = {
       lookup: (_name: string) => V.blank(),
-      resolve: (_id: ItemId) => V.blank(),
-      getLabel: (_id: ItemId) => "",
+      resolve: (_id: EntryId) => V.blank(),
+      getLabel: (_id: EntryId) => "",
     };
 
-    expectBlank(interpretExpr("abs(blank)", env));
-    expect(asScalar(interpretExpr("round(2.34, 1)", env))).toBe(2.3);
-    expect(asScalar(interpretExpr("to_number('3')", env))).toBe(3);
-    expect(asScalar(interpretExpr("to_text(12)", env))).toBe("12");
+    expect(isBlankValue(interpretExpr("abs(blank)", env))).toBe(true);
+    expect(asScalarValue(interpretExpr("round(2.34, 1)", env))).toBe(2.3);
+    expect(asScalarValue(interpretExpr("to_number('3')", env))).toBe(3);
+    expect(asScalarValue(interpretExpr("to_text(12)", env))).toBe("12");
 
-    expect(asScalar(interpretExpr("if(1, 10, 20)", env))).toBe(20);
-    expect(asScalar(interpretExpr("if(true, 10, 20)", env))).toBe(10);
+    expect(asScalarValue(interpretExpr("if(1, 10, 20)", env))).toBe(20);
+    expect(asScalarValue(interpretExpr("if(true, 10, 20)", env))).toBe(10);
 
-    expectBlank(interpretExpr("and(true, blank)", env));
-    expectBlank(interpretExpr("or(blank, blank)", env));
-    expect(asScalar(interpretExpr("or(true, blank)", env))).toBe(true);
+    expect(isBlankValue(interpretExpr("and(true, blank)", env))).toBe(true);
+    expect(isBlankValue(interpretExpr("or(blank, blank)", env))).toBe(true);
+    expect(asScalarValue(interpretExpr("or(true, blank)", env))).toBe(true);
   });
 
   test("parse error returns issue", () => {
     const env = {
       lookup: (_name: string) => V.blank(),
-      resolve: (_id: ItemId) => V.blank(),
-      getLabel: (_id: ItemId) => "",
+      resolve: (_id: EntryId) => V.blank(),
+      getLabel: (_id: EntryId) => "",
     };
     const out = interpretExpr("1 +", env);
-    expectIssue(out);
+    expect(isIssueValue(out)).toBe(true);
   });
 });
 
 describe("core evaluator contract", () => {
-  test("derived computes expression in item env + updates when dependency changes", async () => {
+  test("derived computes expression in entry env + updates when dependency changes", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let x: ItemId = -1;
-    let y: ItemId = -1;
+    let x: EntryId = -1;
+    let y: EntryId = -1;
 
     core.commit((t) => {
-      x = t.insert(rootId, { kind: "blank" });
-      t.setLabel(x, "x");
-      t.setScalar(x, 10);
+      x = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(x), "x");
+      t.setContentScalar(refOf(x), 10);
 
-      y = t.insert(rootId, { kind: "blank" });
-      t.setLabel(y, "y");
-      t.setSource(y, { kind: "derived", expr: "x + 2" });
+      y = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(y), "y");
+      t.setSourceField(refOf(y), "expr", "x + 2");
     });
 
-    expect(asScalar(core.value(y))).toBe(12);
+    expect(contentToScalar(core.item(refOf(y)).content)).toBe(12);
 
-    core.edit.setScalar(x, 40);
+    core.edit.setContentScalar(refOf(x), 40);
     await tick();
-    expect(asScalar(core.value(y))).toBe(42);
+    expect(contentToScalar(core.item(refOf(y)).content)).toBe(42);
   });
 
   test("cycle returns issue", () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let a: ItemId = -1;
-    let b: ItemId = -1;
+    let a: EntryId = -1;
+    let b: EntryId = -1;
 
     core.commit((t) => {
-      a = t.insert(rootId, { kind: "blank" });
-      t.setLabel(a, "a");
-      b = t.insert(rootId, { kind: "blank" });
-      t.setLabel(b, "b");
-      t.setSource(a, { kind: "derived", expr: "b" });
-      t.setSource(b, { kind: "derived", expr: "a" });
+      a = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(a), "a");
+      b = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(b), "b");
+      t.setSourceField(refOf(a), "expr", "b");
+      t.setSourceField(refOf(b), "expr", "a");
     });
 
-    expectIssue(core.value(a), "Cyclic");
-    expectIssue(core.value(b), "Cyclic");
+    const ca = core.item(refOf(a)).content;
+    const cb = core.item(refOf(b)).content;
+    expect(ca.kind).toBe("issue");
+    expect(cb.kind).toBe("issue");
+    if (ca.kind === "issue") expect(ca.message).toContain("Cyclic");
+    if (cb.kind === "issue") expect(cb.message).toContain("Cyclic");
   });
 
-  test("derived materializes item-groups into value-groups (recursive)", () => {
+  test("derived materializes entry-groups into value-groups (recursive) and becomes a group of items", () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let g: ItemId = -1;
-    let a: ItemId = -1;
-    let h: ItemId = -1;
-    let b: ItemId = -1;
-    let d: ItemId = -1;
+    let g: EntryId = -1;
+    let a: EntryId = -1;
+    let h: EntryId = -1;
+    let b: EntryId = -1;
+    let d: EntryId = -1;
 
     core.commit((t) => {
-      g = t.insert(rootId, { kind: "group" });
-      t.setLabel(g, "g");
+      g = t.insertChild(root, { kind: "group" });
+      t.setLabel(refOf(g), "g");
 
-      a = t.insert(g, { kind: "blank" });
-      t.setLabel(a, "a");
-      t.setScalar(a, 1);
+      a = t.insertChild(refOf(g), { kind: "blank" });
+      t.setLabel(refOf(a), "a");
+      t.setContentScalar(refOf(a), 1);
 
-      h = t.insert(g, { kind: "group" });
-      t.setLabel(h, "h");
+      h = t.insertChild(refOf(g), { kind: "group" });
+      t.setLabel(refOf(h), "h");
 
-      b = t.insert(h, { kind: "blank" });
-      t.setLabel(b, "b");
-      t.setScalar(b, 2);
+      b = t.insertChild(refOf(h), { kind: "blank" });
+      t.setLabel(refOf(b), "b");
+      t.setContentScalar(refOf(b), 2);
 
-      d = t.insert(rootId, { kind: "blank" });
-      t.setLabel(d, "d");
-      t.setSource(d, { kind: "derived", expr: "g" });
+      d = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(d), "d");
+      t.setSourceField(refOf(d), "expr", "g");
     });
 
-    const v = expectValueGroup(core.value(d));
-    const labels = v.items.map((it) => it.label ?? "");
-    expect(labels).toContain("a");
-    expect(labels).toContain("h");
+    const snap = core.item(refOf(d));
+    expect(snap.content.kind).toBe("group");
+    if (snap.content.kind !== "group") return;
+
+    const childLabels = snap.content.children.map(
+      (r) => core.item(r).label ?? "",
+    );
+    expect(childLabels).toContain("a");
+    expect(childLabels).toContain("h");
   });
 });
 
 describe("selection contract", () => {
-  test("setSelection repairs when focused item disappears", async () => {
+  test("setSelection repairs when focused entry disappears", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let g: ItemId = -1;
-    let x: ItemId = -1;
+    let g: EntryId = -1;
+    let x: EntryId = -1;
 
     core.commit((t) => {
-      g = t.insert(rootId, { kind: "group" });
-      t.setLabel(g, "g");
-      x = t.insert(g, { kind: "blank" });
-      t.setLabel(x, "x");
-      t.setScalar(x, 1);
+      g = t.insertChild(root, { kind: "group" });
+      t.setLabel(refOf(g), "g");
+      x = t.insertChild(refOf(g), { kind: "blank" });
+      t.setLabel(refOf(x), "x");
+      t.setContentScalar(refOf(x), 1);
     });
 
-    core.focus({ scopeId: g, id: x }, "content");
+    core.focus({ scope: refOf(g), ref: refOf(x) }, "content");
 
     core.commit((t) => {
-      t.remove(g);
+      t.removeEntry(g);
     });
 
     await tick();
 
     const sel = core.selection();
     if (sel.kind === "focused") {
-      expect(core.has(sel.focus.id)).toBe(true);
-      expect(core.has(sel.focus.scopeId)).toBe(true);
+      expect(sel.focus.ref.entryId).toBeGreaterThan(0);
+      expect(sel.focus.scope.entryId).toBeGreaterThan(0);
     } else {
       expect(sel.kind).toBe("idle");
     }
@@ -595,29 +637,30 @@ describe("selection contract", () => {
 describe("views contract (selection transitions via onKeyDown)", () => {
   test("table arrow navigation: row label -> right -> cell; left -> row label; down -> next row", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let tableId: ItemId = -1;
-    let rowA: ItemId = -1;
-    let aScore: ItemId = -1;
-    let rowB: ItemId = -1;
-    let bScore: ItemId = -1;
+    let tableId: EntryId = -1;
+    let rowA: EntryId = -1;
+    let aScore: EntryId = -1;
+    let rowB: EntryId = -1;
+    let bScore: EntryId = -1;
 
     core.commit((t) => {
-      tableId = t.insert(rootId, { kind: "group" });
-      t.setLabel(tableId, "table");
+      tableId = t.insertChild(root, { kind: "group" });
+      t.setLabel(refOf(tableId), "table");
       t.setView(tableId, "table");
 
-      rowA = t.insert(tableId, { kind: "group" });
-      t.setLabel(rowA, "rowA");
-      aScore = t.insert(rowA, { kind: "blank" });
-      t.setLabel(aScore, "score");
-      t.setScalar(aScore, 5);
+      rowA = t.insertChild(refOf(tableId), { kind: "group" });
+      t.setLabel(refOf(rowA), "rowA");
+      aScore = t.insertChild(refOf(rowA), { kind: "blank" });
+      t.setLabel(refOf(aScore), "score");
+      t.setContentScalar(refOf(aScore), 5);
 
-      rowB = t.insert(tableId, { kind: "group" });
-      t.setLabel(rowB, "rowB");
-      bScore = t.insert(rowB, { kind: "blank" });
-      t.setLabel(bScore, "score");
-      t.setScalar(bScore, 6);
+      rowB = t.insertChild(refOf(tableId), { kind: "group" });
+      t.setLabel(refOf(rowB), "rowB");
+      bScore = t.insertChild(refOf(rowB), { kind: "blank" });
+      t.setLabel(refOf(bScore), "score");
+      t.setContentScalar(refOf(bScore), 6);
     });
 
     const view = viewFactories.table({ core, id: tableId });
@@ -646,28 +689,29 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     sel = core.selection();
     expectFocusedSelection(sel);
     expect(sel.target).toBe("content");
-    expect(sel.focus.scopeId).toBe(rowB);
+    expect(sel.focus.scope.entryId).toBe(rowB);
 
     unmount();
   });
 
   test("outline picks first nav stop; arrows keep focused selection", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
     core.commit((t) => {
-      const a = t.insert(rootId, { kind: "blank" });
-      t.setLabel(a, "a");
-      t.setScalar(a, 1);
+      const a = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(a), "a");
+      t.setContentScalar(refOf(a), 1);
 
-      const g = t.insert(rootId, { kind: "group" });
-      t.setLabel(g, "g");
-      const ga = t.insert(g, { kind: "blank" });
-      t.setLabel(ga, "ga");
-      t.setScalar(ga, 2);
+      const g = t.insertChild(root, { kind: "group" });
+      t.setLabel(refOf(g), "g");
+      const ga = t.insertChild(refOf(g), { kind: "blank" });
+      t.setLabel(refOf(ga), "ga");
+      t.setContentScalar(refOf(ga), 2);
 
-      const b = t.insert(rootId, { kind: "blank" });
-      t.setLabel(b, "b");
-      t.setScalar(b, 3);
+      const b = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(b), "b");
+      t.setContentScalar(refOf(b), 3);
     });
 
     const view = viewFactories.outline({ core, id: rootId });
@@ -694,14 +738,15 @@ describe("views contract (selection transitions via onKeyDown)", () => {
 describe("DOM smoke", () => {
   test("slider range input updates scalar content", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let sliderId: ItemId = -1;
+    let sliderId: EntryId = -1;
 
     core.commit((t) => {
-      sliderId = t.insert(rootId, { kind: "blank" });
-      t.setLabel(sliderId, "slider");
+      sliderId = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(sliderId), "slider");
       t.setView(sliderId, "slider");
-      t.setScalar(sliderId, 10);
+      t.setContentScalar(refOf(sliderId), 10);
     });
 
     const view = viewFactories.slider({ core, id: sliderId });
@@ -719,25 +764,26 @@ describe("DOM smoke", () => {
     input.value = "42";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
-    expect(asScalar(core.value(sliderId))).toBe(42);
+    expect(contentToScalar(core.item(refOf(sliderId)).content)).toBe(42);
 
     unmount();
   });
 
   test("reactivity updates derived display text", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let x: ItemId = -1;
-    let d: ItemId = -1;
+    let x: EntryId = -1;
+    let d: EntryId = -1;
 
     core.commit((t) => {
-      x = t.insert(rootId, { kind: "blank" });
-      t.setLabel(x, "x");
-      t.setScalar(x, 1);
+      x = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(x), "x");
+      t.setContentScalar(refOf(x), 1);
 
-      d = t.insert(rootId, { kind: "blank" });
-      t.setLabel(d, "d");
-      t.setSource(d, { kind: "derived", expr: "x + 1" });
+      d = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(d), "d");
+      t.setSourceField(refOf(d), "expr", "x + 1");
     });
 
     const view = viewFactories.outline({ core, id: rootId });
@@ -755,7 +801,7 @@ describe("DOM smoke", () => {
     await tick();
     expect(getDerivedText()).toBe("2");
 
-    core.edit.setScalar(x, 5);
+    core.edit.setContentScalar(refOf(x), 5);
     await tick();
     expect(getDerivedText()).toBe("6");
 
@@ -764,30 +810,32 @@ describe("DOM smoke", () => {
 
   test("dispose safety: disposing view does not crash on subsequent model updates", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const root = refOf(rootId);
 
-    let a: ItemId = -1;
+    let a: EntryId = -1;
 
     core.commit((t) => {
-      a = t.insert(rootId, { kind: "blank" });
-      t.setLabel(a, "a");
-      t.setScalar(a, 1);
+      a = t.insertChild(root, { kind: "blank" });
+      t.setLabel(refOf(a), "a");
+      t.setContentScalar(refOf(a), 1);
     });
 
     const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(core, view);
 
     expect(() => unmount()).not.toThrow();
-    expect(() => core.edit.setScalar(a, 2)).not.toThrow();
+    expect(() => core.edit.setContentScalar(refOf(a), 2)).not.toThrow();
   });
 });
 
 test("outline: clicking editable content focuses the text input element", async () => {
   const { core, rootId } = makeCoreRuntime();
+  const root = refOf(rootId);
 
   core.commit((t) => {
-    const x = t.insert(rootId, { kind: "blank" });
-    t.setLabel(x, "x");
-    t.setScalar(x, 10);
+    const x = t.insertChild(root, { kind: "blank" });
+    t.setLabel(refOf(x), "x");
+    t.setContentScalar(refOf(x), 10);
   });
 
   const view = viewFactories.outline({ core, id: rootId });

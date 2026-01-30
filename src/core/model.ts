@@ -7,7 +7,7 @@ import {
 } from "@preact/signals-core";
 import { DEV, devAssert } from "../dev";
 
-export type ItemId = number;
+export type EntryId = number;
 export type Scalar = true | number | string;
 
 const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
@@ -28,7 +28,7 @@ export type ViewKind = ViewName | null;
 
 type BlankContent = { kind: "blank" };
 type ScalarContent = { kind: "scalar"; value: Scalar };
-type GroupContent = { kind: "group"; childIds: readonly ItemId[] };
+type GroupContent = { kind: "group"; childIds: readonly EntryId[] };
 type DerivedContent = { kind: "derived"; expr: string };
 type LensContent = {
   kind: "lens";
@@ -37,90 +37,83 @@ type LensContent = {
   orderBy: string;
 };
 
-export type StoredContentSettable = BlankContent | ScalarContent | GroupContent;
+export type EntryContentSettable = BlankContent | ScalarContent | GroupContent;
 
-export type StoredContent =
-  | StoredContentSettable
-  | DerivedContent
-  | LensContent;
+export type EntryContent = EntryContentSettable | DerivedContent | LensContent;
 
-export type Item = {
-  readonly id: ItemId;
-  readonly ownerId: ItemId | null;
+export type Entry = {
+  readonly id: EntryId;
+  readonly ownerId: EntryId | null;
   readonly label: string;
   readonly view: ViewKind;
-  readonly content: StoredContent;
+  readonly content: EntryContent;
 };
 
-type GroupItem = Item & { content: GroupContent };
+type GroupEntry = Entry & { content: GroupContent };
 
-export function isBlankContent(
-  content: StoredContent,
-): content is BlankContent {
+export function isBlankContent(content: EntryContent): content is BlankContent {
   return content.kind === "blank";
 }
 
 export function isScalarContent(
-  content: StoredContent,
+  content: EntryContent,
 ): content is ScalarContent {
   return content.kind === "scalar";
 }
 
-export function isGroupContent(
-  content: StoredContent,
-): content is GroupContent {
+export function isGroupContent(content: EntryContent): content is GroupContent {
   return content.kind === "group";
 }
 
 export function isDerivedContent(
-  content: StoredContent,
+  content: EntryContent,
 ): content is DerivedContent {
   return content.kind === "derived";
 }
 
-export function isLensContent(content: StoredContent): content is LensContent {
+export function isLensContent(content: EntryContent): content is LensContent {
   return content.kind === "lens";
 }
 
-export function isGroupItem(item: Item): item is GroupItem {
-  return isGroupContent(item.content);
+export function isGroupEntry(entry: Entry): entry is GroupEntry {
+  return isGroupContent(entry.content);
 }
 
 export type SnapshotContent =
   | { kind: "blank" }
   | { kind: "scalar"; value: Scalar }
-  | { kind: "group"; childIds: SnapshotItem[] }
+  | { kind: "group"; childIds: SnapshotEntry[] }
   | { kind: "derived"; expr: string }
   | { kind: "lens"; from: string; where: string; orderBy: string };
 
-export type SnapshotItem = {
+export type SnapshotEntry = {
   label?: string;
   view?: ViewName;
   content: SnapshotContent;
 };
 
 export type ReparentSpec = {
-  childId: ItemId;
-  toOwnerId: ItemId | null;
+  childId: EntryId;
+  toOwnerId: EntryId | null;
   toIndex?: number;
 };
 
 export type ReparentResult = {
-  fromOwnerId: ItemId | null;
-  toOwnerId: ItemId | null;
+  fromOwnerId: EntryId | null;
+  toOwnerId: EntryId | null;
   fromIndex: number | null;
   toIndex: number | null;
 };
 
-export type ItemPatch = {
+export type EntryPatch = {
   label?: string;
   view?: ViewKind;
-  content?: StoredContent;
+  content?: EntryContent;
 };
 
 export type Op =
-  | { kind: "create"; item: Item }
-  | { kind: "patch"; id: ItemId; next: ItemPatch }
+  | { kind: "create"; entry: Entry }
+  | { kind: "patch"; id: EntryId; next: EntryPatch }
   | { kind: "reparent"; spec: ReparentSpec };
 
 export type Transaction = {
@@ -129,67 +122,67 @@ export type Transaction = {
 };
 
 export type ApplyResult = {
-  readonly created: readonly ItemId[];
-  readonly touched: readonly ItemId[];
+  readonly created: readonly EntryId[];
+  readonly touched: readonly EntryId[];
   readonly reparented: readonly ReparentResult[];
 };
 
 export type LocateInOwnerResult = {
-  readonly ownerId: ItemId;
+  readonly ownerId: EntryId;
   readonly index: number;
-  readonly childIds: ItemId[];
+  readonly childIds: EntryId[];
 };
 
 export type Model = {
-  setRoot(id: ItemId): void;
-  rootId(): ItemId;
+  setRoot(id: EntryId): void;
+  rootId(): EntryId;
 
-  createId(): ItemId;
-  setNextId(next: ItemId): void;
+  createId(): EntryId;
+  setNextId(next: EntryId): void;
 
-  createItem: {
-    blank(id: ItemId): Item;
-    group(id: ItemId): Item;
+  createEntry: {
+    blank(id: EntryId): Entry;
+    group(id: EntryId): Entry;
   };
 
   ops: {
-    create(item: Item): Op;
+    create(entry: Entry): Op;
 
-    patch(id: ItemId, next: ItemPatch): Op;
-    patchLabel(id: ItemId, label: string): Op;
-    patchView(id: ItemId, view: ViewKind): Op;
-    patchContent(id: ItemId, content: StoredContent): Op;
+    patch(id: EntryId, next: EntryPatch): Op;
+    patchLabel(id: EntryId, label: string): Op;
+    patchView(id: EntryId, view: ViewKind): Op;
+    patchContent(id: EntryId, content: EntryContent): Op;
 
     reparent(spec: ReparentSpec): Op;
-    detach(childId: ItemId): Op;
+    detach(childId: EntryId): Op;
 
     transaction(ops: readonly Op[], meta?: Transaction["meta"]): Transaction;
   };
 
-  itemSignal(id: ItemId): ReadonlySignal<Item>;
+  entrySignal(id: EntryId): ReadonlySignal<Entry>;
 
-  hasItem(id: ItemId): boolean;
-  readItem(id: ItemId): Item;
-  peekItem(id: ItemId): Item;
+  hasEntry(id: EntryId): boolean;
+  readEntry(id: EntryId): Entry;
+  peekEntry(id: EntryId): Entry;
 
-  contentKindOf(id: ItemId): StoredContent["kind"];
-  canEditScalarText(id: ItemId): boolean;
+  contentKindOf(id: EntryId): EntryContent["kind"];
+  canEditScalarText(id: EntryId): boolean;
 
-  childIdsOf(groupId: ItemId): ItemId[];
-  findChildIdByLabel(groupId: ItemId, label: string): ItemId | null;
-  locateInOwner(childId: ItemId): LocateInOwnerResult | null;
+  childIdsOf(groupId: EntryId): EntryId[];
+  findChildIdByLabel(groupId: EntryId, label: string): EntryId | null;
+  locateInOwner(childId: EntryId): LocateInOwnerResult | null;
 
   apply(txn: Transaction): ApplyResult;
 
-  snapshot(id: ItemId): SnapshotItem;
-  pruneUnreachable(): { removed: number; removedIds: ItemId[] };
+  snapshot(id: EntryId): SnapshotEntry;
+  pruneUnreachable(): { removed: number; removedIds: EntryId[] };
 
   normalizeLabel(s: string): string;
 };
 
-type ItemRec = {
-  itemSignal: Signal<Item>;
-  childLabelIndexSignal?: ReadonlySignal<Map<string, ItemId>>;
+type EntryRec = {
+  entrySignal: Signal<Entry>;
+  childLabelIndexSignal?: ReadonlySignal<Map<string, EntryId>>;
 };
 
 function clampIndex(i: number, len: number): number {
@@ -201,57 +194,57 @@ export function normalizeLabel(s: string): string {
 }
 
 export function createModel(): Model {
-  const items = new Map<ItemId, ItemRec>();
+  const entries = new Map<EntryId, EntryRec>();
 
-  let root: ItemId | null = null;
+  let root: EntryId | null = null;
   let nextId = 1;
 
-  const setRoot = (id: ItemId): void => {
+  const setRoot = (id: EntryId): void => {
     root = id;
   };
 
-  const rootId = (): ItemId => {
+  const rootId = (): EntryId => {
     if (root == null) throw new Error("Root not set");
     return root;
   };
 
-  const createId = (): ItemId => nextId++;
-  const setNextId = (n: ItemId): void => {
+  const createId = (): EntryId => nextId++;
+  const setNextId = (n: EntryId): void => {
     nextId = n;
   };
 
-  const hasItem = (id: ItemId): boolean => items.has(id);
+  const hasEntry = (id: EntryId): boolean => entries.has(id);
 
-  const itemRec = (id: ItemId): ItemRec => {
-    const rec = items.get(id);
-    if (!rec) throw new Error(`Unknown item id: ${String(id)}`);
+  const entryRec = (id: EntryId): EntryRec => {
+    const rec = entries.get(id);
+    if (!rec) throw new Error(`Unknown entry id: ${String(id)}`);
     return rec;
   };
 
-  const itemSignal = (id: ItemId): ReadonlySignal<Item> =>
-    itemRec(id).itemSignal;
+  const entrySignal = (id: EntryId): ReadonlySignal<Entry> =>
+    entryRec(id).entrySignal;
 
-  const readItem = (id: ItemId): Item => itemSignal(id).value;
-  const peekItem = (id: ItemId): Item => itemSignal(id).peek();
+  const readEntry = (id: EntryId): Entry => entrySignal(id).value;
+  const peekEntry = (id: EntryId): Entry => entrySignal(id).peek();
 
-  const createItemInternal = (initial: Item): void => {
-    if (items.has(initial.id))
-      throw new Error(`Duplicate item id: ${String(initial.id)}`);
-    items.set(initial.id, { itemSignal: signal(initial) });
+  const createEntryInternal = (initial: Entry): void => {
+    if (entries.has(initial.id))
+      throw new Error(`Duplicate entry id: ${String(initial.id)}`);
+    entries.set(initial.id, { entrySignal: signal(initial) });
   };
 
   const childLabelIndexSignal = (
-    groupId: ItemId,
-  ): ReadonlySignal<Map<string, ItemId>> => {
-    const rec = itemRec(groupId);
+    groupId: EntryId,
+  ): ReadonlySignal<Map<string, EntryId>> => {
+    const rec = entryRec(groupId);
     return (rec.childLabelIndexSignal ??= computed(() => {
-      const it = itemSignal(groupId).value;
-      if (!isGroupContent(it.content)) return new Map<string, ItemId>();
+      const it = entrySignal(groupId).value;
+      if (!isGroupContent(it.content)) return new Map<string, EntryId>();
 
-      const m = new Map<string, ItemId>();
+      const m = new Map<string, EntryId>();
       for (const childId of it.content.childIds) {
-        if (!items.has(childId)) continue;
-        const child = itemSignal(childId).value;
+        if (!entries.has(childId)) continue;
+        const child = entrySignal(childId).value;
         const nm = normalizeLabel(child.label);
         if (nm) m.set(nm, childId);
       }
@@ -260,22 +253,22 @@ export function createModel(): Model {
   };
 
   function assertUniqueChildLabels(
-    ownerId: ItemId,
+    ownerId: EntryId,
     opts: {
-      childIds?: readonly ItemId[];
-      override?: { childId: ItemId; label: string };
+      childIds?: readonly EntryId[];
+      override?: { childId: EntryId; label: string };
     } = {},
   ) {
-    const owner = itemSignal(ownerId).peek();
-    if (!isGroupItem(owner)) throw new Error("Owner is not a group");
+    const owner = entrySignal(ownerId).peek();
+    if (!isGroupEntry(owner)) throw new Error("Owner is not a group");
 
     const childIds = opts.childIds ?? owner.content.childIds;
 
     const seen = new Set<string>();
     for (const cid of childIds) {
-      if (!items.has(cid)) continue;
+      if (!entries.has(cid)) continue;
 
-      const it = itemSignal(cid).peek();
+      const it = entrySignal(cid).peek();
       const raw =
         opts.override && opts.override.childId === cid
           ? opts.override.label
@@ -289,15 +282,15 @@ export function createModel(): Model {
     }
   }
 
-  const createItem = {
-    blank: (id: ItemId): Item => ({
+  const createEntry = {
+    blank: (id: EntryId): Entry => ({
       id,
       ownerId: null,
       label: "",
       view: null,
       content: { kind: "blank" },
     }),
-    group: (id: ItemId): Item => ({
+    group: (id: EntryId): Entry => ({
       id,
       ownerId: null,
       label: "",
@@ -307,61 +300,65 @@ export function createModel(): Model {
   } as const;
 
   const ops = {
-    create: (item: Item): Op => ({ kind: "create", item }),
-    patch: (id: ItemId, next: ItemPatch): Op => ({ kind: "patch", id, next }),
-    patchLabel: (id: ItemId, label: string): Op => ({
+    create: (entry: Entry): Op => ({ kind: "create", entry }),
+    patch: (id: EntryId, next: EntryPatch): Op => ({
+      kind: "patch",
+      id,
+      next,
+    }),
+    patchLabel: (id: EntryId, label: string): Op => ({
       kind: "patch",
       id,
       next: { label },
     }),
-    patchView: (id: ItemId, view: ViewKind): Op => ({
+    patchView: (id: EntryId, view: ViewKind): Op => ({
       kind: "patch",
       id,
       next: { view },
     }),
-    patchContent: (id: ItemId, content: StoredContent): Op => ({
+    patchContent: (id: EntryId, content: EntryContent): Op => ({
       kind: "patch",
       id,
       next: { content },
     }),
     reparent: (spec: ReparentSpec): Op => ({ kind: "reparent", spec }),
-    detach: (childId: ItemId): Op => ({
+    detach: (childId: EntryId): Op => ({
       kind: "reparent",
       spec: { childId, toOwnerId: null },
     }),
     transaction: (
-      ops: readonly Op[],
+      ops2: readonly Op[],
       meta?: Transaction["meta"],
-    ): Transaction => (meta ? { ops, meta } : { ops }),
+    ): Transaction => (meta ? { ops: ops2, meta } : { ops: ops2 }),
   } as const;
 
-  const expectGroupOwner = (ownerId: ItemId) => {
-    const s = itemRec(ownerId).itemSignal;
+  const expectGroupOwner = (ownerId: EntryId) => {
+    const s = entryRec(ownerId).entrySignal;
     const owner = s.peek();
-    if (!isGroupItem(owner)) throw new Error("Owner is not a group");
-    return { itemSignal: s, owner };
+    if (!isGroupEntry(owner)) throw new Error("Owner is not a group");
+    return { entrySignal: s, owner };
   };
 
-  const getGroupItem = (id: ItemId | null): GroupItem | null => {
-    if (id == null || !items.has(id)) return null;
-    const o = itemSignal(id).peek();
-    return isGroupItem(o) ? o : null;
+  const getGroupEntry = (id: EntryId | null): GroupEntry | null => {
+    if (id == null || !entries.has(id)) return null;
+    const o = entrySignal(id).peek();
+    return isGroupEntry(o) ? o : null;
   };
 
   function reparent(spec: ReparentSpec): ReparentResult {
     const { childId, toOwnerId } = spec;
 
-    if (!items.has(childId)) throw new Error("Unknown child");
+    if (!entries.has(childId)) throw new Error("Unknown child");
 
-    const childRec = itemRec(childId);
-    const child = childRec.itemSignal.peek();
+    const childRec = entryRec(childId);
+    const child = childRec.entrySignal.peek();
     const fromOwnerId = child.ownerId;
 
     let fromIndex: number | null = null;
     let toIndex: number | null = null;
 
-    const fromOwner = getGroupItem(fromOwnerId);
-    const toOwner = getGroupItem(toOwnerId);
+    const fromOwner = getGroupEntry(fromOwnerId);
+    const toOwner = getGroupEntry(toOwnerId);
 
     if (fromOwnerId != null) {
       if (!fromOwner) throw new Error("Owner is not a group");
@@ -396,7 +393,7 @@ export function createModel(): Model {
 
     batch(() => {
       if (fromOwnerId != null) {
-        const { itemSignal: ownerSignal, owner } =
+        const { entrySignal: ownerSignal, owner } =
           expectGroupOwner(fromOwnerId);
         const before = owner.content.childIds;
         if (before.includes(childId)) {
@@ -411,7 +408,7 @@ export function createModel(): Model {
       }
 
       if (toOwnerId != null) {
-        const { itemSignal: ownerSignal, owner } = expectGroupOwner(toOwnerId);
+        const { entrySignal: ownerSignal, owner } = expectGroupOwner(toOwnerId);
         const before = owner.content.childIds;
         const at = clampIndex(toIndex ?? before.length, before.length);
 
@@ -430,18 +427,18 @@ export function createModel(): Model {
             childIds: nextChildIds,
           },
         };
-        childRec.itemSignal.value = { ...child, ownerId: toOwnerId };
+        childRec.entrySignal.value = { ...child, ownerId: toOwnerId };
       } else {
-        childRec.itemSignal.value = { ...child, ownerId: null };
+        childRec.entrySignal.value = { ...child, ownerId: null };
       }
     });
 
     return { fromOwnerId, toOwnerId, fromIndex, toIndex };
   }
 
-  const patch = (id: ItemId, next: ItemPatch): void => {
-    const rec = itemRec(id);
-    const cur = rec.itemSignal.peek();
+  const patch = (id: EntryId, next: EntryPatch): void => {
+    const rec = entryRec(id);
+    const cur = rec.entrySignal.peek();
 
     if (next.label !== undefined) {
       const ownerId = cur.ownerId;
@@ -458,7 +455,7 @@ export function createModel(): Model {
       }
     }
 
-    rec.itemSignal.value = {
+    rec.entrySignal.value = {
       ...cur,
       ...(next.label !== undefined ? { label: next.label } : {}),
       ...(next.view !== undefined ? { view: next.view } : {}),
@@ -467,17 +464,17 @@ export function createModel(): Model {
   };
 
   const apply = (txn: Transaction): ApplyResult => {
-    const created: ItemId[] = [];
-    const touched = new Set<ItemId>();
+    const created: EntryId[] = [];
+    const touched = new Set<EntryId>();
     const reparented: ReparentResult[] = [];
 
     batch(() => {
       for (const op0 of txn.ops) {
         switch (op0.kind) {
           case "create":
-            createItemInternal(op0.item);
-            created.push(op0.item.id);
-            touched.add(op0.item.id);
+            createEntryInternal(op0.entry);
+            created.push(op0.entry.id);
+            touched.add(op0.entry.id);
             break;
 
           case "patch":
@@ -506,37 +503,37 @@ export function createModel(): Model {
     return { created, touched: [...touched], reparented };
   };
 
-  const contentKindOf = (id: ItemId): StoredContent["kind"] =>
-    itemSignal(id).value.content.kind;
+  const contentKindOf = (id: EntryId): EntryContent["kind"] =>
+    entrySignal(id).value.content.kind;
 
-  const canEditScalarText = (id: ItemId): boolean => {
-    const content = readItem(id).content;
+  const canEditScalarText = (id: EntryId): boolean => {
+    const content = readEntry(id).content;
     return isBlankContent(content) || isScalarContent(content);
   };
 
-  const childIdsOf = (groupId: ItemId): ItemId[] => {
-    const it = itemSignal(groupId).value;
+  const childIdsOf = (groupId: EntryId): EntryId[] => {
+    const it = entrySignal(groupId).value;
     return isGroupContent(it.content) ? [...it.content.childIds] : [];
   };
 
   const findChildIdByLabel = (
-    groupId: ItemId,
+    groupId: EntryId,
     label: string,
-  ): ItemId | null => {
+  ): EntryId | null => {
     const nm = normalizeLabel(label);
     if (!nm) return null;
     return childLabelIndexSignal(groupId).value.get(nm) ?? null;
   };
 
-  const locateInOwner = (childId: ItemId): LocateInOwnerResult | null => {
-    if (!items.has(childId)) return null;
+  const locateInOwner = (childId: EntryId): LocateInOwnerResult | null => {
+    if (!entries.has(childId)) return null;
 
-    const child = peekItem(childId);
+    const child = peekEntry(childId);
     const ownerId = child.ownerId;
     if (ownerId == null) return null;
 
-    const owner = peekItem(ownerId);
-    if (!isGroupItem(owner)) return null;
+    const owner = peekEntry(ownerId);
+    if (!isGroupEntry(owner)) return null;
 
     const childIds = [...owner.content.childIds];
     const index = childIds.indexOf(childId);
@@ -545,29 +542,29 @@ export function createModel(): Model {
     return { ownerId, index, childIds };
   };
 
-  const collectReachableFrom = (start: ItemId): Set<ItemId> => {
-    const seen = new Set<ItemId>();
-    const stack: ItemId[] = [start];
+  const collectReachableFrom = (start: EntryId): Set<EntryId> => {
+    const seen = new Set<EntryId>();
+    const stack: EntryId[] = [start];
 
     while (stack.length) {
       const id = stack.pop()!;
       if (seen.has(id)) continue;
       seen.add(id);
 
-      const it = itemSignal(id).peek();
-      if (isGroupItem(it))
+      const it = entrySignal(id).peek();
+      if (isGroupEntry(it))
         for (const cid of it.content.childIds) stack.push(cid);
     }
     return seen;
   };
 
-  const pruneUnreachable = (): { removed: number; removedIds: ItemId[] } => {
+  const pruneUnreachable = (): { removed: number; removedIds: EntryId[] } => {
     const keep = collectReachableFrom(rootId());
-    const removedIds: ItemId[] = [];
+    const removedIds: EntryId[] = [];
 
-    for (const [id] of items) {
+    for (const [id] of entries) {
       if (!keep.has(id)) {
-        items.delete(id);
+        entries.delete(id);
         removedIds.push(id);
       }
     }
@@ -578,21 +575,21 @@ export function createModel(): Model {
 
   function assertValidInternal() {
     devAssert(root != null, "Root not set");
-    devAssert(items.has(root!), `Root item missing: ${String(root)}`);
+    devAssert(entries.has(root!), `Root entry missing: ${String(root)}`);
 
-    const groupChildIdsOf = (id: ItemId): readonly ItemId[] | null => {
-      const it = items.get(id)?.itemSignal.peek();
+    const groupChildIdsOf = (id: EntryId): readonly EntryId[] | null => {
+      const it = entries.get(id)?.entrySignal.peek();
       if (!it) return null;
-      return isGroupItem(it) ? it.content.childIds : null;
+      return isGroupEntry(it) ? it.content.childIds : null;
     };
 
-    for (const [gid, rec] of items) {
-      const it = rec.itemSignal.peek();
-      if (!isGroupItem(it)) continue;
+    for (const [gid, rec] of entries) {
+      const it = rec.entrySignal.peek();
+      if (!isGroupEntry(it)) continue;
 
       const childIds = it.content.childIds;
 
-      const seenIds = new Set<ItemId>();
+      const seenIds = new Set<EntryId>();
       for (const cid of childIds) {
         devAssert(
           !seenIds.has(cid),
@@ -601,11 +598,11 @@ export function createModel(): Model {
         seenIds.add(cid);
 
         devAssert(
-          items.has(cid),
+          entries.has(cid),
           `Group ${gid} references missing child id ${cid}`,
         );
 
-        const child = items.get(cid)!.itemSignal.peek();
+        const child = entries.get(cid)!.entrySignal.peek();
         devAssert(
           child.ownerId === gid,
           `Child ${cid} has ownerId=${String(child.ownerId)} but is listed under group ${gid}`,
@@ -614,7 +611,7 @@ export function createModel(): Model {
 
       const seenLabels = new Set<string>();
       for (const cid of childIds) {
-        const child = items.get(cid)!.itemSignal.peek();
+        const child = entries.get(cid)!.entrySignal.peek();
         const nm = normalizeLabel(child.label);
         if (!nm) continue;
         devAssert(
@@ -625,31 +622,31 @@ export function createModel(): Model {
       }
     }
 
-    for (const [cid, rec] of items) {
-      const child = rec.itemSignal.peek();
+    for (const [cid, rec] of entries) {
+      const child = rec.entrySignal.peek();
       const ownerId0 = child.ownerId;
       if (ownerId0 == null) continue;
 
       devAssert(
-        items.has(ownerId0),
-        `Item ${cid} has missing owner ${ownerId0}`,
+        entries.has(ownerId0),
+        `Entry ${cid} has missing owner ${ownerId0}`,
       );
 
       const ownerChildIds = groupChildIdsOf(ownerId0);
       devAssert(
         ownerChildIds != null,
-        `Item ${cid} owner ${ownerId0} is not a group`,
+        `Entry ${cid} owner ${ownerId0} is not a group`,
       );
 
       const count = ownerChildIds!.reduce((n, x) => n + (x === cid ? 1 : 0), 0);
       devAssert(
         count === 1,
-        `Item ${cid} owner ${ownerId0} contains it ${count} times (expected 1)`,
+        `Entry ${cid} owner ${ownerId0} contains it ${count} times (expected 1)`,
       );
     }
   }
 
-  const snapshotContent = (content: StoredContent): SnapshotContent => {
+  const snapshotContent = (content: EntryContent): SnapshotContent => {
     if (isBlankContent(content)) return { kind: "blank" };
     if (isScalarContent(content))
       return { kind: "scalar", value: content.value };
@@ -671,8 +668,8 @@ export function createModel(): Model {
     return unreachable;
   };
 
-  const snapshot = (id: ItemId): SnapshotItem => {
-    const it = itemSignal(id).value;
+  const snapshot = (id: EntryId): SnapshotEntry => {
+    const it = entrySignal(id).value;
     const label = it.label.trim() ? it.label : undefined;
     const view = it.view ?? undefined;
     return { label, view, content: snapshotContent(it.content) };
@@ -685,14 +682,14 @@ export function createModel(): Model {
     createId,
     setNextId,
 
-    createItem,
+    createEntry,
     ops,
 
-    itemSignal,
+    entrySignal,
 
-    hasItem,
-    readItem,
-    peekItem,
+    hasEntry,
+    readEntry,
+    peekEntry,
 
     contentKindOf,
     canEditScalarText,

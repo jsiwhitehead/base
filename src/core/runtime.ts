@@ -1,7 +1,9 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { ItemId, Model, ViewKind, ViewName } from "./model";
+import type { EntryId, Model, ViewKind, ViewName } from "./model";
 
-export type Focus = { scopeId: ItemId; id: ItemId };
+export type ItemRef = { entryId: EntryId; path: readonly number[] };
+
+export type Focus = { scope: ItemRef; ref: ItemRef };
 export type Caret = { start: number; end: number };
 
 export type Selection =
@@ -34,10 +36,13 @@ export type DomView = {
   dispose(): void;
 };
 
-export type ViewFactoryArgs<C> = { core: C; id: ItemId; focus?: Focus };
+export type ViewFactoryArgs<C> = { core: C; id: EntryId; focus?: Focus };
 export type ViewFactory<C> = (args: ViewFactoryArgs<C>) => DomView;
 
-const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
+const refKey = (r: ItemRef): string =>
+  `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
+
+const keyOf = (f: Focus): string => `${refKey(f.scope)}::${refKey(f.ref)}`;
 
 export const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
@@ -136,6 +141,8 @@ function computeAnchoredPos(
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
 
+const entryRef = (entryId: EntryId): ItemRef => ({ entryId, path: [] });
+
 export type Runtime<C> = {
   selectionSignal: Signal<Selection>;
 
@@ -149,9 +156,9 @@ export type Runtime<C> = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: { id: ItemId; focus?: Focus }): Component;
+  mountView(opts: { id: EntryId; focus?: Focus }): Component;
   mountView(opts: {
-    id: ItemId;
+    id: EntryId;
     focus?: Focus;
     continueAs: ViewName;
   }): Component | null;
@@ -163,11 +170,11 @@ export type Runtime<C> = {
 
 export function createRuntime<C>(opts: {
   model: Model;
-  core: C;
+  getCore: () => C;
   views: Partial<Record<ViewName, ViewFactory<C>>>;
   initialSelection?: Selection;
 }): Runtime<C> {
-  const { model, core } = opts;
+  const { model } = opts;
   const views = opts.views;
 
   const selectionSignal = signal<Selection>(
@@ -263,24 +270,35 @@ export function createRuntime<C>(opts: {
     scheduleEffects(sel, normalizeEffectsForSelection(sel, effects));
   };
 
+  const canReadEntry = (id: EntryId): boolean => {
+    try {
+      model.peekEntry(id);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const repairSelection = (sel: Selection): Selection => {
     if (sel.kind === "idle") return sel;
 
-    try {
-      model.peekItem(sel.focus.id);
+    if (
+      canReadEntry(sel.focus.ref.entryId) &&
+      canReadEntry(sel.focus.scope.entryId)
+    )
       return sel;
+
+    try {
+      const rootId = model.rootId();
+      model.peekEntry(rootId);
+      const r = entryRef(rootId);
+      return {
+        kind: "focused",
+        focus: { scope: r, ref: r },
+        target: "content",
+      };
     } catch {
-      try {
-        const rootId = model.rootId();
-        model.peekItem(rootId);
-        return {
-          kind: "focused",
-          focus: { scopeId: rootId, id: rootId },
-          target: "content",
-        };
-      } catch {
-        return { kind: "idle" };
-      }
+      return { kind: "idle" };
     }
   };
 
@@ -362,10 +380,10 @@ export function createRuntime<C>(opts: {
     return () => win.removeEventListener("keydown", onKeyDown);
   };
 
-  const resolveWanted = (id: ItemId): ViewName => {
+  const resolveWanted = (id: EntryId): ViewName => {
     let v: ViewKind = null;
     try {
-      v = model.readItem(id).view;
+      v = model.readEntry(id).view;
     } catch {
       v = null;
     }
@@ -374,19 +392,20 @@ export function createRuntime<C>(opts: {
     return (wanted in views ? wanted : "outline") as ViewName;
   };
 
-  function mountView(opts2: { id: ItemId; focus?: Focus }): Component;
+  function mountView(opts2: { id: EntryId; focus?: Focus }): Component;
   function mountView(opts2: {
-    id: ItemId;
+    id: EntryId;
     focus?: Focus;
     continueAs: ViewName;
   }): Component | null;
   function mountView(opts2: {
-    id: ItemId;
+    id: EntryId;
     focus?: Focus;
     continueAs?: ViewName;
   }): Component | null {
     const id = opts2.id;
-    const focus: Focus = opts2.focus ?? { scopeId: id, id };
+    const baseRef = entryRef(id);
+    const focus: Focus = opts2.focus ?? { scope: baseRef, ref: baseRef };
     const wanted = resolveWanted(id);
 
     if (opts2.continueAs && wanted === opts2.continueAs) return null;
@@ -394,7 +413,7 @@ export function createRuntime<C>(opts: {
     const factory = views[wanted];
     if (!factory) return null;
 
-    const view = factory({ core, id, focus });
+    const view = factory({ core: opts.getCore(), id, focus });
 
     const unreg = registerViewRoot({
       root: view.root,

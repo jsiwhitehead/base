@@ -1,6 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Core, Focus, Component, Caret } from "../core";
-import { defaultTextCaret } from "../core";
+import { defaultTextCaret } from "../core/runtime";
 
 export class Disposer {
   private fns: (() => void)[] = [];

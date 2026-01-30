@@ -1,28 +1,28 @@
 import { computed, type ReadonlySignal } from "@preact/signals-core";
-import type { ItemId, Scalar, StoredContent, Model } from "./model";
+import type { EntryId, Scalar, EntryContent, Model } from "./model";
 
 export type LabeledValue = { label?: string; value: Value };
 
 type BlankValue = { kind: "blank" };
 type IssueValue = { kind: "issue"; message: string };
 type ScalarValue = { kind: "scalar"; value: Scalar };
-type ItemGroupValue = { kind: "item-group"; itemIds: readonly ItemId[] };
+type EntryGroupValue = { kind: "entry-group"; entryIds: readonly EntryId[] };
 type ValueGroupValue = { kind: "value-group"; items: readonly LabeledValue[] };
 
 export type Value =
   | BlankValue
   | IssueValue
   | ScalarValue
-  | ItemGroupValue
+  | EntryGroupValue
   | ValueGroupValue;
 
 export const V = {
   blank: (): Value => ({ kind: "blank" }),
   issue: (message: string): Value => ({ kind: "issue", message }),
   scalar: (value: Scalar): Value => ({ kind: "scalar", value }),
-  itemGroup: (itemIds: readonly ItemId[]): Value => ({
-    kind: "item-group",
-    itemIds,
+  entryGroup: (entryIds: readonly EntryId[]): Value => ({
+    kind: "entry-group",
+    entryIds,
   }),
   valueGroup: (items: readonly LabeledValue[]): Value => ({
     kind: "value-group",
@@ -47,8 +47,8 @@ export function isScalarValue(v: Value): v is ScalarValue {
   return v.kind === "scalar";
 }
 
-export function isItemGroupValue(v: Value): v is ItemGroupValue {
-  return v.kind === "item-group";
+export function isEntryGroupValue(v: Value): v is EntryGroupValue {
+  return v.kind === "entry-group";
 }
 
 export function isValueGroupValue(v: Value): v is ValueGroupValue {
@@ -57,16 +57,16 @@ export function isValueGroupValue(v: Value): v is ValueGroupValue {
 
 export type EvalEnv = {
   lookup(name: string): Value;
-  resolve(id: ItemId): Value;
-  getLabel(id: ItemId): string;
+  resolve(id: EntryId): Value;
+  getLabel(id: EntryId): string;
 };
 
 export type Interpreter = (expr: string, env: EvalEnv) => Value;
 
-type EvalCtx = { visiting: Set<ItemId> };
-const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<ItemId>() });
+type EvalCtx = { visiting: Set<EntryId> };
+const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<EntryId>() });
 
-function withVisiting(ctx: EvalCtx, id: ItemId, run: () => Value): Value {
+function withVisiting(ctx: EvalCtx, id: EntryId, run: () => Value): Value {
   if (ctx.visiting.has(id)) return V.issue("Cyclic dependency");
   ctx.visiting.add(id);
   try {
@@ -109,10 +109,10 @@ const compareSortKey = (a: Value, b: Value): number => {
 type CacheRec = { valueSignal?: ReadonlySignal<Value> };
 
 export type Evaluator = {
-  valueSignal(id: ItemId): ReadonlySignal<Value>;
-  value(id: ItemId): Value;
-  itemIds(id: ItemId): ItemId[];
-  prune(ids: readonly ItemId[]): void;
+  valueSignal(id: EntryId): ReadonlySignal<Value>;
+  value(id: EntryId): Value;
+  entryIds(id: EntryId): EntryId[];
+  prune(ids: readonly EntryId[]): void;
   dispose(): void;
 };
 
@@ -123,9 +123,9 @@ export function createEvaluator(opts: {
   const { model } = opts;
   const interpretExpr = opts.interpret;
 
-  const cache = new Map<ItemId, CacheRec>();
+  const cache = new Map<EntryId, CacheRec>();
 
-  const rec = (id: ItemId): CacheRec => {
+  const rec = (id: EntryId): CacheRec => {
     let r = cache.get(id);
     if (!r) {
       r = {};
@@ -134,20 +134,20 @@ export function createEvaluator(opts: {
     return r;
   };
 
-  const baseEnvFor = (ownerId: ItemId, ctx: EvalCtx): EvalEnv => ({
+  const baseEnvFor = (ownerId: EntryId, ctx: EvalCtx): EvalEnv => ({
     lookup: (name) => lookupInAncestors(name, ownerId, ctx),
     resolve: (id) => evaluateValue(id, ctx),
-    getLabel: (id) => model.normalizeLabel(model.readItem(id).label),
+    getLabel: (id) => model.normalizeLabel(model.readEntry(id).label),
   });
 
   const lookupInAncestors = (
     name: string,
-    fromId: ItemId,
+    fromId: EntryId,
     ctx: EvalCtx,
   ): Value => {
-    let cur: ItemId | null = fromId;
+    let cur: EntryId | null = fromId;
     while (cur != null) {
-      const ownerId: ItemId | null = model.readItem(cur).ownerId;
+      const ownerId: EntryId | null = model.readEntry(cur).ownerId;
       if (ownerId == null) break;
 
       const hit = model.findChildIdByLabel(ownerId, name);
@@ -158,12 +158,12 @@ export function createEvaluator(opts: {
     return V.issue(`Unbound identifier: ${name}`);
   };
 
-  const materializeItemGroups = (v: Value, ctx: EvalCtx): Value => {
-    if (isItemGroupValue(v)) {
+  const materializeEntryGroups = (v: Value, ctx: EvalCtx): Value => {
+    if (isEntryGroupValue(v)) {
       return V.valueGroup(
-        v.itemIds.map((id) => ({
-          label: model.readItem(id).label || undefined,
-          value: materializeItemGroups(evaluateValue(id, ctx), ctx),
+        v.entryIds.map((id) => ({
+          label: model.readEntry(id).label || undefined,
+          value: materializeEntryGroups(evaluateValue(id, ctx), ctx),
         })),
       );
     }
@@ -171,25 +171,25 @@ export function createEvaluator(opts: {
       return V.valueGroup(
         v.items.map((it) => ({
           label: it.label,
-          value: materializeItemGroups(it.value, ctx),
+          value: materializeEntryGroups(it.value, ctx),
         })),
       );
     }
     return v;
   };
 
-  type UnwrapItemGroupResult =
+  type UnwrapEntryGroupResult =
     | { kind: "blank" }
     | { kind: "issue"; value: Value }
-    | { kind: "ok"; itemIds: readonly ItemId[] };
+    | { kind: "ok"; entryIds: readonly EntryId[] };
 
-  const unwrapItemGroup = (
+  const unwrapEntryGroup = (
     v: Value,
     typeMessage: string,
-  ): UnwrapItemGroupResult => {
+  ): UnwrapEntryGroupResult => {
     if (isBlankValue(v)) return { kind: "blank" };
     if (isIssueValue(v)) return { kind: "issue", value: v };
-    if (isItemGroupValue(v)) return { kind: "ok", itemIds: v.itemIds };
+    if (isEntryGroupValue(v)) return { kind: "ok", entryIds: v.entryIds };
     return { kind: "issue", value: V.issue(typeMessage) };
   };
 
@@ -198,8 +198,8 @@ export function createEvaluator(opts: {
   });
 
   function evaluateLens(
-    ownerId: ItemId,
-    spec: Extract<StoredContent, { kind: "lens" }>,
+    ownerId: EntryId,
+    spec: Extract<EntryContent, { kind: "lens" }>,
     ctx: EvalCtx,
   ): Value {
     const from = spec.from.trim();
@@ -207,19 +207,19 @@ export function createEvaluator(opts: {
 
     const baseEnv = baseEnvFor(ownerId, ctx);
     const sourceVal = interpretExpr(from, baseEnv);
-    const unwrapped = unwrapItemGroup(
+    const unwrapped = unwrapEntryGroup(
       sourceVal,
-      "Lens 'from' must evaluate to an item-group",
+      "Lens 'from' must evaluate to an entry-group",
     );
 
     if (unwrapped.kind === "blank") return V.blank();
     if (unwrapped.kind === "issue") return unwrapped.value;
 
-    let itemIds: ItemId[] = [...unwrapped.itemIds];
+    let entryIds: EntryId[] = [...unwrapped.entryIds];
 
     const evalRowExpr = (
       expr: string,
-      rowId: ItemId,
+      rowId: EntryId,
       i: number,
       rowCtx: EvalCtx,
     ): Value => {
@@ -227,7 +227,7 @@ export function createEvaluator(opts: {
       if (isIssueValue(row)) return row;
 
       const position = V.scalar(i + 1);
-      const label = V.scalar(model.readItem(rowId).label || "");
+      const label = V.scalar(model.readEntry(rowId).label || "");
 
       return interpretExpr(expr, {
         lookup: (name) => {
@@ -241,55 +241,55 @@ export function createEvaluator(opts: {
           return lookupInAncestors(name, rowId, rowCtx);
         },
         resolve: (id) => evaluateValue(id, rowCtx),
-        getLabel: (id) => model.normalizeLabel(model.readItem(id).label),
+        getLabel: (id) => model.normalizeLabel(model.readEntry(id).label),
       });
     };
 
     const where = spec.where.trim();
     if (where) {
-      const next: ItemId[] = [];
-      for (let i = 0; i < itemIds.length; i++) {
-        const rowId = itemIds[i]!;
+      const next: EntryId[] = [];
+      for (let i = 0; i < entryIds.length; i++) {
+        const rowId = entryIds[i]!;
         const rowCtx = forkCtx(ctx);
         const pred = evalRowExpr(where, rowId, i, rowCtx);
         if (isIssueValue(pred)) return pred;
         if (isTrue(pred)) next.push(rowId);
       }
-      itemIds = next;
+      entryIds = next;
     }
 
     const orderBy = spec.orderBy.trim();
     if (orderBy) {
-      const rows: { rowId: ItemId; i: number; key: Value }[] = [];
-      for (let i = 0; i < itemIds.length; i++) {
-        const rowId = itemIds[i]!;
+      const rows: { rowId: EntryId; i: number; key: Value }[] = [];
+      for (let i = 0; i < entryIds.length; i++) {
+        const rowId = entryIds[i]!;
         const rowCtx = forkCtx(ctx);
         const key = evalRowExpr(orderBy, rowId, i, rowCtx);
         if (isIssueValue(key)) return key;
         rows.push({ rowId, i, key });
       }
       rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);
-      itemIds = rows.map((r) => r.rowId);
+      entryIds = rows.map((r) => r.rowId);
     }
 
-    return V.itemGroup(itemIds);
+    return V.entryGroup(entryIds);
   }
 
-  function evaluateValue(id: ItemId, ctx: EvalCtx): Value {
+  function evaluateValue(id: EntryId, ctx: EvalCtx): Value {
     return withVisiting(ctx, id, () => {
-      const it = model.readItem(id);
+      const it = model.readEntry(id);
       switch (it.content.kind) {
         case "blank":
           return V.blank();
         case "scalar":
           return V.scalar(it.content.value);
         case "group":
-          return V.itemGroup([...it.content.childIds]);
+          return V.entryGroup([...it.content.childIds]);
         case "derived": {
           const expr = it.content.expr.trim();
           if (!expr) return V.blank();
           const out = interpretExpr(expr, baseEnvFor(id, ctx));
-          return materializeItemGroups(out, ctx);
+          return materializeEntryGroups(out, ctx);
         }
         case "lens":
           return evaluateLens(id, it.content, ctx);
@@ -297,19 +297,19 @@ export function createEvaluator(opts: {
     });
   }
 
-  const valueSignal = (id: ItemId): ReadonlySignal<Value> => {
+  const valueSignal = (id: EntryId): ReadonlySignal<Value> => {
     const r = rec(id);
     return (r.valueSignal ??= computed(() => evaluateValue(id, makeEvalCtx())));
   };
 
-  const value = (id: ItemId): Value => valueSignal(id).value;
+  const value = (id: EntryId): Value => valueSignal(id).value;
 
-  const itemIds = (id: ItemId): ItemId[] => {
+  const entryIds = (id: EntryId): EntryId[] => {
     const v = value(id);
-    return isItemGroupValue(v) ? [...v.itemIds] : [];
+    return isEntryGroupValue(v) ? [...v.entryIds] : [];
   };
 
-  const prune = (ids: readonly ItemId[]): void => {
+  const prune = (ids: readonly EntryId[]): void => {
     for (const id of ids) cache.delete(id);
   };
 
@@ -317,5 +317,5 @@ export function createEvaluator(opts: {
     cache.clear();
   };
 
-  return { valueSignal, value, itemIds, prune, dispose };
+  return { valueSignal, value, entryIds, prune, dispose };
 }
