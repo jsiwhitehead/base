@@ -1,5 +1,11 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import { type ItemId, type ViewKind, type ViewName, createCore } from "./core";
+import {
+  type ItemId,
+  type ViewKind,
+  type ViewName,
+  createCore,
+  type Source,
+} from "./core";
 import { createView } from "./views";
 
 export type App = {
@@ -38,7 +44,6 @@ export function createApp(opts: CreateAppOpts = {}): App {
   });
   devAssert(view, `No view factory for rootView='${rootView}'`);
 
-  const uninstallListeners = core.installGlobalListeners(window);
   const unmountRoot = core.mountViewRoot({
     root: view.root,
     onKeyDown: view.onKeyDown,
@@ -50,7 +55,6 @@ export function createApp(opts: CreateAppOpts = {}): App {
     core,
     rootId,
     dispose() {
-      uninstallListeners();
       unmountRoot();
       view.dispose();
       hostEl.replaceChildren();
@@ -98,26 +102,12 @@ export function seedDemo(app: App) {
     return cid;
   };
 
-  const mkDerived = (owner: ItemId, label: string, expr: string) => {
+  const mkSource = (owner: ItemId, label: string, source: Source) => {
     let cid: ItemId = -1;
     core.commit((t) => {
       cid = t.insert(owner, { kind: "blank" });
       t.setLabel(cid, label);
-      t.setDerived(cid, expr);
-    });
-    return cid;
-  };
-
-  const mkLens = (
-    owner: ItemId,
-    label: string,
-    spec: { from: string; where?: string; orderBy?: string },
-  ) => {
-    let cid: ItemId = -1;
-    core.commit((t) => {
-      cid = t.insert(owner, { kind: "blank" });
-      t.setLabel(cid, label);
-      t.setLens(cid, spec);
+      t.setSource(cid, source);
     });
     return cid;
   };
@@ -126,8 +116,8 @@ export function seedDemo(app: App) {
 
   mkScalar(demo, "x", 10);
   mkScalar(demo, "y", 2);
-  mkDerived(demo, "x_plus_y", "x + y");
-  mkDerived(demo, "x_times_y", "x * y");
+  mkSource(demo, "x_plus_y", { kind: "derived", expr: "x + y" });
+  mkSource(demo, "x_times_y", { kind: "derived", expr: "x * y" });
 
   const rows = mkGroup(demo, "rows", "table");
 
@@ -142,7 +132,12 @@ export function seedDemo(app: App) {
   mkRow("b", 1, "low");
   mkRow("c", 3, "high");
 
-  mkLens(demo, "Table", { from: "rows" });
+  mkSource(demo, "Table", {
+    kind: "lens",
+    from: "rows",
+    where: "",
+    orderBy: "",
+  });
 }
 
 function autoMount(): void {

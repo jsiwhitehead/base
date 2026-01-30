@@ -26,19 +26,6 @@ import { createOutlineView } from "../src/views/outline";
 
 GlobalRegistrator.register();
 
-function installRafShim() {
-  if (typeof globalThis.requestAnimationFrame !== "function") {
-    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) =>
-      setTimeout(() => cb(Date.now()), 0) as unknown as number;
-  }
-  if (typeof globalThis.cancelAnimationFrame !== "function") {
-    globalThis.cancelAnimationFrame = (id: number) =>
-      clearTimeout(id as unknown as ReturnType<typeof setTimeout>);
-  }
-}
-
-installRafShim();
-
 const runtimeCleanups = new Set<() => void>();
 
 afterEach(() => {
@@ -53,10 +40,8 @@ async function tick() {
 
 function makeCoreRuntime() {
   const { core, rootId } = createCore();
-  const uninstallListeners = core.installGlobalListeners(window);
 
   runtimeCleanups.add(() => {
-    uninstallListeners();
     core.dispose();
   });
 
@@ -518,7 +503,7 @@ describe("core evaluator contract", () => {
 
       y = t.insert(rootId, { kind: "blank" });
       t.setLabel(y, "y");
-      t.setDerived(y, "x + 2");
+      t.setSource(y, { kind: "derived", expr: "x + 2" });
     });
 
     expect(asScalar(core.value(y))).toBe(12);
@@ -539,8 +524,8 @@ describe("core evaluator contract", () => {
       t.setLabel(a, "a");
       b = t.insert(rootId, { kind: "blank" });
       t.setLabel(b, "b");
-      t.setDerived(a, "b");
-      t.setDerived(b, "a");
+      t.setSource(a, { kind: "derived", expr: "b" });
+      t.setSource(b, { kind: "derived", expr: "a" });
     });
 
     expectIssue(core.value(a), "Cyclic");
@@ -573,7 +558,7 @@ describe("core evaluator contract", () => {
 
       d = t.insert(rootId, { kind: "blank" });
       t.setLabel(d, "d");
-      t.setDerived(d, "g");
+      t.setSource(d, { kind: "derived", expr: "g" });
     });
 
     const v = expectValueGroup(core.value(d));
@@ -762,7 +747,7 @@ describe("DOM smoke", () => {
 
       d = t.insert(rootId, { kind: "blank" });
       t.setLabel(d, "d");
-      t.setDerived(d, "x + 1");
+      t.setSource(d, { kind: "derived", expr: "x + 1" });
     });
 
     const view = createOutlineView({ core, id: rootId });

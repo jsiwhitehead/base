@@ -56,7 +56,7 @@ function deriveColumns(core: Core, tableId: ItemId): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const cid of rowV.itemIds) {
-    const nm = core.get(cid).label;
+    const nm = core.meta(cid).label;
     if (!nm || seen.has(nm)) continue;
     seen.add(nm);
     out.push(nm);
@@ -84,7 +84,7 @@ const isCellSelection = (
   isFocused(sel) && sel.target === "content" && sel.focus.scopeId !== tableId;
 
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
-  ...core.children(tableId),
+  ...core.childIds(tableId),
 ];
 
 function tableNavMove(
@@ -164,7 +164,7 @@ function tableNavMove(
   const rowIdx = rows.indexOf(rowId);
   if (rowIdx < 0) return null;
 
-  const colLabel = core.get(cellId).label || "";
+  const colLabel = core.meta(cellId).label || "";
   const colIdx = Math.max(0, cols.indexOf(colLabel));
 
   if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
@@ -223,7 +223,7 @@ export const tableCommands = {
 
     core.commit((t) => {
       for (const rowId of rows) {
-        if (core.get(rowId).storedKind !== "group") continue;
+        if (core.meta(rowId).storedKind !== "group") continue;
         if (core.findChild(rowId, name) != null) continue;
 
         const cellId = t.insert(rowId, { kind: "blank" });
@@ -333,7 +333,7 @@ function mountTableCellContent(cellCtx: {
 }): Component {
   const { core, rowId, cellId, dispatch } = cellCtx;
   const focus: Focus = { scopeId: rowId, id: cellId };
-  const viewKind = core.get(cellId).view as ViewKind;
+  const viewKind = core.meta(cellId).view as ViewKind;
 
   if (viewWantsChildView(viewKind)) {
     const child = createView({ core }, viewKind, cellId, focus);
@@ -473,7 +473,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
         const sel = mountCtx.core.selection();
         const editing =
           isRowLabelSelection(sel, mountCtx.tableId) && sel.focus.id === rowId;
-        const label = mountCtx.core.get(rowId).label ?? "";
+        const label = mountCtx.core.meta(rowId).label ?? "";
         return { text: label, readOnly: !editing, isIssue: false };
       },
       textKeys: (inp) =>
@@ -525,7 +525,7 @@ function mountTableBody(mountCtx: TableMountCtx): Component {
     );
 
     componentCtx.watch(
-      () => mountCtx.core.children(mountCtx.tableId),
+      () => mountCtx.core.childIds(mountCtx.tableId),
       (rows) => {
         rowList.update(rows);
       },
@@ -617,7 +617,7 @@ export function createTableView(args: { core: Core; id: ItemId }): DomView {
   const unmountRoot = core.mountViewRoot({ root, onKeyDown });
 
   if (core.selection().kind === "idle") {
-    const rows = core.children(tableId);
+    const rows = core.childIds(tableId);
     if (rows.length) {
       const firstRowId = rows[0]!;
       const res = focusRowLabel(tableId, firstRowId);

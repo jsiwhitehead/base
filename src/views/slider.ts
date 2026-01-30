@@ -100,7 +100,7 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetContent = (core: Core, id: ItemId) => {
-  const k = core.get(id).storedKind;
+  const k = core.meta(id).storedKind;
   return k !== "derived" && k !== "lens";
 };
 

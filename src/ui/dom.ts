@@ -1,5 +1,5 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Core, ItemId, Caret, Focus, FocusTarget, Value } from "../core";
+import type { Core, ItemId, Caret, Focus, Value } from "../core";
 import {
   isBlankValue,
   isIssueValue,
@@ -283,7 +283,7 @@ export function bindTextControlKeys(
 }
 
 export type FocusableTargetSpec = Readonly<{
-  target: FocusTarget;
+  target: string;
   getEl: () => HTMLElement | null;
   pointerHost?: () => HTMLElement | null;
   caret?: "zero" | "fromTarget";
@@ -319,7 +319,7 @@ export type Ctx = {
   focusable(opts: {
     core: Core;
     focus: Focus;
-    elementFor: (target: FocusTarget) => HTMLElement | null;
+    elementFor: (target: string) => HTMLElement | null;
     targets?: readonly FocusableTargetSpec[];
     caret?: { set(pos: number): void; getLength(): number };
   }): void;
@@ -532,7 +532,7 @@ export type TextFieldState = {
 export type TextFieldOpts = {
   core: Core;
   focus: Focus;
-  target: FocusTarget;
+  target: string;
   multiline: boolean;
   className?: string;
   caret?: "zero" | "fromTarget";

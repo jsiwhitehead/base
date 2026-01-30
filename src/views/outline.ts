@@ -3,9 +3,8 @@ import type {
   ItemId,
   ViewKind,
   Core,
-  Header,
+  Source,
   Focus,
-  FocusTarget,
   Caret,
   Selection,
 } from "../core";
@@ -27,32 +26,32 @@ import {
 } from "../ui/dom";
 import { createView, viewWantsChildView, type DomView } from "./index";
 
-type HeaderKind = Header["kind"];
+type SourceKind = Source["kind"];
 
-type HeaderFieldDef = Readonly<{
+type SourceFieldDef = Readonly<{
   field: "expr" | "from" | "where" | "orderBy";
   label: string;
   multiline: boolean;
-  target: FocusTarget;
+  target: string;
 }>;
 
-const HEADER_FIELDS: Record<HeaderKind, readonly HeaderFieldDef[]> = {
+const SOURCE_FIELDS: Record<SourceKind, readonly SourceFieldDef[]> = {
   derived: [
-    { field: "expr", label: "=", multiline: true, target: "header:expr" },
+    { field: "expr", label: "=", multiline: true, target: "source:expr" },
   ],
   lens: [
-    { field: "from", label: "~", multiline: false, target: "header:from" },
+    { field: "from", label: "~", multiline: false, target: "source:from" },
     {
       field: "where",
       label: "where:",
       multiline: true,
-      target: "header:where",
+      target: "source:where",
     },
     {
       field: "orderBy",
       label: "orderBy:",
       multiline: true,
-      target: "header:orderBy",
+      target: "source:orderBy",
     },
   ],
   none: [],
@@ -64,39 +63,39 @@ const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 const sameFocus = (a: Focus, b: Focus) =>
   a.scopeId === b.scopeId && a.id === b.id;
 
-function headerFieldsForItem(
+function sourceFieldsForItem(
   core: Core,
   id: ItemId,
-): readonly HeaderFieldDef[] {
-  return HEADER_FIELDS[core.header(id).kind] ?? HEADER_FIELDS.none;
+): readonly SourceFieldDef[] {
+  return SOURCE_FIELDS[core.source(id).kind] ?? SOURCE_FIELDS.none;
 }
 
-function headerFieldValue(core: Core, id: ItemId, def: HeaderFieldDef): string {
-  const h = core.header(id);
-  if (h.kind === "derived") return def.field === "expr" ? (h.expr ?? "") : "";
-  if (h.kind === "lens") {
-    if (def.field === "from") return h.from ?? "";
-    if (def.field === "where") return h.where ?? "";
-    if (def.field === "orderBy") return h.orderBy ?? "";
+function sourceFieldValue(core: Core, id: ItemId, def: SourceFieldDef): string {
+  const s = core.source(id);
+  if (s.kind === "derived") return def.field === "expr" ? (s.expr ?? "") : "";
+  if (s.kind === "lens") {
+    if (def.field === "from") return s.from ?? "";
+    if (def.field === "where") return s.where ?? "";
+    if (def.field === "orderBy") return s.orderBy ?? "";
   }
   return "";
 }
 
-const hasHeaderFields = (core: Core, id: ItemId) =>
-  core.header(id).kind !== "none";
+const hasSourceFields = (core: Core, id: ItemId) =>
+  core.source(id).kind !== "none";
 
 const isNavStop = (core: Core, id: ItemId) => {
-  const kids = core.children(id);
-  return kids.length === 0 || hasHeaderFields(core, id);
+  const kids = core.childIds(id);
+  return kids.length === 0 || hasSourceFields(core, id);
 };
 
-const defaultTargetFor = (core: Core, id: ItemId): FocusTarget =>
-  hasHeaderFields(core, id) ? "label" : "content";
+const defaultTargetFor = (core: Core, id: ItemId): string =>
+  hasSourceFields(core, id) ? "label" : "content";
 
 function collectNavStopsFrom(core: Core, rootId: ItemId): Focus[] {
   const out: Focus[] = [];
   const walk = (ownerId: ItemId) => {
-    for (const id of core.children(ownerId)) {
+    for (const id of core.childIds(ownerId)) {
       if (isNavStop(core, id)) out.push({ scopeId: ownerId, id });
       walk(id);
     }
@@ -105,7 +104,7 @@ function collectNavStopsFrom(core: Core, rootId: ItemId): Focus[] {
   return out;
 }
 
-type NavResult = { focus: Focus; target: FocusTarget; caret?: Caret };
+type NavResult = { focus: Focus; target: string; caret?: Caret };
 
 function outlineNavMove(
   core: Core,
@@ -128,12 +127,12 @@ function outlineNavMove(
   };
 
   const parentFocus = (): Focus | null => {
-    const ownerId = core.get(from.scopeId).ownerId;
+    const ownerId = core.meta(from.scopeId).ownerId;
     return ownerId == null ? null : { scopeId: ownerId, id: from.scopeId };
   };
 
   const firstChildStop = (id: ItemId): Focus | null => {
-    for (const cid of core.children(id)) {
+    for (const cid of core.childIds(id)) {
       if (isNavStop(core, cid)) return { scopeId: id, id: cid };
       const deeper = firstChildStop(cid);
       if (deeper) return deeper;
@@ -143,7 +142,7 @@ function outlineNavMove(
 
   let next: Focus | null = null;
   let caret: Caret | null = null;
-  let targetOverride: FocusTarget | null = null;
+  let targetOverride: string | null = null;
 
   if (dir === "up") next = neighbor(-1);
   else if (dir === "down") next = neighbor(1);
@@ -158,10 +157,10 @@ function outlineNavMove(
 
     if (prev && next && sameFocus(prev, next)) {
       if (sel.target === "content") {
-        const defs = headerFieldsForItem(core, prev.id);
+        const defs = sourceFieldsForItem(core, prev.id);
         if (defs.length > 0) {
           const lastDef = defs[defs.length - 1]!;
-          const text = headerFieldValue(core, prev.id, lastDef);
+          const text = sourceFieldValue(core, prev.id, lastDef);
           targetOverride = lastDef.target;
           caret = caretAt(text.length);
         } else {
@@ -189,30 +188,31 @@ export const outlineCommands = {
   },
 
   setDerived(core: Core, f: Focus): void {
-    core.edit.setDerived(f.id, "");
-    core.focus(f, "header:expr", { caret: caret0() });
+    core.edit.setSource(f.id, { kind: "derived", expr: "" });
+    core.focus(f, "source:expr", { caret: caret0() });
   },
 
-  commitHeaderField(
+  commitSourceField(
     core: Core,
     f: Focus,
-    def: HeaderFieldDef,
+    def: SourceFieldDef,
     text: string,
   ): void {
-    const h = core.header(f.id);
+    const s = core.source(f.id);
 
-    if (h.kind === "derived") {
+    if (s.kind === "derived") {
       if (def.field !== "expr") return;
-      core.edit.setDerived(f.id, text);
+      core.edit.setSource(f.id, { kind: "derived", expr: text });
       return;
     }
 
-    if (h.kind !== "lens") return;
+    if (s.kind !== "lens") return;
 
-    core.edit.setLens(f.id, {
-      from: def.field === "from" ? text : h.from,
-      where: def.field === "where" ? text : h.where,
-      orderBy: def.field === "orderBy" ? text : h.orderBy,
+    core.edit.setSource(f.id, {
+      kind: "lens",
+      from: def.field === "from" ? text : s.from,
+      where: def.field === "where" ? text : s.where,
+      orderBy: def.field === "orderBy" ? text : s.orderBy,
     });
   },
 
@@ -319,7 +319,7 @@ export const outlineCommands = {
         ? (prevId ?? nextId ?? loc.ownerId)
         : (nextId ?? prevId ?? loc.ownerId);
 
-    const containerKids = core.children(f.scopeId);
+    const containerKids = core.childIds(f.scopeId);
     const nextFocus: Focus = containerKids.includes(chosen as ItemId)
       ? { scopeId: f.scopeId, id: chosen as ItemId }
       : { scopeId: loc.ownerId, id: chosen as ItemId };
@@ -348,7 +348,7 @@ export const outlineCommands = {
       const loc = core.locate(f.id);
       if (!loc) return;
 
-      const childLabel = core.get(f.id).label;
+      const childLabel = core.meta(f.id).label;
       let wrapperId: ItemId = -1;
 
       core.commit((t) => {
@@ -361,24 +361,26 @@ export const outlineCommands = {
       core.focus(
         { scopeId: wrapperId, id: f.id },
         defaultTargetFor(core, f.id),
-        { caret: caret0() },
+        {
+          caret: caret0(),
+        },
       );
       return;
     }
 
-    const wrapperId = core.get(f.id).ownerId;
+    const wrapperId = core.meta(f.id).ownerId;
     if (wrapperId == null) return;
 
-    const wrapperMeta = core.get(wrapperId);
+    const wrapperMeta = core.meta(wrapperId);
     if (wrapperMeta.storedKind !== "group") return;
 
-    const kids = core.children(wrapperId);
+    const kids = core.childIds(wrapperId);
     if (kids.length !== 1 || kids[0] !== f.id) return;
 
     const ownerId = wrapperMeta.ownerId;
     if (ownerId == null) return;
 
-    const idx = core.children(ownerId).indexOf(wrapperId);
+    const idx = core.childIds(ownerId).indexOf(wrapperId);
     if (idx < 0) return;
 
     core.commit((t) => {
@@ -397,7 +399,7 @@ export const outlineCommands = {
 
     const f = sel.focus;
 
-    if (sel.target.startsWith("header:") || sel.target === "label") {
+    if (sel.target.startsWith("source:") || sel.target === "label") {
       core.focus(f, "content", { caret: caret0() });
       return;
     }
@@ -462,7 +464,7 @@ type TargetsByKey = Map<string, HTMLElement>;
 function mountOutlineHeader(
   mountCtx: OutlineMountCtx,
   focus: Focus,
-  defs: readonly HeaderFieldDef[],
+  defs: readonly SourceFieldDef[],
   onTargets: (targets: TargetsByKey) => void,
 ): Component {
   const { core, dispatch } = mountCtx;
@@ -478,7 +480,7 @@ function mountOutlineHeader(
     };
 
     const commitLabel = (text: string) => {
-      const current = core.get(focus.id).label ?? "";
+      const current = core.meta(focus.id).label ?? "";
       if (current === text) return;
       outlineCommands.setLabel(core, focus, text);
     };
@@ -490,7 +492,7 @@ function mountOutlineHeader(
       registerFocus: false,
       commit: commitLabel,
       getState: () => ({
-        text: core.get(focus.id).label ?? "",
+        text: core.meta(focus.id).label ?? "",
         readOnly: false,
         isIssue: false,
       }),
@@ -529,9 +531,9 @@ function mountOutlineHeader(
       fieldsHost.append(row);
 
       const commitField = (text: string) => {
-        const current = headerFieldValue(core, focus.id, d);
+        const current = sourceFieldValue(core, focus.id, d);
         if (current === text) return;
-        outlineCommands.commitHeaderField(core, focus, d, text);
+        outlineCommands.commitSourceField(core, focus, d, text);
       };
 
       const fc = textField({
@@ -544,7 +546,7 @@ function mountOutlineHeader(
         registerFocus: false,
         commit: commitField,
         getState: () => ({
-          text: headerFieldValue(core, focus.id, d),
+          text: sourceFieldValue(core, focus.id, d),
           readOnly: false,
           isIssue: false,
         }),
@@ -630,7 +632,7 @@ function mountOutlineChildren(
     );
 
     componentCtx.watch(
-      () => core.children(focus.id),
+      () => core.childIds(focus.id),
       (items) => {
         mgr.update(items);
       },
@@ -661,7 +663,7 @@ function mountOutlineBody(
 
   return createComponent((componentCtx) => {
     const hostEl = el("div");
-    const viewKind = core.get(focus.id).view as ViewKind;
+    const viewKind = core.meta(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
       const childView = createView({ core }, viewKind, focus.id, focus);
@@ -802,10 +804,10 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        const meta = core.get(focus.id);
-        const defs = headerFieldsForItem(core, focus.id);
+        const meta = core.meta(focus.id);
+        const defs = sourceFieldsForItem(core, focus.id);
         const label = (meta.label ?? "").trim();
-        const headerKind = core.header(focus.id).kind;
+        const sourceKind = core.source(focus.id).kind;
 
         const v = core.value(focus.id);
         const viewKind = meta.view as ViewKind;
@@ -825,16 +827,16 @@ function mountOutlineNode(
         return {
           label,
           defs,
-          headerKind,
+          sourceKind,
           mode,
           isIssue: isIssueValue(v),
           labelFocused,
         };
       },
-      ({ label, defs, headerKind, mode, isIssue, labelFocused }) => {
+      ({ label, defs, sourceKind, mode, isIssue, labelFocused }) => {
         const needHeader =
           spec.showHeader && (label !== "" || defs.length > 0 || labelFocused);
-        const headerKey = `${needHeader ? "on" : "off"}:${headerKind}:${defs.length}`;
+        const headerKey = `${needHeader ? "on" : "off"}:${sourceKind}:${defs.length}`;
 
         if (headerKey !== lastHeaderKey) {
           lastHeaderKey = headerKey;

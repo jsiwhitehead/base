@@ -25,7 +25,6 @@ import {
   createShell,
   type Selection,
   type Focus,
-  type FocusTarget,
   type Caret,
   type EditorEffect,
 } from "./runtime";
@@ -42,7 +41,7 @@ export type Meta = {
   storedKind: StoredKind;
 };
 
-export type Header =
+export type Source =
   | { kind: "none" }
   | { kind: "derived"; expr: string }
   | { kind: "lens"; from: string; where: string; orderBy: string };
@@ -95,11 +94,7 @@ export type Tx = {
   setText(id: ItemId, text: string): void;
   setScalar(id: ItemId, value: Scalar | null): void;
 
-  setDerived(id: ItemId, expr: string): void;
-  setLens(
-    id: ItemId,
-    spec: { from: string; where?: string; orderBy?: string },
-  ): void;
+  setSource(id: ItemId, source: Source): void;
 
   insert(
     ownerId: ItemId,
@@ -115,12 +110,14 @@ export type Core = {
   dispose(): void;
 
   has(id: ItemId): boolean;
-  get(id: ItemId): Meta;
+  meta(id: ItemId): Meta;
 
-  header(id: ItemId): Header;
+  source(id: ItemId): Source;
   value(id: ItemId): Value;
-  children(id: ItemId): readonly ItemId[];
+
+  childIds(id: ItemId): readonly ItemId[];
   findChild(ownerId: ItemId, label: string): ItemId | null;
+
   text(id: ItemId): TextState;
   locate(id: ItemId): Locate;
 
@@ -129,7 +126,7 @@ export type Core = {
 
   selection(): Selection;
   setSelection(next: Selection, effects?: EditorEffect[]): void;
-  focus(focus: Focus, target?: FocusTarget, opts?: { caret?: CaretSpec }): void;
+  focus(focus: Focus, target?: string, opts?: { caret?: CaretSpec }): void;
   blur(effects?: EditorEffect[]): void;
 
   mountViewRoot(opts: {
@@ -139,11 +136,9 @@ export type Core = {
 
   bindFocus(opts: {
     focus: Focus;
-    elementFor: (target: FocusTarget) => HTMLElement | null;
+    elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
-
-  installGlobalListeners(win?: Window): () => void;
 };
 
 export function createCore(): { core: Core; rootId: ItemId } {
@@ -156,10 +151,11 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
   const evaluator = createEvaluator({ model, interpret: interpretExpr });
   const shell = createShell({ model, initialSelection: { kind: "idle" } });
+  const uninstallGlobal = shell.installGlobalListeners(window);
 
   const has = (id: ItemId): boolean => model.hasItem(id);
 
-  const get = (id: ItemId): Meta => {
+  const meta = (id: ItemId): Meta => {
     const it = model.readItem(id);
     return {
       id: it.id,
@@ -170,7 +166,8 @@ export function createCore(): { core: Core; rootId: ItemId } {
     };
   };
 
-  const header = (id: ItemId): Header => {
+  const source = (id: ItemId): Source => {
+    if (!model.hasItem(id)) return { kind: "none" };
     const c = model.readItem(id).content;
     if (isDerivedContent(c)) return { kind: "derived", expr: c.expr ?? "" };
     if (isLensContent(c))
@@ -185,7 +182,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
   const value = (id: ItemId): Value => evaluator.value(id);
 
-  const children = (id: ItemId): readonly ItemId[] => {
+  const childIds = (id: ItemId): readonly ItemId[] => {
     const v = evaluator.value(id);
     return isItemGroupValue(v) ? v.itemIds : [];
   };
@@ -256,24 +253,38 @@ export function createCore(): { core: Core; rootId: ItemId } {
         });
       },
 
-      setDerived: (id, expr) => {
-        ops.push({
-          kind: "patch",
-          id,
-          next: { content: { kind: "derived", expr } },
-        });
-      },
+      setSource: (id, nextSource) => {
+        const cur = source(id);
 
-      setLens: (id, spec) => {
+        if (nextSource.kind === "none") {
+          if (cur.kind === "derived" || cur.kind === "lens") {
+            ops.push({
+              kind: "patch",
+              id,
+              next: { content: { kind: "blank" } },
+            });
+          }
+          return;
+        }
+
+        if (nextSource.kind === "derived") {
+          ops.push({
+            kind: "patch",
+            id,
+            next: { content: { kind: "derived", expr: nextSource.expr } },
+          });
+          return;
+        }
+
         ops.push({
           kind: "patch",
           id,
           next: {
             content: {
               kind: "lens",
-              from: spec.from,
-              where: spec.where ?? "",
-              orderBy: spec.orderBy ?? "",
+              from: nextSource.from,
+              where: nextSource.where ?? "",
+              orderBy: nextSource.orderBy ?? "",
             },
           },
         });
@@ -335,8 +346,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
     setView: (id, view) => commit((t) => t.setView(id, view)),
     setText: (id, txt) => commit((t) => t.setText(id, txt)),
     setScalar: (id, v) => commit((t) => t.setScalar(id, v)),
-    setDerived: (id, expr) => commit((t) => t.setDerived(id, expr)),
-    setLens: (id, spec) => commit((t) => t.setLens(id, spec)),
+    setSource: (id, s) => commit((t) => t.setSource(id, s)),
     insert: (ownerId, opts2) => {
       let out: ItemId = -1;
       commit((t) => {
@@ -362,7 +372,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
   const focus = (
     f: Focus,
-    target: FocusTarget = "content",
+    target: string = "content",
     opts2: { caret?: CaretSpec } = {},
   ): void => {
     const caret = normalizeCaret(opts2.caret);
@@ -380,25 +390,26 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
   const bindFocus = (opts2: {
     focus: Focus;
-    elementFor: (target: FocusTarget) => HTMLElement | null;
+    elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): (() => void) => shell.bindFocus(opts2);
 
-  const installGlobalListeners = (win?: Window): (() => void) =>
-    shell.installGlobalListeners(win);
-
   const core: Core = {
     dispose() {
+      uninstallGlobal();
       evaluator.dispose();
       shell.dispose();
     },
 
     has,
-    get,
-    header,
+    meta,
+
+    source,
     value,
-    children,
+
+    childIds,
     findChild,
+
     text,
     locate,
 
@@ -412,14 +423,13 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
     mountViewRoot,
     bindFocus,
-    installGlobalListeners,
   };
 
   return { core, rootId };
 }
 
 export type { ItemId, ViewName, ViewKind, Scalar, Value, LabeledValue };
-export type { Selection, Focus, FocusTarget, Caret };
+export type { Selection, Focus, Caret, EditorEffect };
 export {
   isBlankValue,
   isIssueValue,

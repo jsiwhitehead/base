@@ -54,7 +54,7 @@ export function mountItemBody(
     commitText?: (text: string) => void;
   } = {},
 ): Component {
-  const viewKind = core.get(id).view as ViewKind;
+  const viewKind = core.meta(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return contentField({

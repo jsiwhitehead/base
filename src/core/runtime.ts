@@ -3,18 +3,16 @@ import type { ItemId, Model } from "./model";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
 
-export type FocusTarget = string;
-
 export type Caret = { start: number; end: number };
 
 export type Selection =
   | { kind: "idle" }
-  | { kind: "focused"; focus: Focus; target: FocusTarget; caret?: Caret };
+  | { kind: "focused"; focus: Focus; target: string; caret?: Caret };
 
 export type Anchor = "top" | "bottom";
 
 export type EditorEffect =
-  | { type: "FOCUS"; focus: Focus; target: FocusTarget; anchor?: Anchor }
+  | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
   | { type: "CLEAR_FOCUS" };
 
 export type ViewHandle = {
@@ -26,7 +24,7 @@ export type BindingHandle = unknown;
 
 export type Binding = {
   focus: Focus;
-  elementFor(target: FocusTarget): BindingHandle | null;
+  elementFor(target: string): BindingHandle | null;
   caret?: { set(pos: number): void; getLength(): number };
 };
 
@@ -40,8 +38,6 @@ const isTextInput = (
 
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
-
-const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 
 function shouldBypassGlobalKeydown(): boolean {
   const active = document.activeElement;
@@ -101,7 +97,7 @@ export type Shell = {
   selection(): Selection;
 
   setSelection(next: Selection, effects?: EditorEffect[]): void;
-  focus(focus: Focus, target: FocusTarget, opts?: { caret?: Caret }): void;
+  focus(focus: Focus, target: string, opts?: { caret?: Caret }): void;
   blur(): void;
 
   mountViewRoot(opts: {
@@ -111,7 +107,7 @@ export type Shell = {
 
   bindFocus(opts: {
     focus: Focus;
-    elementFor: (target: FocusTarget) => HTMLElement | null;
+    elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
@@ -246,9 +242,9 @@ export function createShell(opts: {
 
   const focus = (
     focus0: Focus,
-    target: FocusTarget,
+    target: string,
     opts2: { caret?: Caret } = {},
-  ): void => {
+  ) => {
     const next: Selection = {
       kind: "focused",
       focus: focus0,
@@ -299,7 +295,7 @@ export function createShell(opts: {
 
   const bindFocus = (b: {
     focus: Focus;
-    elementFor: (target: FocusTarget) => HTMLElement | null;
+    elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): (() => void) => {
     const binding: Binding = {
