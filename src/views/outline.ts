@@ -12,6 +12,7 @@ import {
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
+  clamp,
 } from "../core";
 import {
   type NavDir,
@@ -19,7 +20,6 @@ import {
   defaultTextNav,
   el,
   on,
-  clamp,
   ensureTabbable,
   stopEvent,
   bindTextControlKeys,
@@ -27,7 +27,7 @@ import {
   textField,
   autosizeTextField,
   contentField,
-} from "../ui/dom";
+} from "../dom";
 
 type SourceKind = Source["kind"];
 

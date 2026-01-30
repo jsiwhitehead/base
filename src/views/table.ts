@@ -21,7 +21,7 @@ import {
   createComponent,
   textField,
   contentField,
-} from "../ui/dom";
+} from "../dom";
 
 type NavResult = {
   focus: Focus;

@@ -29,6 +29,10 @@ import {
   type Caret,
   type DomView,
   type ViewFactory,
+  clamp,
+  isTextInput,
+  defaultTextCaret,
+  type TextCaret,
 } from "./runtime";
 
 export type CaretSpec = number | Caret;
@@ -448,7 +452,11 @@ export function createCore(opts: {
 
 export type { ItemId, ViewName, ViewKind, Scalar, Value, LabeledValue };
 export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
+export type { TextCaret };
 export {
+  clamp,
+  isTextInput,
+  defaultTextCaret,
   isBlankValue,
   isIssueValue,
   isScalarValue,

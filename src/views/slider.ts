@@ -5,9 +5,10 @@ import {
   type Component,
   type Focus,
   type DomView,
+  clamp,
   isScalarValue,
 } from "../core";
-import { el, clamp, stopEvent, createComponent } from "../ui/dom";
+import { el, stopEvent, createComponent } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
