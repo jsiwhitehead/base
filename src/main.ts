@@ -3,10 +3,10 @@ import {
   type ItemId,
   type ViewKind,
   type ViewName,
-  createCore,
   type Source,
+  createCore,
 } from "./core";
-import { createView } from "./views";
+import { viewFactories } from "./views";
 
 export type App = {
   core: ReturnType<typeof createCore>["core"];
@@ -32,31 +32,21 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   devAssert(hostEl, "Missing app root element (#root)");
 
-  const { core, rootId } = createCore();
+  const { core, rootId } = createCore({ views: viewFactories as any });
 
   core.commit((t) => {
     t.setView(rootId, rootView as ViewKind);
   });
 
-  const view = createView(core, rootView, rootId, {
-    scopeId: rootId,
-    id: rootId,
-  });
-  devAssert(view, `No view factory for rootView='${rootView}'`);
+  const rootComp = core.mountView({ id: rootId });
 
-  const unmountRoot = core.attachView({
-    root: view.root,
-    onKeyDown: view.onKeyDown,
-  });
-
-  hostEl.replaceChildren(view.root);
+  hostEl.replaceChildren(rootComp.el);
 
   const app: App = {
     core,
     rootId,
     dispose() {
-      unmountRoot();
-      view.dispose();
+      rootComp.dispose();
       hostEl.replaceChildren();
       core.dispose();
     },

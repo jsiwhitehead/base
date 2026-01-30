@@ -10,7 +10,6 @@ import {
   type ViewKind,
   type ViewName,
 } from "./model";
-
 import {
   type Value,
   type LabeledValue,
@@ -21,16 +20,16 @@ import {
   isItemGroupValue,
   isValueGroupValue,
 } from "./eval";
-
 import { interpretExpr } from "./lang";
-
 import {
-  createEditor,
+  createRuntime,
+  type Component,
   type Selection,
   type Focus,
   type Caret,
-  type EditorEffect,
-} from "./editor";
+  type DomView,
+  type ViewFactory,
+} from "./runtime";
 
 export type CaretSpec = number | Caret;
 
@@ -131,19 +130,23 @@ export type Core = {
   focus(focus: Focus, target?: string, opts?: { caret?: CaretSpec }): void;
   blur(): void;
 
-  attachView(opts: {
-    root: HTMLElement;
-    onKeyDown?: (e: KeyboardEvent) => void;
-  }): () => void;
+  mountView(opts: { id: ItemId; focus?: Focus }): Component;
+  mountView(opts: {
+    id: ItemId;
+    focus?: Focus;
+    continueAs: ViewName;
+  }): Component | null;
 
-  attachFocusable(opts: {
+  attachFocus(opts: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 };
 
-export function createCore(): { core: Core; rootId: ItemId } {
+export function createCore(opts: {
+  views: Partial<Record<ViewName, ViewFactory<Core>>>;
+}): { core: Core; rootId: ItemId } {
   const model = createModel();
   const rootId = model.createId();
   model.setRoot(rootId);
@@ -152,8 +155,6 @@ export function createCore(): { core: Core; rootId: ItemId } {
   );
 
   const evaluator = createEvaluator({ model, interpret: interpretExpr });
-  const editor = createEditor({ model, initialSelection: { kind: "idle" } });
-  const uninstallGlobal = editor.installGlobalListeners(window);
 
   const has = (id: ItemId): boolean => model.hasItem(id);
 
@@ -347,7 +348,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
 
     const result = model.apply(txn) as ApplyResult;
 
-    editor.setSelection(editor.selectionSignal.peek());
+    runtime.setSelection(runtime.selectionSignal.peek());
 
     return result;
   };
@@ -369,8 +370,6 @@ export function createCore(): { core: Core; rootId: ItemId } {
     remove: (id) => commit((t) => t.remove(id)),
   };
 
-  const selection = (): Selection => editor.selection();
-
   const normalizeCaret = (spec: CaretSpec | undefined): Caret | undefined => {
     if (spec == null) return undefined;
     if (typeof spec === "number") return { start: spec, end: spec };
@@ -383,7 +382,7 @@ export function createCore(): { core: Core; rootId: ItemId } {
     opts2: { caret?: CaretSpec } = {},
   ): void => {
     const caret = normalizeCaret(opts2.caret);
-    editor.setSelection(
+    runtime.setSelection(
       {
         kind: "focused",
         focus: f,
@@ -395,25 +394,21 @@ export function createCore(): { core: Core; rootId: ItemId } {
   };
 
   const blur = (): void => {
-    editor.setSelection({ kind: "idle" });
+    runtime.setSelection({ kind: "idle" });
   };
 
-  const attachView = (opts2: {
-    root: HTMLElement;
-    onKeyDown?: (e: KeyboardEvent) => void;
-  }): (() => void) => editor.attachView(opts2);
+  const selection = (): Selection => runtime.selection();
 
-  const attachFocusable = (opts2: {
-    focus: Focus;
-    elementFor: (target: string) => HTMLElement | null;
-    caret?: { set(pos: number): void; getLength(): number };
-  }): (() => void) => editor.attachFocusable(opts2);
+  const mountView: Core["mountView"] = (args: any) =>
+    (runtime.mountView as any)(args);
+
+  const attachFocus: Core["attachFocus"] = (args) => runtime.attachFocus(args);
 
   const core: Core = {
     dispose() {
       uninstallGlobal();
       evaluator.dispose();
-      editor.dispose();
+      runtime.dispose();
     },
 
     has,
@@ -435,15 +430,24 @@ export function createCore(): { core: Core; rootId: ItemId } {
     focus,
     blur,
 
-    attachView,
-    attachFocusable,
+    mountView,
+    attachFocus,
   };
+
+  const runtime = createRuntime<Core>({
+    model,
+    core,
+    views: opts.views,
+    initialSelection: { kind: "idle" },
+  });
+
+  const uninstallGlobal = runtime.installGlobalListeners(window);
 
   return { core, rootId };
 }
 
 export type { ItemId, ViewName, ViewKind, Scalar, Value, LabeledValue };
-export type { Selection, Focus, Caret, EditorEffect };
+export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export {
   isBlankValue,
   isIssueValue,

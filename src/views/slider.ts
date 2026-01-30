@@ -2,17 +2,12 @@ import {
   type Core,
   type ItemId,
   type Scalar,
+  type Component,
   type Focus,
+  type DomView,
   isScalarValue,
 } from "../core";
-import {
-  type Component,
-  el,
-  clamp,
-  stopEvent,
-  createComponent,
-} from "../ui/dom";
-import type { DomView } from "./index";
+import { el, clamp, stopEvent, createComponent } from "../ui/dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -202,6 +197,11 @@ function mountSlider({
       },
     );
 
+    componentCtx.on(root, "pointerdown", (e: PointerEvent) => {
+      core.focus(focus, "content");
+      e.stopPropagation();
+    });
+
     componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
       handleSliderKey(e, dispatch);
     });
@@ -259,8 +259,6 @@ export function createSliderView(args: {
     handleSliderKey(e, dispatch);
   };
 
-  const unmountRoot = core.attachView({ root: comp.el, onKeyDown });
-
   if (core.selection().kind === "idle") {
     core.focus(safeFocus, "content");
   }
@@ -270,7 +268,6 @@ export function createSliderView(args: {
     root: comp.el,
     onKeyDown,
     dispose() {
-      unmountRoot();
       comp.dispose();
       comp.el.replaceChildren();
     },

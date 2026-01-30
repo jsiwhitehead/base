@@ -1,8 +1,7 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { ItemId, Model } from "./model";
+import type { ItemId, Model, ViewKind, ViewName } from "./model";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
-
 export type Caret = { start: number; end: number };
 
 export type Selection =
@@ -11,7 +10,7 @@ export type Selection =
 
 export type Anchor = "top" | "bottom";
 
-export type EditorEffect =
+export type RuntimeEffect =
   | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
   | { type: "CLEAR_FOCUS" };
 
@@ -20,11 +19,23 @@ export type ViewHandle = {
   onKeyDown?: (e: KeyboardEvent) => void;
 };
 
-export type Binding = {
+export type FocusBinding = {
   focus: Focus;
   elementFor(target: string): HTMLElement | null;
   caret?: { set(pos: number): void; getLength(): number };
 };
+
+export type Component = { el: HTMLElement; dispose(): void };
+
+export type DomView = {
+  id: string;
+  root: HTMLElement;
+  onKeyDown?: (e: KeyboardEvent) => void;
+  dispose(): void;
+};
+
+export type ViewFactoryArgs<C> = { core: C; id: ItemId; focus?: Focus };
+export type ViewFactory<C> = (args: ViewFactoryArgs<C>) => DomView;
 
 const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
 
@@ -49,8 +60,8 @@ function shouldBypassGlobalKeydown(): boolean {
 
 function normalizeEffectsForSelection(
   sel: Selection,
-  effects: EditorEffect[],
-): EditorEffect[] {
+  effects: RuntimeEffect[],
+): RuntimeEffect[] {
   const hasClear = effects.some((e) => e.type === "CLEAR_FOCUS");
   const hasFocus = effects.some((e) => e.type === "FOCUS");
 
@@ -89,46 +100,51 @@ function computeAnchoredPos(
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
 
-export type Editor = {
+export type Runtime<C> = {
   selectionSignal: Signal<Selection>;
 
   selection(): Selection;
 
-  setSelection(next: Selection, effects?: EditorEffect[]): void;
+  setSelection(next: Selection, effects?: RuntimeEffect[]): void;
 
-  attachView(opts: {
-    root: HTMLElement;
-    onKeyDown?: (e: KeyboardEvent) => void;
-  }): () => void;
-
-  attachFocusable(opts: {
+  attachFocus(opts: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
+
+  mountView(opts: { id: ItemId; focus?: Focus }): Component;
+  mountView(opts: {
+    id: ItemId;
+    focus?: Focus;
+    continueAs: ViewName;
+  }): Component | null;
 
   installGlobalListeners(win?: Window): () => void;
 
   dispose(): void;
 };
 
-export function createEditor(opts: {
+export function createRuntime<C>(opts: {
   model: Model;
+  core: C;
+  views: Partial<Record<ViewName, ViewFactory<C>>>;
   initialSelection?: Selection;
-}): Editor {
-  const { model } = opts;
+}): Runtime<C> {
+  const { model, core } = opts;
+  const views = opts.views;
 
   const selectionSignal = signal<Selection>(
     opts.initialSelection ?? { kind: "idle" },
   );
 
-  const bindings = new Map<string, Binding>();
+  const bindings = new Map<string, FocusBinding>();
 
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
-  const views = new Set<ViewHandle>();
+  const viewsSet = new Set<ViewHandle>();
   let activeView: ViewHandle | null = null;
 
-  let pending: { sel: Selection; effects: EditorEffect[] } | null = null;
+  let pending: { sel: Selection; effects: RuntimeEffect[] } | null = null;
   let flushScheduled = false;
 
   const getActiveView = (): ViewHandle | null => activeView;
@@ -137,12 +153,12 @@ export function createEditor(opts: {
     activeView = v;
   };
 
-  const getBinding = (focus: Focus): Binding | null =>
+  const getBinding = (focus: Focus): FocusBinding | null =>
     bindings.get(keyOf(focus)) ?? null;
 
   const applyDomFocus = (
     sel: Selection,
-    focusEff: Extract<EditorEffect, { type: "FOCUS" }>,
+    focusEff: Extract<RuntimeEffect, { type: "FOCUS" }>,
   ): void => {
     if (sel.kind !== "focused") return;
 
@@ -175,7 +191,7 @@ export function createEditor(opts: {
     el0.setSelectionRange(pos, pos);
   };
 
-  const applyDomEffects = (sel: Selection, effects: EditorEffect[]): void => {
+  const applyDomEffects = (sel: Selection, effects: RuntimeEffect[]): void => {
     for (const eff of effects) {
       if (eff.type === "FOCUS") {
         applyDomFocus(sel, eff);
@@ -186,7 +202,7 @@ export function createEditor(opts: {
     }
   };
 
-  const scheduleEffects = (sel: Selection, effects: EditorEffect[]): void => {
+  const scheduleEffects = (sel: Selection, effects: RuntimeEffect[]): void => {
     if (!effects.length) return;
 
     pending = pending
@@ -229,20 +245,20 @@ export function createEditor(opts: {
 
   const setSelection = (
     next: Selection,
-    effects: EditorEffect[] = [],
+    effects: RuntimeEffect[] = [],
   ): void => {
     const repaired = repairSelection(next);
     selectionSignal.value = repaired;
     scheduleEffects(repaired, normalizeEffectsForSelection(repaired, effects));
   };
 
-  const attachView = (v: {
+  const registerViewRoot = (v: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
   }): (() => void) => {
     const handle: ViewHandle = { root: v.root, onKeyDown: v.onKeyDown };
     viewRoots.set(handle.root, handle);
-    views.add(handle);
+    viewsSet.add(handle);
 
     const onPointerDown = (e: PointerEvent) => {
       const hit = viewAtTarget(viewRoots, e.target);
@@ -257,26 +273,17 @@ export function createEditor(opts: {
       handle.root.removeEventListener("pointerdown", onPointerDown, {
         capture: true,
       } as any);
-      views.delete(handle);
+      viewsSet.delete(handle);
       if (getActiveView() === handle) setActiveView(null);
-
-      for (const [k, b] of bindings) {
-        if (
-          keyOf(b.focus) === k &&
-          viewAtTarget(viewRoots, b.elementFor("content") as any) === handle
-        ) {
-          void b;
-        }
-      }
     };
   };
 
-  const attachFocusable = (b: {
+  const attachFocus = (b: {
     focus: Focus;
     elementFor: (target: string) => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): (() => void) => {
-    const binding: Binding = {
+    const binding: FocusBinding = {
       focus: b.focus,
       elementFor: (t) => b.elementFor(t),
       ...(b.caret ? { caret: b.caret } : {}),
@@ -312,9 +319,57 @@ export function createEditor(opts: {
     return () => win.removeEventListener("keydown", onKeyDown);
   };
 
+  const resolveWanted = (id: ItemId): ViewName => {
+    let v: ViewKind = null;
+    try {
+      v = model.readItem(id).view;
+    } catch {
+      v = null;
+    }
+
+    const wanted = (v ?? "outline") as ViewName;
+    return (wanted in views ? wanted : "outline") as ViewName;
+  };
+
+  function mountView(opts2: { id: ItemId; focus?: Focus }): Component;
+  function mountView(opts2: {
+    id: ItemId;
+    focus?: Focus;
+    continueAs: ViewName;
+  }): Component | null;
+  function mountView(opts2: {
+    id: ItemId;
+    focus?: Focus;
+    continueAs?: ViewName;
+  }): Component | null {
+    const id = opts2.id;
+    const focus: Focus = opts2.focus ?? { scopeId: id, id };
+    const wanted = resolveWanted(id);
+
+    if (opts2.continueAs && wanted === opts2.continueAs) return null;
+
+    const factory = views[wanted];
+    if (!factory) return null;
+
+    const view = factory({ core, id, focus });
+
+    const unreg = registerViewRoot({
+      root: view.root,
+      onKeyDown: view.onKeyDown,
+    });
+
+    return {
+      el: view.root,
+      dispose() {
+        unreg();
+        view.dispose();
+      },
+    };
+  }
+
   const dispose = (): void => {
     bindings.clear();
-    views.clear();
+    viewsSet.clear();
     activeView = null;
     pending = null;
     flushScheduled = false;
@@ -324,8 +379,8 @@ export function createEditor(opts: {
     selectionSignal,
     selection,
     setSelection,
-    attachView,
-    attachFocusable,
+    attachFocus,
+    mountView: mountView as any,
     installGlobalListeners,
     dispose,
   };

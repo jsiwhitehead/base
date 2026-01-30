@@ -1,28 +1,24 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-
-import { createCore } from "../src/core";
 import {
-  createModel,
   type ItemId,
-  type SnapshotContent,
-  type Model,
-} from "../src/core/model";
-import {
-  V,
   type Value,
-  createEvaluator,
+  type Selection,
+  createCore,
   isBlankValue,
   isIssueValue,
   isScalarValue,
   isItemGroupValue,
   isValueGroupValue,
-} from "../src/core/eval";
+} from "../src/core";
+import {
+  createModel,
+  type SnapshotContent,
+  type Model,
+} from "../src/core/model";
+import { V, createEvaluator } from "../src/core/eval";
 import { interpretExpr } from "../src/core/lang";
-import type { Selection } from "../src/core/editor";
-import { createSliderView } from "../src/views/slider";
-import { createTableView } from "../src/views/table";
-import { createOutlineView } from "../src/views/outline";
+import { viewFactories } from "../src/views";
 
 GlobalRegistrator.register();
 
@@ -39,7 +35,7 @@ async function tick() {
 }
 
 function makeCoreRuntime() {
-  const { core, rootId } = createCore();
+  const { core, rootId } = createCore({ views: viewFactories as any });
 
   runtimeCleanups.add(() => {
     core.dispose();
@@ -140,7 +136,7 @@ function assertPublicModelContracts(model: Model) {
 }
 
 async function mountView(
-  core: ReturnType<typeof createCore>["core"],
+  _core: ReturnType<typeof createCore>["core"],
   view: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
@@ -148,13 +144,8 @@ async function mountView(
   },
 ) {
   document.body.replaceChildren(view.root);
-  const unmountRoot = core.attachView({
-    root: view.root,
-    onKeyDown: view.onKeyDown,
-  });
   await tick();
   return () => {
-    unmountRoot();
     view.dispose();
     document.body.replaceChildren();
   };
@@ -629,7 +620,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
       t.setScalar(bScore, 6);
     });
 
-    const view = createTableView({ core, id: tableId });
+    const view = viewFactories.table({ core, id: tableId });
     const unmount = await mountView(core, view);
 
     await tick();
@@ -679,7 +670,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
       t.setScalar(b, 3);
     });
 
-    const view = createOutlineView({ core, id: rootId });
+    const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(core, view);
 
     await tick();
@@ -713,7 +704,7 @@ describe("DOM smoke", () => {
       t.setScalar(sliderId, 10);
     });
 
-    const view = createSliderView({ core, id: sliderId });
+    const view = viewFactories.slider({ core, id: sliderId });
     const unmount = await mountView(core, view);
     await tick();
 
@@ -749,7 +740,7 @@ describe("DOM smoke", () => {
       t.setSource(d, { kind: "derived", expr: "x + 1" });
     });
 
-    const view = createOutlineView({ core, id: rootId });
+    const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(core, view);
 
     const getDerivedText = () => {
@@ -782,7 +773,7 @@ describe("DOM smoke", () => {
       t.setScalar(a, 1);
     });
 
-    const view = createOutlineView({ core, id: rootId });
+    const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(core, view);
 
     expect(() => unmount()).not.toThrow();
@@ -799,7 +790,7 @@ test("outline: clicking editable content focuses the text input element", async 
     t.setScalar(x, 10);
   });
 
-  const view = createOutlineView({ core, id: rootId });
+  const view = viewFactories.outline({ core, id: rootId });
   const unmount = await mountView(core, view);
 
   const labelInputs = Array.from(

@@ -1,17 +1,21 @@
 import { computed } from "@preact/signals-core";
-import type {
-  ItemId,
-  ViewKind,
-  Core,
-  Source,
-  Focus,
-  Caret,
-  Selection,
-} from "../core";
-import { isIssueValue, isScalarValue, isItemGroupValue } from "../core";
-import type { NavDir, NavMode } from "../ui/dom";
 import {
+  type ItemId,
+  type ViewKind,
+  type Core,
+  type Source,
   type Component,
+  type Focus,
+  type Caret,
+  type Selection,
+  type DomView,
+  isIssueValue,
+  isScalarValue,
+  isItemGroupValue,
+} from "../core";
+import {
+  type NavDir,
+  type NavMode,
   defaultTextNav,
   el,
   on,
@@ -24,7 +28,6 @@ import {
   autosizeTextField,
   contentField,
 } from "../ui/dom";
-import { createView, viewWantsChildView, type DomView } from "./index";
 
 type SourceKind = Source["kind"];
 
@@ -663,23 +666,18 @@ function mountOutlineBody(
 
   return createComponent((componentCtx) => {
     const hostEl = el("div");
-    const viewKind = core.meta(focus.id).view as ViewKind;
 
-    if (viewWantsChildView(viewKind)) {
-      const childView = createView({ core }, viewKind, focus.id, focus);
-      if (childView) {
-        ensureTabbable(childView.root);
-        contentTargetRef.current = childView.root;
-        componentCtx.use(
-          core.attachView({
-            root: childView.root,
-            onKeyDown: childView.onKeyDown,
-          }),
-        );
-        componentCtx.use(() => childView.dispose());
-        hostEl.replaceChildren(childView.root);
-        return hostEl;
-      }
+    const nested = core.mountView({
+      id: focus.id,
+      focus,
+      continueAs: "outline",
+    });
+    if (nested) {
+      ensureTabbable(nested.el);
+      contentTargetRef.current = nested.el;
+      hostEl.replaceChildren(nested.el);
+      componentCtx.use(nested);
+      return hostEl;
     }
 
     const vf = contentField({
@@ -811,8 +809,9 @@ function mountOutlineNode(
 
         const v = core.value(focus.id);
         const viewKind = meta.view as ViewKind;
-        const wantsChildView = viewWantsChildView(viewKind);
-        const mode: "children" | "body" = wantsChildView
+        const forceBody = viewKind != null && viewKind !== "outline";
+
+        const mode: "children" | "body" = forceBody
           ? "body"
           : isItemGroupValue(v)
             ? "children"
@@ -993,8 +992,6 @@ export function createOutlineView(args: { core: Core; id: ItemId }): DomView {
     }
   };
 
-  const unmountRoot = core.attachView({ root, onKeyDown });
-
   if (core.selection().kind === "idle") {
     const first = navStopsSignal.value[0];
     if (first)
@@ -1006,7 +1003,6 @@ export function createOutlineView(args: { core: Core; id: ItemId }): DomView {
     root,
     onKeyDown,
     dispose() {
-      unmountRoot();
       node.dispose();
       root.replaceChildren();
     },

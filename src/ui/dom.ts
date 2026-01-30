@@ -1,6 +1,11 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Core, ItemId, Caret, Focus, Value } from "../core";
 import {
+  type Core,
+  type ItemId,
+  type Caret,
+  type Focus,
+  type Value,
+  type Component,
   isBlankValue,
   isIssueValue,
   isItemGroupValue,
@@ -12,8 +17,6 @@ type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
 export type NavDir = "left" | "right" | "up" | "down";
 export type NavMode = "step" | "jump";
-
-export type Component = { el: HTMLElement; dispose(): void };
 
 export type InputComponent<E extends HTMLElement = TextInputElement> =
   Component & {
@@ -426,7 +429,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
     },
 
     focusable(opts) {
-      const unbind = opts.core.attachFocusable({
+      const unbind = opts.core.attachFocus({
         focus: opts.focus,
         elementFor: (t) => opts.elementFor(t),
         caret:

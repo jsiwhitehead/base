@@ -1,8 +1,17 @@
 import { computed } from "@preact/signals-core";
-import type { Core, ItemId, ViewKind, Caret, Focus, Selection } from "../core";
-import type { NavDir, NavMode } from "../ui/dom";
+import type {
+  Core,
+  ItemId,
+  ViewKind,
+  Component,
+  Caret,
+  Focus,
+  Selection,
+  DomView,
+} from "../core";
 import {
-  type Component,
+  type NavDir,
+  type NavMode,
   defaultTextNav,
   el,
   ensureTabbable,
@@ -13,7 +22,6 @@ import {
   textField,
   contentField,
 } from "../ui/dom";
-import { createView, viewWantsChildView, type DomView } from "./index";
 
 type NavResult = {
   focus: Focus;
@@ -333,44 +341,39 @@ function mountTableCellContent(cellCtx: {
 }): Component {
   const { core, rowId, cellId, dispatch } = cellCtx;
   const focus: Focus = { scopeId: rowId, id: cellId };
+
+  const storedKind = core.meta(cellId).storedKind;
   const viewKind = core.meta(cellId).view as ViewKind;
 
-  if (viewWantsChildView(viewKind)) {
-    const child = createView({ core }, viewKind, cellId, focus);
-    if (child) {
-      return createComponent((componentCtx) => {
-        const hostEl = el("div");
-        ensureTabbable(hostEl);
+  const shouldMountNested = viewKind != null || storedKind === "group";
 
-        const unmount = core.attachView({
-          root: child.root,
-          onKeyDown: child.onKeyDown,
-        });
-        componentCtx.onCleanup(() => {
-          unmount();
-          child.dispose();
-        });
+  if (shouldMountNested) {
+    const nested = core.mountView({ id: cellId, focus });
+    return createComponent((ctx) => {
+      const hostEl = el("div");
+      ensureTabbable(hostEl);
+      ensureTabbable(nested.el);
 
-        componentCtx.focusable({
-          core,
-          focus,
-          elementFor: () => child.root,
-          targets: [
-            {
-              target: "content",
-              getEl: () => child.root,
-              pointerHost: () => hostEl,
-              caret: "zero",
-              stopPropagation: true,
-            },
-          ],
-        });
+      ctx.use(nested);
 
-        ensureTabbable(child.root);
-        hostEl.replaceChildren(child.root);
-        return hostEl;
+      ctx.focusable({
+        core,
+        focus,
+        elementFor: () => nested.el,
+        targets: [
+          {
+            target: "content",
+            getEl: () => nested.el,
+            pointerHost: () => hostEl,
+            caret: "zero",
+            stopPropagation: true,
+          },
+        ],
       });
-    }
+
+      hostEl.replaceChildren(nested.el);
+      return hostEl;
+    });
   }
 
   return contentField({
@@ -614,8 +617,6 @@ export function createTableView(args: { core: Core; id: ItemId }): DomView {
     }
   };
 
-  const unmountRoot = core.attachView({ root, onKeyDown });
-
   if (core.selection().kind === "idle") {
     const rows = core.childIds(tableId);
     if (rows.length) {
@@ -630,7 +631,6 @@ export function createTableView(args: { core: Core; id: ItemId }): DomView {
     root,
     onKeyDown,
     dispose() {
-      unmountRoot();
       header.dispose();
       body.dispose();
       root.replaceChildren();

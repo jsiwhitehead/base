@@ -5,7 +5,6 @@ import {
   type ReadonlySignal,
   type Signal,
 } from "@preact/signals-core";
-
 import { DEV, devAssert } from "../dev";
 
 export type ItemId = number;
