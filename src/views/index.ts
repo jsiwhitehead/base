@@ -1,31 +1,37 @@
 import type { Core, ItemId, ViewKind, ViewName, Focus } from "../core";
-import type { DomHost, View } from "../ui/host";
-import { type Component, el, ensureTabbable, contentField } from "../ui/dom";
+import { ensureTabbable, contentField, el, type Component } from "../ui/dom";
 import { createOutlineView } from "./outline";
 import { createTableView } from "./table";
 import { createSliderView } from "./slider";
 
-export type Runtime = { core: Core; host: DomHost };
+export type DomView = {
+  id: string;
+  root: HTMLElement;
+  onKeyDown?: (e: KeyboardEvent) => void;
+  dispose(): void;
+};
 
-export type DomView = View & { root: HTMLElement };
-
-export type ViewFactoryArgs = { runtime: Runtime; id: ItemId; focus?: Focus };
+export type ViewFactoryArgs = { core: Core; id: ItemId; focus?: Focus };
 export type ViewFactory = (args: ViewFactoryArgs) => DomView;
 
 const factories: Record<ViewName, ViewFactory> = {
-  outline: createOutlineView,
-  table: createTableView,
-  slider: createSliderView,
+  outline: createOutlineView as any,
+  table: createTableView as any,
+  slider: createSliderView as any,
 };
 
 export function createView(
-  runtime: Runtime,
+  runtime: { core: Core } | Core,
   viewKind: ViewKind,
   id: ItemId,
   focus?: Focus,
 ): DomView | null {
+  const core = (runtime as any).core
+    ? (runtime as any).core
+    : (runtime as Core);
   if (viewKind == null) return null;
-  return factories[viewKind]?.({ runtime, id, focus }) ?? null;
+  const fn = factories[viewKind];
+  return fn ? fn({ core, id, focus }) : null;
 }
 
 export function hasView(viewKind: ViewKind): boolean {
@@ -37,7 +43,7 @@ export function viewWantsChildView(viewKind: ViewKind): boolean {
 }
 
 export function mountItemBody(
-  runtime: Runtime,
+  core: Core,
   focus: Focus,
   id: ItemId,
   opts: {
@@ -48,13 +54,11 @@ export function mountItemBody(
     commitText?: (text: string) => void;
   } = {},
 ): Component {
-  const { core, host } = runtime;
   const viewKind = core.get(id).view as ViewKind;
 
   if (!viewWantsChildView(viewKind)) {
     return contentField({
       core,
-      host,
       focus,
       id,
       textKeys: opts.textKeys,
@@ -63,11 +67,10 @@ export function mountItemBody(
     });
   }
 
-  const child = createView(runtime, viewKind, id, focus);
+  const child = createView(core, viewKind, id, focus);
   if (!child) {
     return contentField({
       core,
-      host,
       focus,
       id,
       textKeys: opts.textKeys,
@@ -80,7 +83,15 @@ export function mountItemBody(
   ensureTabbable(hostEl);
   ensureTabbable(child.root);
 
-  hostEl.__unmount = host.mountViewInto(hostEl, child);
+  const unmountRoot = core.mountViewRoot({
+    root: child.root,
+    onKeyDown: child.onKeyDown,
+  });
+  hostEl.__unmount = () => {
+    unmountRoot();
+    child.dispose();
+  };
+
   hostEl.replaceChildren(child.root);
 
   return {

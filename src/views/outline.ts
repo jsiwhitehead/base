@@ -1,18 +1,16 @@
 import { computed } from "@preact/signals-core";
-import {
-  type ItemId,
-  type ViewKind,
-  type Core,
-  type Header,
-  type Focus,
-  type FocusTarget,
-  type Caret,
-  type Selection,
-  isIssueValue,
-  isScalarValue,
-  isItemGroupValue,
+import type {
+  ItemId,
+  ViewKind,
+  Core,
+  Header,
+  Focus,
+  FocusTarget,
+  Caret,
+  Selection,
 } from "../core";
-import { type NavDir, type NavMode, type ViewKeyResult } from "../ui/host";
+import { isIssueValue, isScalarValue, isItemGroupValue } from "../core";
+import type { NavDir, NavMode } from "../ui/dom";
 import {
   type Component,
   defaultTextNav,
@@ -27,13 +25,7 @@ import {
   autosizeTextField,
   contentField,
 } from "../ui/dom";
-import {
-  type DomView,
-  type Runtime,
-  type ViewFactoryArgs,
-  createView,
-  viewWantsChildView,
-} from "./index";
+import { createView, viewWantsChildView, type DomView } from "./index";
 
 type HeaderKind = Header["kind"];
 
@@ -41,14 +33,27 @@ type HeaderFieldDef = Readonly<{
   field: "expr" | "from" | "where" | "orderBy";
   label: string;
   multiline: boolean;
+  target: FocusTarget;
 }>;
 
 const HEADER_FIELDS: Record<HeaderKind, readonly HeaderFieldDef[]> = {
-  derived: [{ field: "expr", label: "=", multiline: true }],
+  derived: [
+    { field: "expr", label: "=", multiline: true, target: "header:expr" },
+  ],
   lens: [
-    { field: "from", label: "~", multiline: false },
-    { field: "where", label: "where:", multiline: true },
-    { field: "orderBy", label: "orderBy:", multiline: true },
+    { field: "from", label: "~", multiline: false, target: "header:from" },
+    {
+      field: "where",
+      label: "where:",
+      multiline: true,
+      target: "header:where",
+    },
+    {
+      field: "orderBy",
+      label: "orderBy:",
+      multiline: true,
+      target: "header:orderBy",
+    },
   ],
   none: [],
 } as const;
@@ -86,9 +91,7 @@ const isNavStop = (core: Core, id: ItemId) => {
 };
 
 const defaultTargetFor = (core: Core, id: ItemId): FocusTarget =>
-  hasHeaderFields(core, id)
-    ? { kind: "header", index: 1 }
-    : { kind: "content" };
+  hasHeaderFields(core, id) ? "label" : "content";
 
 function collectNavStopsFrom(core: Core, rootId: ItemId): Focus[] {
   const out: Focus[] = [];
@@ -154,17 +157,17 @@ function outlineNavMove(
     if (mode === "jump") next = parent ?? prev ?? null;
 
     if (prev && next && sameFocus(prev, next)) {
-      const defs =
-        sel.target.kind === "content" ? headerFieldsForItem(core, prev.id) : [];
-
-      if (sel.target.kind === "content" && defs.length > 0) {
-        const lastDef = defs[defs.length - 1]!;
-        const text = headerFieldValue(core, prev.id, lastDef);
-        targetOverride = { kind: "header", index: defs.length };
-        caret = caretAt(text.length);
-      } else {
-        const t = core.text(prev.id);
-        if (t.kind === "editable") caret = caretAt(t.text.length);
+      if (sel.target === "content") {
+        const defs = headerFieldsForItem(core, prev.id);
+        if (defs.length > 0) {
+          const lastDef = defs[defs.length - 1]!;
+          const text = headerFieldValue(core, prev.id, lastDef);
+          targetOverride = lastDef.target;
+          caret = caretAt(text.length);
+        } else {
+          const t = core.text(prev.id);
+          if (t.kind === "editable") caret = caretAt(t.text.length);
+        }
       }
     }
   }
@@ -187,7 +190,7 @@ export const outlineCommands = {
 
   setDerived(core: Core, f: Focus): void {
     core.edit.setDerived(f.id, "");
-    core.focus(f, { kind: "header", index: 1 }, { caret: caret0() });
+    core.focus(f, "header:expr", { caret: caret0() });
   },
 
   commitHeaderField(
@@ -226,11 +229,9 @@ export const outlineCommands = {
       id = t.insert(loc.ownerId, { at, kind: "blank" });
     });
 
-    core.focus(
-      { scopeId: sel.focus.scopeId, id },
-      { kind: "content" },
-      { caret: caret0() },
-    );
+    core.focus({ scopeId: sel.focus.scopeId, id }, "content", {
+      caret: caret0(),
+    });
   },
 
   splitAt(
@@ -268,11 +269,9 @@ export const outlineCommands = {
       t.setText(rightId, right);
     });
 
-    core.focus(
-      { scopeId: f.scopeId, id: rightId },
-      { kind: "content" },
-      { caret: caret0() },
-    );
+    core.focus({ scopeId: f.scopeId, id: rightId }, "content", {
+      caret: caret0(),
+    });
   },
 
   joinBoundary(core: Core, sel: Selection, dir: "backward" | "forward"): void {
@@ -300,11 +299,9 @@ export const outlineCommands = {
       t.remove(rightId);
     });
 
-    core.focus(
-      { scopeId: f.scopeId, id: leftId },
-      { kind: "content" },
-      { caret: caretAt(a.text.length) },
-    );
+    core.focus({ scopeId: f.scopeId, id: leftId }, "content", {
+      caret: caretAt(a.text.length),
+    });
   },
 
   removeItem(core: Core, sel: Selection, prefer: "prev" | "next"): void {
@@ -400,8 +397,8 @@ export const outlineCommands = {
 
     const f = sel.focus;
 
-    if (sel.target.kind === "header") {
-      core.focus(f, { kind: "content" }, { caret: caret0() });
+    if (sel.target.startsWith("header:") || sel.target === "label") {
+      core.focus(f, "content", { caret: caret0() });
       return;
     }
 
@@ -439,19 +436,6 @@ export const outlineCommands = {
   },
 } as const;
 
-type OutlineMountCtx = {
-  runtime: Runtime;
-  core: Core;
-  rootId: ItemId;
-  navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
-  dispatch: (intent: OutlineIntent) => ViewKeyResult;
-};
-
-type OutlineNodeSpec = {
-  focus: Focus;
-  showHeader: boolean;
-};
-
 type OutlineIntent =
   | { type: "NAV"; dir: NavDir; mode: NavMode }
   | { type: "CONFIRM" }
@@ -461,13 +445,27 @@ type OutlineIntent =
   | { type: "SPLIT"; caret: Caret }
   | { type: "SET_DERIVED" };
 
+type OutlineMountCtx = {
+  core: Core;
+  rootId: ItemId;
+  navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
+  dispatch: (intent: OutlineIntent) => void;
+};
+
+type OutlineNodeSpec = {
+  focus: Focus;
+  showHeader: boolean;
+};
+
+type TargetsByKey = Map<string, HTMLElement>;
+
 function mountOutlineHeader(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   defs: readonly HeaderFieldDef[],
-  onTargets: (targets: HTMLElement[]) => void,
+  onTargets: (targets: TargetsByKey) => void,
 ): Component {
-  const { core, dispatch, runtime } = mountCtx;
+  const { core, dispatch } = mountCtx;
 
   return createComponent((componentCtx) => {
     const wrap = el("div");
@@ -476,7 +474,7 @@ function mountOutlineHeader(
     wrap.append(labelHost, fieldsHost);
 
     const toContent = () => {
-      core.focus(focus, { kind: "content" }, { caret: caret0() });
+      core.focus(focus, "content", { caret: caret0() });
     };
 
     const commitLabel = (text: string) => {
@@ -487,9 +485,8 @@ function mountOutlineHeader(
 
     const labelComp = autosizeTextField({
       core,
-      host: runtime.host,
       focus,
-      target: { kind: "header", index: 0 },
+      target: "label",
       registerFocus: false,
       commit: commitLabel,
       getState: () => ({
@@ -521,17 +518,15 @@ function mountOutlineHeader(
     labelHost.replaceChildren(labelComp.el);
     componentCtx.use(labelComp);
 
-    const targets: HTMLElement[] = [];
-    targets.push(labelComp.focusEl);
+    const targets: TargetsByKey = new Map();
+    targets.set("label", labelComp.focusEl);
 
-    for (let i = 0; i < defs.length; i++) {
-      const d = defs[i]!;
+    for (const d of defs) {
       const labelEl = el("span", "equals", d.label);
       const valueHost = el("div");
       const row = el("div", "wrap");
       row.append(labelEl, valueHost);
       fieldsHost.append(row);
-      const headerIndex = i + 1;
 
       const commitField = (text: string) => {
         const current = headerFieldValue(core, focus.id, d);
@@ -541,9 +536,8 @@ function mountOutlineHeader(
 
       const fc = textField({
         core,
-        host: runtime.host,
         focus,
-        target: { kind: "header", index: headerIndex },
+        target: d.target,
         multiline: d.multiline,
         caret: "fromTarget",
         stopPropagation: true,
@@ -558,18 +552,6 @@ function mountOutlineHeader(
         textKeys: (inp) => {
           const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
 
-          const moveToHeaderField = (
-            index: number,
-            caretPos: "start" | "end",
-          ): boolean => {
-            const def = defs[index - 1];
-            if (!def) return false;
-            const text = headerFieldValue(core, focus.id, def);
-            const c = caretPos === "end" ? caretAt(text.length) : caret0();
-            core.focus(focus, { kind: "header", index }, { caret: c });
-            return true;
-          };
-
           const boundaryNav = (dir: "left" | "right") => {
             dispatch({ type: "NAV", dir, mode: "step" });
           };
@@ -577,6 +559,7 @@ function mountOutlineHeader(
           return on(inputEl, "keydown", (e: KeyboardEvent) => {
             const noModifiers =
               !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+
             if (
               noModifiers &&
               (e.key === "ArrowLeft" || e.key === "ArrowRight")
@@ -589,12 +572,6 @@ function mountOutlineHeader(
               if (!hasSel && e.key === "ArrowLeft" && start === 0) {
                 e.preventDefault();
                 e.stopPropagation();
-                if (
-                  headerIndex > 1
-                    ? moveToHeaderField(headerIndex - 1, "end")
-                    : false
-                )
-                  return;
                 boundaryNav("left");
                 return;
               }
@@ -602,12 +579,6 @@ function mountOutlineHeader(
               if (!hasSel && e.key === "ArrowRight" && end === len) {
                 e.preventDefault();
                 e.stopPropagation();
-                if (
-                  headerIndex < defs.length
-                    ? moveToHeaderField(headerIndex + 1, "start")
-                    : false
-                )
-                  return;
                 boundaryNav("right");
                 return;
               }
@@ -631,11 +602,11 @@ function mountOutlineHeader(
 
       valueHost.replaceChildren(fc.el);
       componentCtx.use(fc);
-      targets.push(fc.focusEl);
+      targets.set(d.target, fc.focusEl);
     }
 
     onTargets(targets);
-    componentCtx.onCleanup(() => onTargets([]));
+    componentCtx.onCleanup(() => onTargets(new Map()));
 
     return wrap;
   });
@@ -671,7 +642,7 @@ function mountOutlineChildren(
         e.target instanceof HTMLTextAreaElement
       )
         return;
-      core.focus(focus, { kind: "content" }, { caret: caret0() });
+      core.focus(focus, "content", { caret: caret0() });
       e.stopPropagation();
     });
 
@@ -686,25 +657,31 @@ function mountOutlineBody(
   focus: Focus,
   contentTargetRef: ContentTargetRef,
 ): Component {
-  const { core, dispatch, runtime } = mountCtx;
+  const { core, dispatch } = mountCtx;
 
   return createComponent((componentCtx) => {
     const hostEl = el("div");
     const viewKind = core.get(focus.id).view as ViewKind;
 
     if (viewWantsChildView(viewKind)) {
-      const childView = createView(runtime, viewKind, focus.id, focus);
+      const childView = createView({ core }, viewKind, focus.id, focus);
       if (childView) {
         ensureTabbable(childView.root);
         contentTargetRef.current = childView.root;
-        componentCtx.use(runtime.host.mountViewInto(hostEl, childView));
+        componentCtx.use(
+          core.mountViewRoot({
+            root: childView.root,
+            onKeyDown: childView.onKeyDown,
+          }),
+        );
+        componentCtx.use(() => childView.dispose());
+        hostEl.replaceChildren(childView.root);
         return hostEl;
       }
     }
 
     const vf = contentField({
       core,
-      host: runtime.host,
       focus,
       id: focus.id,
       registerFocus: false,
@@ -781,7 +758,7 @@ function mountOutlineNode(
   mountCtx: OutlineMountCtx,
   spec: OutlineNodeSpec,
 ): Component {
-  const { core, runtime } = mountCtx;
+  const { core } = mountCtx;
   const { focus } = spec;
 
   return createComponent((componentCtx) => {
@@ -793,20 +770,20 @@ function mountOutlineNode(
     const headerSlot = componentCtx.slot(headerContainer);
     const contentSlot = componentCtx.slot(contentContainer);
 
-    let headerTargets: HTMLElement[] = [];
+    let headerTargets: TargetsByKey = new Map();
     const contentTargetRef: ContentTargetRef = { current: contentContainer };
 
     componentCtx.focusable({
       core,
-      host: runtime.host,
       focus,
-      elementFor: (target) =>
-        target.kind === "content"
-          ? (contentTargetRef.current ?? contentContainer)
-          : (headerTargets[target.index] ?? null),
+      elementFor: (target) => {
+        if (target === "content")
+          return contentTargetRef.current ?? contentContainer;
+        return headerTargets.get(target) ?? null;
+      },
     });
 
-    const setHeaderTargets = (targets: HTMLElement[]) => {
+    const setHeaderTargets = (targets: TargetsByKey) => {
       headerTargets = targets;
     };
 
@@ -843,8 +820,7 @@ function mountOutlineNode(
         const labelFocused =
           sel.kind === "focused" &&
           sameFocus(sel.focus, focus) &&
-          sel.target.kind === "header" &&
-          sel.target.index === 0;
+          sel.target === "label";
 
         return {
           label,
@@ -871,7 +847,7 @@ function mountOutlineNode(
             );
           } else {
             headerSlot.set(null);
-            setHeaderTargets([]);
+            setHeaderTargets(new Map());
             if (headerContainer.parentElement === root)
               headerContainer.remove();
           }
@@ -900,21 +876,16 @@ function mountOutlineNode(
   });
 }
 
-export function createOutlineView({
-  runtime,
-  id: rootId,
-}: ViewFactoryArgs): DomView {
-  const core = runtime.core as Core;
+export function createOutlineView(args: { core: Core; id: ItemId }): DomView {
+  const { core, id: rootId } = args;
 
   const root = el("div", "view outline");
-  const viewId = `outline:${String(rootId)}`;
-
   const navStopsSignal = computed(() => collectNavStopsFrom(core, rootId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
     outlineNavMove(core, navStopsSignal.value, sel, dir, mode);
 
-  const dispatch = (intent: OutlineIntent): ViewKeyResult => {
+  const dispatch = (intent: OutlineIntent): void => {
     const sel = core.selection();
 
     switch (intent.type) {
@@ -962,13 +933,7 @@ export function createOutlineView({
     }
   };
 
-  const mountCtx: OutlineMountCtx = {
-    runtime: runtime as Runtime,
-    core,
-    rootId,
-    navMove,
-    dispatch,
-  };
+  const mountCtx: OutlineMountCtx = { core, rootId, navMove, dispatch };
 
   const node = mountOutlineNode(mountCtx, {
     focus: { scopeId: rootId, id: rootId },
@@ -976,65 +941,70 @@ export function createOutlineView({
   });
 
   root.append(node.el);
+  ensureTabbable(root);
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
+
+    const arrowDir: Record<string, NavDir> = {
+      ArrowUp: "up",
+      ArrowDown: "down",
+      ArrowLeft: "left",
+      ArrowRight: "right",
+    };
+
+    const dir = arrowDir[e.key];
+    if (dir) {
+      stopEvent(e);
+      dispatch({ type: "NAV", dir, mode });
+      return;
+    }
+
+    if (e.key === "Enter") {
+      stopEvent(e);
+      dispatch({ type: "CONFIRM" });
+      return;
+    }
+
+    if (e.key === "Backspace") {
+      stopEvent(e);
+      dispatch({ type: "DELETE_BOUNDARY", dir: "backward" });
+      return;
+    }
+
+    if (e.key === "Delete") {
+      stopEvent(e);
+      dispatch({ type: "DELETE_BOUNDARY", dir: "forward" });
+      return;
+    }
+
+    if (e.key === "Tab") {
+      stopEvent(e);
+      dispatch({ type: "INDENT", dir: e.shiftKey ? "out" : "in" });
+      return;
+    }
+
+    if (e.key === "Escape") {
+      stopEvent(e);
+      dispatch({ type: "CANCEL" });
+      return;
+    }
+  };
+
+  const unmountRoot = core.mountViewRoot({ root, onKeyDown });
+
+  if (core.selection().kind === "idle") {
+    const first = navStopsSignal.value[0];
+    if (first)
+      core.focus(first, defaultTargetFor(core, first.id), { caret: caret0() });
+  }
 
   return {
-    id: viewId,
+    id: `outline:${String(rootId)}`,
     root,
-
-    onActivate() {
-      if (core.selection().kind !== "idle") return;
-
-      const first = navStopsSignal.value[0];
-      if (!first) return;
-
-      core.focus(first, defaultTargetFor(core, first.id), { caret: caret0() });
-    },
-
-    onKeyDown(e): ViewKeyResult {
-      if (!(e instanceof KeyboardEvent)) return;
-
-      const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
-
-      const arrowDir: Record<string, NavDir> = {
-        ArrowUp: "up",
-        ArrowDown: "down",
-        ArrowLeft: "left",
-        ArrowRight: "right",
-      };
-
-      const dir = arrowDir[e.key];
-      if (dir) {
-        stopEvent(e);
-        return dispatch({ type: "NAV", dir, mode });
-      }
-
-      if (e.key === "Enter") {
-        stopEvent(e);
-        return dispatch({ type: "CONFIRM" });
-      }
-
-      if (e.key === "Backspace") {
-        stopEvent(e);
-        return dispatch({ type: "DELETE_BOUNDARY", dir: "backward" });
-      }
-
-      if (e.key === "Delete") {
-        stopEvent(e);
-        return dispatch({ type: "DELETE_BOUNDARY", dir: "forward" });
-      }
-
-      if (e.key === "Tab") {
-        stopEvent(e);
-        return dispatch({ type: "INDENT", dir: e.shiftKey ? "out" : "in" });
-      }
-
-      if (e.key === "Escape") {
-        stopEvent(e);
-        return dispatch({ type: "CANCEL" });
-      }
-    },
-
+    onKeyDown,
     dispose() {
+      unmountRoot();
       node.dispose();
       root.replaceChildren();
     },

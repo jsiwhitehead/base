@@ -6,7 +6,6 @@ import {
   isScalarContent,
   type Item,
   type ItemId,
-  type Model,
   type Scalar,
   type ViewKind,
   type ViewName,
@@ -23,11 +22,12 @@ import {
 } from "./compute";
 import { interpretExpr } from "./lang";
 import {
-  createEditor,
+  createShell,
   type Selection,
   type Focus,
   type FocusTarget,
   type Caret,
+  type EditorEffect,
 } from "./runtime";
 
 export type CaretSpec = number | Caret;
@@ -128,23 +128,34 @@ export type Core = {
   edit: Tx;
 
   selection(): Selection;
+  setSelection(next: Selection, effects?: EditorEffect[]): void;
   focus(focus: Focus, target?: FocusTarget, opts?: { caret?: CaretSpec }): void;
-  blur(): void;
+  blur(effects?: EditorEffect[]): void;
+
+  mountViewRoot(opts: {
+    root: HTMLElement;
+    onKeyDown?: (e: KeyboardEvent) => void;
+  }): () => void;
+
+  bindFocus(opts: {
+    focus: Focus;
+    elementFor: (target: FocusTarget) => HTMLElement | null;
+    caret?: { set(pos: number): void; getLength(): number };
+  }): () => void;
+
+  installGlobalListeners(win?: Window): () => void;
 };
 
-export function createCore(
-  opts: {
-    model?: Model;
-    interpreter?: (expr: string, env: any) => Value;
-    runtime?: any;
-  } = {},
-): Core {
-  const model = opts.model ?? createModel();
-  const evaluator = createEvaluator({
-    model,
-    interpret: (opts.interpreter as any) ?? interpretExpr,
-  });
-  const editor = createEditor(model, { runtime: opts.runtime });
+export function createCore(): { core: Core; rootId: ItemId } {
+  const model = createModel();
+  const rootId = model.createId();
+  model.setRoot(rootId);
+  model.apply(
+    model.op.transaction([model.op.create(model.createItem.group(rootId))]),
+  );
+
+  const evaluator = createEvaluator({ model, interpret: interpretExpr });
+  const shell = createShell({ model, initialSelection: { kind: "idle" } });
 
   const has = (id: ItemId): boolean => model.hasItem(id);
 
@@ -219,13 +230,8 @@ export function createCore(
     > = [];
 
     const t: Tx = {
-      setLabel: (id, label) => {
-        ops.push({ kind: "patch", id, next: { label } });
-      },
-
-      setView: (id, view) => {
-        ops.push({ kind: "patch", id, next: { view } });
-      },
+      setLabel: (id, label) => ops.push({ kind: "patch", id, next: { label } }),
+      setView: (id, view) => ops.push({ kind: "patch", id, next: { view } }),
 
       setText: (id, txt) => {
         const v = parseScalar(txt);
@@ -273,9 +279,9 @@ export function createCore(
         });
       },
 
-      insert: (ownerId, opts) => {
+      insert: (ownerId, opts2) => {
         const id = model.createId();
-        const kind = opts?.kind ?? "blank";
+        const kind = opts2?.kind ?? "blank";
         const item =
           kind === "group"
             ? model.createItem.group(id)
@@ -286,26 +292,25 @@ export function createCore(
           spec: {
             childId: id,
             toOwnerId: ownerId,
-            ...(opts?.at != null ? { toIndex: opts.at } : {}),
+            ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
           },
         });
         return id;
       },
 
-      move: (id, toOwnerId, opts) => {
+      move: (id, toOwnerId, opts2) => {
         ops.push({
           kind: "reparent",
           spec: {
             childId: id,
             toOwnerId,
-            ...(opts?.at != null ? { toIndex: opts.at } : {}),
+            ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
           },
         });
       },
 
-      remove: (id) => {
-        ops.push({ kind: "reparent", spec: { childId: id, toOwnerId: null } });
-      },
+      remove: (id) =>
+        ops.push({ kind: "reparent", spec: { childId: id, toOwnerId: null } }),
     };
 
     run(t);
@@ -320,47 +325,33 @@ export function createCore(
       }),
     );
 
-    return editor.commit(txn) as ApplyResult;
+    const result = model.apply(txn) as ApplyResult;
+    shell.setSelection(shell.selectionSignal.peek());
+    return result;
   };
 
   const edit: Tx = {
-    setLabel: (id, label) => {
-      commit((t) => t.setLabel(id, label));
-    },
-    setView: (id, view) => {
-      commit((t) => t.setView(id, view));
-    },
-    setText: (id, txt) => {
-      commit((t) => t.setText(id, txt));
-    },
-    setScalar: (id, v) => {
-      commit((t) => t.setScalar(id, v));
-    },
-    setDerived: (id, expr) => {
-      commit((t) => t.setDerived(id, expr));
-    },
-    setLens: (id, spec) => {
-      commit((t) => t.setLens(id, spec));
-    },
-    insert: (ownerId, opts) => {
+    setLabel: (id, label) => commit((t) => t.setLabel(id, label)),
+    setView: (id, view) => commit((t) => t.setView(id, view)),
+    setText: (id, txt) => commit((t) => t.setText(id, txt)),
+    setScalar: (id, v) => commit((t) => t.setScalar(id, v)),
+    setDerived: (id, expr) => commit((t) => t.setDerived(id, expr)),
+    setLens: (id, spec) => commit((t) => t.setLens(id, spec)),
+    insert: (ownerId, opts2) => {
       let out: ItemId = -1;
       commit((t) => {
-        out = t.insert(ownerId, opts);
+        out = t.insert(ownerId, opts2);
       });
       return out;
     },
-    move: (id, toOwnerId, opts) => {
-      commit((t) => t.move(id, toOwnerId, opts));
-    },
-    remove: (id) => {
-      commit((t) => t.remove(id));
-    },
+    move: (id, toOwnerId, opts2) => commit((t) => t.move(id, toOwnerId, opts2)),
+    remove: (id) => commit((t) => t.remove(id)),
   };
 
-  const selection = (): Selection => editor.getSelection() as Selection;
+  const selection = (): Selection => shell.selectionSignal.value;
 
-  const blur = (): void => {
-    editor.setSelection({ kind: "idle" } as Selection);
+  const setSelection = (next: Selection, effects: EditorEffect[] = []) => {
+    shell.setSelection(next, effects);
   };
 
   const normalizeCaret = (spec: CaretSpec | undefined): Caret | undefined => {
@@ -371,22 +362,35 @@ export function createCore(
 
   const focus = (
     f: Focus,
-    target: FocusTarget = { kind: "content" },
+    target: FocusTarget = "content",
     opts2: { caret?: CaretSpec } = {},
   ): void => {
     const caret = normalizeCaret(opts2.caret);
-    const sel: Selection = {
-      kind: "focused",
-      focus: f,
-      target,
-      ...(caret ? { caret } : {}),
-    };
-    editor.setSelection(sel);
+    shell.focus(f, target, caret ? { caret } : {});
   };
 
-  return {
+  const blur = (effects: EditorEffect[] = []): void => {
+    shell.setSelection({ kind: "idle" }, effects);
+  };
+
+  const mountViewRoot = (opts2: {
+    root: HTMLElement;
+    onKeyDown?: (e: KeyboardEvent) => void;
+  }): (() => void) => shell.mountViewRoot(opts2);
+
+  const bindFocus = (opts2: {
+    focus: Focus;
+    elementFor: (target: FocusTarget) => HTMLElement | null;
+    caret?: { set(pos: number): void; getLength(): number };
+  }): (() => void) => shell.bindFocus(opts2);
+
+  const installGlobalListeners = (win?: Window): (() => void) =>
+    shell.installGlobalListeners(win);
+
+  const core: Core = {
     dispose() {
       evaluator.dispose();
+      shell.dispose();
     },
 
     has,
@@ -402,24 +406,20 @@ export function createCore(
     edit,
 
     selection,
+    setSelection,
     focus,
     blur,
+
+    mountViewRoot,
+    bindFocus,
+    installGlobalListeners,
   };
+
+  return { core, rootId };
 }
 
-export type {
-  ItemId,
-  ViewName,
-  ViewKind,
-  Scalar,
-  Value,
-  LabeledValue,
-  Selection,
-  Focus,
-  FocusTarget,
-  Caret,
-};
-
+export type { ItemId, ViewName, ViewKind, Scalar, Value, LabeledValue };
+export type { Selection, Focus, FocusTarget, Caret };
 export {
   isBlankValue,
   isIssueValue,

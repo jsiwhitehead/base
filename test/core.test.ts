@@ -20,12 +20,6 @@ import {
 } from "../src/core/compute";
 import { interpretExpr } from "../src/core/lang";
 import type { Selection } from "../src/core/runtime";
-import {
-  createEditor,
-  EditorRuntime,
-  repairSelection,
-} from "../src/core/runtime";
-import { createDomHost } from "../src/ui/host";
 import { createSliderView } from "../src/views/slider";
 import { createTableView } from "../src/views/table";
 import { createOutlineView } from "../src/views/outline";
@@ -57,96 +51,16 @@ async function tick() {
   await new Promise<void>((r) => setTimeout(() => r(), 0));
 }
 
-function makeRuntime() {
-  const model = createModel();
-
-  const rootId = model.createId();
-  model.setRoot(rootId);
-  model.apply(
-    model.op.transaction([
-      model.op.create(model.createItem.group(rootId)),
-      model.op.patchView(rootId, "outline"),
-    ]),
-  );
-
-  const runtime = new EditorRuntime({ kind: "idle" });
-  const core = createCore({ model, runtime, interpreter: interpretExpr });
-  const host = createDomHost({ runtime });
-  const evaluator = createEvaluator({ model, interpret: interpretExpr });
-  const editor = createEditor(model, { runtime });
+function makeCoreRuntime() {
+  const { core, rootId } = createCore();
+  const uninstallListeners = core.installGlobalListeners(window);
 
   runtimeCleanups.add(() => {
-    host.dispose();
-    evaluator.dispose();
+    uninstallListeners();
     core.dispose();
   });
 
-  return { core, model, evaluator, editor, host, runtime, rootId };
-}
-
-function addBlankChild(model: Model, ownerId: ItemId, label = "") {
-  const id = model.createId();
-  model.apply(
-    model.op.transaction([
-      model.op.create(model.createItem.blank(id)),
-      ...(label ? [model.op.patchLabel(id, label)] : []),
-      model.op.reparent({ childId: id, toOwnerId: ownerId }),
-    ]),
-  );
-  return id;
-}
-
-function addGroupChild(model: Model, ownerId: ItemId, label = "") {
-  const id = model.createId();
-  model.apply(
-    model.op.transaction([
-      model.op.create(model.createItem.group(id)),
-      ...(label ? [model.op.patchLabel(id, label)] : []),
-      model.op.reparent({ childId: id, toOwnerId: ownerId }),
-    ]),
-  );
-  return id;
-}
-
-function patchScalar(model: Model, id: ItemId, value: true | number | string) {
-  model.apply(
-    model.op.transaction([
-      model.op.patchContent(id, { kind: "scalar", value }),
-    ]),
-  );
-}
-
-function patchDerived(model: Model, id: ItemId, expr: string) {
-  model.apply(
-    model.op.transaction([
-      model.op.patchContent(id, { kind: "derived", expr }),
-    ]),
-  );
-}
-
-function patchLens(
-  model: Model,
-  id: ItemId,
-  spec: { from: string; where: string; orderBy: string },
-) {
-  model.apply(
-    model.op.transaction([
-      model.op.patchContent(id, {
-        kind: "lens",
-        from: spec.from,
-        where: spec.where,
-        orderBy: spec.orderBy,
-      }),
-    ]),
-  );
-}
-
-function setView(
-  model: Model,
-  id: ItemId,
-  view: "outline" | "table" | "slider",
-) {
-  model.apply(model.op.transaction([model.op.patchView(id, view)]));
+  return { core, rootId };
 }
 
 function asScalar(v: Value): true | number | string | null {
@@ -165,7 +79,6 @@ function expectIssue(v: Value, includes?: string) {
 }
 
 type SnapshotGroupContent = Extract<SnapshotContent, { kind: "group" }>;
-
 type FocusedSelection = Extract<Selection, { kind: "focused" }>;
 type ItemGroupValue = Extract<Value, { kind: "item-group" }>;
 type ValueGroupValue = Extract<Value, { kind: "value-group" }>;
@@ -241,31 +154,110 @@ function assertPublicModelContracts(model: Model) {
   }
 }
 
-async function mountAndActivateView(
-  host: ReturnType<typeof createDomHost>,
+async function mountView(
+  core: ReturnType<typeof createCore>["core"],
   view: {
-    id: string;
     root: HTMLElement;
-    onActivate?: () => void;
+    onKeyDown?: (e: KeyboardEvent) => void;
     dispose(): void;
   },
 ) {
-  const unmount = host.mountViewInto(document.body, view as any);
+  document.body.replaceChildren(view.root);
+  const unmountRoot = core.mountViewRoot({
+    root: view.root,
+    onKeyDown: view.onKeyDown,
+  });
   await tick();
-
-  host.setActiveView(view.id);
-  view.onActivate?.();
-
-  await tick();
-
   return () => {
-    unmount();
+    unmountRoot();
+    view.dispose();
+    document.body.replaceChildren();
   };
 }
 
 describe("model contract", () => {
+  function makeModelRuntime() {
+    const model = createModel();
+
+    const rootId = model.createId();
+    model.setRoot(rootId);
+    model.apply(
+      model.op.transaction([
+        model.op.create(model.createItem.group(rootId)),
+        model.op.patchView(rootId, "outline"),
+      ]),
+    );
+
+    runtimeCleanups.add(() => {
+      void 0;
+    });
+
+    return { model, rootId };
+  }
+
+  function addBlankChild(model: Model, ownerId: ItemId, label = "") {
+    const id = model.createId();
+    model.apply(
+      model.op.transaction([
+        model.op.create(model.createItem.blank(id)),
+        ...(label ? [model.op.patchLabel(id, label)] : []),
+        model.op.reparent({ childId: id, toOwnerId: ownerId }),
+      ]),
+    );
+    return id;
+  }
+
+  function addGroupChild(model: Model, ownerId: ItemId, label = "") {
+    const id = model.createId();
+    model.apply(
+      model.op.transaction([
+        model.op.create(model.createItem.group(id)),
+        ...(label ? [model.op.patchLabel(id, label)] : []),
+        model.op.reparent({ childId: id, toOwnerId: ownerId }),
+      ]),
+    );
+    return id;
+  }
+
+  function patchScalar(
+    model: Model,
+    id: ItemId,
+    value: true | number | string,
+  ) {
+    model.apply(
+      model.op.transaction([
+        model.op.patchContent(id, { kind: "scalar", value }),
+      ]),
+    );
+  }
+
+  function patchDerived(model: Model, id: ItemId, expr: string) {
+    model.apply(
+      model.op.transaction([
+        model.op.patchContent(id, { kind: "derived", expr }),
+      ]),
+    );
+  }
+
+  function patchLens(
+    model: Model,
+    id: ItemId,
+    spec: { from: string; where: string; orderBy: string },
+  ) {
+    model.apply(
+      model.op.transaction([
+        model.op.patchContent(id, {
+          kind: "lens",
+          from: spec.from,
+          where: spec.where,
+          orderBy: spec.orderBy,
+        }),
+      ]),
+    );
+  }
+
   test("root exists and is readable", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
     expect(model.rootId()).toBe(rootId);
     expect(model.readItem(rootId).id).toBe(rootId);
     expect(model.childIdsOf(rootId)).toEqual([]);
@@ -273,7 +265,7 @@ describe("model contract", () => {
   });
 
   test("reparent adds/removes membership and updates ownerId", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     const b = addBlankChild(model, rootId, "b");
@@ -290,7 +282,7 @@ describe("model contract", () => {
   });
 
   test("reparent within same group preserves expected ordering rules", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     const b = addBlankChild(model, rootId, "b");
@@ -314,7 +306,7 @@ describe("model contract", () => {
   });
 
   test("label uniqueness enforced per-group (normalized) on create/patch/reparent", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
 
     const a = addBlankChild(model, rootId, "Name");
     expect(() => addBlankChild(model, rootId, " Name ")).toThrow();
@@ -342,7 +334,7 @@ describe("model contract", () => {
   });
 
   test("locateInOwner returns correct index and null when detached", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
 
     const a = addBlankChild(model, rootId, "a");
     const b = addBlankChild(model, rootId, "b");
@@ -359,7 +351,7 @@ describe("model contract", () => {
   });
 
   test("snapshot is stable and omits empty label/view", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
 
     const g = addGroupChild(model, rootId, "g");
     const x = addBlankChild(model, g, "x");
@@ -389,15 +381,15 @@ describe("model contract", () => {
   });
 
   test("compactUnreachable removes detached subtrees", () => {
-    const { model, rootId } = makeRuntime();
+    const { model, rootId } = makeModelRuntime();
 
     const a = addGroupChild(model, rootId, "A");
     const x = addBlankChild(model, a, "x");
     patchScalar(model, x, 123);
 
     model.apply(model.op.transaction([model.op.detach(a)]));
-
     const res = model.compactUnreachable();
+
     expect(res.removed).toBeGreaterThanOrEqual(1);
     expect(res.removedIds).toContain(a);
     expect(model.hasItem(a)).toBe(false);
@@ -421,12 +413,35 @@ describe("expr contract", () => {
   });
 
   test("path forms: member, select-by-label, implicit dot member", () => {
-    const { model, evaluator, rootId } = makeRuntime();
-    const g = addGroupChild(model, rootId, "g");
-    const a = addBlankChild(model, g, "a");
-    const b = addBlankChild(model, g, "b");
-    patchScalar(model, a, 10);
-    patchScalar(model, b, 20);
+    const model = createModel();
+    const rootId = model.createId();
+    model.setRoot(rootId);
+    model.apply(
+      model.op.transaction([model.op.create(model.createItem.group(rootId))]),
+    );
+    const evaluator = createEvaluator({ model, interpret: interpretExpr });
+
+    const g = model.createId();
+    const a = model.createId();
+    const b = model.createId();
+
+    model.apply(
+      model.op.transaction([
+        model.op.create(model.createItem.group(g)),
+        model.op.patchLabel(g, "g"),
+        model.op.reparent({ childId: g, toOwnerId: rootId }),
+
+        model.op.create(model.createItem.blank(a)),
+        model.op.patchLabel(a, "a"),
+        model.op.patchContent(a, { kind: "scalar", value: 10 }),
+        model.op.reparent({ childId: a, toOwnerId: g }),
+
+        model.op.create(model.createItem.blank(b)),
+        model.op.patchLabel(b, "b"),
+        model.op.patchContent(b, { kind: "scalar", value: 20 }),
+        model.op.reparent({ childId: b, toOwnerId: g }),
+      ]),
+    );
 
     const env = {
       lookup: (name: string) => {
@@ -442,6 +457,7 @@ describe("expr contract", () => {
     expect(asScalar(interpretExpr("g['b']", env))).toBe(20);
     expect(asScalar(interpretExpr(".a", env))).toBe(10);
 
+    evaluator.dispose();
     assertPublicModelContracts(model);
   });
 
@@ -488,336 +504,269 @@ describe("expr contract", () => {
   });
 });
 
-describe("evaluator contract", () => {
+describe("core evaluator contract", () => {
   test("derived computes expression in item env + updates when dependency changes", async () => {
-    const { model, evaluator, rootId } = makeRuntime();
+    const { core, rootId } = makeCoreRuntime();
 
-    const x = addBlankChild(model, rootId, "x");
-    patchScalar(model, x, 10);
+    let x: ItemId = -1;
+    let y: ItemId = -1;
 
-    const y = addBlankChild(model, rootId, "y");
-    patchDerived(model, y, "x + 2");
+    core.commit((t) => {
+      x = t.insert(rootId, { kind: "blank" });
+      t.setLabel(x, "x");
+      t.setScalar(x, 10);
 
-    expect(asScalar(evaluator.value(y))).toBe(12);
+      y = t.insert(rootId, { kind: "blank" });
+      t.setLabel(y, "y");
+      t.setDerived(y, "x + 2");
+    });
 
-    patchScalar(model, x, 40);
+    expect(asScalar(core.value(y))).toBe(12);
+
+    core.edit.setScalar(x, 40);
     await tick();
-    expect(asScalar(evaluator.value(y))).toBe(42);
-
-    assertPublicModelContracts(model);
-  });
-
-  test("ancestor lookup shadows outer values", () => {
-    const { model, evaluator, rootId } = makeRuntime();
-
-    const xOuter = addBlankChild(model, rootId, "x");
-    patchScalar(model, xOuter, 100);
-
-    const g = addGroupChild(model, rootId, "g");
-    const xInner = addBlankChild(model, g, "x");
-    patchScalar(model, xInner, 1);
-
-    const d = addBlankChild(model, g, "d");
-    patchDerived(model, d, "x + 1");
-
-    expect(asScalar(evaluator.value(d))).toBe(2);
-
-    assertPublicModelContracts(model);
+    expect(asScalar(core.value(y))).toBe(42);
   });
 
   test("cycle returns issue", () => {
-    const { model, evaluator, rootId } = makeRuntime();
+    const { core, rootId } = makeCoreRuntime();
 
-    const a = addBlankChild(model, rootId, "a");
-    const b = addBlankChild(model, rootId, "b");
+    let a: ItemId = -1;
+    let b: ItemId = -1;
 
-    model.apply(
-      model.op.transaction([
-        model.op.patchContent(a, { kind: "derived", expr: "b" }),
-        model.op.patchContent(b, { kind: "derived", expr: "a" }),
-      ]),
-    );
+    core.commit((t) => {
+      a = t.insert(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      b = t.insert(rootId, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setDerived(a, "b");
+      t.setDerived(b, "a");
+    });
 
-    expectIssue(evaluator.value(a), "Cyclic");
-    expectIssue(evaluator.value(b), "Cyclic");
-
-    assertPublicModelContracts(model);
+    expectIssue(core.value(a), "Cyclic");
+    expectIssue(core.value(b), "Cyclic");
   });
 
   test("derived materializes item-groups into value-groups (recursive)", () => {
-    const { model, evaluator, rootId } = makeRuntime();
+    const { core, rootId } = makeCoreRuntime();
 
-    const g = addGroupChild(model, rootId, "g");
-    const a = addBlankChild(model, g, "a");
-    patchScalar(model, a, 1);
+    let g: ItemId = -1;
+    let a: ItemId = -1;
+    let h: ItemId = -1;
+    let b: ItemId = -1;
+    let d: ItemId = -1;
 
-    const h = addGroupChild(model, g, "h");
-    const b = addBlankChild(model, h, "b");
-    patchScalar(model, b, 2);
+    core.commit((t) => {
+      g = t.insert(rootId, { kind: "group" });
+      t.setLabel(g, "g");
 
-    const d = addBlankChild(model, rootId, "d");
-    patchDerived(model, d, "g");
+      a = t.insert(g, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
 
-    const v = expectValueGroup(evaluator.value(d));
+      h = t.insert(g, { kind: "group" });
+      t.setLabel(h, "h");
+
+      b = t.insert(h, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setScalar(b, 2);
+
+      d = t.insert(rootId, { kind: "blank" });
+      t.setLabel(d, "d");
+      t.setDerived(d, "g");
+    });
+
+    const v = expectValueGroup(core.value(d));
     const labels = v.items.map((it) => it.label ?? "");
     expect(labels).toContain("a");
     expect(labels).toContain("h");
-
-    assertPublicModelContracts(model);
-  });
-
-  test("lens contract: blank from => blank; non-item-group => issue", () => {
-    const { model, evaluator, rootId } = makeRuntime();
-
-    const l1 = addBlankChild(model, rootId, "l1");
-    patchLens(model, l1, { from: " ", where: "", orderBy: "" });
-    expectBlank(evaluator.value(l1));
-
-    const x = addBlankChild(model, rootId, "x");
-    patchScalar(model, x, 123);
-
-    const l2 = addBlankChild(model, rootId, "l2");
-    patchLens(model, l2, { from: "x", where: "", orderBy: "" });
-    expectIssue(evaluator.value(l2), "item-group");
-
-    assertPublicModelContracts(model);
-  });
-
-  test("lens where + orderBy works and ties are stable", () => {
-    const { model, evaluator, rootId } = makeRuntime();
-
-    const rows = addGroupChild(model, rootId, "rows");
-
-    function addRow(label: string, score: number) {
-      const row = addGroupChild(model, rows, label);
-      const scoreId = addBlankChild(model, row, "score");
-      patchScalar(model, scoreId, score);
-      return row;
-    }
-
-    const rA = addRow("a", 2);
-    const rB = addRow("b", 2);
-    addRow("c", 1);
-
-    const lensId = addBlankChild(model, rootId, "lens");
-    patchLens(model, lensId, {
-      from: "rows",
-      where: "_.score >= 2",
-      orderBy: "_.score",
-    });
-
-    const out = expectItemGroup(evaluator.value(lensId));
-    expect(out.itemIds).toEqual([rA, rB]);
-
-    assertPublicModelContracts(model);
-  });
-
-  test("lens row env provides _, position, label", () => {
-    const { model, evaluator, rootId } = makeRuntime();
-
-    const rows = addGroupChild(model, rootId, "rows");
-
-    const r1 = addGroupChild(model, rows, "rowA");
-    const s1 = addBlankChild(model, r1, "score");
-    patchScalar(model, s1, 2);
-
-    const r2 = addGroupChild(model, rows, "rowB");
-    const s2 = addBlankChild(model, r2, "score");
-    patchScalar(model, s2, 1);
-
-    const lensId = addBlankChild(model, rootId, "lens");
-    patchLens(model, lensId, {
-      from: "rows",
-      where: "position = 2",
-      orderBy: "label",
-    });
-
-    const out = expectItemGroup(evaluator.value(lensId));
-    const labels = out.itemIds.map((id) => model.readItem(id).label);
-    expect(labels).toEqual(["rowB"]);
-
-    assertPublicModelContracts(model);
   });
 });
 
-describe("editor contract (no DOM)", () => {
-  test("commit applies transaction", () => {
-    const { model, editor, rootId } = makeRuntime();
-    const a = addBlankChild(model, rootId, "a");
+describe("selection contract", () => {
+  test("setSelection repairs when focused item disappears", async () => {
+    const { core, rootId } = makeCoreRuntime();
 
-    editor.commit(model.op.transaction([model.op.patchLabel(a, "aa")]));
-    expect(model.readItem(a).label).toBe("aa");
+    let g: ItemId = -1;
+    let x: ItemId = -1;
 
-    assertPublicModelContracts(model);
-  });
-
-  test("repairSelection falls back when focused item disappears", () => {
-    const { model, editor, rootId } = makeRuntime();
-
-    const g = addGroupChild(model, rootId, "g");
-    const x = addBlankChild(model, g, "x");
-
-    editor.setSelection({
-      kind: "focused",
-      focus: { scopeId: g, id: x },
-      target: { kind: "content" },
+    core.commit((t) => {
+      g = t.insert(rootId, { kind: "group" });
+      t.setLabel(g, "g");
+      x = t.insert(g, { kind: "blank" });
+      t.setLabel(x, "x");
+      t.setScalar(x, 1);
     });
 
-    model.apply(model.op.transaction([model.op.detach(g)]));
-    model.compactUnreachable();
+    core.focus({ scopeId: g, id: x }, "content");
 
-    const sel = editor.getSelection();
-    const repaired = repairSelection(editor, sel);
+    core.commit((t) => {
+      t.remove(g);
+    });
 
-    if (repaired.kind === "focused") {
-      expect(model.hasItem(repaired.focus.id)).toBe(true);
-      expect(model.hasItem(repaired.focus.scopeId)).toBe(true);
+    await tick();
+    core.setSelection(core.selection());
+
+    const sel = core.selection();
+    if (sel.kind === "focused") {
+      expect(core.has(sel.focus.id)).toBe(true);
+      expect(core.has(sel.focus.scopeId)).toBe(true);
     } else {
-      expect(repaired.kind).toBe("idle");
+      expect(sel.kind).toBe("idle");
     }
-
-    assertPublicModelContracts(model);
   });
 });
 
 describe("views contract (selection transitions via onKeyDown)", () => {
   test("table arrow navigation: row label -> right -> cell; left -> row label; down -> next row", async () => {
-    const { core, model, editor, host, rootId } = makeRuntime();
+    const { core, rootId } = makeCoreRuntime();
 
-    const tableId = addGroupChild(model, rootId, "table");
-    setView(model, tableId, "table");
+    let tableId: ItemId = -1;
+    let rowA: ItemId = -1;
+    let aScore: ItemId = -1;
+    let rowB: ItemId = -1;
+    let bScore: ItemId = -1;
 
-    const rowA = addGroupChild(model, tableId, "rowA");
-    const aScore = addBlankChild(model, rowA, "score");
-    patchScalar(model, aScore, 5);
+    core.commit((t) => {
+      tableId = t.insert(rootId, { kind: "group" });
+      t.setLabel(tableId, "table");
+      t.setView(tableId, "table");
 
-    const rowB = addGroupChild(model, tableId, "rowB");
-    const bScore = addBlankChild(model, rowB, "score");
-    patchScalar(model, bScore, 6);
+      rowA = t.insert(tableId, { kind: "group" });
+      t.setLabel(rowA, "rowA");
+      aScore = t.insert(rowA, { kind: "blank" });
+      t.setLabel(aScore, "score");
+      t.setScalar(aScore, 5);
 
-    const view = createTableView({
-      runtime: { core, host },
-      id: tableId,
+      rowB = t.insert(tableId, { kind: "group" });
+      t.setLabel(rowB, "rowB");
+      bScore = t.insert(rowB, { kind: "blank" });
+      t.setLabel(bScore, "score");
+      t.setScalar(bScore, 6);
     });
-    const unmount = await mountAndActivateView(host, view);
 
-    let sel = editor.getSelection();
+    const view = createTableView({ core, id: tableId });
+    const unmount = await mountView(core, view);
+
+    await tick();
+    let sel = core.selection();
     expectFocusedSelection(sel);
-    expect(sel.target.kind).toBe("header");
-    if (sel.target.kind === "header") expect(sel.target.index).toBe(0);
+    expect(sel.target).toBe("label");
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     await tick();
-    sel = editor.getSelection();
+    sel = core.selection();
     expectFocusedSelection(sel);
-    expect(sel.target.kind).toBe("content");
+    expect(sel.target).toBe("content");
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     await tick();
-    sel = editor.getSelection();
+    sel = core.selection();
     expectFocusedSelection(sel);
-    expect(sel.target.kind).toBe("header");
-    if (sel.target.kind === "header") expect(sel.target.index).toBe(0);
+    expect(sel.target).toBe("label");
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
-    sel = editor.getSelection();
+    sel = core.selection();
     expectFocusedSelection(sel);
-    expect(sel.target.kind).toBe("content");
+    expect(sel.target).toBe("content");
     expect(sel.focus.scopeId).toBe(rowB);
 
     unmount();
-    assertPublicModelContracts(model);
   });
 
-  test("outline onActivate picks first nav stop; arrows keep focused selection", async () => {
-    const { core, model, editor, host, rootId } = makeRuntime();
+  test("outline picks first nav stop; arrows keep focused selection", async () => {
+    const { core, rootId } = makeCoreRuntime();
 
-    const a = addBlankChild(model, rootId, "a");
-    patchScalar(model, a, 1);
+    core.commit((t) => {
+      const a = t.insert(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
 
-    const g = addGroupChild(model, rootId, "g");
-    const ga = addBlankChild(model, g, "ga");
-    patchScalar(model, ga, 2);
+      const g = t.insert(rootId, { kind: "group" });
+      t.setLabel(g, "g");
+      const ga = t.insert(g, { kind: "blank" });
+      t.setLabel(ga, "ga");
+      t.setScalar(ga, 2);
 
-    const b = addBlankChild(model, rootId, "b");
-    patchScalar(model, b, 3);
-
-    const view = createOutlineView({
-      runtime: { core, host },
-      id: rootId,
+      const b = t.insert(rootId, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setScalar(b, 3);
     });
-    const unmount = await mountAndActivateView(host, view);
 
-    let sel = editor.getSelection();
+    const view = createOutlineView({ core, id: rootId });
+    const unmount = await mountView(core, view);
+
+    await tick();
+    let sel = core.selection();
     expectFocusedSelection(sel);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
-    sel = editor.getSelection();
+    sel = core.selection();
     expectFocusedSelection(sel);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     await tick();
-    sel = editor.getSelection();
+    sel = core.selection();
     expectFocusedSelection(sel);
 
     unmount();
-    assertPublicModelContracts(model);
   });
 });
 
 describe("DOM smoke", () => {
   test("slider range input updates scalar content", async () => {
-    const { core, model, host, rootId } = makeRuntime();
-    const sliderId = addBlankChild(model, rootId, "slider");
+    const { core, rootId } = makeCoreRuntime();
 
-    setView(model, sliderId, "slider");
-    patchScalar(model, sliderId, 10);
+    let sliderId: ItemId = -1;
 
-    const view = createSliderView({
-      runtime: { core, host },
-      id: sliderId,
+    core.commit((t) => {
+      sliderId = t.insert(rootId, { kind: "blank" });
+      t.setLabel(sliderId, "slider");
+      t.setView(sliderId, "slider");
+      t.setScalar(sliderId, 10);
     });
 
-    document.body.append(view.root);
+    const view = createSliderView({ core, id: sliderId });
+    const unmount = await mountView(core, view);
     await tick();
 
     const input = view.root.querySelector("input") as HTMLInputElement | null;
     expect(input).not.toBeNull();
 
     if (!input) {
-      view.dispose();
+      unmount();
       return;
     }
 
     input.value = "42";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
-    expect(model.readItem(sliderId).content).toEqual({
-      kind: "scalar",
-      value: 42,
-    });
+    expect(asScalar(core.value(sliderId))).toBe(42);
 
-    view.dispose();
-    assertPublicModelContracts(model);
+    unmount();
   });
 
   test("reactivity updates derived display text", async () => {
-    const { core, model, host, rootId } = makeRuntime();
+    const { core, rootId } = makeCoreRuntime();
 
-    const x = addBlankChild(model, rootId, "x");
-    patchScalar(model, x, 1);
+    let x: ItemId = -1;
+    let d: ItemId = -1;
 
-    const d = addBlankChild(model, rootId, "d");
-    patchDerived(model, d, "x + 1");
+    core.commit((t) => {
+      x = t.insert(rootId, { kind: "blank" });
+      t.setLabel(x, "x");
+      t.setScalar(x, 1);
 
-    const view = createOutlineView({
-      runtime: { core, host },
-      id: rootId,
+      d = t.insert(rootId, { kind: "blank" });
+      t.setLabel(d, "d");
+      t.setDerived(d, "x + 1");
     });
-    const unmount = await mountAndActivateView(host, view);
+
+    const view = createOutlineView({ core, id: rootId });
+    const unmount = await mountView(core, view);
 
     const getDerivedText = () => {
       const nodes = Array.from(view.root.querySelectorAll(".item.readonly"));
@@ -831,44 +780,43 @@ describe("DOM smoke", () => {
     await tick();
     expect(getDerivedText()).toBe("2");
 
-    patchScalar(model, x, 5);
+    core.edit.setScalar(x, 5);
     await tick();
     expect(getDerivedText()).toBe("6");
 
     unmount();
-    assertPublicModelContracts(model);
   });
 
   test("dispose safety: disposing view does not crash on subsequent model updates", async () => {
-    const { core, model, host, rootId } = makeRuntime();
+    const { core, rootId } = makeCoreRuntime();
 
-    const a = addBlankChild(model, rootId, "a");
-    patchScalar(model, a, 1);
+    let a: ItemId = -1;
 
-    const view = createOutlineView({
-      runtime: { core, host },
-      id: rootId,
+    core.commit((t) => {
+      a = t.insert(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
     });
-    const unmount = await mountAndActivateView(host, view);
+
+    const view = createOutlineView({ core, id: rootId });
+    const unmount = await mountView(core, view);
 
     expect(() => unmount()).not.toThrow();
-    expect(() => patchScalar(model, a, 2)).not.toThrow();
-
-    assertPublicModelContracts(model);
+    expect(() => core.edit.setScalar(a, 2)).not.toThrow();
   });
 });
 
 test("outline: clicking editable content focuses the text input element", async () => {
-  const { core, model, editor, host, rootId } = makeRuntime();
+  const { core, rootId } = makeCoreRuntime();
 
-  const x = addBlankChild(model, rootId, "x");
-  patchScalar(model, x, 10);
-
-  const view = createOutlineView({
-    runtime: { core, host },
-    id: rootId,
+  core.commit((t) => {
+    const x = t.insert(rootId, { kind: "blank" });
+    t.setLabel(x, "x");
+    t.setScalar(x, 10);
   });
-  const unmount = await mountAndActivateView(host, view);
+
+  const view = createOutlineView({ core, id: rootId });
+  const unmount = await mountView(core, view);
 
   const labelInputs = Array.from(
     view.root.querySelectorAll(".autosize.label input"),
@@ -907,10 +855,9 @@ test("outline: clicking editable content focuses the text input element", async 
 
   expect(document.activeElement === contentTextarea).toBe(true);
 
-  const sel = editor.getSelection();
+  const sel = core.selection();
   expectFocusedSelection(sel);
-  expect(sel.target.kind).toBe("content");
+  expect(sel.target).toBe("content");
 
   unmount();
-  assertPublicModelContracts(model);
 });

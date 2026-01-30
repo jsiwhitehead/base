@@ -1,6 +1,5 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Core, ItemId } from "../core";
-import type { Caret, Focus, FocusTarget, Value } from "../core";
+import type { Core, ItemId, Caret, Focus, FocusTarget, Value } from "../core";
 import {
   isBlankValue,
   isIssueValue,
@@ -8,9 +7,11 @@ import {
   isScalarValue,
   isValueGroupValue,
 } from "../core";
-import type { DomHost, NavDir, NavMode, Binding } from "./host";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
+
+export type NavDir = "left" | "right" | "up" | "down";
+export type NavMode = "step" | "jump";
 
 export type Component = { el: HTMLElement; dispose(): void };
 
@@ -40,7 +41,6 @@ function shallowEqual(a: unknown, b: unknown): boolean {
       return false;
     }
   }
-
   return true;
 }
 
@@ -318,10 +318,10 @@ export type Ctx = {
 
   focusable(opts: {
     core: Core;
-    host: DomHost;
     focus: Focus;
     elementFor: (target: FocusTarget) => HTMLElement | null;
     targets?: readonly FocusableTargetSpec[];
+    caret?: { set(pos: number): void; getLength(): number };
   }): void;
 };
 
@@ -426,25 +426,31 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
     },
 
     focusable(opts) {
-      const binding: Binding = {
+      const unbind = opts.core.bindFocus({
         focus: opts.focus,
-        elementFor: (t: FocusTarget) => opts.elementFor(t),
-        setCaret: (pos: number) => {
-          const a = document.activeElement;
-          if (a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement)
-            a.setSelectionRange(pos, pos);
-        },
-        getTextLength: () => {
-          const a = document.activeElement;
-          return a instanceof HTMLInputElement ||
-            a instanceof HTMLTextAreaElement
-            ? a.value.length
-            : 0;
-        },
-      };
+        elementFor: (t) => opts.elementFor(t),
+        caret:
+          opts.caret ??
+          ({
+            set: (pos: number) => {
+              const a = document.activeElement;
+              if (
+                a instanceof HTMLInputElement ||
+                a instanceof HTMLTextAreaElement
+              )
+                a.setSelectionRange(pos, pos);
+            },
+            getLength: () => {
+              const a = document.activeElement;
+              return a instanceof HTMLInputElement ||
+                a instanceof HTMLTextAreaElement
+                ? a.value.length
+                : 0;
+            },
+          } as const),
+      });
 
-      opts.host.registerBinding(binding);
-      bag.add(() => opts.host.unregisterBinding(opts.focus));
+      bag.add(unbind);
 
       installFocusableTargets(ctx, {
         core: opts.core,
@@ -525,7 +531,6 @@ export type TextFieldState = {
 
 export type TextFieldOpts = {
   core: Core;
-  host: DomHost;
   focus: Focus;
   target: FocusTarget;
   multiline: boolean;
@@ -557,7 +562,6 @@ export function textField(opts: TextFieldOpts): InputComponent {
     if (opts.registerFocus !== false) {
       ctx.focusable({
         core: opts.core,
-        host: opts.host,
         focus: opts.focus,
         elementFor: () => inp,
         targets,
@@ -630,7 +634,6 @@ export function autosizeTextField(opts: AutosizeTextFieldOpts): InputComponent {
     if (opts.registerFocus !== false) {
       ctx.focusable({
         core: opts.core,
-        host: opts.host,
         focus: opts.focus,
         elementFor: () => inp,
         targets,
@@ -696,7 +699,6 @@ export function renderLabeledValueReadonly(
 
 export type ContentFieldOpts = {
   core: Core;
-  host: DomHost;
   focus: Focus;
   id: ItemId;
   className?: string;
@@ -749,7 +751,7 @@ export function contentField(opts: ContentFieldOpts): Component {
     const installContentClickTarget = (wrap: HTMLElement) => {
       const targets: FocusableTargetSpec[] = [
         {
-          target: { kind: "content" },
+          target: "content",
           getEl: () => wrap,
           pointerHost: () => wrap,
           caret: "zero",
@@ -760,7 +762,6 @@ export function contentField(opts: ContentFieldOpts): Component {
       if (register) {
         ctx.focusable({
           core,
-          host: opts.host,
           focus: opts.focus,
           elementFor: () => wrap,
           targets,
@@ -778,9 +779,8 @@ export function contentField(opts: ContentFieldOpts): Component {
       const { focus, id } = opts;
       return textField({
         core,
-        host: opts.host,
         focus,
-        target: { kind: "content" },
+        target: "content",
         multiline: true,
         className: "content",
         caret: "fromTarget",

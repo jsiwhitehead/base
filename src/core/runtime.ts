@@ -1,11 +1,9 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { ItemId, Transaction, ApplyResult, Model } from "./model";
+import type { ItemId, Model } from "./model";
 
 export type Focus = { scopeId: ItemId; id: ItemId };
 
-export type FocusTarget =
-  | { kind: "content" }
-  | { kind: "header"; index: number };
+export type FocusTarget = string;
 
 export type Caret = { start: number; end: number };
 
@@ -19,34 +17,41 @@ export type EditorEffect =
   | { type: "FOCUS"; focus: Focus; target: FocusTarget; anchor?: Anchor }
   | { type: "CLEAR_FOCUS" };
 
-export type CommitHints = {
-  propose?: (ctx: {
-    model: Model;
-    prevSelection: Selection;
-    result: ApplyResult;
-  }) => { selection?: Selection; effects?: EditorEffect[] };
-  effects?: EditorEffect[];
+export type ViewHandle = {
+  root: HTMLElement;
+  onKeyDown?: (e: KeyboardEvent) => void;
 };
 
-export type NextSelection =
-  | { selection: Selection; effects?: EditorEffect[] }
-  | ((ctx: { model: Model; prevSelection: Selection; result: ApplyResult }) => {
-      selection?: Selection;
-      effects?: EditorEffect[];
-    });
+export type BindingHandle = unknown;
 
-export function withSelection(proposal: NextSelection): CommitHints {
-  return typeof proposal === "function"
-    ? { propose: proposal }
-    : {
-        propose: () => ({
-          selection: proposal.selection,
-          effects: proposal.effects,
-        }),
-      };
+export type Binding = {
+  focus: Focus;
+  elementFor(target: FocusTarget): BindingHandle | null;
+  caret?: { set(pos: number): void; getLength(): number };
+};
+
+const keyOf = (f: Focus): string => `${String(f.scopeId)}::${String(f.id)}`;
+
+const isTextInput = (
+  el: HTMLElement,
+): el is HTMLInputElement | HTMLTextAreaElement =>
+  (el instanceof HTMLInputElement && el.type === "text") ||
+  el instanceof HTMLTextAreaElement;
+
+const clamp = (n: number, lo: number, hi: number): number =>
+  Math.max(lo, Math.min(hi, n));
+
+const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+function shouldBypassGlobalKeydown(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return false;
+  if (active.isContentEditable) return true;
+  return (
+    active instanceof HTMLTextAreaElement ||
+    (active instanceof HTMLInputElement && active.type === "text")
+  );
 }
-
-export type EffectsApplier = (sel: Selection, effects: EditorEffect[]) => void;
 
 function normalizeEffectsForSelection(
   sel: Selection,
@@ -55,10 +60,8 @@ function normalizeEffectsForSelection(
   const hasClear = effects.some((e) => e.type === "CLEAR_FOCUS");
   const hasFocus = effects.some((e) => e.type === "FOCUS");
 
-  if (sel.kind === "idle") {
-    if (hasClear) return effects;
-    return [...effects, { type: "CLEAR_FOCUS" }];
-  }
+  if (sel.kind === "idle")
+    return hasClear ? effects : [...effects, { type: "CLEAR_FOCUS" }];
 
   if (hasClear) return effects;
   if (hasFocus) return effects;
@@ -66,183 +69,292 @@ function normalizeEffectsForSelection(
   return [...effects, { type: "FOCUS", focus: sel.focus, target: sel.target }];
 }
 
-export class EditorRuntime {
-  selection: Signal<Selection>;
-
-  private pending: { sel: Selection; effects: EditorEffect[] } | null = null;
-  private flushScheduled = false;
-
-  private effectsApplier: EffectsApplier;
-
-  constructor(
-    initialSelection: Selection = { kind: "idle" },
-    effectsApplier: EffectsApplier = () => {},
+function viewAtTarget(
+  viewRoots: WeakMap<HTMLElement, ViewHandle>,
+  target: EventTarget | null,
+): ViewHandle | null {
+  for (
+    let el0 = target instanceof HTMLElement ? target : null;
+    el0;
+    el0 = el0.parentElement
   ) {
-    this.selection = signal(initialSelection);
-    this.effectsApplier = effectsApplier;
+    const hit = viewRoots.get(el0);
+    if (hit) return hit;
   }
-
-  setEffectsApplier(applier: EffectsApplier): void {
-    this.effectsApplier = applier;
-  }
-
-  scheduleEffects(sel: Selection, effects: EditorEffect[]): void {
-    if (!effects.length) return;
-
-    this.pending = this.pending
-      ? { sel, effects: [...this.pending.effects, ...effects] }
-      : { sel, effects };
-
-    if (this.flushScheduled) return;
-    this.flushScheduled = true;
-
-    queueMicrotask(() => {
-      this.flushScheduled = false;
-      const next = this.pending;
-      this.pending = null;
-      if (next) this.applyEffects(next.sel, next.effects);
-    });
-  }
-
-  applyEffects(sel: Selection, effects: EditorEffect[]): void {
-    this.effectsApplier(sel, effects);
-  }
+  return null;
 }
 
-export type Editor = {
-  model: Model;
-  runtime: EditorRuntime;
-  getSelection(): Selection;
+function computeAnchoredPos(
+  text: string,
+  column: number,
+  anchor: Anchor,
+): number {
+  const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
+  if (nl === -1) return clamp(column, 0, text.length);
+  const lineStart = anchor === "top" ? 0 : nl + 1;
+  return lineStart + clamp(column, 0, text.length - lineStart);
+}
+
+export type Shell = {
+  selectionSignal: Signal<Selection>;
+
+  selection(): Selection;
+
   setSelection(next: Selection, effects?: EditorEffect[]): void;
-  commit(txn: Transaction, hints?: CommitHints): ApplyResult;
+  focus(focus: Focus, target: FocusTarget, opts?: { caret?: Caret }): void;
+  blur(): void;
+
+  mountViewRoot(opts: {
+    root: HTMLElement;
+    onKeyDown?: (e: KeyboardEvent) => void;
+  }): () => void;
+
+  bindFocus(opts: {
+    focus: Focus;
+    elementFor: (target: FocusTarget) => HTMLElement | null;
+    caret?: { set(pos: number): void; getLength(): number };
+  }): () => void;
+
+  installGlobalListeners(win?: Window): () => void;
+
+  dispose(): void;
 };
 
-export function focusSelection(
-  focus: Focus,
-  target: FocusTarget,
-  caret?: Caret,
-): { selection: Selection; effects: EditorEffect[] } {
-  const selection: Selection = {
-    kind: "focused",
-    focus,
-    target,
-    ...(caret ? { caret } : {}),
-  };
-  return { selection, effects: [{ type: "FOCUS", focus, target }] };
-}
+export function createShell(opts: {
+  model: Model;
+  initialSelection?: Selection;
+}): Shell {
+  const { model } = opts;
 
-export function repairSelection(editor: Editor, sel: Selection): Selection {
-  const model = editor.model;
-
-  if (sel.kind === "idle") return sel;
-
-  try {
-    model.peekItem(sel.focus.id);
-    // Selection is valid, return as-is
-    return sel;
-  } catch {
-    try {
-      const rootId = model.rootId();
-      model.peekItem(rootId);
-      return {
-        kind: "focused",
-        focus: { scopeId: rootId, id: rootId },
-        target: { kind: "content" },
-      };
-    } catch {
-      return { kind: "idle" };
-    }
-  }
-}
-
-export function ensureSelection(
-  editor: Editor,
-  next: Selection,
-  effects: EditorEffect[] = [],
-): void {
-  const repaired = repairSelection(editor, next);
-  editor.runtime.selection.value = repaired;
-  editor.runtime.scheduleEffects(
-    repaired,
-    normalizeEffectsForSelection(repaired, effects),
+  const selectionSignal = signal<Selection>(
+    opts.initialSelection ?? { kind: "idle" },
   );
-}
 
-export function createEditor(
-  model: Model,
-  opts: { runtime?: EditorRuntime } = {},
-): Editor {
-  const runtime = opts.runtime ?? new EditorRuntime({ kind: "idle" });
+  const bindings = new Map<string, Binding>();
 
-  const getSelection = (): Selection => runtime.selection.value;
+  const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
+  const views = new Set<ViewHandle>();
+  let activeView: ViewHandle | null = null;
+
+  let pending: { sel: Selection; effects: EditorEffect[] } | null = null;
+  let flushScheduled = false;
+
+  const getActiveView = (): ViewHandle | null => activeView;
+
+  const setActiveView = (v: ViewHandle | null): void => {
+    activeView = v;
+  };
+
+  const getBinding = (focus: Focus): Binding | null =>
+    bindings.get(keyOf(focus)) ?? null;
+
+  const applyDomFocus = (
+    sel: Selection,
+    focusEff: Extract<EditorEffect, { type: "FOCUS" }>,
+  ): void => {
+    if (sel.kind !== "focused") return;
+
+    const binding = getBinding(sel.focus);
+    const el0 = (binding?.elementFor(sel.target) as HTMLElement | null) ?? null;
+    if (!binding || !el0) return;
+
+    const wasFocused = document.activeElement === el0;
+    if (!wasFocused) el0.focus({ preventScroll: true });
+
+    const hitView = viewAtTarget(viewRoots, el0);
+    if (hitView) setActiveView(hitView);
+
+    const caret = sel.caret;
+    const canCaret = !!caret && !!binding.caret;
+    const shouldUpdateCaret = canCaret && (!wasFocused || !!focusEff.anchor);
+
+    if (shouldUpdateCaret) {
+      const len = binding.caret!.getLength();
+      binding.caret!.set(clamp(caret!.end, 0, len));
+      return;
+    }
+
+    if (!isTextInput(el0) || wasFocused) return;
+
+    const pos = focusEff.anchor
+      ? computeAnchoredPos(el0.value, el0.value.length, focusEff.anchor)
+      : el0.value.length;
+
+    el0.setSelectionRange(pos, pos);
+  };
+
+  const applyDomEffects = (sel: Selection, effects: EditorEffect[]): void => {
+    for (const eff of effects) {
+      if (eff.type === "FOCUS") {
+        applyDomFocus(sel, eff);
+      } else {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) active.blur();
+      }
+    }
+  };
+
+  const scheduleEffects = (sel: Selection, effects: EditorEffect[]): void => {
+    if (!effects.length) return;
+
+    pending = pending
+      ? { sel, effects: [...pending.effects, ...effects] }
+      : { sel, effects };
+
+    if (flushScheduled) return;
+    flushScheduled = true;
+
+    queueMicrotask(() => {
+      flushScheduled = false;
+      const next = pending;
+      pending = null;
+      if (next) applyDomEffects(next.sel, next.effects);
+    });
+  };
+
+  const repairSelection = (sel: Selection): Selection => {
+    if (sel.kind === "idle") return sel;
+
+    try {
+      model.peekItem(sel.focus.id);
+      return sel;
+    } catch {
+      try {
+        const rootId = model.rootId();
+        model.peekItem(rootId);
+        return {
+          kind: "focused",
+          focus: { scopeId: rootId, id: rootId },
+          target: "content",
+        };
+      } catch {
+        return { kind: "idle" };
+      }
+    }
+  };
+
+  const selection = (): Selection => selectionSignal.value;
 
   const setSelection = (
     next: Selection,
     effects: EditorEffect[] = [],
   ): void => {
-    const editor = api;
-    const repaired = repairSelection(editor, next);
-    runtime.selection.value = repaired;
-    runtime.scheduleEffects(
-      repaired,
-      normalizeEffectsForSelection(repaired, effects),
-    );
+    const repaired = repairSelection(next);
+    selectionSignal.value = repaired;
+    scheduleEffects(repaired, normalizeEffectsForSelection(repaired, effects));
   };
 
-  const commit = (txn: Transaction, hints: CommitHints = {}): ApplyResult => {
-    const prevSelection = getSelection();
-    const result = model.apply(txn);
-
-    const proposed = hints.propose?.({ model, prevSelection, result });
-    const editor = api;
-    const repaired = repairSelection(
-      editor,
-      proposed?.selection ?? prevSelection,
-    );
-
-    runtime.selection.value = repaired;
-
-    const mergedEffects = [
-      ...(proposed?.effects ?? []),
-      ...(hints.effects ?? []),
-    ];
-
-    runtime.scheduleEffects(
-      repaired,
-      normalizeEffectsForSelection(repaired, mergedEffects),
-    );
-
-    return result;
+  const focus = (
+    focus0: Focus,
+    target: FocusTarget,
+    opts2: { caret?: Caret } = {},
+  ): void => {
+    const next: Selection = {
+      kind: "focused",
+      focus: focus0,
+      target,
+      ...(opts2.caret ? { caret: opts2.caret } : {}),
+    };
+    setSelection(next);
   };
 
-  const api: Editor = { model, runtime, getSelection, setSelection, commit };
-  return api;
-}
+  const blur = (): void => {
+    setSelection({ kind: "idle" });
+  };
 
-export type CmdResult = {
-  didChange: boolean;
-  selection?: Selection;
-  effects?: EditorEffect[];
-  issue?: string;
-};
+  const mountViewRoot = (v: {
+    root: HTMLElement;
+    onKeyDown?: (e: KeyboardEvent) => void;
+  }): (() => void) => {
+    const handle: ViewHandle = { root: v.root, onKeyDown: v.onKeyDown };
+    viewRoots.set(handle.root, handle);
+    views.add(handle);
 
-export function safeIssue(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+    const onPointerDown = (e: PointerEvent) => {
+      const hit = viewAtTarget(viewRoots, e.target);
+      if (hit) setActiveView(hit);
+    };
 
-export function tryCmd(fn: () => CmdResult): CmdResult {
-  try {
-    return fn();
-  } catch (err) {
-    return { didChange: false, issue: safeIssue(err) };
-  }
-}
+    handle.root.addEventListener("pointerdown", onPointerDown, {
+      capture: true,
+    });
 
-export function applyCmd(editor: Editor, res: CmdResult): CmdResult {
-  if (res.selection) editor.setSelection(res.selection, res.effects ?? []);
-  return res;
-}
+    return () => {
+      handle.root.removeEventListener("pointerdown", onPointerDown, {
+        capture: true,
+      } as any);
+      views.delete(handle);
+      if (getActiveView() === handle) setActiveView(null);
 
-export function setIdle(editor: Editor): void {
-  editor.setSelection({ kind: "idle" });
+      for (const [k, b] of bindings) {
+        if (
+          keyOf(b.focus) === k &&
+          viewAtTarget(viewRoots, b.elementFor("content") as any) === handle
+        ) {
+          void b;
+        }
+      }
+    };
+  };
+
+  const bindFocus = (b: {
+    focus: Focus;
+    elementFor: (target: FocusTarget) => HTMLElement | null;
+    caret?: { set(pos: number): void; getLength(): number };
+  }): (() => void) => {
+    const binding: Binding = {
+      focus: b.focus,
+      elementFor: (t) => b.elementFor(t),
+      ...(b.caret ? { caret: b.caret } : {}),
+    };
+
+    const k = keyOf(binding.focus);
+    bindings.set(k, binding);
+
+    return () => {
+      bindings.delete(k);
+
+      const sel = selectionSignal.peek();
+      if (sel.kind === "focused" && keyOf(sel.focus) === k) {
+        scheduleEffects(sel, [{ type: "CLEAR_FOCUS" }]);
+      }
+    };
+  };
+
+  const dispatchKeyDown = (e: KeyboardEvent) => {
+    if (shouldBypassGlobalKeydown()) return;
+
+    const v = getActiveView();
+    if (!v?.onKeyDown) return;
+    v.onKeyDown(e);
+  };
+
+  const installGlobalListeners = (win: Window = window): (() => void) => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      dispatchKeyDown(e);
+    };
+
+    win.addEventListener("keydown", onKeyDown);
+    return () => win.removeEventListener("keydown", onKeyDown);
+  };
+
+  const dispose = (): void => {
+    bindings.clear();
+    views.clear();
+    activeView = null;
+    pending = null;
+    flushScheduled = false;
+  };
+
+  return {
+    selectionSignal,
+    selection,
+    setSelection,
+    focus,
+    blur,
+    mountViewRoot,
+    bindFocus,
+    installGlobalListeners,
+    dispose,
+  };
 }

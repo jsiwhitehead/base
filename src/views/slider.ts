@@ -5,7 +5,6 @@ import {
   type Focus,
   isScalarValue,
 } from "../core";
-import { type DomHost, type ViewKeyResult } from "../ui/host";
 import {
   type Component,
   el,
@@ -13,7 +12,7 @@ import {
   stopEvent,
   createComponent,
 } from "../ui/dom";
-import type { DomView, ViewFactoryArgs } from "./index";
+import type { DomView } from "./index";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -25,9 +24,14 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
   step: 1,
 };
 
+type SliderIntent =
+  | { type: "NUDGE"; dir: -1 | 1; mul: number }
+  | { type: "SET"; kind: "min" | "max" }
+  | { type: "CANCEL" };
+
 function handleSliderKey(
   e: KeyboardEvent,
-  dispatch: (intent: SliderIntent) => ViewKeyResult,
+  dispatch: (intent: SliderIntent) => void,
 ): boolean {
   if (e.metaKey || e.ctrlKey) return false;
 
@@ -109,7 +113,7 @@ export const sliderCommands = {
   setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetContent(core, id)) return;
     core.edit.setScalar(id, value);
-    core.focus(focus, { kind: "content" });
+    core.focus(focus, "content");
   },
 
   nudgeScalarValue(
@@ -126,23 +130,16 @@ export const sliderCommands = {
   },
 } as const;
 
-type SliderIntent =
-  | { type: "NUDGE"; dir: -1 | 1; mul: number }
-  | { type: "SET"; kind: "min" | "max" }
-  | { type: "CANCEL" };
-
 type SliderMountCtx = {
   core: Core;
-  host: DomHost;
   id: ItemId;
   focus: Focus;
   opts: SliderResolvedOpts;
-  dispatch: (intent: SliderIntent) => ViewKeyResult;
+  dispatch: (intent: SliderIntent) => void;
 };
 
 function mountSlider({
   core,
-  host,
   id,
   focus,
   opts,
@@ -163,12 +160,11 @@ function mountSlider({
 
     componentCtx.focusable({
       core,
-      host,
       focus,
       elementFor: () => input,
       targets: [
         {
-          target: { kind: "content" },
+          target: "content",
           getEl: () => input,
           pointerHost: () => root,
           caret: "zero",
@@ -184,10 +180,6 @@ function mountSlider({
 
     componentCtx.on(input, "input", () => {
       commitValue(Number(input.value));
-    });
-
-    componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
-      handleSliderKey(e, dispatch);
     });
 
     componentCtx.watch(
@@ -210,22 +202,25 @@ function mountSlider({
       },
     );
 
+    componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
+      handleSliderKey(e, dispatch);
+    });
+
     return root;
   });
 }
 
-export function createSliderView({
-  runtime,
-  id,
-  focus,
-}: ViewFactoryArgs): DomView {
-  const core = runtime.core as Core;
-  const host = runtime.host as DomHost;
+export function createSliderView(args: {
+  core: Core;
+  id: ItemId;
+  focus?: Focus;
+}): DomView {
+  const { core, id } = args;
 
-  const safeFocus: Focus = focus ?? { scopeId: id, id };
+  const safeFocus: Focus = args.focus ?? { scopeId: id, id };
   const resolved = DEFAULT_SLIDER_OPTS;
 
-  const dispatch = (intent: SliderIntent): ViewKeyResult => {
+  const dispatch = (intent: SliderIntent): void => {
     switch (intent.type) {
       case "NUDGE":
         sliderCommands.nudgeScalarValue(
@@ -252,35 +247,30 @@ export function createSliderView({
     }
   };
 
-  const mountCtx: SliderMountCtx = {
+  const comp = mountSlider({
     core,
-    host,
     id,
     focus: safeFocus,
     opts: resolved,
     dispatch,
+  });
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    handleSliderKey(e, dispatch);
   };
-  const comp = mountSlider(mountCtx);
+
+  const unmountRoot = core.mountViewRoot({ root: comp.el, onKeyDown });
+
+  if (core.selection().kind === "idle") {
+    core.focus(safeFocus, "content");
+  }
 
   return {
     id: `slider:${String(id)}`,
     root: comp.el,
-
-    onActivate() {
-      const sel = core.selection();
-      const focused =
-        sel.kind === "focused" &&
-        sel.focus.id === safeFocus.id &&
-        sel.focus.scopeId === safeFocus.scopeId;
-
-      if (!focused) core.focus(safeFocus, { kind: "content" });
-    },
-
-    onKeyDown(e) {
-      handleSliderKey(e as KeyboardEvent, dispatch);
-    },
-
+    onKeyDown,
     dispose() {
+      unmountRoot();
       comp.dispose();
       comp.el.replaceChildren();
     },

@@ -1,13 +1,9 @@
 import { DEV, devAssert, devWarn } from "./dev";
 import { type ItemId, type ViewKind, type ViewName, createCore } from "./core";
-import { createModel } from "./core/model";
-import { EditorRuntime } from "./core/runtime";
-import { createDomHost } from "./ui/host";
 import { createView } from "./views";
 
 export type App = {
-  core: ReturnType<typeof createCore>;
-  host: ReturnType<typeof createDomHost>;
+  core: ReturnType<typeof createCore>["core"];
   rootId: ItemId;
   dispose(): void;
 };
@@ -30,38 +26,34 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   devAssert(hostEl, "Missing app root element (#root)");
 
-  const model = createModel();
-  const rootId = model.createId();
-  model.setRoot(rootId);
-  model.apply(
-    model.op.transaction([model.op.create(model.createItem.group(rootId))]),
-  );
-
-  const runtime = new EditorRuntime({ kind: "idle" });
-  const core = createCore({ model, runtime });
-  const host = createDomHost({ runtime });
+  const { core, rootId } = createCore();
 
   core.commit((t) => {
     t.setView(rootId, rootView as ViewKind);
   });
 
-  const view = createView({ core, host }, rootView, rootId, {
+  const view = createView(core, rootView, rootId, {
     scopeId: rootId,
     id: rootId,
   });
   devAssert(view, `No view factory for rootView='${rootView}'`);
 
-  const uninstallListeners = host.installGlobalListeners(window);
-  const unmount = host.mountViewInto(hostEl!, view);
+  const uninstallListeners = core.installGlobalListeners(window);
+  const unmountRoot = core.mountViewRoot({
+    root: view.root,
+    onKeyDown: view.onKeyDown,
+  });
+
+  hostEl.replaceChildren(view.root);
 
   const app: App = {
     core,
-    host,
     rootId,
     dispose() {
       uninstallListeners();
-      unmount();
-      host.dispose();
+      unmountRoot();
+      view.dispose();
+      hostEl.replaceChildren();
       core.dispose();
     },
   };
