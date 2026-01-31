@@ -8,7 +8,10 @@ import {
   type Caret,
   type Selection,
   type DomView,
+  type ScalarOrBlank,
+  type Source,
   parseScalar,
+  refKey,
 } from "../core";
 import {
   type NavDir,
@@ -42,8 +45,43 @@ const sameRef = (a: ItemRef, b: ItemRef) =>
 
 const isEntryRef = (r: ItemRef) => r.path.length === 0;
 
-const refKey = (r: ItemRef): string =>
-  `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
+function scalarToText(v: ScalarOrBlank): string {
+  return v == null ? "" : String(v);
+}
+
+function fieldsFromSource(source: Source): SourceField[] {
+  if (source.type === "derived") {
+    return [
+      { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
+    ];
+  }
+  return [
+    { key: "from", label: "~", multiline: false, text: source.from ?? "" },
+    {
+      key: "where",
+      label: "where:",
+      multiline: true,
+      text: source.where ?? "",
+    },
+    {
+      key: "orderBy",
+      label: "orderBy:",
+      multiline: true,
+      text: source.orderBy ?? "",
+    },
+  ];
+}
+
+function patchSource(source: Source, key: string, text: string): Source {
+  if (source.type === "derived") {
+    if (key === "expr") return { type: "derived", expr: text };
+    return source;
+  }
+  if (key === "from") return { ...source, from: text };
+  if (key === "where") return { ...source, where: text };
+  if (key === "orderBy") return { ...source, orderBy: text };
+  return source;
+}
 
 const defaultTargetFor = (core: Core, ref: ItemRef): string => {
   const it = core.item(ref);
@@ -128,14 +166,14 @@ function outlineNavMove(
       if (sel.target === "content") {
         const it = core.item(prev);
         if (it.edit.kind === "source") {
-          const fields = it.edit.fields;
+          const fields = fieldsFromSource(it.edit.source);
           const last = fields[fields.length - 1];
           if (last) {
             targetOverride = `source:${last.key}`;
             caret = caretAt((last.text ?? "").length);
           }
-        } else if (it.edit.kind === "scalar") {
-          caret = caretAt((it.edit.text ?? "").length);
+        } else if (it.edit.kind === "direct" && it.content.kind === "scalar") {
+          caret = caretAt(scalarToText(it.content.value).length);
         }
       }
     }
@@ -154,23 +192,22 @@ function outlineNavMove(
 
 export const outlineCommands = {
   setLabel(core: Core, ref: ItemRef, text: string): void {
-    if (!isEntryRef(ref)) return;
-    core.edit.setLabel(ref, text);
+    core.commit((t) => t.setLabel(ref, text));
   },
 
   setText(core: Core, ref: ItemRef, text: string): void {
-    if (!isEntryRef(ref)) return;
-    core.edit.setContentScalar(ref, parseScalar(text) as any);
+    core.commit((t) => t.setScalar(ref, parseScalar(text)));
   },
 
   setDerived(core: Core, ref: ItemRef): void {
-    if (!isEntryRef(ref)) return;
-    core.edit.setSourceField(ref, "expr", "");
+    core.commit((t) => t.setSource(ref, { type: "derived", expr: "" }));
   },
 
   commitSourceField(core: Core, ref: ItemRef, key: string, text: string): void {
-    if (!isEntryRef(ref)) return;
-    core.edit.setSourceField(ref, key, text);
+    const it = core.item(ref);
+    if (it.edit.kind !== "source") return;
+    const next = patchSource(it.edit.source, key, text);
+    core.commit((t) => t.setSource(ref, next));
   },
 
   insertSibling(core: Core, sel: Selection, side: "before" | "after"): void {
@@ -203,13 +240,9 @@ export const outlineCommands = {
   ): void {
     if (sel.kind !== "focused") return;
     const ref = sel.focus.ref;
-    if (!isEntryRef(ref)) {
-      outlineCommands.insertSibling(core, sel, "after");
-      return;
-    }
 
     const snap = core.item(ref);
-    if (snap.edit.kind !== "scalar") {
+    if (!(snap.edit.kind === "direct" && snap.content.kind === "scalar")) {
       outlineCommands.insertSibling(core, sel, "after");
       return;
     }
@@ -222,7 +255,7 @@ export const outlineCommands = {
     const idx = siblings.findIndex((r) => sameRef(r, ref));
     if (idx < 0) return;
 
-    const curText = snap.edit.text ?? "";
+    const curText = scalarToText(snap.content.value);
     const len = curText.length;
 
     const start = Math.max(0, Math.min(caretStart, len));
@@ -234,12 +267,9 @@ export const outlineCommands = {
     let rightId: EntryId = -1;
 
     core.commit((t) => {
-      t.setContentScalar(ref, parseScalar(left) as any);
+      t.setScalar(ref, parseScalar(left));
       rightId = t.insertChild(scope, { at: idx + 1, kind: "blank" });
-      t.setContentScalar(
-        { entryId: rightId, path: [] },
-        parseScalar(right) as any,
-      );
+      t.setScalar({ entryId: rightId, path: [] }, parseScalar(right));
     });
 
     core.focus({ scope, ref: { entryId: rightId, path: [] } }, "content", {
@@ -269,15 +299,17 @@ export const outlineCommands = {
 
     const a = core.item(leftRef);
     const b = core.item(rightRef);
-    if (a.edit.kind !== "scalar" || b.edit.kind !== "scalar") return;
+
+    if (!(a.edit.kind === "direct" && a.content.kind === "scalar")) return;
+    if (!(b.edit.kind === "direct" && b.content.kind === "scalar")) return;
     if (!isEntryRef(leftRef) || !isEntryRef(rightRef)) return;
 
-    const leftText = a.edit.text ?? "";
-    const rightText = b.edit.text ?? "";
+    const leftText = scalarToText(a.content.value);
+    const rightText = scalarToText(b.content.value);
 
     core.commit((t) => {
-      t.setContentScalar(leftRef, parseScalar(leftText + rightText) as any);
-      t.removeEntry(rightRef.entryId);
+      t.setScalar(leftRef, parseScalar(leftText + rightText));
+      t.remove(rightRef.entryId);
     });
 
     core.focus({ scope, ref: leftRef }, "content", {
@@ -304,13 +336,15 @@ export const outlineCommands = {
     const chosen =
       prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
 
-    core.edit.removeEntry(ref.entryId);
+    core.commit((t) => t.remove(ref.entryId));
 
     if (chosen) {
       const it = core.item(chosen);
       const caret =
-        prefer === "prev" && it.edit.kind === "scalar"
-          ? caretAt((it.edit.text ?? "").length)
+        prefer === "prev" &&
+        it.edit.kind === "direct" &&
+        it.content.kind === "scalar"
+          ? caretAt(scalarToText(it.content.value).length)
           : caret0();
       core.focus({ scope, ref: chosen }, defaultTargetFor(core, chosen), {
         caret,
@@ -342,7 +376,7 @@ export const outlineCommands = {
         wrapperId = t.insertChild(scope, { at: idx, kind: "group" });
         t.setLabel({ entryId: wrapperId, path: [] }, label);
         t.setLabel(ref, "");
-        t.moveEntry(ref.entryId, wrapperId, { at: 0 });
+        t.move(ref.entryId, wrapperId, { at: 0 });
       });
 
       core.focus(
@@ -354,9 +388,7 @@ export const outlineCommands = {
     }
 
     const parentEntryId = scope.entryId;
-    const parentRef: ItemRef | null = { entryId: parentEntryId, path: [] };
-
-    if (!parentRef) return;
+    const parentRef: ItemRef = { entryId: parentEntryId, path: [] };
 
     const parentContent = core.item(parentRef).content;
     if (parentContent.kind !== "group") return;
@@ -369,8 +401,8 @@ export const outlineCommands = {
     const wrapperLabel = core.item(scope).label ?? "";
 
     core.commit((t) => {
-      t.moveEntry(ref.entryId, parentEntryId, { at: wrapperIdx });
-      t.removeEntry(scope.entryId);
+      t.move(ref.entryId, parentEntryId, { at: wrapperIdx });
+      t.remove(scope.entryId);
       t.setLabel(ref, wrapperLabel);
     });
 
@@ -390,7 +422,7 @@ export const outlineCommands = {
     }
 
     const it = core.item(ref);
-    if (it.edit.kind === "scalar") {
+    if (it.edit.kind === "direct" && it.content.kind === "scalar") {
       outlineCommands.splitAt(core, sel, 0, 0);
       return;
     }
@@ -409,12 +441,12 @@ export const outlineCommands = {
     const prefer = dir === "backward" ? "prev" : "next";
 
     const it = core.item(ref);
-    if (it.edit.kind !== "scalar") {
+    if (!(it.edit.kind === "direct" && it.content.kind === "scalar")) {
       outlineCommands.removeItem(core, sel, prefer);
       return;
     }
 
-    if ((it.edit.text ?? "").length === 0) {
+    if (scalarToText(it.content.value).length === 0) {
       outlineCommands.removeItem(core, sel, prefer);
       return;
     }
@@ -458,7 +490,7 @@ function mountOutlineHeader(
 
     const toContent = () => core.focus(focus, "content", { caret: caret0() });
 
-    const canEditLabel = isEntryRef(ref);
+    const canEditLabel = isEntryRef(ref) && core.item(ref).edit.kind !== "none";
 
     const commitLabel = (text: string) => {
       if (!canEditLabel) return;
@@ -527,10 +559,12 @@ function mountOutlineHeader(
         commit: commitField,
         getState: () => {
           const snap = core.item(ref);
+          if (snap.edit.kind !== "source") {
+            return { text: "", readOnly: true, isIssue: false };
+          }
           const text =
-            snap.edit.kind === "source"
-              ? (snap.edit.fields.find((x) => x.key === f.key)?.text ?? "")
-              : "";
+            fieldsFromSource(snap.edit.source).find((x) => x.key === f.key)
+              ?.text ?? "";
           return { text, readOnly: !isEntryRef(ref), isIssue: false };
         },
         onCommitEvents: ["blur"],
@@ -606,13 +640,12 @@ function mountOutlineChildren(
     ensureTabbable(container);
 
     const mgr = componentCtx.list(container, (key: string) => {
-      const childRef = (() => {
-        const [a, rest] = key.split(":");
-        const entryId = Number(a);
-        const path =
-          rest && rest.length ? rest.split(",").map((x) => Number(x)) : [];
-        return { entryId, path } as ItemRef;
-      })();
+      const [a, rest] = key.split(":");
+      const entryId = Number(a);
+      const path =
+        rest && rest.length ? rest.split(",").map((x) => Number(x)) : [];
+      const childRef = { entryId, path } as ItemRef;
+
       return mountOutlineNode(mountCtx, {
         focus: { scope: focus.ref, ref: childRef },
         showHeader: true,
@@ -683,8 +716,11 @@ function mountOutlineBody(
         stops.push(
           on(inputEl, "keydown", (e: KeyboardEvent) => {
             if (e.key === "=" && !inputEl.value && isEntryRef(ref)) {
-              stopEvent(e);
-              dispatch({ type: "SET_DERIVED" });
+              const it = core.item(ref);
+              if (it.edit.kind === "direct") {
+                stopEvent(e);
+                dispatch({ type: "SET_DERIVED" });
+              }
             }
           }),
         );
@@ -798,9 +834,7 @@ function mountOutlineNode(
         const snap = core.item(focus.ref);
         const label = (snap.label ?? "").trim();
         const fields =
-          snap.edit.kind === "source"
-            ? (snap.edit.fields as SourceField[])
-            : [];
+          snap.edit.kind === "source" ? fieldsFromSource(snap.edit.source) : [];
         const content = snap.content;
         const mode: "children" | "body" =
           content.kind === "group" ? "children" : "body";
@@ -988,9 +1022,7 @@ export function createOutlineView(args: {
       core.focus(
         { scope: rootRef, ref: first },
         defaultTargetFor(core, first),
-        {
-          caret: caret0(),
-        },
+        { caret: caret0() },
       );
     }
   }

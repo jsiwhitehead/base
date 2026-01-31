@@ -1,10 +1,11 @@
-import type {
-  Core,
-  ItemRef,
-  ItemContent,
-  Caret,
-  Focus,
-  Component,
+import {
+  type Core,
+  type ItemRef,
+  type Caret,
+  type Focus,
+  type Component,
+  refKey,
+  refFromKey,
 } from "../core";
 import {
   createComponent,
@@ -338,18 +339,6 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-const refKey = (r: ItemRef): string =>
-  `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
-
-const refFromKey = (key: string): ItemRef => {
-  const i = key.indexOf(":");
-  if (i === -1) return { entryId: Number(key), path: [] };
-  const entryId = Number(key.slice(0, i));
-  const rest = key.slice(i + 1);
-  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
-  return { entryId, path };
-};
-
 function readonlyItemText(core: Core, ref: ItemRef): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
@@ -440,10 +429,18 @@ export function contentField(opts: ContentFieldOpts): Component {
         commit: (text) => opts.commitText?.(text),
         getState: () => {
           const snap = core.item(opts.ref);
-          if (snap.edit.kind === "scalar")
-            return { text: snap.edit.text, readOnly: false, isIssue: false };
-
           const c = snap.content;
+
+          const canEdit = snap.edit.kind === "direct" && c.kind === "scalar";
+
+          if (canEdit) {
+            return {
+              text: c.value == null ? "" : String(c.value),
+              readOnly: false,
+              isIssue: false,
+            };
+          }
+
           const isIssue = c.kind === "issue";
           const text =
             c.kind === "issue"
@@ -513,7 +510,7 @@ export function contentField(opts: ContentFieldOpts): Component {
         const nextKind =
           c.kind === "group"
             ? "group"
-            : snap.edit.kind === "scalar"
+            : snap.edit.kind === "direct" && c.kind === "scalar"
               ? "text"
               : "readonly";
 

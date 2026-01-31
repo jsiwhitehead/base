@@ -4,19 +4,15 @@ import {
   type Entry,
   type EntryId,
   type EntryContent,
-  type EntryContentSettable,
   type ViewKind,
   type ViewName,
-  isBlankContent,
-  isScalarContent,
+  type Op,
   isDerivedContent,
   isLensContent,
-  type Op,
 } from "./model";
 import {
   createEvaluator,
   type Value,
-  type LabeledValue,
   isBlankValue,
   isIssueValue,
   isScalarValue,
@@ -36,35 +32,44 @@ import {
   clamp,
   isTextInput,
   defaultTextCaret,
+  refKey,
+  refFromKey,
 } from "./runtime";
+import { DEV, devAssert } from "../dev";
 
 export type ItemRef = { entryId: EntryId; path: readonly number[] };
 
-export type Scalar = null | true | number | string;
+export type Scalar = true | number | string;
+export type ScalarOrBlank = Scalar | null;
 
-export type SourceField = {
-  key: string;
-  label: string;
-  multiline: boolean;
-  text: string;
-};
-
-export type Editability =
-  | { kind: "none" }
-  | { kind: "scalar"; text: string }
-  | { kind: "source"; fields: readonly SourceField[] };
-
-export type ItemContent =
-  | { kind: "scalar"; value: Scalar }
+export type Content =
+  | { kind: "scalar"; value: ScalarOrBlank }
   | { kind: "issue"; message: string }
   | { kind: "group"; children: readonly ItemRef[] };
 
-export type ItemSnapshot = {
+export type Source =
+  | { type: "derived"; expr: string }
+  | { type: "lens"; from: string; where: string; orderBy: string };
+
+export type Edit =
+  | { kind: "none" }
+  | { kind: "direct" }
+  | { kind: "source"; source: Source };
+
+export type ItemBase = {
   ref: ItemRef;
   label?: string;
-  content: ItemContent;
-  edit: Editability;
 };
+
+export type Item =
+  | (ItemBase & {
+      edit: { kind: "direct" };
+      content: Exclude<Content, { kind: "issue" }>;
+    })
+  | (ItemBase & {
+      edit: Exclude<Edit, { kind: "direct" }>;
+      content: Content;
+    });
 
 export type ApplyResult = {
   readonly created: readonly EntryId[];
@@ -84,61 +89,50 @@ const refOf = (entryId: EntryId, path: readonly number[] = []): ItemRef => ({
 
 const isEntryRef = (r: ItemRef): boolean => r.path.length === 0;
 
-const entryIdOf = (r: ItemRef): EntryId => {
-  if (!isEntryRef(r)) throw new Error("ItemRef is not an entry ref");
-  return r.entryId;
-};
-
-type Resolved = { value: Value; label?: string };
-
-function storedFromScalar(v: Scalar): EntryContentSettable {
+function storedFromScalar(v: ScalarOrBlank): EntryContent {
   return v === null ? { kind: "blank" } : { kind: "scalar", value: v };
 }
 
-function entryContentToEditability(c: EntryContent): Editability {
-  if (isBlankContent(c)) return { kind: "scalar", text: "" };
-  if (isScalarContent(c)) return { kind: "scalar", text: String(c.value) };
+function toEditFromContent(c: EntryContent): Edit {
   if (isDerivedContent(c))
-    return {
-      kind: "source",
-      fields: [
-        { key: "expr", label: "=", multiline: true, text: c.expr ?? "" },
-      ],
-    };
+    return { kind: "source", source: { type: "derived", expr: c.expr } };
   if (isLensContent(c))
     return {
       kind: "source",
-      fields: [
-        { key: "from", label: "~", multiline: false, text: c.from ?? "" },
-        { key: "where", label: "where:", multiline: true, text: c.where ?? "" },
-        {
-          key: "orderBy",
-          label: "orderBy:",
-          multiline: true,
-          text: c.orderBy ?? "",
-        },
-      ],
+      source: {
+        type: "lens",
+        from: c.from,
+        where: c.where,
+        orderBy: c.orderBy,
+      },
     };
-  return { kind: "none" };
+  return { kind: "direct" };
+}
+
+function contentToScalarOrBlank(
+  c: Extract<Content, { kind: "scalar" }>,
+): ScalarOrBlank {
+  return c.value;
 }
 
 export type Tx = {
   setLabel(ref: ItemRef, label: string): void;
-  setContentScalar(ref: ItemRef, value: Scalar): void;
-  setSourceField(ref: ItemRef, key: string, text: string): void;
+  setView(entryId: EntryId, view: ViewKind): void;
+
+  setScalar(ref: ItemRef, value: ScalarOrBlank): void;
+  setSource(ref: ItemRef, source: Source): void;
 
   insertChild(
-    ref: ItemRef,
+    owner: ItemRef,
     opts?: { at?: number; kind?: "blank" | "group" },
   ): EntryId;
-  moveEntry(
+
+  move(
     entryId: EntryId,
     toOwnerId: EntryId | null,
     opts?: { at?: number },
   ): void;
-  removeEntry(entryId: EntryId): void;
-
-  setView(entryId: EntryId, view: ViewKind): void;
+  remove(entryId: EntryId): void;
 };
 
 export type Core = {
@@ -146,10 +140,9 @@ export type Core = {
 
   root(): ItemRef;
 
-  item(ref: ItemRef): ItemSnapshot;
+  item(ref: ItemRef): Item;
 
   commit(run: (t: Tx) => void): ApplyResult;
-  edit: Tx;
 
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
@@ -173,6 +166,7 @@ export function createCore(opts: {
   views: Partial<Record<ViewName, ViewFactory<Core>>>;
 }): { core: Core; rootId: EntryId } {
   const model = createModel();
+
   const rootId = model.createId();
   model.setRoot(rootId);
   model.apply(
@@ -190,39 +184,12 @@ export function createCore(opts: {
     initialSelection: { kind: "idle" },
   });
 
-  const resolve = (ref: ItemRef): Resolved => {
-    let cur: Value = evaluator.value(ref.entryId);
-    let label: string | undefined =
-      model.readEntry(ref.entryId).label.trim() || undefined;
-
-    for (let i = 0; i < ref.path.length; i++) {
-      const idx = ref.path[i]!;
-      if (isEntryGroupValue(cur)) {
-        const childEntryId = cur.entryIds[idx];
-        if (childEntryId == null)
-          return { value: { kind: "issue", message: "Invalid path" } as any };
-        label = model.readEntry(childEntryId).label.trim() || undefined;
-        cur = evaluator.value(childEntryId);
-        continue;
-      }
-      if (isValueGroupValue(cur)) {
-        const it: LabeledValue | undefined = cur.items[idx];
-        if (!it)
-          return { value: { kind: "issue", message: "Invalid path" } as any };
-        label = it.label?.trim() || undefined;
-        cur = it.value;
-        continue;
-      }
-      return { value: { kind: "issue", message: "Invalid path" } as any };
-    }
-
-    return { value: cur, ...(label ? { label } : {}) };
-  };
-
   const childrenOfResolved = (base: ItemRef, v: Value): readonly ItemRef[] => {
-    if (isEntryGroupValue(v) || isValueGroupValue(v)) {
-      const len = isEntryGroupValue(v) ? v.entryIds.length : v.items.length;
-      return Array.from({ length: len }, (_, i) => ({
+    if (isEntryGroupValue(v)) {
+      return v.entryIds.map((id) => ({ entryId: id, path: [] }));
+    }
+    if (isValueGroupValue(v)) {
+      return v.items.map((_it, i) => ({
         entryId: base.entryId,
         path: [...base.path, i],
       }));
@@ -230,96 +197,144 @@ export function createCore(opts: {
     return [];
   };
 
-  const toContent = (ref: ItemRef, v: Value): ItemContent => {
+  const resolve = (ref: ItemRef): { value: Value; label?: string } => {
+    let cur: Value = evaluator.value(ref.entryId);
+    let label: string | undefined =
+      model.readEntry(ref.entryId).label.trim() || undefined;
+
+    for (let i = 0; i < ref.path.length; i++) {
+      const idx = ref.path[i]!;
+      if (!isValueGroupValue(cur)) {
+        return { value: { kind: "issue", message: "Invalid path" } as any };
+      }
+      const it = cur.items[idx];
+      if (!it)
+        return { value: { kind: "issue", message: "Invalid path" } as any };
+      label = it.label?.trim() || undefined;
+      cur = it.value;
+    }
+
+    return { value: cur, ...(label ? { label } : {}) };
+  };
+
+  const toContent = (ref: ItemRef, v: Value): Content => {
     if (isBlankValue(v)) return { kind: "scalar", value: null };
     if (isIssueValue(v)) return { kind: "issue", message: v.message };
-    if (isScalarValue(v))
+    if (isScalarValue(v)) {
+      const x = v.value;
       return {
         kind: "scalar",
         value:
-          typeof v.value === "number" ||
-          typeof v.value === "string" ||
-          v.value === true
-            ? v.value
+          x === true || typeof x === "number" || typeof x === "string"
+            ? x
             : null,
       };
+    }
     return { kind: "group", children: childrenOfResolved(ref, v) };
   };
 
-  const editabilityOf = (ref: ItemRef): Editability => {
+  const toEdit = (ref: ItemRef): Edit => {
     if (!isEntryRef(ref)) return { kind: "none" };
-    return entryContentToEditability(model.readEntry(ref.entryId).content);
+    const c = model.readEntry(ref.entryId).content;
+    return toEditFromContent(c);
   };
 
-  const item = (ref: ItemRef): ItemSnapshot => {
-    const r = resolve(ref);
-    return {
-      ref,
-      ...(r.label ? { label: r.label } : {}),
-      content: toContent(ref, r.value),
-      edit: editabilityOf(ref),
-    };
+  const item = (ref: ItemRef): Item => {
+    try {
+      const r = resolve(ref);
+      const c = toContent(ref, r.value);
+      const edit = toEdit(ref);
+
+      const base: ItemBase = {
+        ref,
+        ...(r.label ? { label: r.label } : {}),
+      };
+
+      if (edit.kind === "direct") {
+        devAssert(
+          c.kind !== "issue",
+          "Direct edit cannot pair with issue content",
+        );
+        return {
+          ...base,
+          edit,
+          content: c as Exclude<Content, { kind: "issue" }>,
+        };
+      }
+
+      return { ...base, edit, content: c };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        ref,
+        content: { kind: "issue", message: msg },
+        edit: { kind: "none" },
+      };
+    }
   };
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
     const ops: Op[] = [];
 
+    const ensureEditableEntryRef = (ref: ItemRef) => {
+      if (!isEntryRef(ref)) {
+        if (DEV) throw new Error("Ref is not editable");
+        return false;
+      }
+      return true;
+    };
+
     const t: Tx = {
       setLabel: (ref0, label) => {
-        ops.push(model.ops.patchLabel(entryIdOf(ref0), label));
+        if (!ensureEditableEntryRef(ref0)) return;
+        ops.push(model.ops.patchLabel(ref0.entryId, label));
       },
 
-      setContentScalar: (ref0, value) => {
-        ops.push(
-          model.ops.patchContent(entryIdOf(ref0), storedFromScalar(value)),
-        );
+      setView: (entryId, view) => {
+        ops.push(model.ops.patchView(entryId, view));
       },
 
-      setSourceField: (ref0, key, text) => {
-        const id = entryIdOf(ref0);
-        const prev: EntryContent = model.readEntry(id).content;
+      setScalar: (ref0, value) => {
+        if (!ensureEditableEntryRef(ref0)) return;
+        ops.push(model.ops.patchContent(ref0.entryId, storedFromScalar(value)));
+      },
 
-        if (key === "expr") {
-          ops.push(model.ops.patchContent(id, { kind: "derived", expr: text }));
+      setSource: (ref0, source) => {
+        if (!ensureEditableEntryRef(ref0)) return;
+
+        if (source.type === "derived") {
+          ops.push(
+            model.ops.patchContent(ref0.entryId, {
+              kind: "derived",
+              expr: source.expr,
+            }),
+          );
           return;
         }
 
-        const base =
-          prev.kind === "lens"
-            ? prev
-            : ({ kind: "lens", from: "", where: "", orderBy: "" } as const);
-
-        if (key === "from")
-          ops.push(
-            model.ops.patchContent(id, {
-              kind: "lens",
-              from: text,
-              where: base.where,
-              orderBy: base.orderBy,
-            }),
-          );
-        else if (key === "where")
-          ops.push(
-            model.ops.patchContent(id, {
-              kind: "lens",
-              from: base.from,
-              where: text,
-              orderBy: base.orderBy,
-            }),
-          );
-        else if (key === "orderBy")
-          ops.push(
-            model.ops.patchContent(id, {
-              kind: "lens",
-              from: base.from,
-              where: base.where,
-              orderBy: text,
-            }),
-          );
+        ops.push(
+          model.ops.patchContent(ref0.entryId, {
+            kind: "lens",
+            from: source.from,
+            where: source.where,
+            orderBy: source.orderBy,
+          }),
+        );
       },
 
-      insertChild: (ref0, opts2) => {
-        const ownerId = entryIdOf(ref0);
+      insertChild: (ownerRef, opts2) => {
+        if (!ensureEditableEntryRef(ownerRef)) return -1;
+
+        const ownerItem = item(ownerRef);
+        if (
+          ownerItem.edit.kind !== "direct" ||
+          ownerItem.content.kind !== "group"
+        ) {
+          if (DEV) throw new Error("Owner is not a direct editable group");
+          return -1;
+        }
+
+        const ownerId = ownerRef.entryId;
         const id = model.createId();
         const kind = opts2?.kind ?? "blank";
         const entry: Entry =
@@ -338,7 +353,7 @@ export function createCore(opts: {
         return id;
       },
 
-      moveEntry: (id, toOwnerId, opts2) => {
+      move: (id, toOwnerId, opts2) => {
         ops.push(
           model.ops.reparent({
             childId: id,
@@ -348,12 +363,8 @@ export function createCore(opts: {
         );
       },
 
-      removeEntry: (id) => {
+      remove: (id) => {
         ops.push(model.ops.detach(id));
-      },
-
-      setView: (id, view) => {
-        ops.push(model.ops.patchView(id, view));
       },
     };
 
@@ -367,25 +378,6 @@ export function createCore(opts: {
     runtime.setSelection(runtime.selectionSignal.peek());
 
     return result;
-  };
-
-  const edit: Tx = {
-    setLabel: (ref0, label) => commit((t) => t.setLabel(ref0, label)),
-    setContentScalar: (ref0, value) =>
-      commit((t) => t.setContentScalar(ref0, value)),
-    setSourceField: (ref0, key, text) =>
-      commit((t) => t.setSourceField(ref0, key, text)),
-    insertChild: (ref0, opts2) => {
-      let out: EntryId = -1;
-      commit((t) => {
-        out = t.insertChild(ref0, opts2);
-      });
-      return out;
-    },
-    moveEntry: (id, toOwnerId, opts2) =>
-      commit((t) => t.moveEntry(id, toOwnerId, opts2)),
-    removeEntry: (id) => commit((t) => t.removeEntry(id)),
-    setView: (id, view) => commit((t) => t.setView(id, view)),
   };
 
   const focus = (
@@ -435,7 +427,6 @@ export function createCore(opts: {
     item,
 
     commit,
-    edit,
 
     selection,
     focus,
@@ -448,17 +439,14 @@ export function createCore(opts: {
   return { core, rootId };
 }
 
-export type { EntryId, ViewName, ViewKind, Value, LabeledValue };
 export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
+export type { EntryId, ViewName, ViewKind };
 export {
   parseScalar,
   clamp,
   isTextInput,
   defaultTextCaret,
-  isBlankValue,
-  isIssueValue,
-  isScalarValue,
-  isEntryGroupValue,
-  isValueGroupValue,
+  refKey,
+  refFromKey,
 };

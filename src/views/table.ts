@@ -9,13 +9,14 @@ import {
   type Selection,
   type DomView,
   parseScalar,
+  refKey,
+  refFromKey,
 } from "../core";
 import {
   type NavDir,
   type NavMode,
   defaultTextNav,
   el,
-  ensureTabbable,
   reconcileChildren,
   stopEvent,
   bindTextControlKeys,
@@ -38,18 +39,6 @@ const sameRef = (a: ItemRef, b: ItemRef) =>
   a.entryId === b.entryId &&
   a.path.length === b.path.length &&
   a.path.every((x, i) => x === b.path[i]);
-
-const refKey = (r: ItemRef): string =>
-  `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
-
-const refFromKey = (key: string): ItemRef => {
-  const i = key.indexOf(":");
-  if (i === -1) return { entryId: Number(key), path: [] };
-  const entryId = Number(key.slice(0, i));
-  const rest = key.slice(i + 1);
-  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
-  return { entryId, path };
-};
 
 const tableRefOf = (tableId: EntryId): ItemRef => ({
   entryId: tableId,
@@ -234,18 +223,14 @@ function tableNavMove(
 
 export const tableCommands = {
   setLabel(core: Core, rowRef: ItemRef, text: string): void {
-    if (!isEntryRef(rowRef)) return;
-    core.edit.setLabel(rowRef, text);
+    core.commit((t) => t.setLabel(rowRef, text));
   },
 
   setText(core: Core, cellRef: ItemRef, raw: string): void {
-    if (!isEntryRef(cellRef)) return;
-    core.edit.setContentScalar(cellRef, parseScalar(raw) as any);
+    core.commit((t) => t.setScalar(cellRef, parseScalar(raw)));
   },
 
   addRowAfter(core: Core, tableRef: ItemRef, afterRow: ItemRef | null): void {
-    if (!isEntryRef(tableRef)) return;
-
     const rows = rowRefs(core, tableRef);
     const afterIdx = afterRow
       ? rows.findIndex((r) => sameRef(r, afterRow))
@@ -269,7 +254,7 @@ export const tableCommands = {
     const idx = rows.findIndex((r) => sameRef(r, rowRef));
     const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
 
-    core.edit.removeEntry(rowRef.entryId);
+    core.commit((t) => t.remove(rowRef.entryId));
 
     if (nextRow) {
       const next = focusRowLabel(tableRef, nextRow);
@@ -309,7 +294,7 @@ export const tableCommands = {
         if (!isEntryRef(rowRef)) continue;
         const cell = findChildByLabel(core, rowRef, name);
         if (!cell || !isEntryRef(cell)) continue;
-        t.removeEntry(cell.entryId);
+        t.remove(cell.entryId);
       }
     });
   },

@@ -5,7 +5,6 @@ import {
   type ItemRef,
   type Selection,
   createCore,
-  parseScalar,
 } from "../src/core";
 import {
   createModel,
@@ -520,16 +519,16 @@ describe("core evaluator contract", () => {
     core.commit((t) => {
       x = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(x), "x");
-      t.setContentScalar(refOf(x), 10);
+      t.setScalar(refOf(x), 10);
 
       y = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(y), "y");
-      t.setSourceField(refOf(y), "expr", "x + 2");
+      t.setSource(refOf(y), { type: "derived", expr: "x + 2" });
     });
 
     expect(contentToScalar(core.item(refOf(y)).content)).toBe(12);
 
-    core.edit.setContentScalar(refOf(x), 40);
+    core.commit((t) => t.setScalar(refOf(x), 40));
     await tick();
     expect(contentToScalar(core.item(refOf(y)).content)).toBe(42);
   });
@@ -546,8 +545,8 @@ describe("core evaluator contract", () => {
       t.setLabel(refOf(a), "a");
       b = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(b), "b");
-      t.setSourceField(refOf(a), "expr", "b");
-      t.setSourceField(refOf(b), "expr", "a");
+      t.setSource(refOf(a), { type: "derived", expr: "b" });
+      t.setSource(refOf(b), { type: "derived", expr: "a" });
     });
 
     const ca = core.item(refOf(a)).content;
@@ -574,18 +573,18 @@ describe("core evaluator contract", () => {
 
       a = t.insertChild(refOf(g), { kind: "blank" });
       t.setLabel(refOf(a), "a");
-      t.setContentScalar(refOf(a), 1);
+      t.setScalar(refOf(a), 1);
 
       h = t.insertChild(refOf(g), { kind: "group" });
       t.setLabel(refOf(h), "h");
 
       b = t.insertChild(refOf(h), { kind: "blank" });
       t.setLabel(refOf(b), "b");
-      t.setContentScalar(refOf(b), 2);
+      t.setScalar(refOf(b), 2);
 
       d = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(d), "d");
-      t.setSourceField(refOf(d), "expr", "g");
+      t.setSource(refOf(d), { type: "derived", expr: "g" });
     });
 
     const snap = core.item(refOf(d));
@@ -613,13 +612,13 @@ describe("selection contract", () => {
       t.setLabel(refOf(g), "g");
       x = t.insertChild(refOf(g), { kind: "blank" });
       t.setLabel(refOf(x), "x");
-      t.setContentScalar(refOf(x), 1);
+      t.setScalar(refOf(x), 1);
     });
 
     core.focus({ scope: refOf(g), ref: refOf(x) }, "content");
 
     core.commit((t) => {
-      t.removeEntry(g);
+      t.remove(g);
     });
 
     await tick();
@@ -654,13 +653,13 @@ describe("views contract (selection transitions via onKeyDown)", () => {
       t.setLabel(refOf(rowA), "rowA");
       aScore = t.insertChild(refOf(rowA), { kind: "blank" });
       t.setLabel(refOf(aScore), "score");
-      t.setContentScalar(refOf(aScore), 5);
+      t.setScalar(refOf(aScore), 5);
 
       rowB = t.insertChild(refOf(tableId), { kind: "group" });
       t.setLabel(refOf(rowB), "rowB");
       bScore = t.insertChild(refOf(rowB), { kind: "blank" });
       t.setLabel(refOf(bScore), "score");
-      t.setContentScalar(refOf(bScore), 6);
+      t.setScalar(refOf(bScore), 6);
     });
 
     const view = viewFactories.table({ core, id: tableId });
@@ -701,17 +700,17 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     core.commit((t) => {
       const a = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(a), "a");
-      t.setContentScalar(refOf(a), 1);
+      t.setScalar(refOf(a), 1);
 
       const g = t.insertChild(root, { kind: "group" });
       t.setLabel(refOf(g), "g");
       const ga = t.insertChild(refOf(g), { kind: "blank" });
       t.setLabel(refOf(ga), "ga");
-      t.setContentScalar(refOf(ga), 2);
+      t.setScalar(refOf(ga), 2);
 
       const b = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(b), "b");
-      t.setContentScalar(refOf(b), 3);
+      t.setScalar(refOf(b), 3);
     });
 
     const view = viewFactories.outline({ core, id: rootId });
@@ -746,7 +745,7 @@ describe("DOM smoke", () => {
       sliderId = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(sliderId), "slider");
       t.setView(sliderId, "slider");
-      t.setContentScalar(refOf(sliderId), 10);
+      t.setScalar(refOf(sliderId), 10);
     });
 
     const view = viewFactories.slider({ core, id: sliderId });
@@ -779,11 +778,11 @@ describe("DOM smoke", () => {
     core.commit((t) => {
       x = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(x), "x");
-      t.setContentScalar(refOf(x), 1);
+      t.setScalar(refOf(x), 1);
 
       d = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(d), "d");
-      t.setSourceField(refOf(d), "expr", "x + 1");
+      t.setSource(refOf(d), { type: "derived", expr: "x + 1" });
     });
 
     const view = viewFactories.outline({ core, id: rootId });
@@ -801,7 +800,7 @@ describe("DOM smoke", () => {
     await tick();
     expect(getDerivedText()).toBe("2");
 
-    core.edit.setContentScalar(refOf(x), 5);
+    core.commit((t) => t.setScalar(refOf(x), 5));
     await tick();
     expect(getDerivedText()).toBe("6");
 
@@ -817,14 +816,14 @@ describe("DOM smoke", () => {
     core.commit((t) => {
       a = t.insertChild(root, { kind: "blank" });
       t.setLabel(refOf(a), "a");
-      t.setContentScalar(refOf(a), 1);
+      t.setScalar(refOf(a), 1);
     });
 
     const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(core, view);
 
     expect(() => unmount()).not.toThrow();
-    expect(() => core.edit.setContentScalar(refOf(a), 2)).not.toThrow();
+    expect(() => core.commit((t) => t.setScalar(refOf(a), 2))).not.toThrow();
   });
 });
 
@@ -835,7 +834,7 @@ test("outline: clicking editable content focuses the text input element", async 
   core.commit((t) => {
     const x = t.insertChild(root, { kind: "blank" });
     t.setLabel(refOf(x), "x");
-    t.setContentScalar(refOf(x), 10);
+    t.setScalar(refOf(x), 10);
   });
 
   const view = viewFactories.outline({ core, id: rootId });

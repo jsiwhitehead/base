@@ -39,8 +39,17 @@ export type DomView = {
 export type ViewFactoryArgs<C> = { core: C; id: EntryId; focus?: Focus };
 export type ViewFactory<C> = (args: ViewFactoryArgs<C>) => DomView;
 
-const refKey = (r: ItemRef): string =>
+export const refKey = (r: ItemRef): string =>
   `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
+
+export const refFromKey = (key: string): ItemRef => {
+  const i = key.indexOf(":");
+  if (i === -1) return { entryId: Number(key), path: [] };
+  const entryId = Number(key.slice(0, i));
+  const rest = key.slice(i + 1);
+  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
+  return { entryId, path };
+};
 
 const keyOf = (f: Focus): string => `${refKey(f.scope)}::${refKey(f.ref)}`;
 

@@ -1,11 +1,11 @@
-import {
-  type Core,
-  type EntryId,
-  type ItemRef,
-  type Scalar,
-  type Component,
-  type Focus,
-  type DomView,
+import type {
+  Core,
+  EntryId,
+  ItemRef,
+  ScalarOrBlank,
+  Component,
+  Focus,
+  DomView,
 } from "../core";
 import { clamp } from "../core/runtime";
 import { el, stopEvent, createComponent } from "../dom";
@@ -67,7 +67,7 @@ function handleSliderKey(
   }
 }
 
-function toNumberOr(v: Scalar, fallback: number): number {
+function toNumberOr(v: ScalarOrBlank, fallback: number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
   if (typeof v === "string") {
     const n = Number(v);
@@ -98,21 +98,23 @@ function formatNumberForStep(n: number, step: number): string {
 const isEntryRef = (r: ItemRef) => r.path.length === 0;
 
 const canSetScalar = (core: Core, ref: ItemRef): boolean => {
-  const snap = core.item(ref);
-  return isEntryRef(ref) && snap.edit.kind === "scalar";
+  const it = core.item(ref);
+  return (
+    isEntryRef(ref) && it.edit.kind === "direct" && it.content.kind === "scalar"
+  );
 };
 
 const getScalarOr = (core: Core, ref: ItemRef, fallback: number): number => {
-  const c = core.item(ref).content;
-  if (c.kind === "scalar" && c.value != null)
-    return toNumberOr(c.value, fallback);
+  const it = core.item(ref);
+  if (it.content.kind === "scalar")
+    return toNumberOr(it.content.value, fallback);
   return fallback;
 };
 
 export const sliderCommands = {
   setScalarValue(core: Core, focus: Focus, ref: ItemRef, value: number): void {
     if (!Number.isFinite(value) || !canSetScalar(core, ref)) return;
-    core.edit.setContentScalar(ref, value);
+    core.commit((t) => t.setScalar(ref, value));
     core.focus(focus, "content");
   },
 

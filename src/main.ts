@@ -1,12 +1,6 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import {
-  type EntryId,
-  type ItemRef,
-  type ViewKind,
-  type ViewName,
-  createCore,
-  parseScalar,
-} from "./core";
+import type { EntryId, ItemRef, ViewKind, ViewName, Scalar } from "./core";
+import { createCore } from "./core";
 import { viewFactories } from "./views";
 
 export type App = {
@@ -99,16 +93,12 @@ export function seedDemo(app: App) {
     return refOf(id);
   };
 
-  const mkScalar = (
-    owner: ItemRef,
-    label: string,
-    value: true | number | string,
-  ) => {
+  const mkScalar = (owner: ItemRef, label: string, value: Scalar) => {
     let id: EntryId = -1;
     core.commit((t) => {
       id = t.insertChild(owner, { kind: "blank" });
       t.setLabel(refOf(id), label);
-      t.setContentScalar(refOf(id), value);
+      t.setScalar(refOf(id), value);
     });
     return refOf(id);
   };
@@ -118,7 +108,7 @@ export function seedDemo(app: App) {
     core.commit((t) => {
       id = t.insertChild(owner, { kind: "blank" });
       t.setLabel(refOf(id), label);
-      t.setSourceField(refOf(id), "expr", expr);
+      t.setSource(refOf(id), { type: "derived", expr });
     });
     return refOf(id);
   };
@@ -132,9 +122,12 @@ export function seedDemo(app: App) {
     core.commit((t) => {
       id = t.insertChild(owner, { kind: "blank" });
       t.setLabel(refOf(id), label);
-      t.setSourceField(refOf(id), "from", spec.from);
-      t.setSourceField(refOf(id), "where", spec.where ?? "");
-      t.setSourceField(refOf(id), "orderBy", spec.orderBy ?? "");
+      t.setSource(refOf(id), {
+        type: "lens",
+        from: spec.from,
+        where: spec.where ?? "",
+        orderBy: spec.orderBy ?? "",
+      });
     });
     return refOf(id);
   };
