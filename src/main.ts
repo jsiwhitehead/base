@@ -1,10 +1,10 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import type { ItemId, ViewKind, ViewName, Scalar } from "./core";
+import type { Core, ItemId, ViewKind, ViewName, Scalar } from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
 
 export type App = {
-  core: ReturnType<typeof createCore>["core"];
+  core: Core;
   rootId: ItemId;
   dispose(): void;
 };

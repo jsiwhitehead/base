@@ -1,11 +1,21 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { type ItemId, type Selection, createCore } from "../src/core";
+import {
+  type ItemId,
+  type Selection,
+  type Content,
+  type Core,
+  createCore,
+  DEFAULT_TARGET,
+} from "../src/core";
 import {
   createModel,
   type SnapshotContent,
   type Model,
   type EntryId,
+  makeBlankEntry,
+  makeGroupEntry,
+  normalizeLabel,
 } from "../src/core/model";
 import {
   V,
@@ -14,8 +24,6 @@ import {
   isBlankValue,
   isIssueValue,
   isScalarValue,
-  isEntryGroupValue,
-  isValueGroupValue,
 } from "../src/core/eval";
 import { interpretExpr } from "../src/core/lang";
 import { viewFactories } from "../src/views";
@@ -44,23 +52,14 @@ function makeCoreRuntime() {
   return { core, rootId };
 }
 
-function contentToScalar(
-  content: ReturnType<ReturnType<typeof createCore>["core"]["item"]>["content"],
-): true | number | string | null {
+function contentToScalar(content: Content): true | number | string | null {
   if (content.kind === "issue") throw new Error(`Issue: ${content.message}`);
   if (content.kind === "group") throw new Error(`Expected scalar, got group`);
   return content.value;
 }
 
-function expectIssueValue(v: Value, includes?: string) {
-  expect(isIssueValue(v)).toBe(true);
-  if (includes && isIssueValue(v)) expect(v.message).toContain(includes);
-}
-
 type SnapshotGroupContent = Extract<SnapshotContent, { kind: "group" }>;
 type FocusedSelection = Extract<Selection, { kind: "focused" }>;
-type EntryGroupValue = Extract<Value, { kind: "entry-group" }>;
-type ValueGroupValue = Extract<Value, { kind: "value-group" }>;
 
 function expectSnapshotGroup(content: SnapshotContent): SnapshotGroupContent {
   if (
@@ -79,18 +78,6 @@ function expectFocusedSelection(
 ): asserts sel is FocusedSelection {
   expect(sel.kind).toBe("focused");
   if (sel.kind !== "focused") throw new Error("expected focused selection");
-}
-
-function expectEntryGroup(val: Value): EntryGroupValue {
-  expect(isEntryGroupValue(val)).toBe(true);
-  if (!isEntryGroupValue(val)) throw new Error("expected entry-group value");
-  return val;
-}
-
-function expectValueGroup(val: Value): ValueGroupValue {
-  expect(isValueGroupValue(val)).toBe(true);
-  if (!isValueGroupValue(val)) throw new Error("expected value-group value");
-  return val;
 }
 
 function assertPublicModelContracts(model: Model) {
@@ -124,7 +111,7 @@ function assertPublicModelContracts(model: Model) {
 
     const labelToId = new Map<string, EntryId>();
     for (const cid of kids) {
-      const nm = model.normalizeLabel(model.readEntry(cid).label);
+      const nm = normalizeLabel(model.readEntry(cid).label);
       if (!nm) continue;
       const prev = labelToId.get(nm);
       expect(prev).toBeUndefined();
@@ -134,7 +121,7 @@ function assertPublicModelContracts(model: Model) {
 }
 
 async function mountView(
-  _core: ReturnType<typeof createCore>["core"],
+  _core: Core,
   view: {
     root: HTMLElement;
     onKeyDown?: (e: KeyboardEvent) => void;
@@ -157,8 +144,8 @@ describe("model contract", () => {
     model.setRoot(rootId);
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createEntry.group(rootId)),
-        model.ops.patchView(rootId, "outline"),
+        model.ops.create(makeGroupEntry(rootId)),
+        model.ops.patch(rootId, { view: "outline" }),
       ]),
     );
 
@@ -173,8 +160,8 @@ describe("model contract", () => {
     const id = model.createId();
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createEntry.blank(id)),
-        ...(label ? [model.ops.patchLabel(id, label)] : []),
+        model.ops.create(makeBlankEntry(id)),
+        ...(label ? [model.ops.patch(id, { label })] : []),
         model.ops.reparent({ childId: id, toOwnerId: ownerId }),
       ]),
     );
@@ -185,8 +172,8 @@ describe("model contract", () => {
     const id = model.createId();
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createEntry.group(id)),
-        ...(label ? [model.ops.patchLabel(id, label)] : []),
+        model.ops.create(makeGroupEntry(id)),
+        ...(label ? [model.ops.patch(id, { label })] : []),
         model.ops.reparent({ childId: id, toOwnerId: ownerId }),
       ]),
     );
@@ -200,7 +187,7 @@ describe("model contract", () => {
   ) {
     model.apply(
       model.ops.transaction([
-        model.ops.patchContent(id, { kind: "scalar", value }),
+        model.ops.patch(id, { content: { kind: "scalar", value } }),
       ]),
     );
   }
@@ -208,7 +195,7 @@ describe("model contract", () => {
   function patchDerived(model: Model, id: EntryId, expr: string) {
     model.apply(
       model.ops.transaction([
-        model.ops.patchContent(id, { kind: "derived", expr }),
+        model.ops.patch(id, { content: { kind: "derived", expr } }),
       ]),
     );
   }
@@ -220,11 +207,13 @@ describe("model contract", () => {
   ) {
     model.apply(
       model.ops.transaction([
-        model.ops.patchContent(id, {
-          kind: "lens",
-          from: spec.from,
-          where: spec.where,
-          orderBy: spec.orderBy,
+        model.ops.patch(id, {
+          content: {
+            kind: "lens",
+            from: spec.from,
+            where: spec.where,
+            orderBy: spec.orderBy,
+          },
         }),
       ]),
     );
@@ -248,7 +237,11 @@ describe("model contract", () => {
     expect(model.readEntry(b).ownerId).toBe(rootId);
     expect(model.childIdsOf(rootId)).toEqual([a, b]);
 
-    model.apply(model.ops.transaction([model.ops.detach(b)]));
+    model.apply(
+      model.ops.transaction([
+        model.ops.reparent({ childId: b, toOwnerId: null }),
+      ]),
+    );
     expect(model.readEntry(b).ownerId).toBe(null);
     expect(model.childIdsOf(rootId)).toEqual([a]);
 
@@ -287,7 +280,7 @@ describe("model contract", () => {
 
     addBlankChild(model, rootId, "b");
     expect(() => {
-      model.apply(model.ops.transaction([model.ops.patchLabel(a, "b")]));
+      model.apply(model.ops.transaction([model.ops.patch(a, { label: "b" })]));
     }).toThrow();
 
     const g1 = addGroupChild(model, rootId, "g1");
@@ -318,7 +311,11 @@ describe("model contract", () => {
     expect(locB.index).toBe(1);
     expect(locB.childIds).toEqual([a, b]);
 
-    model.apply(model.ops.transaction([model.ops.detach(b)]));
+    model.apply(
+      model.ops.transaction([
+        model.ops.reparent({ childId: b, toOwnerId: null }),
+      ]),
+    );
     expect(model.locateInOwner(b)).toBe(null);
 
     assertPublicModelContracts(model);
@@ -361,7 +358,11 @@ describe("model contract", () => {
     const x = addBlankChild(model, a, "x");
     patchScalar(model, x, 123);
 
-    model.apply(model.ops.transaction([model.ops.detach(a)]));
+    model.apply(
+      model.ops.transaction([
+        model.ops.reparent({ childId: a, toOwnerId: null }),
+      ]),
+    );
     const res = model.pruneUnreachable();
 
     expect(res.removed).toBeGreaterThanOrEqual(1);
@@ -397,10 +398,9 @@ describe("expr contract", () => {
     const rootId = model.createId();
     model.setRoot(rootId);
     model.apply(
-      model.ops.transaction([
-        model.ops.create(model.createEntry.group(rootId)),
-      ]),
+      model.ops.transaction([model.ops.create(makeGroupEntry(rootId))]),
     );
+
     const evaluator = createEvaluator({ model, interpret: interpretExpr });
 
     const g = model.createId();
@@ -409,18 +409,22 @@ describe("expr contract", () => {
 
     model.apply(
       model.ops.transaction([
-        model.ops.create(model.createEntry.group(g)),
-        model.ops.patchLabel(g, "g"),
+        model.ops.create(makeGroupEntry(g)),
+        model.ops.patch(g, { label: "g" }),
         model.ops.reparent({ childId: g, toOwnerId: rootId }),
 
-        model.ops.create(model.createEntry.blank(a)),
-        model.ops.patchLabel(a, "a"),
-        model.ops.patchContent(a, { kind: "scalar", value: 10 }),
+        model.ops.create(makeBlankEntry(a)),
+        model.ops.patch(a, {
+          label: "a",
+          content: { kind: "scalar", value: 10 },
+        }),
         model.ops.reparent({ childId: a, toOwnerId: g }),
 
-        model.ops.create(model.createEntry.blank(b)),
-        model.ops.patchLabel(b, "b"),
-        model.ops.patchContent(b, { kind: "scalar", value: 20 }),
+        model.ops.create(makeBlankEntry(b)),
+        model.ops.patch(b, {
+          label: "b",
+          content: { kind: "scalar", value: 20 },
+        }),
         model.ops.reparent({ childId: b, toOwnerId: g }),
       ]),
     );
@@ -432,8 +436,7 @@ describe("expr contract", () => {
         return V.issue(`unbound: ${name}`);
       },
       resolve: (id: EntryId) => evaluator.value(id),
-      getLabel: (id: EntryId) =>
-        model.normalizeLabel(model.readEntry(id).label),
+      getLabel: (id: EntryId) => normalizeLabel(model.readEntry(id).label),
     };
 
     expect(asScalarValue(interpretExpr("g.a", env))).toBe(10);
@@ -590,7 +593,7 @@ describe("selection contract", () => {
       t.setScalar(x, 1);
     });
 
-    core.focus({ container: g, item: x }, "content");
+    core.focus({ container: g, item: x }, DEFAULT_TARGET);
 
     core.commit((t) => {
       t.remove(g);
@@ -616,9 +619,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
 
     let tableId: ItemId = "";
     let rowA: ItemId = "";
-    let aScore: ItemId = "";
     let rowB: ItemId = "";
-    let bScore: ItemId = "";
 
     core.commit((t) => {
       tableId = t.insertChild(rootId, { kind: "group" });
@@ -627,13 +628,13 @@ describe("views contract (selection transitions via onKeyDown)", () => {
 
       rowA = t.insertChild(tableId, { kind: "group" });
       t.setLabel(rowA, "rowA");
-      aScore = t.insertChild(rowA, { kind: "blank" });
+      const aScore = t.insertChild(rowA, { kind: "blank" });
       t.setLabel(aScore, "score");
       t.setScalar(aScore, 5);
 
       rowB = t.insertChild(tableId, { kind: "group" });
       t.setLabel(rowB, "rowB");
-      bScore = t.insertChild(rowB, { kind: "blank" });
+      const bScore = t.insertChild(rowB, { kind: "blank" });
       t.setLabel(bScore, "score");
       t.setScalar(bScore, 6);
     });
@@ -650,7 +651,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     await tick();
     sel = core.selection();
     expectFocusedSelection(sel);
-    expect(sel.target).toBe("content");
+    expect(sel.target).toBe(DEFAULT_TARGET);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     await tick();
@@ -663,7 +664,7 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     await tick();
     sel = core.selection();
     expectFocusedSelection(sel);
-    expect(sel.target).toBe("content");
+    expect(sel.target).toBe(DEFAULT_TARGET);
     expect(sel.focus.container).toBe(rowB);
 
     unmount();
@@ -850,7 +851,7 @@ test("outline: clicking editable content focuses the text input element", async 
 
   const sel = core.selection();
   expectFocusedSelection(sel);
-  expect(sel.target).toBe("content");
+  expect(sel.target).toBe(DEFAULT_TARGET);
 
   unmount();
 });

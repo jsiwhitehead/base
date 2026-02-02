@@ -1,5 +1,6 @@
 import { computed, type ReadonlySignal } from "@preact/signals-core";
 import type { EntryId, Scalar, EntryContent, Model } from "./model";
+import { normalizeLabel } from "./model";
 
 export type LabeledValue = { label?: string; value: Value };
 
@@ -137,7 +138,7 @@ export function createEvaluator(opts: {
   const baseEnvFor = (ownerId: EntryId, ctx: EvalCtx): EvalEnv => ({
     lookup: (name) => lookupInAncestors(name, ownerId, ctx),
     resolve: (id) => evaluateValue(id, ctx),
-    getLabel: (id) => model.normalizeLabel(model.readEntry(id).label),
+    getLabel: (id) => normalizeLabel(model.readEntry(id).label),
   });
 
   const lookupInAncestors = (
@@ -241,7 +242,7 @@ export function createEvaluator(opts: {
           return lookupInAncestors(name, rowId, rowCtx);
         },
         resolve: (id) => evaluateValue(id, rowCtx),
-        getLabel: (id) => model.normalizeLabel(model.readEntry(id).label),
+        getLabel: (id) => normalizeLabel(model.readEntry(id).label),
       });
     };
 

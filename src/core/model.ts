@@ -139,22 +139,10 @@ export type Model = {
   createId(): EntryId;
   setNextId(next: EntryId): void;
 
-  createEntry: {
-    blank(id: EntryId): Entry;
-    group(id: EntryId): Entry;
-  };
-
   ops: {
     create(entry: Entry): Op;
-
     patch(id: EntryId, next: EntryPatch): Op;
-    patchLabel(id: EntryId, label: string): Op;
-    patchView(id: EntryId, view: ViewKind): Op;
-    patchContent(id: EntryId, content: EntryContent): Op;
-
     reparent(spec: ReparentSpec): Op;
-    detach(childId: EntryId): Op;
-
     transaction(ops: readonly Op[], meta?: Transaction["meta"]): Transaction;
   };
 
@@ -175,8 +163,6 @@ export type Model = {
 
   snapshot(id: EntryId): SnapshotEntry;
   pruneUnreachable(): { removed: number; removedIds: EntryId[] };
-
-  normalizeLabel(s: string): string;
 };
 
 type EntryRec = {
@@ -190,6 +176,26 @@ function clampIndex(i: number, len: number): number {
 
 export function normalizeLabel(s: string): string {
   return s.trim();
+}
+
+export function makeBlankEntry(id: EntryId): Entry {
+  return {
+    id,
+    ownerId: null,
+    label: "",
+    view: null,
+    content: { kind: "blank" },
+  };
+}
+
+export function makeGroupEntry(id: EntryId): Entry {
+  return {
+    id,
+    ownerId: null,
+    label: "",
+    view: null,
+    content: { kind: "group", childIds: [] },
+  };
 }
 
 export function createModel(): Model {
@@ -281,23 +287,6 @@ export function createModel(): Model {
     }
   }
 
-  const createEntry = {
-    blank: (id: EntryId): Entry => ({
-      id,
-      ownerId: null,
-      label: "",
-      view: null,
-      content: { kind: "blank" },
-    }),
-    group: (id: EntryId): Entry => ({
-      id,
-      ownerId: null,
-      label: "",
-      view: null,
-      content: { kind: "group", childIds: [] },
-    }),
-  } as const;
-
   const ops = {
     create: (entry: Entry): Op => ({ kind: "create", entry }),
     patch: (id: EntryId, next: EntryPatch): Op => ({
@@ -305,26 +294,7 @@ export function createModel(): Model {
       id,
       next,
     }),
-    patchLabel: (id: EntryId, label: string): Op => ({
-      kind: "patch",
-      id,
-      next: { label },
-    }),
-    patchView: (id: EntryId, view: ViewKind): Op => ({
-      kind: "patch",
-      id,
-      next: { view },
-    }),
-    patchContent: (id: EntryId, content: EntryContent): Op => ({
-      kind: "patch",
-      id,
-      next: { content },
-    }),
     reparent: (spec: ReparentSpec): Op => ({ kind: "reparent", spec }),
-    detach: (childId: EntryId): Op => ({
-      kind: "reparent",
-      spec: { childId, toOwnerId: null },
-    }),
     transaction: (
       ops2: readonly Op[],
       meta?: Transaction["meta"],
@@ -681,7 +651,6 @@ export function createModel(): Model {
     createId,
     setNextId,
 
-    createEntry,
     ops,
 
     entrySignal,
@@ -701,7 +670,5 @@ export function createModel(): Model {
 
     snapshot,
     pruneUnreachable,
-
-    normalizeLabel,
   };
 }

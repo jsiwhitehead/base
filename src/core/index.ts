@@ -9,6 +9,8 @@ import {
   type Op,
   isDerivedContent,
   isLensContent,
+  makeBlankEntry,
+  makeGroupEntry,
 } from "./model";
 import {
   createEvaluator,
@@ -138,8 +140,6 @@ export type LocateResult = {
 export type Core = {
   dispose(): void;
 
-  root(): ItemId;
-
   item(id: ItemId): Item;
 
   commit(run: (t: Tx) => void): ApplyResult;
@@ -172,9 +172,7 @@ export function createCore(opts: {
   const rootEntryId = model.createId();
   model.setRoot(rootEntryId);
   model.apply(
-    model.ops.transaction([
-      model.ops.create(model.createEntry.group(rootEntryId)),
-    ]),
+    model.ops.transaction([model.ops.create(makeGroupEntry(rootEntryId))]),
   );
 
   const evaluator = createEvaluator({ model, interpret: interpretExpr });
@@ -278,19 +276,19 @@ export function createCore(opts: {
       setLabel: (id, label) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patchLabel(eid, label));
+        ops.push(model.ops.patch(eid, { label }));
       },
 
       setView: (id, view) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patchView(eid, view));
+        ops.push(model.ops.patch(eid, { view }));
       },
 
       setScalar: (id, value) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patchContent(eid, storedFromScalar(value)));
+        ops.push(model.ops.patch(eid, { content: storedFromScalar(value) }));
       },
 
       setSource: (id, source) => {
@@ -299,20 +297,24 @@ export function createCore(opts: {
 
         if (source.type === "derived") {
           ops.push(
-            model.ops.patchContent(eid, {
-              kind: "derived",
-              expr: source.expr,
+            model.ops.patch(eid, {
+              content: {
+                kind: "derived",
+                expr: source.expr,
+              },
             }),
           );
           return;
         }
 
         ops.push(
-          model.ops.patchContent(eid, {
-            kind: "lens",
-            from: source.from,
-            where: source.where,
-            orderBy: source.orderBy,
+          model.ops.patch(eid, {
+            content: {
+              kind: "lens",
+              from: source.from,
+              where: source.where,
+              orderBy: source.orderBy,
+            },
           }),
         );
       },
@@ -333,9 +335,7 @@ export function createCore(opts: {
         const id = model.createId();
         const kind = opts2?.kind ?? "blank";
         const entry: Entry =
-          kind === "group"
-            ? model.createEntry.group(id)
-            : model.createEntry.blank(id);
+          kind === "group" ? makeGroupEntry(id) : makeBlankEntry(id);
 
         ops.push(model.ops.create(entry));
         ops.push(
@@ -368,7 +368,7 @@ export function createCore(opts: {
       remove: (id) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.detach(eid));
+        ops.push(model.ops.reparent({ childId: eid, toOwnerId: null }));
       },
     };
 
@@ -458,8 +458,6 @@ export function createCore(opts: {
       evaluator.dispose();
       runtime.dispose();
     },
-
-    root: () => rootId,
 
     item,
 

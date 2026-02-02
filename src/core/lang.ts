@@ -568,7 +568,7 @@ const groupSpec = {
     isEntryGroupValue(v) || isValueGroupValue(v) ? v : null,
 } as const;
 
-export const builtins: Record<string, Builtin> = {
+const builtins: Record<string, Builtin> = {
   is_blank: contentFn((_env, v) => primitiveToValue(isBlankValue(v))),
   is_present: contentFn((_env, v) => primitiveToValue(isPresent(v))),
   is_true: contentFn((_env, v) => primitiveToValue(isTrue(v))),
