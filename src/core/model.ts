@@ -115,9 +115,13 @@ export type Op =
   | { kind: "patch"; id: EntryId; next: EntryPatch }
   | { kind: "reparent"; spec: ReparentSpec };
 
+export type TransactionMeta = {
+  source?: "user" | "remote" | "rule" | "undo" | "redo" | string;
+};
+
 export type Transaction = {
   readonly ops: readonly Op[];
-  readonly meta?: { source?: "local" | "remote" | string };
+  readonly meta?: TransactionMeta;
 };
 
 export type ApplyResult = {
@@ -629,7 +633,6 @@ export function createModel(): Model {
     if (isGroupContent(content)) {
       return { kind: "group", childIds: content.childIds.map(snapshot) };
     }
-
     const unreachable: never = content;
     return unreachable;
   };

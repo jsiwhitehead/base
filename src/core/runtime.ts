@@ -457,7 +457,7 @@ export function createRuntime<C>(opts: {
     selection,
     setSelection,
     attachFocus,
-    mountView: mountView as any,
+    mountView,
     installGlobalListeners,
     dispose,
   };

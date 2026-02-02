@@ -1,12 +1,16 @@
+import { batch } from "@preact/signals-core";
 import {
   createModel,
   parseScalar,
+  type ApplyResult as ModelApplyResult,
   type Entry,
-  type EntryId,
   type EntryContent,
+  type EntryId,
+  type Model,
+  type Op,
+  type Transaction,
   type ViewKind,
   type ViewName,
-  type Op,
   isDerivedContent,
   isLensContent,
   makeBlankEntry,
@@ -16,27 +20,26 @@ import {
   createEvaluator,
   type Value,
   isBlankValue,
+  isEntryGroupValue,
   isIssueValue,
   isScalarValue,
-  isEntryGroupValue,
   isValueGroupValue,
 } from "./eval";
 import { interpretExpr } from "./lang";
 import {
   createRuntime,
-  type Component,
-  type Selection,
-  type Focus,
   type Caret,
+  type Component,
   type DomView,
-  type ViewFactory,
+  type Focus,
+  type Selection,
   type TextCaret,
+  type ViewFactory,
   DEFAULT_TARGET,
   clamp,
-  isTextInput,
   defaultTextCaret,
+  isTextInput,
 } from "./runtime";
-import { DEV } from "../dev";
 
 export type ItemId = string;
 
@@ -137,12 +140,27 @@ export type LocateResult = {
   siblings: readonly ItemId[];
 };
 
+export type Rule = (
+  model: Model,
+  input: ModelApplyResult,
+  meta?: Transaction["meta"],
+) => readonly Op[];
+
+type HistoryEntry = {
+  user: Transaction;
+  inverse: Transaction;
+};
+
 export type Core = {
   dispose(): void;
 
   item(id: ItemId): Item;
 
   commit(run: (t: Tx) => void): ApplyResult;
+
+  dispatch(txn: Transaction): ApplyResult;
+
+  addRule(rule: Rule): () => void;
 
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
@@ -186,13 +204,175 @@ export function createCore(opts: {
     initialSelection: { kind: "idle" },
   });
 
+  const rules: Rule[] = [];
+
+  const history: { undo: HistoryEntry[]; redo: HistoryEntry[] } = {
+    undo: [],
+    redo: [],
+  };
+
+  const emptyModelApply: ModelApplyResult = {
+    created: [],
+    touched: [],
+    reparented: [],
+  };
+
+  const mergeModelApply = (
+    a: ModelApplyResult,
+    b: ModelApplyResult,
+  ): ModelApplyResult => ({
+    created: [...a.created, ...b.created],
+    touched: Array.from(new Set([...a.touched, ...b.touched])),
+    reparented: [...a.reparented, ...b.reparented],
+  });
+
+  const inverseOfOp = (op: Op): Op => {
+    if (op.kind === "create") {
+      return model.ops.reparent({ childId: op.entry.id, toOwnerId: null });
+    }
+    if (op.kind === "patch") {
+      const cur = model.peekEntry(op.id);
+      const next: any = {};
+      if (op.next.label !== undefined) next.label = cur.label;
+      if (op.next.view !== undefined) next.view = cur.view;
+      if (op.next.content !== undefined) next.content = cur.content;
+      return model.ops.patch(op.id, next);
+    }
+    const childId = op.spec.childId;
+    const child = model.peekEntry(childId);
+    const ownerId = child.ownerId ?? null;
+    const loc = model.locateInOwner(childId);
+    return model.ops.reparent({
+      childId,
+      toOwnerId: ownerId,
+      ...(loc ? { toIndex: loc.index } : {}),
+    });
+  };
+
+  const applyTxnCapturingInverse = (
+    txn: Transaction,
+  ): { result: ModelApplyResult; inverseOps: Op[] } => {
+    let out = emptyModelApply;
+    const inverseOps: Op[] = [];
+
+    for (const op of txn.ops) {
+      inverseOps.push(inverseOfOp(op));
+      const one = model.apply(model.ops.transaction([op], txn.meta));
+      out = mergeModelApply(out, one);
+    }
+
+    return { result: out, inverseOps };
+  };
+
+  const MAX_RULE_PASSES = 25;
+
+  const runRulesFixpoint = (
+    seed: ModelApplyResult,
+    inverseAcc: Op[],
+  ): ModelApplyResult => {
+    let merged = emptyModelApply;
+    let input = seed;
+
+    for (let pass = 0; pass < MAX_RULE_PASSES; pass++) {
+      let opsOut: Op[] = [];
+      for (const rule of rules) {
+        const ops0 = rule(model, input, { source: "rule" });
+        if (ops0.length) opsOut = opsOut.concat(ops0);
+      }
+      if (!opsOut.length) break;
+
+      const txn = model.ops.transaction(opsOut, { source: "rule" });
+      const { result, inverseOps } = applyTxnCapturingInverse(txn);
+      inverseAcc.push(...inverseOps);
+      merged = mergeModelApply(merged, result);
+      input = result;
+    }
+
+    return merged;
+  };
+
+  const toApplyResult = (r: ModelApplyResult): ApplyResult => {
+    const toItemId = (eid: EntryId) => itemIdOf(eid);
+    return {
+      created: r.created.map(toItemId),
+      touched: r.touched.map(toItemId),
+      reparented: r.reparented.map((x) => ({
+        fromOwnerId: x.fromOwnerId == null ? null : toItemId(x.fromOwnerId),
+        toOwnerId: x.toOwnerId == null ? null : toItemId(x.toOwnerId),
+        fromIndex: x.fromIndex,
+        toIndex: x.toIndex,
+      })),
+    };
+  };
+
+  const entryIdFromItemIdLoose = (id: ItemId): EntryId | null => {
+    const i = id.indexOf(":");
+    const head = i === -1 ? id : id.slice(0, i);
+    const n = Number(head);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const selectionStillValid = (sel: Selection): boolean => {
+    if (sel.kind === "idle") return true;
+    const a = entryIdFromItemIdLoose(sel.focus.item);
+    const b = entryIdFromItemIdLoose(sel.focus.container);
+    if (a == null || b == null) return false;
+    return model.hasEntry(a) && model.hasEntry(b);
+  };
+
+  const repairSelectionAfterDispatch = (meta?: Transaction["meta"]) => {
+    const src = meta?.source;
+    if (src === "remote") {
+      const sel = runtime.selectionSignal.peek();
+      if (!selectionStillValid(sel)) runtime.setSelection({ kind: "idle" });
+      return;
+    }
+    runtime.setSelection(runtime.selectionSignal.peek());
+  };
+
+  const dispatch = (txn: Transaction): ApplyResult => {
+    let final = emptyModelApply;
+    const inverseAcc: Op[] = [];
+    const isUser = txn.meta?.source === "user";
+
+    batch(() => {
+      const { result: userRes, inverseOps: invUser } =
+        applyTxnCapturingInverse(txn);
+      inverseAcc.push(...invUser);
+      final = mergeModelApply(final, userRes);
+
+      const ruleRes = runRulesFixpoint(userRes, inverseAcc);
+      final = mergeModelApply(final, ruleRes);
+
+      repairSelectionAfterDispatch(txn.meta);
+
+      if (isUser) {
+        const inverse = model.ops.transaction(inverseAcc.toReversed(), {
+          source: "undo",
+        });
+        history.undo.push({ user: txn, inverse });
+        history.redo = [];
+      }
+    });
+
+    return toApplyResult(final);
+  };
+
+  const addRule = (rule: Rule): (() => void) => {
+    rules.push(rule);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const i = rules.indexOf(rule);
+      if (i >= 0) rules.splice(i, 1);
+    };
+  };
+
   const childrenOfResolved = (base: ItemRef, v: Value): readonly ItemId[] => {
-    if (isEntryGroupValue(v)) {
-      return v.entryIds.map((eid) => itemIdOf(eid, []));
-    }
-    if (isValueGroupValue(v)) {
+    if (isEntryGroupValue(v)) return v.entryIds.map((eid) => itemIdOf(eid, []));
+    if (isValueGroupValue(v))
       return v.items.map((_it, i) => itemIdOf(base.entryId, [...base.path, i]));
-    }
     return [];
   };
 
@@ -203,9 +383,8 @@ export function createCore(opts: {
 
     for (let i = 0; i < ref.path.length; i++) {
       const idx = ref.path[i]!;
-      if (!isValueGroupValue(cur)) {
+      if (!isValueGroupValue(cur))
         return { value: { kind: "issue", message: "Invalid path" } as any };
-      }
       const it = cur.items[idx];
       if (!it)
         return { value: { kind: "issue", message: "Invalid path" } as any };
@@ -265,22 +444,8 @@ export function createCore(opts: {
 
     const ensureEntryId = (id: ItemId): EntryId | null => {
       const r = refFromItemId(id);
-      if (r.path.length) {
-        if (DEV) throw new Error("Item is not entry-backed");
-        return null;
-      }
+      if (r.path.length) return null;
       return r.entryId;
-    };
-
-    const contentDrafts = new Map<EntryId, EntryContent>();
-    const trackContent = (entryId: EntryId, content: EntryContent): void => {
-      contentDrafts.set(entryId, content);
-    };
-    const currentContent = (entryId: EntryId): EntryContent | null => {
-      const draft = contentDrafts.get(entryId);
-      if (draft) return draft;
-      if (!model.hasEntry(entryId)) return null;
-      return model.peekEntry(entryId).content;
     };
 
     const t: Tx = {
@@ -299,9 +464,7 @@ export function createCore(opts: {
       setScalar: (id, value) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        const content = storedFromScalar(value);
-        ops.push(model.ops.patch(eid, { content }));
-        trackContent(eid, content);
+        ops.push(model.ops.patch(eid, { content: storedFromScalar(value) }));
       },
 
       setSource: (id, source) => {
@@ -309,49 +472,34 @@ export function createCore(opts: {
         if (eid == null) return;
 
         if (source.type === "derived") {
-          const content: EntryContent = {
-            kind: "derived",
-            expr: source.expr,
-          };
           ops.push(
             model.ops.patch(eid, {
-              content,
+              content: { kind: "derived", expr: source.expr },
             }),
           );
-          trackContent(eid, content);
           return;
         }
 
-        const content: EntryContent = {
-          kind: "lens",
-          from: source.from,
-          where: source.where,
-          orderBy: source.orderBy,
-        };
         ops.push(
           model.ops.patch(eid, {
-            content,
+            content: {
+              kind: "lens",
+              from: source.from,
+              where: source.where,
+              orderBy: source.orderBy,
+            },
           }),
         );
-        trackContent(eid, content);
       },
 
       insertChild: (ownerId, opts2) => {
         const ownerEid = ensureEntryId(ownerId);
         if (ownerEid == null) return itemIdOf(-1);
 
-        const ownerContent = currentContent(ownerEid);
-        if (!ownerContent || ownerContent.kind !== "group") {
-          if (DEV) throw new Error("Owner is not a direct editable group");
-          return itemIdOf(-1);
-        }
-
         const id = model.createId();
         const kind = opts2?.kind ?? "blank";
         const entry: Entry =
           kind === "group" ? makeGroupEntry(id) : makeBlankEntry(id);
-
-        trackContent(id, entry.content);
 
         ops.push(model.ops.create(entry));
         ops.push(
@@ -389,26 +537,10 @@ export function createCore(opts: {
     };
 
     run(t);
+    if (!ops.length) return toApplyResult(emptyModelApply);
 
-    if (!ops.length) return { created: [], touched: [], reparented: [] };
-
-    const txn = model.ops.transaction(ops);
-    const result0 = model.apply(txn);
-
-    runtime.setSelection(runtime.selectionSignal.peek());
-
-    const toItemId = (eid: EntryId) => itemIdOf(eid);
-
-    return {
-      created: result0.created.map(toItemId),
-      touched: result0.touched.map(toItemId),
-      reparented: result0.reparented.map((r) => ({
-        fromOwnerId: r.fromOwnerId == null ? null : toItemId(r.fromOwnerId),
-        toOwnerId: r.toOwnerId == null ? null : toItemId(r.toOwnerId),
-        fromIndex: r.fromIndex,
-        toIndex: r.toIndex,
-      })),
-    };
+    const txn = model.ops.transaction(ops, { source: "user" });
+    return dispatch(txn);
   };
 
   const focus = (
@@ -458,11 +590,6 @@ export function createCore(opts: {
     };
   };
 
-  const gc = (): void => {
-    const { removedIds } = model.pruneUnreachable();
-    evaluator.prune(removedIds);
-  };
-
   const uninstallGlobal = runtime.installGlobalListeners(window);
 
   const rootId = itemIdOf(rootEntryId);
@@ -470,7 +597,8 @@ export function createCore(opts: {
   core = {
     dispose() {
       uninstallGlobal();
-      gc();
+      const { removedIds } = model.pruneUnreachable();
+      evaluator.prune(removedIds);
       evaluator.dispose();
       runtime.dispose();
     },
@@ -478,6 +606,10 @@ export function createCore(opts: {
     item,
 
     commit,
+
+    dispatch,
+
+    addRule,
 
     selection,
     focus,
