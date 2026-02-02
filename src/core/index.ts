@@ -29,6 +29,7 @@ import {
   type DomView,
   type ViewFactory,
   type TextCaret,
+  DEFAULT_TARGET,
   clamp,
   isTextInput,
   defaultTextCaret,
@@ -128,6 +129,12 @@ export type Tx = {
   remove(id: ItemId): void;
 };
 
+export type LocateResult = {
+  ownerId: ItemId;
+  index: number;
+  siblings: readonly ItemId[];
+};
+
 export type Core = {
   dispose(): void;
 
@@ -140,6 +147,8 @@ export type Core = {
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
   blur(): void;
+
+  locate(id: ItemId): LocateResult | null;
 
   attachFocus(opts: {
     focus: Focus;
@@ -388,7 +397,7 @@ export function createCore(opts: {
 
   const focus = (
     f: Focus,
-    target: string = "content",
+    target: string = DEFAULT_TARGET,
     opts2: { caret?: Caret } = {},
   ) => {
     runtime.setSelection(
@@ -419,6 +428,20 @@ export function createCore(opts: {
     return (runtime.mountView as any)(args);
   };
 
+  const locate = (id: ItemId): LocateResult | null => {
+    const r = refFromItemId(id);
+    if (r.path.length) return null;
+
+    const loc = model.locateInOwner(r.entryId);
+    if (!loc) return null;
+
+    return {
+      ownerId: itemIdOf(loc.ownerId),
+      index: loc.index,
+      siblings: loc.childIds.map((eid) => itemIdOf(eid)),
+    };
+  };
+
   const gc = (): void => {
     const { removedIds } = model.pruneUnreachable();
     evaluator.prune(removedIds);
@@ -446,6 +469,8 @@ export function createCore(opts: {
     focus,
     blur,
 
+    locate,
+
     attachFocus,
     mountView,
   };
@@ -456,4 +481,5 @@ export function createCore(opts: {
 export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
 export type { ViewName, ViewKind };
+export { DEFAULT_TARGET };
 export { parseScalar, clamp, isTextInput, defaultTextCaret };

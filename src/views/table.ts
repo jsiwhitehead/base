@@ -8,6 +8,7 @@ import {
   type Selection,
   type DomView,
   parseScalar,
+  DEFAULT_TARGET,
 } from "../core";
 import {
   type NavDir,
@@ -20,15 +21,27 @@ import {
   createComponent,
   textField,
   contentField,
+  ensureTabbable,
+  on,
 } from "../dom";
 
 type NavResult = {
   focus: Focus;
-  target: "label" | "content";
+  target: "label" | typeof DEFAULT_TARGET;
   caret?: Caret;
 };
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
+
+function caretFromTarget(t: EventTarget | null): Caret {
+  const el0 = t instanceof HTMLElement ? t : null;
+  if (el0 instanceof HTMLInputElement || el0 instanceof HTMLTextAreaElement) {
+    const start = el0.selectionStart ?? 0;
+    const end = el0.selectionEnd ?? start;
+    return { start, end };
+  }
+  return caret0();
+}
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -53,7 +66,7 @@ const focusCell = (
   caret: Caret = caret0(),
 ): NavResult => ({
   focus: { container: rowId, item: cellId },
-  target: "content",
+  target: DEFAULT_TARGET,
   caret,
 });
 
@@ -78,7 +91,7 @@ function deriveColumns(core: Core, tableId: ItemId): string[] {
 
 type FocusedSelection = Extract<Selection, { kind: "focused" }>;
 type RowLabelSelection = FocusedSelection & { target: "label" };
-type CellSelection = FocusedSelection & { target: "content" };
+type CellSelection = FocusedSelection & { target: typeof DEFAULT_TARGET };
 
 const isFocused = (sel: Selection): sel is FocusedSelection =>
   sel.kind === "focused";
@@ -93,7 +106,9 @@ const isCellSelection = (
   sel: Selection,
   tableId: ItemId,
 ): sel is CellSelection =>
-  isFocused(sel) && sel.target === "content" && sel.focus.container !== tableId;
+  isFocused(sel) &&
+  sel.target === DEFAULT_TARGET &&
+  sel.focus.container !== tableId;
 
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
   ...childrenOf(core, tableId),
@@ -294,7 +309,7 @@ export const tableCommands = {
       return;
     }
 
-    if (sel.target === "content") {
+    if (sel.target === DEFAULT_TARGET) {
       tableCommands.addRowAfter(core, tableId, sel.focus.container);
     }
   },
@@ -366,18 +381,33 @@ function mountTableCellContent(cellCtx: {
   const { core, rowId, cellId, dispatch } = cellCtx;
   const focus: Focus = { container: rowId, item: cellId };
 
-  return contentField({
-    core,
-    focus,
-    id: cellId,
-    commitText: (text) => tableCommands.setText(core, cellId, text),
-    textKeys: (inp) =>
-      bindTextControlKeys(inp, {
-        nav: defaultTextNav,
-        onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-        onEnter: () => dispatch({ type: "CONFIRM" }),
-        onEscape: () => dispatch({ type: "CANCEL" }),
-      }),
+  return createComponent((ctx) => {
+    const wrap = el("div");
+    const inner = contentField({
+      core,
+      id: cellId,
+      commitText: (text) => tableCommands.setText(core, cellId, text),
+      textKeys: (inp) =>
+        bindTextControlKeys(inp, {
+          nav: defaultTextNav,
+          onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
+          onEnter: () => dispatch({ type: "CONFIRM" }),
+          onEscape: () => dispatch({ type: "CANCEL" }),
+        }),
+    });
+
+    const scope = ctx.focus(core, focus, { default: () => inner.focusEl });
+    scope.elementFor(DEFAULT_TARGET, () => inner.focusEl);
+
+    ctx.on(inner.focusEl, "pointerdown", (e: PointerEvent) => {
+      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
+      e.stopPropagation();
+    });
+
+    wrap.replaceChildren(inner.el);
+    ctx.use(inner);
+
+    return wrap;
   });
 }
 
@@ -388,13 +418,13 @@ function mountTableCell(
 ): Component {
   return createComponent((componentCtx) => {
     const hostEl = el("div", "item cell");
-    const inner = el("div");
-    hostEl.append(inner);
+    const innerHost = el("div");
+    hostEl.append(innerHost);
 
     let cur: Component | null = null;
     let curCellId: ItemId | null = null;
 
-    const setInner = (node: HTMLElement) => inner.replaceChildren(node);
+    const setInner = (node: HTMLElement) => innerHost.replaceChildren(node);
 
     const mountMissing = () => {
       cur?.dispose();
@@ -431,7 +461,7 @@ function mountTableCell(
     componentCtx.on(hostEl, "pointerdown", (e: PointerEvent) => {
       const nextCell = getCellId();
       const res = nextCell
-        ? focusCell(rowId, nextCell)
+        ? focusCell(rowId, nextCell, caretFromTarget(e.target))
         : focusRowLabel(mountCtx.tableId, rowId);
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
@@ -454,13 +484,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
     const labelFocus: Focus = { container: mountCtx.tableId, item: rowId };
 
     const labelComp = textField({
-      core: mountCtx.core,
-      focus: labelFocus,
-      target: "label",
       multiline: false,
-      caret: "fromTarget",
-      stopPropagation: true,
-      onCommitEvents: ["input", "blur"],
       commit: (text) => tableCommands.setLabel(mountCtx.core, rowId, text),
       getState: () => {
         const sel = mountCtx.core.selection();
@@ -493,6 +517,18 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
         }),
     });
 
+    const scope = componentCtx.focus(mountCtx.core, labelFocus, {
+      default: () => labelComp.focusEl,
+    });
+    scope.elementFor("label", () => labelComp.focusEl);
+
+    componentCtx.on(labelComp.focusEl, "pointerdown", (e: PointerEvent) => {
+      mountCtx.core.focus(labelFocus, "label", {
+        caret: caretFromTarget(e.target),
+      });
+      e.stopPropagation();
+    });
+
     labelHost.replaceChildren(labelComp.el);
     componentCtx.use(labelComp);
 
@@ -508,7 +544,11 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
     );
 
     componentCtx.on(labelCell, "pointerdown", (e: PointerEvent) => {
-      const res = focusRowLabel(mountCtx.tableId, rowId);
+      const res = focusRowLabel(
+        mountCtx.tableId,
+        rowId,
+        caretFromTarget(e.target),
+      );
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
@@ -543,7 +583,7 @@ export function createTableView(args: {
   const { core, id: tableId } = args;
 
   const root = el("div", "view table");
-  root.tabIndex = 0;
+  ensureTabbable(root);
 
   const headerHost = el("div");
   const bodyHost = el("div");

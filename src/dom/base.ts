@@ -1,6 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 import type { Core, Focus, Component, Caret } from "../core";
-import { defaultTextCaret } from "../core/runtime";
+import { DEFAULT_TARGET, defaultTextCaret } from "../core/runtime";
 
 export class Disposer {
   private fns: (() => void)[] = [];
@@ -122,28 +122,42 @@ function shallowEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
-export type InputComponent<E extends HTMLElement = HTMLElement> = Component & {
+export type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
 };
 
-export function isInputComponent(c: Component): c is InputComponent {
+export function isFocusComponent(c: Component): c is FocusComponent {
   return "focusEl" in (c as any) && (c as any).focusEl instanceof HTMLElement;
 }
 
 export function focusElOf(c: Component): HTMLElement {
-  return isInputComponent(c) ? c.focusEl : c.el;
+  return isFocusComponent(c) ? c.focusEl : c.el;
 }
 
-export type NavDir = "left" | "right" | "up" | "down";
-export type NavMode = "step" | "jump";
+type PointerCaretMode = "zero" | "fromTarget";
 
-export type FocusableTargetSpec = Readonly<{
-  target: string;
-  getEl: () => HTMLElement | null;
-  pointerHost?: () => HTMLElement | null;
-  caret?: "zero" | "fromTarget";
-  stopPropagation?: boolean;
-}>;
+function caretFromEl(el0: EventTarget | null): Caret {
+  const el = el0 instanceof HTMLElement ? el0 : null;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+    return { start, end };
+  }
+  return { start: 0, end: 0 };
+}
+
+export type FocusScope = {
+  elementFor(target: string, getEl: () => HTMLElement | null): void;
+
+  selectOn(
+    el0: HTMLElement,
+    opts?: {
+      target?: string;
+      caret?: PointerCaretMode;
+      stopPropagation?: boolean;
+    },
+  ): void;
+};
 
 export type Ctx = {
   onCleanup(fn: (() => void) | null | undefined): void;
@@ -171,52 +185,15 @@ export type Ctx = {
     create: (id: Id) => Component,
   ): { update(ids: readonly Id[]): void };
 
-  focusable(opts: {
-    core: Core;
-    focus: Focus;
-    elementFor: (target: string) => HTMLElement | null;
-    targets?: readonly FocusableTargetSpec[];
-    caret?: { set(pos: number): void; getLength(): number };
-  }): void;
+  focus(
+    core: Core,
+    focus: Focus,
+    spec: {
+      default: () => HTMLElement | null;
+      caret?: { set(pos: number): void; getLength(): number };
+    },
+  ): FocusScope;
 };
-
-function caretFromEl(el0: HTMLElement | null): Caret {
-  if (el0 instanceof HTMLInputElement || el0 instanceof HTMLTextAreaElement) {
-    const start = el0.selectionStart ?? 0;
-    const end = el0.selectionEnd ?? start;
-    return { start, end };
-  }
-  return { start: 0, end: 0 };
-}
-
-export function installFocusableTargets(
-  ctx: Ctx,
-  opts: {
-    core: Core;
-    focus: Focus;
-    targets: readonly FocusableTargetSpec[];
-  },
-): void {
-  for (const t of opts.targets) {
-    const hostFn = t.pointerHost ?? t.getEl;
-    const host = hostFn();
-    if (!host) continue;
-
-    ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      const pointerTarget =
-        t.getEl() ?? (e.target instanceof HTMLElement ? e.target : null);
-
-      const caret =
-        (t.caret ?? "zero") === "fromTarget"
-          ? caretFromEl(pointerTarget)
-          : undefined;
-
-      opts.core.focus(opts.focus, t.target, { caret });
-
-      if (t.stopPropagation ?? true) e.stopPropagation();
-    });
-  }
-}
 
 export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
   const bag = new Disposer();
@@ -289,20 +266,45 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       return { update: (ids: readonly Id[]) => mgr.update(ids) };
     },
 
-    focusable(opts) {
-      const unbind = opts.core.attachFocus({
-        focus: opts.focus,
-        elementFor: (t) => opts.elementFor(t),
-        caret: opts.caret ?? defaultTextCaret(),
+    focus(core, focus, spec) {
+      const targets = new Map<string, () => HTMLElement | null>();
+      targets.set(DEFAULT_TARGET, spec.default);
+
+      const caret = spec.caret ?? defaultTextCaret();
+
+      const unbind = core.attachFocus({
+        focus,
+        elementFor: (target: string) =>
+          (targets.get(target) ?? targets.get(DEFAULT_TARGET))?.() ?? null,
+        caret,
       });
 
       bag.add(unbind);
 
-      installFocusableTargets(ctx, {
-        core: opts.core,
-        focus: opts.focus,
-        targets: opts.targets ?? [],
-      });
+      const scope: FocusScope = {
+        elementFor(target, getEl) {
+          targets.set(target, getEl);
+        },
+
+        selectOn(el0, opts = {}) {
+          const target = opts.target ?? DEFAULT_TARGET;
+          const caretMode = opts.caret ?? "zero";
+          const stop = opts.stopPropagation ?? true;
+
+          bag.add(
+            on(el0, "pointerdown", (e: PointerEvent) => {
+              const caret0 =
+                caretMode === "fromTarget" ? caretFromEl(e.target) : undefined;
+
+              core.focus(focus, target, caret0 ? { caret: caret0 } : undefined);
+
+              if (stop) e.stopPropagation();
+            }),
+          );
+        },
+      };
+
+      return scope;
     },
   };
 

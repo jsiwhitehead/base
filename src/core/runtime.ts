@@ -1,6 +1,8 @@
 import { signal, type Signal } from "@preact/signals-core";
 import type { Model, ViewKind, ViewName } from "./model";
 
+export const DEFAULT_TARGET = "default" as const;
+
 export type ItemId = string;
 
 export type Focus = { container: ItemId; item: ItemId };
@@ -300,7 +302,7 @@ export function createRuntime<C>(opts: {
       return {
         kind: "focused",
         focus: { container: rootId, item: rootId },
-        target: "content",
+        target: DEFAULT_TARGET,
       };
     } catch {
       return { kind: "idle" };

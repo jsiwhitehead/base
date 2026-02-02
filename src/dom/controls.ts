@@ -1,17 +1,12 @@
-import type { Core, ItemId, Caret, Focus, Component } from "../core";
+import type { Core, ItemId, Caret, Component } from "../core";
 import {
   createComponent,
   el,
   on,
   stopEvent,
   ensureTabbable,
-  type InputComponent,
+  type FocusComponent,
   focusElOf,
-  type FocusableTargetSpec,
-  installFocusableTargets,
-  type Ctx,
-  type NavDir,
-  type NavMode,
 } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
@@ -20,6 +15,9 @@ export const defaultTextNav = {
   yieldUpDown: "always",
   yieldLeftRight: "boundary",
 } as const;
+
+export type NavDir = "left" | "right" | "up" | "down";
+export type NavMode = "step" | "jump";
 
 export type TextNavDir = NavDir;
 export type TextNavMode = NavMode;
@@ -147,7 +145,14 @@ export function textInput(multiline: boolean): TextInputElement {
 type TextCommitEvent = "input" | "blur";
 
 function registerCommitHandlers(
-  ctx: Ctx,
+  ctx: {
+    on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
+      el0: T,
+      type: K,
+      handler: (e: HTMLElementEventMap[K]) => void,
+      opts?: AddEventListenerOptions,
+    ): void;
+  },
   target: TextInputElement,
   events: readonly TextCommitEvent[] | undefined,
   handler: () => void,
@@ -189,14 +194,8 @@ export type TextFieldState = {
 };
 
 export type TextFieldOpts = {
-  core: Core;
-  focus: Focus;
-  target: string;
   multiline: boolean;
   className?: string;
-  caret?: "zero" | "fromTarget";
-  stopPropagation?: boolean;
-  registerFocus?: boolean;
   commit: (text: string) => void;
   getState: () => TextFieldState;
   onCommitEvents?: readonly ("input" | "blur")[];
@@ -205,35 +204,10 @@ export type TextFieldOpts = {
 
 export function textField(
   opts: TextFieldOpts,
-): InputComponent<TextInputElement> {
+): FocusComponent<TextInputElement> {
   const c = createComponent((ctx) => {
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
-
-    const targets: FocusableTargetSpec[] = [
-      {
-        target: opts.target,
-        getEl: () => inp,
-        pointerHost: () => inp,
-        caret: opts.caret ?? "fromTarget",
-        stopPropagation: opts.stopPropagation ?? true,
-      },
-    ];
-
-    if (opts.registerFocus !== false) {
-      ctx.focusable({
-        core: opts.core,
-        focus: opts.focus,
-        elementFor: () => inp,
-        targets,
-      });
-    } else {
-      installFocusableTargets(ctx, {
-        core: opts.core,
-        focus: opts.focus,
-        targets,
-      });
-    }
 
     registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
       opts.commit(inp.value),
@@ -268,7 +242,7 @@ export type AutosizeTextFieldOpts = Omit<
 
 export function autosizeTextField(
   opts: AutosizeTextFieldOpts,
-): InputComponent<HTMLInputElement> {
+): FocusComponent<HTMLInputElement> {
   let focusEl!: HTMLInputElement;
 
   const c = createComponent((ctx) => {
@@ -283,31 +257,6 @@ export function autosizeTextField(
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
     wrap.append(mirror, inp);
-
-    const targets: FocusableTargetSpec[] = [
-      {
-        target: opts.target,
-        getEl: () => inp,
-        pointerHost: () => wrap,
-        caret: opts.caret ?? "fromTarget",
-        stopPropagation: opts.stopPropagation ?? true,
-      },
-    ];
-
-    if (opts.registerFocus !== false) {
-      ctx.focusable({
-        core: opts.core,
-        focus: opts.focus,
-        elementFor: () => inp,
-        targets,
-      });
-    } else {
-      installFocusableTargets(ctx, {
-        core: opts.core,
-        focus: opts.focus,
-        targets,
-      });
-    }
 
     registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
       opts.commit(inp.value),
@@ -334,6 +283,8 @@ export function autosizeTextField(
 function readonlyItemText(core: Core, id: ItemId): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
+    ensureTabbable(d);
+
     ctx.watch(
       () => core.item(id).content,
       (c) => {
@@ -350,97 +301,63 @@ function readonlyItemText(core: Core, id: ItemId): Component {
         d.classList.toggle("issue", isIssue);
       },
     );
+
     return d;
   });
 }
 
 export type ContentFieldOpts = {
   core: Core;
-  focus: Focus;
   id: ItemId;
   className?: string;
-  registerFocus?: boolean;
   textKeys?: (inp: TextInputElement) => (() => void) | void;
   renderGroupChild?: (childId: ItemId) => Component;
   commitText?: (text: string) => void;
-  focusElRef?: { current: HTMLElement | null };
 };
 
-export function contentField(opts: ContentFieldOpts): Component {
-  return createComponent((ctx) => {
+export function contentField(opts: ContentFieldOpts): FocusComponent {
+  let focusEl: HTMLElement | null = null;
+
+  const c = createComponent((ctx) => {
     const hostEl = el("div");
     if (opts.className) hostEl.className = opts.className;
 
     const core = opts.core;
     const slot = ctx.slot(hostEl);
 
-    const register = opts.registerFocus !== false;
     const setFocusEl = (comp: Component | null) => {
       const next = comp ? focusElOf(comp) : hostEl;
-      if (opts.focusElRef) opts.focusElRef.current = next;
+      focusEl = next;
     };
     setFocusEl(null);
 
-    const installContentClickTarget = (wrap: HTMLElement) => {
-      const targets: FocusableTargetSpec[] = [
-        {
-          target: "content",
-          getEl: () => wrap,
-          pointerHost: () => wrap,
-          caret: "zero",
-          stopPropagation: true,
-        },
-      ];
-
-      if (register) {
-        ctx.focusable({
-          core,
-          focus: opts.focus,
-          elementFor: () => wrap,
-          targets,
-        });
-      } else {
-        installFocusableTargets(ctx, {
-          core,
-          focus: opts.focus,
-          targets,
-        });
-      }
-    };
-
-    const mountText = (): Component => {
+    const mountText = (): FocusComponent<TextInputElement> => {
       return textField({
-        core,
-        focus: opts.focus,
-        target: "content",
         multiline: true,
         className: "content",
-        caret: "fromTarget",
-        stopPropagation: true,
-        registerFocus: register,
         commit: (text) => opts.commitText?.(text),
         getState: () => {
           const snap = core.item(opts.id);
-          const c = snap.content;
+          const c0 = snap.content;
 
-          const canEdit = snap.mode.kind === "direct" && c.kind === "scalar";
+          const canEdit = snap.mode.kind === "direct" && c0.kind === "scalar";
 
           if (canEdit) {
             return {
-              text: c.value == null ? "" : String(c.value),
+              text: c0.value == null ? "" : String(c0.value),
               readOnly: false,
               isIssue: false,
             };
           }
 
-          const isIssue = c.kind === "issue";
+          const isIssue = c0.kind === "issue";
           const text =
-            c.kind === "issue"
-              ? c.message
-              : c.kind === "scalar"
-                ? c.value == null
+            c0.kind === "issue"
+              ? c0.message
+              : c0.kind === "scalar"
+                ? c0.value == null
                   ? ""
-                  : String(c.value)
+                  : String(c0.value)
                 : "";
           return { text, readOnly: true, isIssue };
         },
@@ -450,7 +367,7 @@ export function contentField(opts: ContentFieldOpts): Component {
 
     const mountReadonlyText = (): Component => {
       const d = el("div", "item readonly");
-      installContentClickTarget(d);
+      ensureTabbable(d);
 
       const inner = readonlyItemText(core, opts.id);
       d.replaceChildren(inner.el);
@@ -468,20 +385,19 @@ export function contentField(opts: ContentFieldOpts): Component {
     const mountGroup = (): Component => {
       const wrap = el("div", "group");
       ensureTabbable(wrap);
-      installContentClickTarget(wrap);
 
       const children = ctx.list(wrap, (childId: string) => {
-        const c =
+        const c0 =
           opts.renderGroupChild?.(childId) ?? readonlyItemText(core, childId);
-        c.el.classList.add("item");
-        return c;
+        c0.el.classList.add("item");
+        return c0;
       });
 
       ctx.watch(
         () => {
-          const c = core.item(opts.id).content;
-          if (c.kind !== "group") return [] as string[];
-          return [...c.children];
+          const c0 = core.item(opts.id).content;
+          if (c0.kind !== "group") return [] as string[];
+          return [...c0.children];
         },
         (ids) => {
           children.update(ids);
@@ -496,12 +412,12 @@ export function contentField(opts: ContentFieldOpts): Component {
     ctx.watch(
       () => core.item(opts.id),
       (snap) => {
-        const c = snap.content;
+        const c0 = snap.content;
 
         const nextKind =
-          c.kind === "group"
+          c0.kind === "group"
             ? "group"
-            : snap.mode.kind === "direct" && c.kind === "scalar"
+            : snap.mode.kind === "direct" && c0.kind === "scalar"
               ? "text"
               : "readonly";
 
@@ -521,9 +437,16 @@ export function contentField(opts: ContentFieldOpts): Component {
     );
 
     ctx.onCleanup(() => {
-      if (opts.focusElRef) opts.focusElRef.current = hostEl;
+      focusEl = hostEl;
     });
 
     return hostEl;
   });
+
+  return {
+    ...c,
+    get focusEl() {
+      return focusEl ?? c.el;
+    },
+  } as FocusComponent;
 }

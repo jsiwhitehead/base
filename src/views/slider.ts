@@ -6,7 +6,7 @@ import type {
   Focus,
   DomView,
 } from "../core";
-import { clamp } from "../core/runtime";
+import { DEFAULT_TARGET, clamp } from "../core/runtime";
 import { el, stopEvent, createComponent } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
@@ -110,7 +110,7 @@ export const sliderCommands = {
   setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetScalar(core, id)) return;
     core.commit((t) => t.setScalar(id, value));
-    core.focus(focus, "content");
+    core.focus(focus, DEFAULT_TARGET);
   },
 
   nudgeScalarValue(
@@ -144,7 +144,6 @@ function mountSlider({
 }: SliderMountCtx): Component {
   return createComponent((componentCtx) => {
     const root = el("div", "view slider");
-    root.tabIndex = 0;
 
     const input = document.createElement("input");
     input.type = "range";
@@ -155,19 +154,17 @@ function mountSlider({
     const valueEl = el("div", "slider-value");
     root.append(input, valueEl);
 
-    componentCtx.focusable({
-      core,
-      focus,
-      elementFor: () => input,
-      targets: [
-        {
-          target: "content",
-          getEl: () => input,
-          pointerHost: () => root,
-          caret: "zero",
-          stopPropagation: true,
-        },
-      ],
+    const scope = componentCtx.focus(core, focus, { default: () => input });
+    scope.elementFor(DEFAULT_TARGET, () => input);
+
+    componentCtx.on(root, "pointerdown", (e: PointerEvent) => {
+      core.focus(focus, DEFAULT_TARGET);
+      e.stopPropagation();
+    });
+
+    componentCtx.on(input, "pointerdown", (e: PointerEvent) => {
+      core.focus(focus, DEFAULT_TARGET);
+      e.stopPropagation();
     });
 
     const commitValue = (next: number) => {
@@ -199,14 +196,11 @@ function mountSlider({
       },
     );
 
-    componentCtx.on(root, "pointerdown", (e: PointerEvent) => {
-      core.focus(focus, "content");
-      e.stopPropagation();
-    });
-
     componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
       handleSliderKey(e, dispatch);
     });
+
+    root.tabIndex = 0;
 
     return root;
   });
@@ -262,7 +256,7 @@ export function createSliderView(args: {
   };
 
   if (core.selection().kind === "idle") {
-    core.focus(safeFocus, "content");
+    core.focus(safeFocus, DEFAULT_TARGET);
   }
 
   return {
