@@ -39,7 +39,11 @@ const grammar = ohm.grammar(String.raw`
 Script {
   Start         = Expr
 
-  Expr          = Eq
+  Expr          = Or
+
+  Or            = And ("or" And)*
+
+  And           = Eq ("and" Eq)*
 
   Eq            = Rel (("!=" | "=") Rel)*
 
@@ -104,9 +108,23 @@ export type Expr =
   | Blank
   | Ident;
 
+type PrimitiveBinaryOp =
+  | "!="
+  | "="
+  | "<="
+  | "<"
+  | ">="
+  | ">"
+  | "+"
+  | "-"
+  | "*"
+  | "/";
+
+type LogicalBinaryOp = "and" | "or";
+
 export interface Binary {
   type: "Binary";
-  op: "!=" | "=" | "<=" | "<" | ">=" | ">" | "+" | "-" | "*" | "/";
+  op: PrimitiveBinaryOp | LogicalBinaryOp;
   left: Expr;
   right: Expr;
 }
@@ -176,6 +194,15 @@ function decodeEscapes(unquoted: string): string {
 }
 
 const semantics = grammar.createSemantics().addAttribute("ast", {
+  Expr(expr) {
+    return expr.ast;
+  },
+  Or(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
+  },
+  And(first, ops, rights) {
+    return buildBinaryChain(first, ops, rights);
+  },
   Eq(first, ops, rights) {
     return buildBinaryChain(first, ops, rights);
   },
@@ -448,7 +475,7 @@ function getByPositionOrLabel(group: Value, selV: Value, env: EvalEnv): Value {
 }
 
 const BINARY_OPS: Record<
-  Binary["op"],
+  PrimitiveBinaryOp,
   (a: Value, b: Value) => boolean | number | string | null
 > = {
   "!=": (a, b) => primExpect(a) !== primExpect(b),
@@ -463,7 +490,11 @@ const BINARY_OPS: Record<
   "-": (a, b) => numericOp((x, y) => x - y, a, b),
   "*": (a, b) => numericOp((x, y) => x * y, a, b),
   "/": (a, b) => numericOp((x, y) => x / y, a, b),
-};
+} as const;
+
+function isPrimitiveBinaryOp(op: Binary["op"]): op is PrimitiveBinaryOp {
+  return op !== "and" && op !== "or";
+}
 
 const UNARY_OPS: Record<
   Unary["op"],
@@ -735,6 +766,28 @@ function interpretAst(e: Expr, env: EvalEnv): Value {
   try {
     switch (e.type) {
       case "Binary": {
+        if (e.op === "and" || e.op === "or") {
+          const l = interpretAst(e.left, env);
+          if (isIssueValue(l)) return l;
+
+          const lTrue = isTrue(l);
+          if (e.op === "and") {
+            if (!lTrue) return V.blank();
+            const r = interpretAst(e.right, env);
+            if (isIssueValue(r)) return r;
+            return isTrue(r) ? V.scalar(true) : V.blank();
+          }
+
+          if (lTrue) return V.scalar(true);
+          const r = interpretAst(e.right, env);
+          if (isIssueValue(r)) return r;
+          return isTrue(r) ? V.scalar(true) : V.blank();
+        }
+
+        if (!isPrimitiveBinaryOp(e.op)) {
+          throw new TypeError(`Unknown operator: ${e.op}`);
+        }
+
         const l = interpretAst(e.left, env);
         if (isIssueValue(l)) return l;
 

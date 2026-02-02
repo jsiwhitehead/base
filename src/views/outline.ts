@@ -652,6 +652,16 @@ function mountOutlineBody(
       return hostEl;
     }
 
+    const snap = core.item(id);
+    if (snap.content.kind === "group") {
+      const childrenComp = mountOutlineChildren(mountCtx, focus, scope);
+      ensureTabbable(childrenComp.el);
+      contentTargetRef.current = childrenComp.el;
+      hostEl.replaceChildren(childrenComp.el);
+      componentCtx.use(childrenComp);
+      return hostEl;
+    }
+
     const vf = contentField({
       core,
       id,
@@ -782,9 +792,7 @@ function mountOutlineNode(
         const snap = core.item(focus.item);
         const label = (snap.label ?? "").trim();
         const fields =
-          snap.mode.kind === "source"
-            ? fieldsFromSource(snap.mode.source)
-            : [];
+          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
         const content = snap.content;
 
         const sel = core.selection();
@@ -797,10 +805,7 @@ function mountOutlineNode(
         return {
           label,
           fields,
-          mode:
-            content.kind === "group"
-              ? ("children" as const)
-              : ("body" as const),
+          mode: "body" as const,
           isIssue: content.kind === "issue",
           labelFocused,
         };
@@ -830,16 +835,9 @@ function mountOutlineNode(
         if (mode !== lastContentMode) {
           lastContentMode = mode;
 
-          if (mode === "children") {
-            const kids = mountOutlineChildren(mountCtx, focus, scope);
-            contentSlot.set(kids);
-            ensureTabbable(kids.el);
-            contentTargetRef.current = kids.el;
-          } else {
-            contentSlot.set(
-              mountOutlineBody(mountCtx, focus, scope, contentTargetRef),
-            );
-          }
+          contentSlot.set(
+            mountOutlineBody(mountCtx, focus, scope, contentTargetRef),
+          );
         }
       },
     );

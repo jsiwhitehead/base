@@ -325,6 +325,7 @@ export function createModel(): Model {
 
     let fromIndex: number | null = null;
     let toIndex: number | null = null;
+    let preparedChildIds: EntryId[] | null = null;
 
     const fromOwner = getGroupEntry(fromOwnerId);
     const toOwner = getGroupEntry(toOwnerId);
@@ -338,16 +339,22 @@ export function createModel(): Model {
     if (toOwnerId != null) {
       if (!toOwner) throw new Error("Owner is not a group");
 
-      assertUniqueChildLabels(toOwnerId, {
-        override: { childId, label: child.label },
-      });
+      const baseline =
+        toOwnerId === fromOwnerId && fromIndex != null
+          ? toOwner.content.childIds.filter((cid) => cid !== childId)
+          : [...toOwner.content.childIds];
 
-      const len = toOwner.content.childIds.length;
+      const len = baseline.length;
       const rawAt = spec.toIndex == null ? len : clampIndex(spec.toIndex, len);
-      toIndex =
-        toOwnerId === fromOwnerId && fromIndex != null && rawAt > fromIndex
-          ? rawAt - 1
-          : rawAt;
+      toIndex = rawAt;
+
+      preparedChildIds = [
+        ...baseline.slice(0, rawAt),
+        childId,
+        ...baseline.slice(rawAt),
+      ];
+
+      assertUniqueChildLabels(toOwnerId, { childIds: preparedChildIds });
     }
 
     if (
@@ -361,44 +368,34 @@ export function createModel(): Model {
     }
 
     batch(() => {
-      if (fromOwnerId != null) {
+      if (toOwnerId != null && preparedChildIds) {
+        const { entrySignal: ownerSignal, owner } = expectGroupOwner(toOwnerId);
+        ownerSignal.value = {
+          ...owner,
+          content: {
+            kind: "group",
+            childIds: preparedChildIds,
+          },
+        };
+      }
+
+      if (fromOwnerId != null && fromOwnerId !== toOwnerId) {
         const { entrySignal: ownerSignal, owner } =
           expectGroupOwner(fromOwnerId);
-        const before = owner.content.childIds;
-        if (before.includes(childId)) {
+        if (owner.content.childIds.includes(childId)) {
           ownerSignal.value = {
             ...owner,
             content: {
               kind: "group",
-              childIds: before.filter((x) => x !== childId),
+              childIds: owner.content.childIds.filter((x) => x !== childId),
             },
           };
         }
       }
 
-      if (toOwnerId != null) {
-        const { entrySignal: ownerSignal, owner } = expectGroupOwner(toOwnerId);
-        const before = owner.content.childIds;
-        const at = clampIndex(toIndex ?? before.length, before.length);
-
-        const nextChildIds = [
-          ...before.slice(0, at),
-          childId,
-          ...before.slice(at),
-        ];
-
-        assertUniqueChildLabels(toOwnerId, { childIds: nextChildIds });
-
-        ownerSignal.value = {
-          ...owner,
-          content: {
-            kind: "group",
-            childIds: nextChildIds,
-          },
-        };
-        childRec.entrySignal.value = { ...child, ownerId: toOwnerId };
-      } else {
-        childRec.entrySignal.value = { ...child, ownerId: null };
+      const nextOwnerId = toOwnerId ?? null;
+      if (child.ownerId !== nextOwnerId) {
+        childRec.entrySignal.value = { ...child, ownerId: nextOwnerId };
       }
     });
 

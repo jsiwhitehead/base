@@ -4,7 +4,6 @@ import {
   type ItemId,
   type Selection,
   type Content,
-  type Core,
   createCore,
   DEFAULT_TARGET,
 } from "../src/core";
@@ -24,8 +23,6 @@ import {
   isBlankValue,
   isIssueValue,
   isScalarValue,
-  isEntryGroupValue,
-  isValueGroupValue,
 } from "../src/core/eval";
 import { interpretExpr } from "../src/core/lang";
 import { viewFactories } from "../src/views";
@@ -230,6 +227,86 @@ describe("model", () => {
 
     assertPublicModelContracts(model);
   });
+
+  test("reparent across owners enforces label uniqueness; detach and no-op move behavior", () => {
+    const { model, rootId } = makeModelRuntime();
+
+    const ga = addGroupChild(model, rootId, "ga");
+    const gb = addGroupChild(model, rootId, "gb");
+
+    const xa = addBlankChild(model, ga, "x");
+    const xb = addBlankChild(model, gb, "x");
+
+    expect(() =>
+      model.apply(
+        model.ops.transaction([
+          model.ops.reparent({ childId: xa, toOwnerId: gb }),
+        ]),
+      ),
+    ).toThrow();
+
+    model.apply(model.ops.transaction([model.ops.patch(xa, { label: "" })]));
+
+    expect(() =>
+      model.apply(
+        model.ops.transaction([
+          model.ops.reparent({ childId: xa, toOwnerId: gb }),
+        ]),
+      ),
+    ).not.toThrow();
+
+    expect(model.readEntry(xa).ownerId).toBe(gb);
+    expect(model.childIdsOf(ga)).toEqual([]);
+    expect(model.childIdsOf(gb)).toEqual([xb, xa]);
+
+    const before = model.childIdsOf(gb);
+    const res = model.apply(
+      model.ops.transaction([
+        model.ops.reparent({
+          childId: xa,
+          toOwnerId: gb,
+          toIndex: before.indexOf(xa),
+        }),
+      ]),
+    );
+    expect(model.childIdsOf(gb)).toEqual(before);
+    expect(res.reparented.length).toBe(1);
+
+    model.apply(
+      model.ops.transaction([
+        model.ops.reparent({ childId: xb, toOwnerId: null }),
+      ]),
+    );
+    expect(model.readEntry(xb).ownerId).toBe(null);
+
+    assertPublicModelContracts(model);
+  });
+
+  test("patch rejects group content updates; label patch checks uniqueness; findChildIdByLabel normalizes", () => {
+    const { model, rootId } = makeModelRuntime();
+
+    const a = addBlankChild(model, rootId, " A ");
+    const b = addBlankChild(model, rootId, "b");
+
+    expect(model.findChildIdByLabel(rootId, "A")).toBe(a);
+    expect(model.findChildIdByLabel(rootId, "  ")).toBe(null);
+
+    expect(() =>
+      model.apply(model.ops.transaction([model.ops.patch(a, { label: "b" })])),
+    ).toThrow();
+
+    expect(() =>
+      model.apply(
+        model.ops.transaction([
+          model.ops.patch(rootId, {
+            content: { kind: "group", childIds: [] } as any,
+          }),
+        ]),
+      ),
+    ).toThrow();
+
+    assertPublicModelContracts(model);
+  });
 });
 
 describe("lang", () => {
@@ -305,6 +382,74 @@ describe("lang", () => {
     evaluator.dispose();
     assertPublicModelContracts(model);
   });
+
+  test("select-by-position, pipe syntax, and key builtins", () => {
+    const model = createModel();
+    const rootId = model.createId();
+    model.setRoot(rootId);
+    model.apply(
+      model.ops.transaction([model.ops.create(makeGroupEntry(rootId))]),
+    );
+
+    const evaluator = createEvaluator({ model, interpret: interpretExpr });
+
+    const a = model.createId();
+    const b = model.createId();
+    const c = model.createId();
+
+    model.apply(
+      model.ops.transaction([
+        model.ops.create(makeBlankEntry(a)),
+        model.ops.patch(a, {
+          label: "a",
+          content: { kind: "scalar", value: 1 },
+        }),
+        model.ops.reparent({ childId: a, toOwnerId: rootId }),
+
+        model.ops.create(makeBlankEntry(b)),
+        model.ops.patch(b, {
+          label: "b",
+          content: { kind: "scalar", value: 2 },
+        }),
+        model.ops.reparent({ childId: b, toOwnerId: rootId }),
+
+        model.ops.create(makeBlankEntry(c)),
+        model.ops.patch(c, {
+          label: "c",
+          content: { kind: "scalar", value: 3 },
+        }),
+        model.ops.reparent({ childId: c, toOwnerId: rootId }),
+      ]),
+    );
+
+    const env = {
+      lookup: (name: string) => {
+        if (name === "g") return V.entryGroup([a, b, c]);
+        if (name === "_") return V.entryGroup([a, b, c]);
+        return V.issue(`unbound: ${name}`);
+      },
+      resolve: (id: EntryId) => evaluator.value(id),
+      getLabel: (id: EntryId) => normalizeLabel(model.readEntry(id).label),
+    };
+
+    expect(asScalarValue(interpretExpr("g[2]", env))).toBe(2);
+    expect(isIssueValue(interpretExpr("g[0]", env))).toBe(true);
+
+    expect(asScalarValue(interpretExpr("sum(g)", env))).toBe(6);
+    expect(asScalarValue(interpretExpr("g:count()", env))).toBe(3);
+
+    expect(asScalarValue(interpretExpr("text_or(blank, 'x')", env))).toBe("x");
+    expect(asScalarValue(interpretExpr("If(true, 1, 2)", env))).toBe(1);
+    expect(isBlankValue(interpretExpr("and(true, blank)", env))).toBe(true);
+    expect(asScalarValue(interpretExpr("or(blank, true)", env))).toBe(true);
+
+    expect(
+      asScalarValue(interpretExpr("join(split('a,b', ','), '-')", env)),
+    ).toBe("a-b");
+
+    evaluator.dispose();
+    assertPublicModelContracts(model);
+  });
 });
 
 describe("eval", () => {
@@ -362,6 +507,76 @@ describe("eval", () => {
       expect(labels).toContain("ga");
     }
   });
+
+  test("lens: from/where/orderBy with label and position vars", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    let rows: ItemId = "";
+    let lens: ItemId = "";
+
+    const mkRow = (label: string, score: number) => {
+      let row: ItemId = "";
+      core.commit((t) => {
+        row = t.insertChild(rows, { kind: "group" });
+        t.setLabel(row, label);
+        const sc = t.insertChild(row, { kind: "blank" });
+        t.setLabel(sc, "score");
+        t.setScalar(sc, score);
+      });
+      return row;
+    };
+
+    core.commit((t) => {
+      rows = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(rows, "rows");
+    });
+
+    mkRow("a", 2);
+    mkRow("b", 1);
+    mkRow("c", 3);
+
+    core.commit((t) => {
+      lens = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(lens, "L");
+      t.setSource(lens, {
+        type: "lens",
+        from: "rows",
+        where: "score > 1",
+        orderBy: "score",
+      });
+    });
+
+    await tick();
+
+    const snap = core.item(lens);
+    expect(snap.content.kind).toBe("group");
+    if (snap.content.kind === "group") {
+      const labels = snap.content.children.map(
+        (cid) => core.item(cid).label ?? "",
+      );
+      expect(labels).toEqual(["a", "c"]);
+    }
+
+    core.commit((t) => {
+      t.setSource(lens, {
+        type: "lens",
+        from: "rows",
+        where: "position = 1 or label = 'c'",
+        orderBy: "label",
+      });
+    });
+
+    await tick();
+
+    const snap2 = core.item(lens);
+    expect(snap2.content.kind).toBe("group");
+    if (snap2.content.kind === "group") {
+      const labels = snap2.content.children.map(
+        (cid) => core.item(cid).label ?? "",
+      );
+      expect(labels).toEqual(["a", "c"]);
+    }
+  });
 });
 
 describe("core", () => {
@@ -393,8 +608,42 @@ describe("core", () => {
     expect(groupSnap.content.kind).toBe("group");
     if (groupSnap.content.kind === "group") {
       const firstChild = groupSnap.content.children[0]!;
-      const ro = core.item(`${firstChild},0` as any);
-      expect(core.locate(ro.id)).toBe(null);
+      const roId = `${String(firstChild)}0` as ItemId;
+      expect(core.locate(roId)).toBe(null);
+    }
+  });
+
+  test("value-group projection via split produces path children with readonly mode", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    let d: ItemId = "";
+
+    core.commit((t) => {
+      d = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(d, "d");
+      t.setSource(d, { type: "derived", expr: "split('a,b', ',')" });
+    });
+
+    await tick();
+
+    const snap = core.item(d);
+    expect(snap.content.kind).toBe("group");
+    if (snap.content.kind === "group") {
+      expect(snap.content.children.length).toBe(2);
+
+      const c0 = snap.content.children[0]!;
+      const c1 = snap.content.children[1]!;
+
+      const it0 = core.item(c0);
+      const it1 = core.item(c1);
+
+      expect(it0.mode.kind).toBe("readonly");
+      expect(it1.mode.kind).toBe("readonly");
+
+      expect(contentToScalar(it0.content)).toBe("a");
+      expect(contentToScalar(it1.content)).toBe("b");
+
+      expect(core.locate(c0)).toBe(null);
     }
   });
 
@@ -477,6 +726,48 @@ describe("views", () => {
     unmount();
   });
 
+  test("outline: '=' on empty direct content sets derived and focuses expr field", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    let x: ItemId = "";
+    core.commit((t) => {
+      x = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(x, "x");
+    });
+
+    const view = viewFactories.outline({ core, id: rootId });
+    const unmount = await mountView(view);
+
+    await tick();
+
+    const ta = view.root.querySelector(
+      "textarea.content",
+    ) as HTMLTextAreaElement | null;
+    expect(ta).not.toBeNull();
+    ta!.dispatchEvent(
+      new Event("pointerdown", { bubbles: true, cancelable: true }),
+    );
+    await tick();
+
+    ta!.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "=",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await tick();
+
+    const it = core.item(x);
+    expect(it.mode.kind).toBe("source");
+
+    const sel = core.selection();
+    expectFocused(sel);
+    expect(sel.target).toBe("source:expr");
+
+    unmount();
+  });
+
   test("table: arrow navigation label -> right -> cell; left -> label; down -> next row", async () => {
     const { core, rootId } = makeCoreRuntime();
 
@@ -525,6 +816,64 @@ describe("views", () => {
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
+    sel = core.selection();
+    expectFocused(sel);
+    expect(sel.target).toBe(DEFAULT_TARGET);
+    expect(sel.focus.container).toBe(rowB);
+
+    unmount();
+  });
+
+  test("outline mounts nested table and runtime routes global keydown to it", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    let tableId: ItemId = "";
+    let rowA: ItemId = "";
+    let rowB: ItemId = "";
+
+    core.commit((t) => {
+      tableId = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(tableId, "table");
+      t.setView(tableId, "table");
+
+      rowA = t.insertChild(tableId, { kind: "group" });
+      t.setLabel(rowA, "rowA");
+      const aScore = t.insertChild(rowA, { kind: "blank" });
+      t.setLabel(aScore, "score");
+      t.setScalar(aScore, 5);
+
+      rowB = t.insertChild(tableId, { kind: "group" });
+      t.setLabel(rowB, "rowB");
+      const bScore = t.insertChild(rowB, { kind: "blank" });
+      t.setLabel(bScore, "score");
+      t.setScalar(bScore, 6);
+    });
+
+    const outline = viewFactories.outline({ core, id: rootId });
+    const unmount = await mountView(outline);
+
+    await tick();
+
+    const nestedTableRoot = outline.root.querySelector(".view.table");
+    expect(nestedTableRoot).not.toBeNull();
+
+    const cellTextarea = outline.root.querySelector(
+      ".view.table textarea.content",
+    ) as HTMLTextAreaElement | null;
+    expect(cellTextarea).not.toBeNull();
+
+    cellTextarea!.dispatchEvent(
+      new Event("pointerdown", { bubbles: true, cancelable: true }),
+    );
+    await tick();
+
+    let sel = core.selection();
+    expectFocused(sel);
+    expect(sel.target).toBe(DEFAULT_TARGET);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    await tick();
+
     sel = core.selection();
     expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
