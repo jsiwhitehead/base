@@ -1,15 +1,11 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import {
-  type EntryId,
-  type ItemRef,
-  type Selection,
-  createCore,
-} from "../src/core";
+import { type ItemId, type Selection, createCore } from "../src/core";
 import {
   createModel,
   type SnapshotContent,
   type Model,
+  type EntryId,
 } from "../src/core/model";
 import {
   V,
@@ -38,18 +34,6 @@ async function tick() {
   await new Promise<void>((r) => setTimeout(() => r(), 0));
 }
 
-function refOf(entryId: EntryId, path: readonly number[] = []): ItemRef {
-  return { entryId, path };
-}
-
-function sameRef(a: ItemRef, b: ItemRef): boolean {
-  return (
-    a.entryId === b.entryId &&
-    a.path.length === b.path.length &&
-    a.path.every((x, i) => x === b.path[i])
-  );
-}
-
 function makeCoreRuntime() {
   const { core, rootId } = createCore({ views: viewFactories as any });
 
@@ -66,11 +50,6 @@ function contentToScalar(
   if (content.kind === "issue") throw new Error(`Issue: ${content.message}`);
   if (content.kind === "group") throw new Error(`Expected scalar, got group`);
   return content.value;
-}
-
-function expectBlankContent(content: { kind: string } | any) {
-  expect(content.kind).toBe("scalar");
-  if (content.kind === "scalar") expect(content.value).toBeNull();
 }
 
 function expectIssueValue(v: Value, includes?: string) {
@@ -511,46 +490,44 @@ describe("expr contract", () => {
 describe("core evaluator contract", () => {
   test("derived computes expression in entry env + updates when dependency changes", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let x: EntryId = -1;
-    let y: EntryId = -1;
+    let x: ItemId = "";
+    let y: ItemId = "";
 
     core.commit((t) => {
-      x = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(x), "x");
-      t.setScalar(refOf(x), 10);
+      x = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(x, "x");
+      t.setScalar(x, 10);
 
-      y = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(y), "y");
-      t.setSource(refOf(y), { type: "derived", expr: "x + 2" });
+      y = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(y, "y");
+      t.setSource(y, { type: "derived", expr: "x + 2" });
     });
 
-    expect(contentToScalar(core.item(refOf(y)).content)).toBe(12);
+    expect(contentToScalar(core.item(y).content)).toBe(12);
 
-    core.commit((t) => t.setScalar(refOf(x), 40));
+    core.commit((t) => t.setScalar(x, 40));
     await tick();
-    expect(contentToScalar(core.item(refOf(y)).content)).toBe(42);
+    expect(contentToScalar(core.item(y).content)).toBe(42);
   });
 
   test("cycle returns issue", () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let a: EntryId = -1;
-    let b: EntryId = -1;
+    let a: ItemId = "";
+    let b: ItemId = "";
 
     core.commit((t) => {
-      a = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(a), "a");
-      b = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(b), "b");
-      t.setSource(refOf(a), { type: "derived", expr: "b" });
-      t.setSource(refOf(b), { type: "derived", expr: "a" });
+      a = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      b = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setSource(a, { type: "derived", expr: "b" });
+      t.setSource(b, { type: "derived", expr: "a" });
     });
 
-    const ca = core.item(refOf(a)).content;
-    const cb = core.item(refOf(b)).content;
+    const ca = core.item(a).content;
+    const cb = core.item(b).content;
     expect(ca.kind).toBe("issue");
     expect(cb.kind).toBe("issue");
     if (ca.kind === "issue") expect(ca.message).toContain("Cyclic");
@@ -559,40 +536,39 @@ describe("core evaluator contract", () => {
 
   test("derived materializes entry-groups into value-groups (recursive) and becomes a group of items", () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let g: EntryId = -1;
-    let a: EntryId = -1;
-    let h: EntryId = -1;
-    let b: EntryId = -1;
-    let d: EntryId = -1;
+    let g: ItemId = "";
+    let a: ItemId = "";
+    let h: ItemId = "";
+    let b: ItemId = "";
+    let d: ItemId = "";
 
     core.commit((t) => {
-      g = t.insertChild(root, { kind: "group" });
-      t.setLabel(refOf(g), "g");
+      g = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(g, "g");
 
-      a = t.insertChild(refOf(g), { kind: "blank" });
-      t.setLabel(refOf(a), "a");
-      t.setScalar(refOf(a), 1);
+      a = t.insertChild(g, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
 
-      h = t.insertChild(refOf(g), { kind: "group" });
-      t.setLabel(refOf(h), "h");
+      h = t.insertChild(g, { kind: "group" });
+      t.setLabel(h, "h");
 
-      b = t.insertChild(refOf(h), { kind: "blank" });
-      t.setLabel(refOf(b), "b");
-      t.setScalar(refOf(b), 2);
+      b = t.insertChild(h, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setScalar(b, 2);
 
-      d = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(d), "d");
-      t.setSource(refOf(d), { type: "derived", expr: "g" });
+      d = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(d, "d");
+      t.setSource(d, { type: "derived", expr: "g" });
     });
 
-    const snap = core.item(refOf(d));
+    const snap = core.item(d);
     expect(snap.content.kind).toBe("group");
     if (snap.content.kind !== "group") return;
 
     const childLabels = snap.content.children.map(
-      (r) => core.item(r).label ?? "",
+      (id) => core.item(id).label ?? "",
     );
     expect(childLabels).toContain("a");
     expect(childLabels).toContain("h");
@@ -602,20 +578,19 @@ describe("core evaluator contract", () => {
 describe("selection contract", () => {
   test("setSelection repairs when focused entry disappears", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let g: EntryId = -1;
-    let x: EntryId = -1;
+    let g: ItemId = "";
+    let x: ItemId = "";
 
     core.commit((t) => {
-      g = t.insertChild(root, { kind: "group" });
-      t.setLabel(refOf(g), "g");
-      x = t.insertChild(refOf(g), { kind: "blank" });
-      t.setLabel(refOf(x), "x");
-      t.setScalar(refOf(x), 1);
+      g = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(g, "g");
+      x = t.insertChild(g, { kind: "blank" });
+      t.setLabel(x, "x");
+      t.setScalar(x, 1);
     });
 
-    core.focus({ scope: refOf(g), ref: refOf(x) }, "content");
+    core.focus({ container: g, item: x }, "content");
 
     core.commit((t) => {
       t.remove(g);
@@ -625,8 +600,10 @@ describe("selection contract", () => {
 
     const sel = core.selection();
     if (sel.kind === "focused") {
-      expect(sel.focus.ref.entryId).toBeGreaterThan(0);
-      expect(sel.focus.scope.entryId).toBeGreaterThan(0);
+      expect(typeof sel.focus.item).toBe("string");
+      expect(sel.focus.item.length).toBeGreaterThan(0);
+      expect(typeof sel.focus.container).toBe("string");
+      expect(sel.focus.container.length).toBeGreaterThan(0);
     } else {
       expect(sel.kind).toBe("idle");
     }
@@ -636,30 +613,29 @@ describe("selection contract", () => {
 describe("views contract (selection transitions via onKeyDown)", () => {
   test("table arrow navigation: row label -> right -> cell; left -> row label; down -> next row", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let tableId: EntryId = -1;
-    let rowA: EntryId = -1;
-    let aScore: EntryId = -1;
-    let rowB: EntryId = -1;
-    let bScore: EntryId = -1;
+    let tableId: ItemId = "";
+    let rowA: ItemId = "";
+    let aScore: ItemId = "";
+    let rowB: ItemId = "";
+    let bScore: ItemId = "";
 
     core.commit((t) => {
-      tableId = t.insertChild(root, { kind: "group" });
-      t.setLabel(refOf(tableId), "table");
+      tableId = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(tableId, "table");
       t.setView(tableId, "table");
 
-      rowA = t.insertChild(refOf(tableId), { kind: "group" });
-      t.setLabel(refOf(rowA), "rowA");
-      aScore = t.insertChild(refOf(rowA), { kind: "blank" });
-      t.setLabel(refOf(aScore), "score");
-      t.setScalar(refOf(aScore), 5);
+      rowA = t.insertChild(tableId, { kind: "group" });
+      t.setLabel(rowA, "rowA");
+      aScore = t.insertChild(rowA, { kind: "blank" });
+      t.setLabel(aScore, "score");
+      t.setScalar(aScore, 5);
 
-      rowB = t.insertChild(refOf(tableId), { kind: "group" });
-      t.setLabel(refOf(rowB), "rowB");
-      bScore = t.insertChild(refOf(rowB), { kind: "blank" });
-      t.setLabel(refOf(bScore), "score");
-      t.setScalar(refOf(bScore), 6);
+      rowB = t.insertChild(tableId, { kind: "group" });
+      t.setLabel(rowB, "rowB");
+      bScore = t.insertChild(rowB, { kind: "blank" });
+      t.setLabel(bScore, "score");
+      t.setScalar(bScore, 6);
     });
 
     const view = viewFactories.table({ core, id: tableId });
@@ -688,29 +664,28 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     sel = core.selection();
     expectFocusedSelection(sel);
     expect(sel.target).toBe("content");
-    expect(sel.focus.scope.entryId).toBe(rowB);
+    expect(sel.focus.container).toBe(rowB);
 
     unmount();
   });
 
   test("outline picks first nav stop; arrows keep focused selection", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
     core.commit((t) => {
-      const a = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(a), "a");
-      t.setScalar(refOf(a), 1);
+      const a = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
 
-      const g = t.insertChild(root, { kind: "group" });
-      t.setLabel(refOf(g), "g");
-      const ga = t.insertChild(refOf(g), { kind: "blank" });
-      t.setLabel(refOf(ga), "ga");
-      t.setScalar(refOf(ga), 2);
+      const g = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(g, "g");
+      const ga = t.insertChild(g, { kind: "blank" });
+      t.setLabel(ga, "ga");
+      t.setScalar(ga, 2);
 
-      const b = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(b), "b");
-      t.setScalar(refOf(b), 3);
+      const b = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setScalar(b, 3);
     });
 
     const view = viewFactories.outline({ core, id: rootId });
@@ -737,15 +712,14 @@ describe("views contract (selection transitions via onKeyDown)", () => {
 describe("DOM smoke", () => {
   test("slider range input updates scalar content", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let sliderId: EntryId = -1;
+    let sliderId: ItemId = "";
 
     core.commit((t) => {
-      sliderId = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(sliderId), "slider");
+      sliderId = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(sliderId, "slider");
       t.setView(sliderId, "slider");
-      t.setScalar(refOf(sliderId), 10);
+      t.setScalar(sliderId, 10);
     });
 
     const view = viewFactories.slider({ core, id: sliderId });
@@ -763,26 +737,25 @@ describe("DOM smoke", () => {
     input.value = "42";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
-    expect(contentToScalar(core.item(refOf(sliderId)).content)).toBe(42);
+    expect(contentToScalar(core.item(sliderId).content)).toBe(42);
 
     unmount();
   });
 
   test("reactivity updates derived display text", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let x: EntryId = -1;
-    let d: EntryId = -1;
+    let x: ItemId = "";
+    let d: ItemId = "";
 
     core.commit((t) => {
-      x = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(x), "x");
-      t.setScalar(refOf(x), 1);
+      x = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(x, "x");
+      t.setScalar(x, 1);
 
-      d = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(d), "d");
-      t.setSource(refOf(d), { type: "derived", expr: "x + 1" });
+      d = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(d, "d");
+      t.setSource(d, { type: "derived", expr: "x + 1" });
     });
 
     const view = viewFactories.outline({ core, id: rootId });
@@ -800,7 +773,7 @@ describe("DOM smoke", () => {
     await tick();
     expect(getDerivedText()).toBe("2");
 
-    core.commit((t) => t.setScalar(refOf(x), 5));
+    core.commit((t) => t.setScalar(x, 5));
     await tick();
     expect(getDerivedText()).toBe("6");
 
@@ -809,32 +782,30 @@ describe("DOM smoke", () => {
 
   test("dispose safety: disposing view does not crash on subsequent model updates", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const root = refOf(rootId);
 
-    let a: EntryId = -1;
+    let a: ItemId = "";
 
     core.commit((t) => {
-      a = t.insertChild(root, { kind: "blank" });
-      t.setLabel(refOf(a), "a");
-      t.setScalar(refOf(a), 1);
+      a = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
     });
 
     const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(core, view);
 
     expect(() => unmount()).not.toThrow();
-    expect(() => core.commit((t) => t.setScalar(refOf(a), 2))).not.toThrow();
+    expect(() => core.commit((t) => t.setScalar(a, 2))).not.toThrow();
   });
 });
 
 test("outline: clicking editable content focuses the text input element", async () => {
   const { core, rootId } = makeCoreRuntime();
-  const root = refOf(rootId);
 
   core.commit((t) => {
-    const x = t.insertChild(root, { kind: "blank" });
-    t.setLabel(refOf(x), "x");
-    t.setScalar(refOf(x), 10);
+    const x = t.insertChild(rootId, { kind: "blank" });
+    t.setLabel(x, "x");
+    t.setScalar(x, 10);
   });
 
   const view = viewFactories.outline({ core, id: rootId });

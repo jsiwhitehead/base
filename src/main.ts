@@ -1,11 +1,11 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import type { EntryId, ItemRef, ViewKind, ViewName, Scalar } from "./core";
+import type { ItemId, ViewKind, ViewName, Scalar } from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
 
 export type App = {
   core: ReturnType<typeof createCore>["core"];
-  rootId: EntryId;
+  rootId: ItemId;
   dispose(): void;
 };
 
@@ -14,8 +14,6 @@ export type CreateAppOpts = {
   rootView?: ViewName;
   demo?: boolean;
 };
-
-const refOf = (entryId: EntryId): ItemRef => ({ entryId, path: [] });
 
 export function createApp(opts: CreateAppOpts = {}): App {
   const rootView = opts.rootView ?? "outline";
@@ -61,78 +59,78 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
 function findChildByLabel(
   core: App["core"],
-  owner: ItemRef,
+  ownerId: ItemId,
   label: string,
-): ItemRef | null {
+): ItemId | null {
   const want = label.trim();
   if (!want) return null;
 
-  const snap = core.item(owner);
+  const snap = core.item(ownerId);
   if (snap.content.kind !== "group") return null;
 
-  for (const child of snap.content.children) {
-    const c = core.item(child);
-    if ((c.label ?? "").trim() === want) return child;
+  for (const childId of snap.content.children) {
+    const c = core.item(childId);
+    if ((c.label ?? "").trim() === want) return childId;
   }
+
   return null;
 }
 
 export function seedDemo(app: App) {
   const { core, rootId } = app;
-  const rootRef = refOf(rootId);
 
-  if (findChildByLabel(core, rootRef, "Demo")) return;
+  if (findChildByLabel(core, rootId, "Demo")) return;
 
-  const mkGroup = (owner: ItemRef, label: string, view: ViewKind = null) => {
-    let id: EntryId = -1;
+  const mkGroup = (ownerId: ItemId, label: string, view: ViewKind = null) => {
+    let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(owner, { kind: "group" });
-      t.setLabel(refOf(id), label);
+      id = t.insertChild(ownerId, { kind: "group" });
+      t.setLabel(id, label);
       if (view != null) t.setView(id, view);
     });
-    return refOf(id);
+    return id;
   };
 
-  const mkScalar = (owner: ItemRef, label: string, value: Scalar) => {
-    let id: EntryId = -1;
+  const mkScalar = (ownerId: ItemId, label: string, value: Scalar) => {
+    let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(owner, { kind: "blank" });
-      t.setLabel(refOf(id), label);
-      t.setScalar(refOf(id), value);
+      id = t.insertChild(ownerId, { kind: "blank" });
+      t.setLabel(id, label);
+      t.setScalar(id, value);
     });
-    return refOf(id);
+    return id;
   };
 
-  const mkDerived = (owner: ItemRef, label: string, expr: string) => {
-    let id: EntryId = -1;
+  const mkDerived = (ownerId: ItemId, label: string, expr: string) => {
+    let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(owner, { kind: "blank" });
-      t.setLabel(refOf(id), label);
-      t.setSource(refOf(id), { type: "derived", expr });
+      id = t.insertChild(ownerId, { kind: "blank" });
+      t.setLabel(id, label);
+      t.setSource(id, { type: "derived", expr });
     });
-    return refOf(id);
+    return id;
   };
 
   const mkLens = (
-    owner: ItemRef,
+    ownerId: ItemId,
     label: string,
     spec: { from: string; where?: string; orderBy?: string },
   ) => {
-    let id: EntryId = -1;
+    let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(owner, { kind: "blank" });
-      t.setLabel(refOf(id), label);
-      t.setSource(refOf(id), {
+      id = t.insertChild(ownerId, { kind: "blank" });
+      t.setLabel(id, label);
+      t.setSource(id, {
         type: "lens",
         from: spec.from,
         where: spec.where ?? "",
         orderBy: spec.orderBy ?? "",
       });
     });
-    return refOf(id);
+    return id;
   };
 
-  const demo = mkGroup(rootRef, "Demo", "outline");
+  const demo = mkGroup(rootId, "Demo", "outline");
 
   mkScalar(demo, "x", 10);
   mkScalar(demo, "y", 2);

@@ -1,12 +1,4 @@
-import {
-  type Core,
-  type ItemRef,
-  type Caret,
-  type Focus,
-  type Component,
-  refKey,
-  refFromKey,
-} from "../core";
+import type { Core, ItemId, Caret, Focus, Component } from "../core";
 import {
   createComponent,
   el,
@@ -339,11 +331,11 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-function readonlyItemText(core: Core, ref: ItemRef): Component {
+function readonlyItemText(core: Core, id: ItemId): Component {
   return createComponent((ctx) => {
     const d = el("div", "item readonly");
     ctx.watch(
-      () => core.item(ref).content,
+      () => core.item(id).content,
       (c) => {
         const isIssue = c.kind === "issue";
         const text =
@@ -365,11 +357,11 @@ function readonlyItemText(core: Core, ref: ItemRef): Component {
 export type ContentFieldOpts = {
   core: Core;
   focus: Focus;
-  ref: ItemRef;
+  id: ItemId;
   className?: string;
   registerFocus?: boolean;
   textKeys?: (inp: TextInputElement) => (() => void) | void;
-  renderGroupChild?: (childRef: ItemRef) => Component;
+  renderGroupChild?: (childId: ItemId) => Component;
   commitText?: (text: string) => void;
   focusElRef?: { current: HTMLElement | null };
 };
@@ -428,10 +420,10 @@ export function contentField(opts: ContentFieldOpts): Component {
         registerFocus: register,
         commit: (text) => opts.commitText?.(text),
         getState: () => {
-          const snap = core.item(opts.ref);
+          const snap = core.item(opts.id);
           const c = snap.content;
 
-          const canEdit = snap.edit.kind === "direct" && c.kind === "scalar";
+          const canEdit = snap.mode.kind === "direct" && c.kind === "scalar";
 
           if (canEdit) {
             return {
@@ -460,7 +452,7 @@ export function contentField(opts: ContentFieldOpts): Component {
       const d = el("div", "item readonly");
       installContentClickTarget(d);
 
-      const inner = readonlyItemText(core, opts.ref);
+      const inner = readonlyItemText(core, opts.id);
       d.replaceChildren(inner.el);
       ctx.use(inner);
 
@@ -478,22 +470,21 @@ export function contentField(opts: ContentFieldOpts): Component {
       ensureTabbable(wrap);
       installContentClickTarget(wrap);
 
-      const children = ctx.list(wrap, (key: string) => {
-        const childRef = refFromKey(key);
+      const children = ctx.list(wrap, (childId: string) => {
         const c =
-          opts.renderGroupChild?.(childRef) ?? readonlyItemText(core, childRef);
+          opts.renderGroupChild?.(childId) ?? readonlyItemText(core, childId);
         c.el.classList.add("item");
         return c;
       });
 
       ctx.watch(
         () => {
-          const c = core.item(opts.ref).content;
+          const c = core.item(opts.id).content;
           if (c.kind !== "group") return [] as string[];
-          return c.children.map(refKey);
+          return [...c.children];
         },
-        (keys) => {
-          children.update(keys);
+        (ids) => {
+          children.update(ids);
         },
       );
 
@@ -503,14 +494,14 @@ export function contentField(opts: ContentFieldOpts): Component {
     let currentKind: "group" | "text" | "readonly" | null = null;
 
     ctx.watch(
-      () => core.item(opts.ref),
+      () => core.item(opts.id),
       (snap) => {
         const c = snap.content;
 
         const nextKind =
           c.kind === "group"
             ? "group"
-            : snap.edit.kind === "direct" && c.kind === "scalar"
+            : snap.mode.kind === "direct" && c.kind === "scalar"
               ? "text"
               : "readonly";
 

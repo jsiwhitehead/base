@@ -1,9 +1,9 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { EntryId, Model, ViewKind, ViewName } from "./model";
+import type { Model, ViewKind, ViewName } from "./model";
 
-export type ItemRef = { entryId: EntryId; path: readonly number[] };
+export type ItemId = string;
 
-export type Focus = { scope: ItemRef; ref: ItemRef };
+export type Focus = { container: ItemId; item: ItemId };
 export type Caret = { start: number; end: number };
 
 export type Selection =
@@ -36,22 +36,12 @@ export type DomView = {
   dispose(): void;
 };
 
-export type ViewFactoryArgs<C> = { core: C; id: EntryId; focus?: Focus };
+export type ViewFactoryArgs<C> = { core: C; id: ItemId; focus?: Focus };
 export type ViewFactory<C> = (args: ViewFactoryArgs<C>) => DomView;
 
-export const refKey = (r: ItemRef): string =>
-  `${String(r.entryId)}:${r.path.length ? r.path.join(",") : ""}`;
-
-export const refFromKey = (key: string): ItemRef => {
-  const i = key.indexOf(":");
-  if (i === -1) return { entryId: Number(key), path: [] };
-  const entryId = Number(key.slice(0, i));
-  const rest = key.slice(i + 1);
-  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
-  return { entryId, path };
-};
-
-const keyOf = (f: Focus): string => `${refKey(f.scope)}::${refKey(f.ref)}`;
+const itemKey = (id: ItemId): string => id;
+const keyOf = (f: Focus): string =>
+  `${itemKey(f.container)}::${itemKey(f.item)}`;
 
 export const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
@@ -150,7 +140,14 @@ function computeAnchoredPos(
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
 
-const entryRef = (entryId: EntryId): ItemRef => ({ entryId, path: [] });
+const itemIdFromEntryId = (entryId: number): ItemId => `${String(entryId)}:`;
+
+const entryIdFromItemId = (id: ItemId): number | null => {
+  const i = id.indexOf(":");
+  const head = i === -1 ? id : id.slice(0, i);
+  const n = Number(head);
+  return Number.isFinite(n) ? n : null;
+};
 
 export type Runtime<C> = {
   selectionSignal: Signal<Selection>;
@@ -165,9 +162,9 @@ export type Runtime<C> = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: { id: EntryId; focus?: Focus }): Component;
+  mountView(opts: { id: ItemId; focus?: Focus }): Component;
   mountView(opts: {
-    id: EntryId;
+    id: ItemId;
     focus?: Focus;
     continueAs: ViewName;
   }): Component | null;
@@ -279,9 +276,11 @@ export function createRuntime<C>(opts: {
     scheduleEffects(sel, normalizeEffectsForSelection(sel, effects));
   };
 
-  const canReadEntry = (id: EntryId): boolean => {
+  const canReadItem = (id: ItemId): boolean => {
+    const entryId = entryIdFromItemId(id);
+    if (entryId == null) return false;
     try {
-      model.peekEntry(id);
+      model.peekEntry(entryId);
       return true;
     } catch {
       return false;
@@ -291,19 +290,16 @@ export function createRuntime<C>(opts: {
   const repairSelection = (sel: Selection): Selection => {
     if (sel.kind === "idle") return sel;
 
-    if (
-      canReadEntry(sel.focus.ref.entryId) &&
-      canReadEntry(sel.focus.scope.entryId)
-    )
+    if (canReadItem(sel.focus.item) && canReadItem(sel.focus.container))
       return sel;
 
     try {
-      const rootId = model.rootId();
-      model.peekEntry(rootId);
-      const r = entryRef(rootId);
+      const rootEntryId = model.rootId();
+      model.peekEntry(rootEntryId);
+      const rootId = itemIdFromEntryId(rootEntryId);
       return {
         kind: "focused",
-        focus: { scope: r, ref: r },
+        focus: { container: rootId, item: rootId },
         target: "content",
       };
     } catch {
@@ -389,10 +385,13 @@ export function createRuntime<C>(opts: {
     return () => win.removeEventListener("keydown", onKeyDown);
   };
 
-  const resolveWanted = (id: EntryId): ViewName => {
+  const resolveWanted = (id: ItemId): ViewName => {
+    const entryId = entryIdFromItemId(id);
+    if (entryId == null) return "outline";
+
     let v: ViewKind = null;
     try {
-      v = model.readEntry(id).view;
+      v = model.readEntry(entryId).view;
     } catch {
       v = null;
     }
@@ -401,22 +400,27 @@ export function createRuntime<C>(opts: {
     return (wanted in views ? wanted : "outline") as ViewName;
   };
 
-  function mountView(opts2: { id: EntryId; focus?: Focus }): Component;
+  function mountView(opts2: { id: ItemId; focus?: Focus }): Component;
   function mountView(opts2: {
-    id: EntryId;
+    id: ItemId;
     focus?: Focus;
     continueAs: ViewName;
   }): Component | null;
   function mountView(opts2: {
-    id: EntryId;
+    id: ItemId;
     focus?: Focus;
     continueAs?: ViewName;
   }): Component | null {
     const id = opts2.id;
-    const baseRef = entryRef(id);
-    const focus: Focus = opts2.focus ?? { scope: baseRef, ref: baseRef };
-    const wanted = resolveWanted(id);
+    const focus: Focus = opts2.focus ?? { container: id, item: id };
 
+    const entryId = entryIdFromItemId(id);
+    if (entryId == null)
+      return opts2.continueAs
+        ? null
+        : { el: document.createElement("div"), dispose() {} };
+
+    const wanted = resolveWanted(id);
     if (opts2.continueAs && wanted === opts2.continueAs) return null;
 
     const factory = views[wanted];

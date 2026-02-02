@@ -38,7 +38,6 @@ type LensContent = {
 };
 
 export type EntryContentSettable = BlankContent | ScalarContent | GroupContent;
-
 export type EntryContent = EntryContentSettable | DerivedContent | LensContent;
 
 export type Entry = {

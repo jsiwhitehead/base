@@ -1,7 +1,6 @@
 import { computed } from "@preact/signals-core";
 import {
-  type EntryId,
-  type ItemRef,
+  type ItemId,
   type Core,
   type Component,
   type Focus,
@@ -11,7 +10,6 @@ import {
   type ScalarOrBlank,
   type Source,
   parseScalar,
-  refKey,
 } from "../core";
 import {
   type NavDir,
@@ -37,13 +35,6 @@ type SourceField = {
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
 const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
-
-const sameRef = (a: ItemRef, b: ItemRef) =>
-  a.entryId === b.entryId &&
-  a.path.length === b.path.length &&
-  a.path.every((x, i) => x === b.path[i]);
-
-const isEntryRef = (r: ItemRef) => r.path.length === 0;
 
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
@@ -83,63 +74,77 @@ function patchSource(source: Source, key: string, text: string): Source {
   return source;
 }
 
-const defaultTargetFor = (core: Core, ref: ItemRef): string => {
-  const it = core.item(ref);
-  return it.edit.kind === "source" ? "label" : "content";
+const defaultTargetFor = (core: Core, id: ItemId): string => {
+  const it = core.item(id);
+  return it.mode.kind === "source" ? "label" : "content";
 };
 
-const childrenOf = (core: Core, ref: ItemRef): readonly ItemRef[] => {
-  const c = core.item(ref).content;
+const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
+  const c = core.item(id).content;
   return c.kind === "group" ? c.children : [];
 };
 
-const isNavStop = (core: Core, ref: ItemRef) => {
-  const it = core.item(ref);
+const isNavStop = (core: Core, id: ItemId) => {
+  const it = core.item(id);
   const kids = it.content.kind === "group" ? it.content.children : [];
-  return kids.length === 0 || it.edit.kind === "source";
+  return kids.length === 0 || it.mode.kind === "source";
 };
 
-function collectNavStopsFrom(core: Core, root: ItemRef): ItemRef[] {
-  const out: ItemRef[] = [];
-  const walk = (owner: ItemRef) => {
-    for (const child of childrenOf(core, owner)) {
-      if (isNavStop(core, child)) out.push(child);
-      walk(child);
+function collectNavStopsFrom(core: Core, rootId: ItemId): ItemId[] {
+  const out: ItemId[] = [];
+  const walk = (ownerId: ItemId) => {
+    for (const childId of childrenOf(core, ownerId)) {
+      if (isNavStop(core, childId)) out.push(childId);
+      walk(childId);
     }
   };
-  walk(root);
+  walk(rootId);
   return out;
 }
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
 
+function findPresentedParent(
+  rootId: ItemId,
+  core: Core,
+  want: ItemId,
+): ItemId | null {
+  if (rootId === want) return null;
+
+  const stack: ItemId[] = [rootId];
+
+  while (stack.length) {
+    const cur = stack.pop()!;
+    const kids = childrenOf(core, cur);
+    for (const k of kids) {
+      if (k === want) return cur;
+      stack.push(k);
+    }
+  }
+
+  return null;
+}
+
 function outlineNavMove(
   core: Core,
-  stops: ItemRef[],
+  rootId: ItemId,
+  stops: ItemId[],
   sel: Selection,
   dir: NavDir,
   mode: NavMode,
 ): NavResult | null {
   if (sel.kind !== "focused") return null;
 
-  const from = sel.focus.ref;
-  const at = Math.max(
-    0,
-    stops.findIndex((r) => sameRef(r, from)),
-  );
+  const from = sel.focus.item;
+  const at = Math.max(0, stops.indexOf(from));
 
   const neighbor = (delta: -1 | 1) => {
     const j = at + delta;
     return j >= 0 && j < stops.length ? stops[j]! : null;
   };
 
-  const parentRef = (r: ItemRef): ItemRef | null => {
-    if (!r.path.length) return null;
-    return { entryId: r.entryId, path: r.path.slice(0, -1) };
-  };
-
-  const firstChildStop = (r: ItemRef): ItemRef | null => {
-    for (const cid of childrenOf(core, r)) {
+  const firstChildStop = (id: ItemId): ItemId | null => {
+    for (const cid of childrenOf(core, id)) {
       if (isNavStop(core, cid)) return cid;
       const deeper = firstChildStop(cid);
       if (deeper) return deeper;
@@ -147,7 +152,7 @@ function outlineNavMove(
     return null;
   };
 
-  let next: ItemRef | null = null;
+  let next: ItemId | null = null;
   let caret: Caret | null = null;
   let targetOverride: string | null = null;
 
@@ -158,21 +163,21 @@ function outlineNavMove(
     if (mode === "jump") next = neighbor(1) ?? next;
   } else if (dir === "left") {
     const prev = neighbor(-1);
-    const parent = parentRef(from);
+    const parent = findPresentedParent(rootId, core, from);
     next = prev ?? parent;
     if (mode === "jump") next = parent ?? prev ?? null;
 
-    if (prev && next && sameRef(prev, next)) {
+    if (prev && next && prev === next) {
       if (sel.target === "content") {
         const it = core.item(prev);
-        if (it.edit.kind === "source") {
-          const fields = fieldsFromSource(it.edit.source);
+        if (it.mode.kind === "source") {
+          const fields = fieldsFromSource(it.mode.source);
           const last = fields[fields.length - 1];
           if (last) {
             targetOverride = `source:${last.key}`;
             caret = caretAt((last.text ?? "").length);
           }
-        } else if (it.edit.kind === "direct" && it.content.kind === "scalar") {
+        } else if (it.mode.kind === "direct" && it.content.kind === "scalar") {
           caret = caretAt(scalarToText(it.content.value).length);
         }
       }
@@ -184,52 +189,55 @@ function outlineNavMove(
   const target = targetOverride ?? defaultTargetFor(core, next);
   const outCaret = caret ?? caret0();
   return {
-    focus: { scope: sel.focus.scope, ref: next },
+    focus: { container: sel.focus.container, item: next },
     target,
     caret: outCaret,
   };
 }
 
 export const outlineCommands = {
-  setLabel(core: Core, ref: ItemRef, text: string): void {
-    core.commit((t) => t.setLabel(ref, text));
+  setLabel(core: Core, id: ItemId, text: string): void {
+    core.commit((t) => t.setLabel(id, text));
   },
 
-  setText(core: Core, ref: ItemRef, text: string): void {
-    core.commit((t) => t.setScalar(ref, parseScalar(text)));
+  setText(core: Core, id: ItemId, text: string): void {
+    core.commit((t) => t.setScalar(id, parseScalar(text)));
   },
 
-  setDerived(core: Core, ref: ItemRef): void {
-    core.commit((t) => t.setSource(ref, { type: "derived", expr: "" }));
+  setDerived(core: Core, id: ItemId): void {
+    core.commit((t) => t.setSource(id, { type: "derived", expr: "" }));
   },
 
-  commitSourceField(core: Core, ref: ItemRef, key: string, text: string): void {
-    const it = core.item(ref);
-    if (it.edit.kind !== "source") return;
-    const next = patchSource(it.edit.source, key, text);
-    core.commit((t) => t.setSource(ref, next));
+  commitSourceField(core: Core, id: ItemId, key: string, text: string): void {
+    const it = core.item(id);
+    if (it.mode.kind !== "source") return;
+    const next = patchSource(it.mode.source, key, text);
+    core.commit((t) => t.setSource(id, next));
   },
 
   insertSibling(core: Core, sel: Selection, side: "before" | "after"): void {
     if (sel.kind !== "focused") return;
-    const scope = sel.focus.scope;
 
-    const c = core.item(scope).content;
-    if (c.kind !== "group") return;
+    const containerId = sel.focus.container;
+    const itemId = sel.focus.item;
 
-    const siblings = c.children;
-    const idx = siblings.findIndex((r) => sameRef(r, sel.focus.ref));
+    const container = core.item(containerId).content;
+    if (container.kind !== "group") return;
+
+    const siblings = container.children;
+    const idx = siblings.indexOf(itemId);
     if (idx < 0) return;
 
     const at = side === "before" ? idx : idx + 1;
 
-    let id: EntryId = -1;
+    let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(scope, { at, kind: "blank" });
+      id = t.insertChild(containerId, { at, kind: "blank" });
     });
 
-    const ref: ItemRef = { entryId: id, path: [] };
-    core.focus({ scope, ref }, "content", { caret: caret0() });
+    core.focus({ container: containerId, item: id }, "content", {
+      caret: caret0(),
+    });
   },
 
   splitAt(
@@ -239,20 +247,21 @@ export const outlineCommands = {
     caretEnd = caretStart,
   ): void {
     if (sel.kind !== "focused") return;
-    const ref = sel.focus.ref;
 
-    const snap = core.item(ref);
-    if (!(snap.edit.kind === "direct" && snap.content.kind === "scalar")) {
+    const containerId = sel.focus.container;
+    const id = sel.focus.item;
+
+    const snap = core.item(id);
+    if (!(snap.mode.kind === "direct" && snap.content.kind === "scalar")) {
       outlineCommands.insertSibling(core, sel, "after");
       return;
     }
 
-    const scope = sel.focus.scope;
-    const c = core.item(scope).content;
-    if (c.kind !== "group") return;
+    const container = core.item(containerId).content;
+    if (container.kind !== "group") return;
 
-    const siblings = c.children;
-    const idx = siblings.findIndex((r) => sameRef(r, ref));
+    const siblings = container.children;
+    const idx = siblings.indexOf(id);
     if (idx < 0) return;
 
     const curText = scalarToText(snap.content.value);
@@ -264,15 +273,15 @@ export const outlineCommands = {
     const left = curText.slice(0, start);
     const right = curText.slice(end);
 
-    let rightId: EntryId = -1;
+    let rightId: ItemId = "";
 
     core.commit((t) => {
-      t.setScalar(ref, parseScalar(left));
-      rightId = t.insertChild(scope, { at: idx + 1, kind: "blank" });
-      t.setScalar({ entryId: rightId, path: [] }, parseScalar(right));
+      t.setScalar(id, parseScalar(left));
+      rightId = t.insertChild(containerId, { at: idx + 1, kind: "blank" });
+      t.setScalar(rightId, parseScalar(right));
     });
 
-    core.focus({ scope, ref: { entryId: rightId, path: [] } }, "content", {
+    core.focus({ container: containerId, item: rightId }, "content", {
       caret: caret0(),
     });
   },
@@ -280,12 +289,12 @@ export const outlineCommands = {
   joinBoundary(core: Core, sel: Selection, dir: "backward" | "forward"): void {
     if (sel.kind !== "focused") return;
 
-    const scope = sel.focus.scope;
-    const c = core.item(scope).content;
-    if (c.kind !== "group") return;
+    const containerId = sel.focus.container;
+    const container = core.item(containerId).content;
+    if (container.kind !== "group") return;
 
-    const siblings = c.children;
-    const idx = siblings.findIndex((r) => sameRef(r, sel.focus.ref));
+    const siblings = container.children;
+    const idx = siblings.indexOf(sel.focus.item);
     if (idx < 0) return;
 
     const neighbor =
@@ -294,40 +303,39 @@ export const outlineCommands = {
         : (siblings[idx + 1] ?? null);
     if (!neighbor) return;
 
-    const leftRef = dir === "backward" ? neighbor : sel.focus.ref;
-    const rightRef = dir === "backward" ? sel.focus.ref : neighbor;
+    const leftId = dir === "backward" ? neighbor : sel.focus.item;
+    const rightId = dir === "backward" ? sel.focus.item : neighbor;
 
-    const a = core.item(leftRef);
-    const b = core.item(rightRef);
+    const a = core.item(leftId);
+    const b = core.item(rightId);
 
-    if (!(a.edit.kind === "direct" && a.content.kind === "scalar")) return;
-    if (!(b.edit.kind === "direct" && b.content.kind === "scalar")) return;
-    if (!isEntryRef(leftRef) || !isEntryRef(rightRef)) return;
+    if (!(a.mode.kind === "direct" && a.content.kind === "scalar")) return;
+    if (!(b.mode.kind === "direct" && b.content.kind === "scalar")) return;
 
     const leftText = scalarToText(a.content.value);
     const rightText = scalarToText(b.content.value);
 
     core.commit((t) => {
-      t.setScalar(leftRef, parseScalar(leftText + rightText));
-      t.remove(rightRef.entryId);
+      t.setScalar(leftId, parseScalar(leftText + rightText));
+      t.remove(rightId);
     });
 
-    core.focus({ scope, ref: leftRef }, "content", {
+    core.focus({ container: containerId, item: leftId }, "content", {
       caret: caretAt(leftText.length),
     });
   },
 
   removeItem(core: Core, sel: Selection, prefer: "prev" | "next"): void {
     if (sel.kind !== "focused") return;
-    const ref = sel.focus.ref;
-    if (!isEntryRef(ref)) return;
 
-    const scope = sel.focus.scope;
-    const c = core.item(scope).content;
-    if (c.kind !== "group") return;
+    const containerId = sel.focus.container;
+    const id = sel.focus.item;
 
-    const siblings = c.children;
-    const idx = siblings.findIndex((r) => sameRef(r, ref));
+    const container = core.item(containerId).content;
+    if (container.kind !== "group") return;
+
+    const siblings = container.children;
+    const idx = siblings.indexOf(id);
     if (idx < 0) return;
 
     const prev = siblings[idx - 1] ?? null;
@@ -336,77 +344,83 @@ export const outlineCommands = {
     const chosen =
       prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
 
-    core.commit((t) => t.remove(ref.entryId));
+    core.commit((t) => t.remove(id));
 
     if (chosen) {
       const it = core.item(chosen);
       const caret =
         prefer === "prev" &&
-        it.edit.kind === "direct" &&
+        it.mode.kind === "direct" &&
         it.content.kind === "scalar"
           ? caretAt(scalarToText(it.content.value).length)
           : caret0();
-      core.focus({ scope, ref: chosen }, defaultTargetFor(core, chosen), {
-        caret,
-      });
+      core.focus(
+        { container: containerId, item: chosen },
+        defaultTargetFor(core, chosen),
+        {
+          caret,
+        },
+      );
     } else {
       core.blur();
     }
   },
 
-  changeNesting(core: Core, sel: Selection, dir: "in" | "out"): void {
+  changeNesting(
+    core: Core,
+    rootId: ItemId,
+    sel: Selection,
+    dir: "in" | "out",
+  ): void {
     if (sel.kind !== "focused") return;
 
-    const ref = sel.focus.ref;
-    const scope = sel.focus.scope;
-    if (!isEntryRef(ref) || !isEntryRef(scope)) return;
+    const containerId = sel.focus.container;
+    const id = sel.focus.item;
 
-    const scopeContent = core.item(scope).content;
-    if (scopeContent.kind !== "group") return;
+    const container = core.item(containerId).content;
+    if (container.kind !== "group") return;
 
-    const siblings = scopeContent.children;
-    const idx = siblings.findIndex((r) => sameRef(r, ref));
+    const siblings = container.children;
+    const idx = siblings.indexOf(id);
     if (idx < 0) return;
 
     if (dir === "in") {
-      const label = core.item(ref).label ?? "";
-      let wrapperId: EntryId = -1;
+      const label = core.item(id).label ?? "";
+      let wrapperId: ItemId = "";
 
       core.commit((t) => {
-        wrapperId = t.insertChild(scope, { at: idx, kind: "group" });
-        t.setLabel({ entryId: wrapperId, path: [] }, label);
-        t.setLabel(ref, "");
-        t.move(ref.entryId, wrapperId, { at: 0 });
+        wrapperId = t.insertChild(containerId, { at: idx, kind: "group" });
+        t.setLabel(wrapperId, label);
+        t.setLabel(id, "");
+        t.move(id, wrapperId, { at: 0 });
       });
 
       core.focus(
-        { scope: { entryId: wrapperId, path: [] }, ref },
-        defaultTargetFor(core, ref),
+        { container: wrapperId, item: id },
+        defaultTargetFor(core, id),
         { caret: caret0() },
       );
       return;
     }
 
-    const parentEntryId = scope.entryId;
-    const parentRef: ItemRef = { entryId: parentEntryId, path: [] };
+    const parentId = findPresentedParent(rootId, core, containerId);
+    if (!parentId) return;
 
-    const parentContent = core.item(parentRef).content;
+    const parentContent = core.item(parentId).content;
     if (parentContent.kind !== "group") return;
 
-    const wrapperIdx = parentContent.children.findIndex(
-      (r) => r.entryId === scope.entryId && r.path.length === 0,
-    );
+    const wrapperIdx = parentContent.children.indexOf(containerId);
     if (wrapperIdx < 0) return;
 
-    const wrapperLabel = core.item(scope).label ?? "";
+    const wrapperLabel = core.item(containerId).label ?? "";
 
     core.commit((t) => {
-      t.move(ref.entryId, parentEntryId, { at: wrapperIdx });
-      t.remove(scope.entryId);
-      t.setLabel(ref, wrapperLabel);
+      t.move(id, parentId, { at: wrapperIdx });
+      t.remove(containerId);
+      t.setLabel(id, wrapperLabel);
     });
 
-    core.focus({ scope: parentRef, ref }, defaultTargetFor(core, ref), {
+    core.focus({ container: parentId, item: id }, defaultTargetFor(core, id), {
       caret: caret0(),
     });
   },
@@ -414,15 +428,15 @@ export const outlineCommands = {
   confirm(core: Core, sel: Selection): void {
     if (sel.kind !== "focused") return;
 
-    const ref = sel.focus.ref;
+    const id = sel.focus.item;
 
     if (sel.target.startsWith("source:") || sel.target === "label") {
       core.focus(sel.focus, "content", { caret: caret0() });
       return;
     }
 
-    const it = core.item(ref);
-    if (it.edit.kind === "direct" && it.content.kind === "scalar") {
+    const it = core.item(id);
+    if (it.mode.kind === "direct" && it.content.kind === "scalar") {
       outlineCommands.splitAt(core, sel, 0, 0);
       return;
     }
@@ -437,11 +451,10 @@ export const outlineCommands = {
   ): void {
     if (sel.kind !== "focused") return;
 
-    const ref = sel.focus.ref;
     const prefer = dir === "backward" ? "prev" : "next";
+    const it = core.item(sel.focus.item);
 
-    const it = core.item(ref);
-    if (!(it.edit.kind === "direct" && it.content.kind === "scalar")) {
+    if (!(it.mode.kind === "direct" && it.content.kind === "scalar")) {
       outlineCommands.removeItem(core, sel, prefer);
       return;
     }
@@ -466,7 +479,7 @@ type OutlineIntent =
 
 type OutlineMountCtx = {
   core: Core;
-  root: ItemRef;
+  rootId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   dispatch: (intent: OutlineIntent) => void;
 };
@@ -480,7 +493,7 @@ function mountOutlineHeader(
   onTargets: (targets: TargetsByKey) => void,
 ): Component {
   const { core, dispatch } = mountCtx;
-  const ref = focus.ref;
+  const id = focus.item;
 
   return createComponent((componentCtx) => {
     const wrap = el("div");
@@ -490,13 +503,13 @@ function mountOutlineHeader(
 
     const toContent = () => core.focus(focus, "content", { caret: caret0() });
 
-    const canEditLabel = isEntryRef(ref) && core.item(ref).edit.kind !== "none";
+    const canEditLabel = core.item(id).mode.kind !== "readonly";
 
     const commitLabel = (text: string) => {
       if (!canEditLabel) return;
-      const cur = core.item(ref).label ?? "";
+      const cur = core.item(id).label ?? "";
       if (cur === text) return;
-      outlineCommands.setLabel(core, ref, text);
+      outlineCommands.setLabel(core, id, text);
     };
 
     const labelComp = autosizeTextField({
@@ -506,7 +519,7 @@ function mountOutlineHeader(
       registerFocus: false,
       commit: commitLabel,
       getState: () => ({
-        text: core.item(ref).label ?? "",
+        text: core.item(id).label ?? "",
         readOnly: !canEditLabel,
         isIssue: false,
       }),
@@ -545,7 +558,7 @@ function mountOutlineHeader(
       fieldsHost.append(row);
 
       const commitField = (text: string) => {
-        outlineCommands.commitSourceField(core, ref, f.key, text);
+        outlineCommands.commitSourceField(core, id, f.key, text);
       };
 
       const fc = textField({
@@ -558,14 +571,14 @@ function mountOutlineHeader(
         registerFocus: false,
         commit: commitField,
         getState: () => {
-          const snap = core.item(ref);
-          if (snap.edit.kind !== "source") {
+          const snap = core.item(id);
+          if (snap.mode.kind !== "source") {
             return { text: "", readOnly: true, isIssue: false };
           }
           const text =
-            fieldsFromSource(snap.edit.source).find((x) => x.key === f.key)
+            fieldsFromSource(snap.mode.source).find((x) => x.key === f.key)
               ?.text ?? "";
-          return { text, readOnly: !isEntryRef(ref), isIssue: false };
+          return { text, readOnly: false, isIssue: false };
         },
         onCommitEvents: ["blur"],
         textKeys: (inp) => {
@@ -639,25 +652,20 @@ function mountOutlineChildren(
     const container = el("div", "group");
     ensureTabbable(container);
 
-    const mgr = componentCtx.list(container, (key: string) => {
-      const [a, rest] = key.split(":");
-      const entryId = Number(a);
-      const path =
-        rest && rest.length ? rest.split(",").map((x) => Number(x)) : [];
-      const childRef = { entryId, path } as ItemRef;
-
+    const mgr = componentCtx.list(container, (childId: string) => {
+      const childFocus: Focus = { container: focus.item, item: childId };
       return mountOutlineNode(mountCtx, {
-        focus: { scope: focus.ref, ref: childRef },
+        focus: childFocus,
         showHeader: true,
       });
     });
 
     componentCtx.watch(
       () => {
-        const c = core.item(focus.ref).content;
-        return c.kind === "group" ? c.children.map(refKey) : [];
+        const c = core.item(focus.item).content;
+        return c.kind === "group" ? [...c.children] : [];
       },
-      (keys) => mgr.update(keys),
+      (ids) => mgr.update(ids),
     );
 
     componentCtx.on(container, "pointerdown", (e: PointerEvent) => {
@@ -682,42 +690,36 @@ function mountOutlineBody(
   contentTargetRef: ContentTargetRef,
 ): Component {
   const { core, dispatch } = mountCtx;
-  const ref = focus.ref;
+  const id = focus.item;
 
   return createComponent((componentCtx) => {
     const hostEl = el("div");
 
-    if (isEntryRef(ref)) {
-      const nested = core.mountView({
-        id: ref.entryId,
-        focus,
-        continueAs: "outline",
-      });
-      if (nested) {
-        ensureTabbable(nested.el);
-        contentTargetRef.current = nested.el;
-        hostEl.replaceChildren(nested.el);
-        componentCtx.use(nested);
-        return hostEl;
-      }
+    const nested = core.mountView({ id, focus, continueAs: "outline" });
+    if (nested) {
+      ensureTabbable(nested.el);
+      contentTargetRef.current = nested.el;
+      hostEl.replaceChildren(nested.el);
+      componentCtx.use(nested);
+      return hostEl;
     }
 
     const vf = contentField({
       core,
       focus,
-      ref,
+      id,
       registerFocus: false,
       focusElRef: contentTargetRef,
-      commitText: (text) => outlineCommands.setText(core, ref, text),
+      commitText: (text) => outlineCommands.setText(core, id, text),
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
         const stops: Array<() => void> = [];
 
         stops.push(
           on(inputEl, "keydown", (e: KeyboardEvent) => {
-            if (e.key === "=" && !inputEl.value && isEntryRef(ref)) {
-              const it = core.item(ref);
-              if (it.edit.kind === "direct") {
+            if (e.key === "=" && !inputEl.value) {
+              const it = core.item(id);
+              if (it.mode.kind === "direct") {
                 stopEvent(e);
                 dispatch({ type: "SET_DERIVED" });
               }
@@ -744,11 +746,11 @@ function mountOutlineBody(
           for (const fn of stops.toReversed()) fn();
         };
       },
-      renderGroupChild: (childRef) => {
+      renderGroupChild: (childId) => {
         const d = el("div", "item readonly");
         return createComponent((componentCtx) => {
           componentCtx.watch(
-            () => core.item(childRef).content,
+            () => core.item(childId).content,
             (c) => {
               const isIssue = c.kind === "issue";
               const text =
@@ -817,8 +819,8 @@ function mountOutlineNode(
         const sel = core.selection();
         return (
           sel.kind === "focused" &&
-          sameRef(sel.focus.ref, focus.ref) &&
-          sameRef(sel.focus.scope, focus.scope)
+          sel.focus.item === focus.item &&
+          sel.focus.container === focus.container
         );
       },
       (focused) => {
@@ -831,10 +833,10 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        const snap = core.item(focus.ref);
+        const snap = core.item(focus.item);
         const label = (snap.label ?? "").trim();
         const fields =
-          snap.edit.kind === "source" ? fieldsFromSource(snap.edit.source) : [];
+          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
         const content = snap.content;
         const mode: "children" | "body" =
           content.kind === "group" ? "children" : "body";
@@ -842,8 +844,8 @@ function mountOutlineNode(
         const sel = core.selection();
         const labelFocused =
           sel.kind === "focused" &&
-          sameRef(sel.focus.ref, focus.ref) &&
-          sameRef(sel.focus.scope, focus.scope) &&
+          sel.focus.item === focus.item &&
+          sel.focus.container === focus.container &&
           sel.target === "label";
 
         return {
@@ -902,18 +904,16 @@ function mountOutlineNode(
 
 export function createOutlineView(args: {
   core: Core;
-  id: EntryId;
+  id: ItemId;
   focus?: Focus;
 }): DomView {
-  const { core, id } = args;
-
-  const rootRef: ItemRef = { entryId: id, path: [] };
+  const { core, id: rootId } = args;
 
   const root = el("div", "view outline");
-  const navStopsSignal = computed(() => collectNavStopsFrom(core, rootRef));
+  const navStopsSignal = computed(() => collectNavStopsFrom(core, rootId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    outlineNavMove(core, navStopsSignal.value, sel, dir, mode);
+    outlineNavMove(core, rootId, navStopsSignal.value, sel, dir, mode);
 
   const dispatch = (intent: OutlineIntent): void => {
     const sel = core.selection();
@@ -934,7 +934,7 @@ export function createOutlineView(args: {
         return;
 
       case "INDENT":
-        outlineCommands.changeNesting(core, sel, intent.dir);
+        outlineCommands.changeNesting(core, rootId, sel, intent.dir);
         return;
 
       case "DELETE_BOUNDARY":
@@ -952,16 +952,16 @@ export function createOutlineView(args: {
 
       case "SET_DERIVED":
         if (sel.kind !== "focused") return;
-        outlineCommands.setDerived(core, sel.focus.ref);
+        outlineCommands.setDerived(core, sel.focus.item);
         core.focus(sel.focus, "source:expr", { caret: caret0() });
         return;
     }
   };
 
-  const mountCtx: OutlineMountCtx = { core, root: rootRef, navMove, dispatch };
+  const mountCtx: OutlineMountCtx = { core, rootId, navMove, dispatch };
 
   const node = mountOutlineNode(mountCtx, {
-    focus: args.focus ?? { scope: rootRef, ref: rootRef },
+    focus: args.focus ?? { container: rootId, item: rootId },
     showHeader: false,
   });
 
@@ -1020,15 +1020,17 @@ export function createOutlineView(args: {
     const first = navStopsSignal.value[0];
     if (first) {
       core.focus(
-        { scope: rootRef, ref: first },
+        { container: rootId, item: first },
         defaultTargetFor(core, first),
-        { caret: caret0() },
+        {
+          caret: caret0(),
+        },
       );
     }
   }
 
   return {
-    id: `outline:${String(id)}`,
+    id: `outline:${String(rootId)}`,
     root,
     onKeyDown,
     dispose() {

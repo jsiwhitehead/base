@@ -32,12 +32,10 @@ import {
   clamp,
   isTextInput,
   defaultTextCaret,
-  refKey,
-  refFromKey,
 } from "./runtime";
-import { DEV, devAssert } from "../dev";
+import { DEV } from "../dev";
 
-export type ItemRef = { entryId: EntryId; path: readonly number[] };
+export type ItemId = string;
 
 export type Scalar = true | number | string;
 export type ScalarOrBlank = Scalar | null;
@@ -45,55 +43,49 @@ export type ScalarOrBlank = Scalar | null;
 export type Content =
   | { kind: "scalar"; value: ScalarOrBlank }
   | { kind: "issue"; message: string }
-  | { kind: "group"; children: readonly ItemRef[] };
+  | { kind: "group"; children: readonly ItemId[] };
 
 export type Source =
   | { type: "derived"; expr: string }
   | { type: "lens"; from: string; where: string; orderBy: string };
 
-export type Edit =
-  | { kind: "none" }
+export type Mode =
+  | { kind: "readonly" }
   | { kind: "direct" }
   | { kind: "source"; source: Source };
 
-export type ItemBase = {
-  ref: ItemRef;
+export type Item = {
+  id: ItemId;
   label?: string;
+  content: Content;
+  mode: Mode;
 };
 
-export type Item =
-  | (ItemBase & {
-      edit: { kind: "direct" };
-      content: Exclude<Content, { kind: "issue" }>;
-    })
-  | (ItemBase & {
-      edit: Exclude<Edit, { kind: "direct" }>;
-      content: Content;
-    });
+type ItemRef = { entryId: EntryId; path: readonly number[] };
 
-export type ApplyResult = {
-  readonly created: readonly EntryId[];
-  readonly touched: readonly EntryId[];
-  readonly reparented: readonly {
-    readonly fromOwnerId: EntryId | null;
-    readonly toOwnerId: EntryId | null;
-    readonly fromIndex: number | null;
-    readonly toIndex: number | null;
-  }[];
+const itemIdOf = (entryId: EntryId, path: readonly number[] = []): ItemId =>
+  `${String(entryId)}:${path.length ? path.join(",") : ""}`;
+
+const refFromItemId = (id: ItemId): ItemRef => {
+  const i = id.indexOf(":");
+  const head = i === -1 ? id : id.slice(0, i);
+  const entryId = Number(head);
+  if (!Number.isFinite(entryId)) throw new Error("Invalid item id");
+  const rest = i === -1 ? "" : id.slice(i + 1);
+  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
+  if (path.some((n) => !Number.isFinite(n))) throw new Error("Invalid item id");
+  return { entryId, path };
 };
 
-const refOf = (entryId: EntryId, path: readonly number[] = []): ItemRef => ({
-  entryId,
-  path,
-});
-
-const isEntryRef = (r: ItemRef): boolean => r.path.length === 0;
+const isEntryItemId = (id: ItemId): boolean =>
+  refFromItemId(id).path.length === 0;
 
 function storedFromScalar(v: ScalarOrBlank): EntryContent {
   return v === null ? { kind: "blank" } : { kind: "scalar", value: v };
 }
 
-function toEditFromContent(c: EntryContent): Edit {
+function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
+  if (ref.path.length) return { kind: "readonly" };
   if (isDerivedContent(c))
     return { kind: "source", source: { type: "derived", expr: c.expr } };
   if (isLensContent(c))
@@ -109,38 +101,39 @@ function toEditFromContent(c: EntryContent): Edit {
   return { kind: "direct" };
 }
 
-function contentToScalarOrBlank(
-  c: Extract<Content, { kind: "scalar" }>,
-): ScalarOrBlank {
-  return c.value;
-}
+export type ApplyResult = {
+  readonly created: readonly ItemId[];
+  readonly touched: readonly ItemId[];
+  readonly reparented: readonly {
+    readonly fromOwnerId: ItemId | null;
+    readonly toOwnerId: ItemId | null;
+    readonly fromIndex: number | null;
+    readonly toIndex: number | null;
+  }[];
+};
 
 export type Tx = {
-  setLabel(ref: ItemRef, label: string): void;
-  setView(entryId: EntryId, view: ViewKind): void;
+  setLabel(id: ItemId, label: string): void;
+  setView(id: ItemId, view: ViewKind): void;
 
-  setScalar(ref: ItemRef, value: ScalarOrBlank): void;
-  setSource(ref: ItemRef, source: Source): void;
+  setScalar(id: ItemId, value: ScalarOrBlank): void;
+  setSource(id: ItemId, source: Source): void;
 
   insertChild(
-    owner: ItemRef,
+    ownerId: ItemId,
     opts?: { at?: number; kind?: "blank" | "group" },
-  ): EntryId;
+  ): ItemId;
 
-  move(
-    entryId: EntryId,
-    toOwnerId: EntryId | null,
-    opts?: { at?: number },
-  ): void;
-  remove(entryId: EntryId): void;
+  move(id: ItemId, toOwnerId: ItemId | null, opts?: { at?: number }): void;
+  remove(id: ItemId): void;
 };
 
 export type Core = {
   dispose(): void;
 
-  root(): ItemRef;
+  root(): ItemId;
 
-  item(ref: ItemRef): Item;
+  item(id: ItemId): Item;
 
   commit(run: (t: Tx) => void): ApplyResult;
 
@@ -154,9 +147,9 @@ export type Core = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: { id: EntryId; focus?: Focus }): Component;
+  mountView(opts: { id: ItemId; focus?: Focus }): Component;
   mountView(opts: {
-    id: EntryId;
+    id: ItemId;
     focus?: Focus;
     continueAs: ViewName;
   }): Component | null;
@@ -164,13 +157,15 @@ export type Core = {
 
 export function createCore(opts: {
   views: Partial<Record<ViewName, ViewFactory<Core>>>;
-}): { core: Core; rootId: EntryId } {
+}): { core: Core; rootId: ItemId } {
   const model = createModel();
 
-  const rootId = model.createId();
-  model.setRoot(rootId);
+  const rootEntryId = model.createId();
+  model.setRoot(rootEntryId);
   model.apply(
-    model.ops.transaction([model.ops.create(model.createEntry.group(rootId))]),
+    model.ops.transaction([
+      model.ops.create(model.createEntry.group(rootEntryId)),
+    ]),
   );
 
   const evaluator = createEvaluator({ model, interpret: interpretExpr });
@@ -184,15 +179,12 @@ export function createCore(opts: {
     initialSelection: { kind: "idle" },
   });
 
-  const childrenOfResolved = (base: ItemRef, v: Value): readonly ItemRef[] => {
+  const childrenOfResolved = (base: ItemRef, v: Value): readonly ItemId[] => {
     if (isEntryGroupValue(v)) {
-      return v.entryIds.map((id) => ({ entryId: id, path: [] }));
+      return v.entryIds.map((eid) => itemIdOf(eid, []));
     }
     if (isValueGroupValue(v)) {
-      return v.items.map((_it, i) => ({
-        entryId: base.entryId,
-        path: [...base.path, i],
-      }));
+      return v.items.map((_it, i) => itemIdOf(base.entryId, [...base.path, i]));
     }
     return [];
   };
@@ -233,42 +225,30 @@ export function createCore(opts: {
     return { kind: "group", children: childrenOfResolved(ref, v) };
   };
 
-  const toEdit = (ref: ItemRef): Edit => {
-    if (!isEntryRef(ref)) return { kind: "none" };
-    const c = model.readEntry(ref.entryId).content;
-    return toEditFromContent(c);
-  };
-
-  const item = (ref: ItemRef): Item => {
+  const item = (id: ItemId): Item => {
     try {
+      const ref = refFromItemId(id);
       const r = resolve(ref);
       const c = toContent(ref, r.value);
-      const edit = toEdit(ref);
 
-      const base: ItemBase = {
-        ref,
-        ...(r.label ? { label: r.label } : {}),
-      };
-
-      if (edit.kind === "direct") {
-        devAssert(
-          c.kind !== "issue",
-          "Direct edit cannot pair with issue content",
-        );
-        return {
-          ...base,
-          edit,
-          content: c as Exclude<Content, { kind: "issue" }>,
-        };
+      let mode: Mode = { kind: "readonly" };
+      if (!ref.path.length) {
+        const stored = model.readEntry(ref.entryId).content;
+        mode = modeFromContent(ref, stored);
       }
 
-      return { ...base, edit, content: c };
+      return {
+        id,
+        ...(r.label ? { label: r.label } : {}),
+        content: c,
+        mode,
+      };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return {
-        ref,
+        id,
         content: { kind: "issue", message: msg },
-        edit: { kind: "none" },
+        mode: { kind: "readonly" },
       };
     }
   };
@@ -276,35 +256,41 @@ export function createCore(opts: {
   const commit = (run: (t: Tx) => void): ApplyResult => {
     const ops: Op[] = [];
 
-    const ensureEditableEntryRef = (ref: ItemRef) => {
-      if (!isEntryRef(ref)) {
-        if (DEV) throw new Error("Ref is not editable");
-        return false;
+    const ensureEntryId = (id: ItemId): EntryId | null => {
+      const r = refFromItemId(id);
+      if (r.path.length) {
+        if (DEV) throw new Error("Item is not entry-backed");
+        return null;
       }
-      return true;
+      return r.entryId;
     };
 
     const t: Tx = {
-      setLabel: (ref0, label) => {
-        if (!ensureEditableEntryRef(ref0)) return;
-        ops.push(model.ops.patchLabel(ref0.entryId, label));
+      setLabel: (id, label) => {
+        const eid = ensureEntryId(id);
+        if (eid == null) return;
+        ops.push(model.ops.patchLabel(eid, label));
       },
 
-      setView: (entryId, view) => {
-        ops.push(model.ops.patchView(entryId, view));
+      setView: (id, view) => {
+        const eid = ensureEntryId(id);
+        if (eid == null) return;
+        ops.push(model.ops.patchView(eid, view));
       },
 
-      setScalar: (ref0, value) => {
-        if (!ensureEditableEntryRef(ref0)) return;
-        ops.push(model.ops.patchContent(ref0.entryId, storedFromScalar(value)));
+      setScalar: (id, value) => {
+        const eid = ensureEntryId(id);
+        if (eid == null) return;
+        ops.push(model.ops.patchContent(eid, storedFromScalar(value)));
       },
 
-      setSource: (ref0, source) => {
-        if (!ensureEditableEntryRef(ref0)) return;
+      setSource: (id, source) => {
+        const eid = ensureEntryId(id);
+        if (eid == null) return;
 
         if (source.type === "derived") {
           ops.push(
-            model.ops.patchContent(ref0.entryId, {
+            model.ops.patchContent(eid, {
               kind: "derived",
               expr: source.expr,
             }),
@@ -313,7 +299,7 @@ export function createCore(opts: {
         }
 
         ops.push(
-          model.ops.patchContent(ref0.entryId, {
+          model.ops.patchContent(eid, {
             kind: "lens",
             from: source.from,
             where: source.where,
@@ -322,19 +308,19 @@ export function createCore(opts: {
         );
       },
 
-      insertChild: (ownerRef, opts2) => {
-        if (!ensureEditableEntryRef(ownerRef)) return -1;
+      insertChild: (ownerId, opts2) => {
+        const ownerEid = ensureEntryId(ownerId);
+        if (ownerEid == null) return itemIdOf(-1);
 
-        const ownerItem = item(ownerRef);
+        const ownerItem = item(ownerId);
         if (
-          ownerItem.edit.kind !== "direct" ||
+          ownerItem.mode.kind !== "direct" ||
           ownerItem.content.kind !== "group"
         ) {
           if (DEV) throw new Error("Owner is not a direct editable group");
-          return -1;
+          return itemIdOf(-1);
         }
 
-        const ownerId = ownerRef.entryId;
         const id = model.createId();
         const kind = opts2?.kind ?? "blank";
         const entry: Entry =
@@ -346,25 +332,34 @@ export function createCore(opts: {
         ops.push(
           model.ops.reparent({
             childId: id,
-            toOwnerId: ownerId,
+            toOwnerId: ownerEid,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
           }),
         );
-        return id;
+
+        return itemIdOf(id);
       },
 
       move: (id, toOwnerId, opts2) => {
+        const childEid = ensureEntryId(id);
+        if (childEid == null) return;
+
+        const toOwnerEid = toOwnerId == null ? null : ensureEntryId(toOwnerId);
+        if (toOwnerId != null && toOwnerEid == null) return;
+
         ops.push(
           model.ops.reparent({
-            childId: id,
-            toOwnerId,
+            childId: childEid,
+            toOwnerId: toOwnerEid,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
           }),
         );
       },
 
       remove: (id) => {
-        ops.push(model.ops.detach(id));
+        const eid = ensureEntryId(id);
+        if (eid == null) return;
+        ops.push(model.ops.detach(eid));
       },
     };
 
@@ -373,11 +368,22 @@ export function createCore(opts: {
     if (!ops.length) return { created: [], touched: [], reparented: [] };
 
     const txn = model.ops.transaction(ops);
-    const result = model.apply(txn) as ApplyResult;
+    const result0 = model.apply(txn);
 
     runtime.setSelection(runtime.selectionSignal.peek());
 
-    return result;
+    const toItemId = (eid: EntryId) => itemIdOf(eid);
+
+    return {
+      created: result0.created.map(toItemId),
+      touched: result0.touched.map(toItemId),
+      reparented: result0.reparented.map((r) => ({
+        fromOwnerId: r.fromOwnerId == null ? null : toItemId(r.fromOwnerId),
+        toOwnerId: r.toOwnerId == null ? null : toItemId(r.toOwnerId),
+        fromIndex: r.fromIndex,
+        toIndex: r.toIndex,
+      })),
+    };
   };
 
   const focus = (
@@ -404,8 +410,14 @@ export function createCore(opts: {
 
   const attachFocus: Core["attachFocus"] = (args) => runtime.attachFocus(args);
 
-  const mountView: Core["mountView"] = (args: any) =>
-    (runtime.mountView as any)(args);
+  const mountView: Core["mountView"] = (args: any) => {
+    const id: ItemId = args.id;
+    if (!isEntryItemId(id)) {
+      if ("continueAs" in args) return null;
+      return { el: document.createElement("div"), dispose() {} };
+    }
+    return (runtime.mountView as any)(args);
+  };
 
   const gc = (): void => {
     const { removedIds } = model.pruneUnreachable();
@@ -413,6 +425,8 @@ export function createCore(opts: {
   };
 
   const uninstallGlobal = runtime.installGlobalListeners(window);
+
+  const rootId = itemIdOf(rootEntryId);
 
   core = {
     dispose() {
@@ -422,7 +436,7 @@ export function createCore(opts: {
       runtime.dispose();
     },
 
-    root: () => refOf(rootId),
+    root: () => rootId,
 
     item,
 
@@ -441,12 +455,5 @@ export function createCore(opts: {
 
 export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
-export type { EntryId, ViewName, ViewKind };
-export {
-  parseScalar,
-  clamp,
-  isTextInput,
-  defaultTextCaret,
-  refKey,
-  refFromKey,
-};
+export type { ViewName, ViewKind };
+export { parseScalar, clamp, isTextInput, defaultTextCaret };

@@ -1,16 +1,13 @@
 import { computed } from "@preact/signals-core";
 import {
   type Core,
-  type EntryId,
-  type ItemRef,
+  type ItemId,
   type Component,
   type Caret,
   type Focus,
   type Selection,
   type DomView,
   parseScalar,
-  refKey,
-  refFromKey,
 } from "../core";
 import {
   type NavDir,
@@ -33,48 +30,35 @@ type NavResult = {
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
 
-const isEntryRef = (r: ItemRef) => r.path.length === 0;
-
-const sameRef = (a: ItemRef, b: ItemRef) =>
-  a.entryId === b.entryId &&
-  a.path.length === b.path.length &&
-  a.path.every((x, i) => x === b.path[i]);
-
-const tableRefOf = (tableId: EntryId): ItemRef => ({
-  entryId: tableId,
-  path: [],
-});
-
-const childrenOf = (core: Core, ref: ItemRef): readonly ItemRef[] => {
-  const c = core.item(ref).content;
+const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
+  const c = core.item(id).content;
   return c.kind === "group" ? c.children : [];
 };
 
-const labelOf = (core: Core, ref: ItemRef): string =>
-  core.item(ref).label ?? "";
+const labelOf = (core: Core, id: ItemId): string => core.item(id).label ?? "";
 
 const focusRowLabel = (
-  tableRef: ItemRef,
-  rowRef: ItemRef,
+  tableId: ItemId,
+  rowId: ItemId,
   caret: Caret = caret0(),
 ): NavResult => ({
-  focus: { scope: tableRef, ref: rowRef },
+  focus: { container: tableId, item: rowId },
   target: "label",
   caret,
 });
 
 const focusCell = (
-  rowRef: ItemRef,
-  cellRef: ItemRef,
+  rowId: ItemId,
+  cellId: ItemId,
   caret: Caret = caret0(),
 ): NavResult => ({
-  focus: { scope: rowRef, ref: cellRef },
+  focus: { container: rowId, item: cellId },
   target: "content",
   caret,
 });
 
-function deriveColumns(core: Core, tableRef: ItemRef): string[] {
-  const rows = childrenOf(core, tableRef);
+function deriveColumns(core: Core, tableId: ItemId): string[] {
+  const rows = childrenOf(core, tableId);
   const firstRow = rows[0];
   if (!firstRow) return [];
 
@@ -88,6 +72,7 @@ function deriveColumns(core: Core, tableRef: ItemRef): string[] {
     seen.add(nm);
     out.push(nm);
   }
+
   return out;
 }
 
@@ -100,72 +85,68 @@ const isFocused = (sel: Selection): sel is FocusedSelection =>
 
 const isRowLabelSelection = (
   sel: Selection,
-  tableRef: ItemRef,
+  tableId: ItemId,
 ): sel is RowLabelSelection =>
-  isFocused(sel) &&
-  sel.target === "label" &&
-  sameRef(sel.focus.scope, tableRef);
+  isFocused(sel) && sel.target === "label" && sel.focus.container === tableId;
 
 const isCellSelection = (
   sel: Selection,
-  tableRef: ItemRef,
+  tableId: ItemId,
 ): sel is CellSelection =>
-  isFocused(sel) &&
-  sel.target === "content" &&
-  !sameRef(sel.focus.scope, tableRef);
+  isFocused(sel) && sel.target === "content" && sel.focus.container !== tableId;
 
-const rowRefs = (core: Core, tableRef: ItemRef): ItemRef[] => [
-  ...childrenOf(core, tableRef),
+const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
+  ...childrenOf(core, tableId),
 ];
 
 function findChildByLabel(
   core: Core,
-  owner: ItemRef,
+  ownerId: ItemId,
   label: string,
-): ItemRef | null {
+): ItemId | null {
   const want = label.trim();
   if (!want) return null;
 
-  for (const child of childrenOf(core, owner)) {
-    const nm = (core.item(child).label ?? "").trim();
-    if (nm === want) return child;
+  for (const childId of childrenOf(core, ownerId)) {
+    const nm = (core.item(childId).label ?? "").trim();
+    if (nm === want) return childId;
   }
   return null;
 }
 
 function tableNavMove(
   core: Core,
-  tableRef: ItemRef,
+  tableId: ItemId,
   sel: Selection,
   dir: NavDir,
   _mode: NavMode,
 ): NavResult | null {
   if (!isFocused(sel)) return null;
 
-  const cols = deriveColumns(core, tableRef);
-  const rows = rowRefs(core, tableRef);
+  const cols = deriveColumns(core, tableId);
+  const rows = rowIds(core, tableId);
   if (rows.length === 0) return null;
 
-  const moveRowLabel = (rowRef: ItemRef, delta: number) => {
-    const r = rows.findIndex((x) => sameRef(x, rowRef));
+  const moveRowLabel = (rowId: ItemId, delta: number) => {
+    const r = rows.indexOf(rowId);
     if (r < 0) return null;
     const nextRow = rows[r + delta];
-    return nextRow ? focusRowLabel(tableRef, nextRow) : null;
+    return nextRow ? focusRowLabel(tableId, nextRow) : null;
   };
 
   const moveCellHoriz = (
-    rowRef: ItemRef,
+    rowId: ItemId,
     colIdx: number,
     delta: number,
   ): NavResult | null => {
     const nc = colIdx + delta;
-    if (nc < 0) return focusRowLabel(tableRef, rowRef);
+    if (nc < 0) return focusRowLabel(tableId, rowId);
 
     const nextCol = cols[nc];
     if (!nextCol) return null;
 
-    const nextCell = findChildByLabel(core, rowRef, nextCol);
-    return nextCell ? focusCell(rowRef, nextCell) : null;
+    const nextCell = findChildByLabel(core, rowId, nextCol);
+    return nextCell ? focusCell(rowId, nextCell) : null;
   };
 
   const moveCellVert = (
@@ -182,39 +163,39 @@ function tableNavMove(
     const nextCell = findChildByLabel(core, nextRow, col);
     return nextCell
       ? focusCell(nextRow, nextCell)
-      : focusRowLabel(tableRef, nextRow);
+      : focusRowLabel(tableId, nextRow);
   };
 
-  if (isRowLabelSelection(sel, tableRef)) {
-    const rowRef = sel.focus.ref;
+  if (isRowLabelSelection(sel, tableId)) {
+    const rowId = sel.focus.item;
 
-    if (dir === "up") return moveRowLabel(rowRef, -1);
-    if (dir === "down") return moveRowLabel(rowRef, 1);
+    if (dir === "up") return moveRowLabel(rowId, -1);
+    if (dir === "down") return moveRowLabel(rowId, 1);
 
     if (dir === "right") {
       const firstCol = cols[0];
       if (!firstCol) return null;
 
-      const cid = findChildByLabel(core, rowRef, firstCol);
-      return cid ? focusCell(rowRef, cid) : null;
+      const cid = findChildByLabel(core, rowId, firstCol);
+      return cid ? focusCell(rowId, cid) : null;
     }
 
     return null;
   }
 
-  if (!isCellSelection(sel, tableRef)) return null;
+  if (!isCellSelection(sel, tableId)) return null;
 
-  const rowRef = sel.focus.scope;
-  const cellRef = sel.focus.ref;
+  const rowId = sel.focus.container;
+  const cellId = sel.focus.item;
 
-  const rowIdx = rows.findIndex((x) => sameRef(x, rowRef));
+  const rowIdx = rows.indexOf(rowId);
   if (rowIdx < 0) return null;
 
-  const colLabel = (labelOf(core, cellRef) ?? "").trim();
+  const colLabel = (labelOf(core, cellId) ?? "").trim();
   const colIdx = Math.max(0, cols.indexOf(colLabel));
 
-  if (dir === "left") return moveCellHoriz(rowRef, colIdx, -1);
-  if (dir === "right") return moveCellHoriz(rowRef, colIdx, 1);
+  if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
+  if (dir === "right") return moveCellHoriz(rowId, colIdx, 1);
   if (dir === "up") return moveCellVert(rowIdx, colIdx, -1);
   if (dir === "down") return moveCellVert(rowIdx, colIdx, 1);
 
@@ -222,99 +203,99 @@ function tableNavMove(
 }
 
 export const tableCommands = {
-  setLabel(core: Core, rowRef: ItemRef, text: string): void {
-    core.commit((t) => t.setLabel(rowRef, text));
+  setLabel(core: Core, rowId: ItemId, text: string): void {
+    core.commit((t) => t.setLabel(rowId, text));
   },
 
-  setText(core: Core, cellRef: ItemRef, raw: string): void {
-    core.commit((t) => t.setScalar(cellRef, parseScalar(raw)));
+  setText(core: Core, cellId: ItemId, raw: string): void {
+    core.commit((t) => t.setScalar(cellId, parseScalar(raw)));
   },
 
-  addRowAfter(core: Core, tableRef: ItemRef, afterRow: ItemRef | null): void {
-    const rows = rowRefs(core, tableRef);
-    const afterIdx = afterRow
-      ? rows.findIndex((r) => sameRef(r, afterRow))
-      : rows.length - 1;
+  addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {
+    const rows = rowIds(core, tableId);
+    const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
 
-    let id: EntryId = -1;
+    let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(tableRef, { at, kind: "group" });
+      id = t.insertChild(tableId, { at, kind: "group" });
     });
 
-    const nextRowRef: ItemRef = { entryId: id, path: [] };
-    const next = focusRowLabel(tableRef, nextRowRef);
+    const next = focusRowLabel(tableId, id);
     core.focus(next.focus, next.target, { caret: next.caret });
   },
 
-  removeRow(core: Core, tableRef: ItemRef, rowRef: ItemRef): void {
-    if (!isEntryRef(rowRef)) return;
-
-    const rows = rowRefs(core, tableRef);
-    const idx = rows.findIndex((r) => sameRef(r, rowRef));
+  removeRow(core: Core, tableId: ItemId, rowId: ItemId): void {
+    const rows = rowIds(core, tableId);
+    const idx = rows.indexOf(rowId);
     const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
 
-    core.commit((t) => t.remove(rowRef.entryId));
+    core.commit((t) => t.remove(rowId));
 
     if (nextRow) {
-      const next = focusRowLabel(tableRef, nextRow);
+      const next = focusRowLabel(tableId, nextRow);
       core.focus(next.focus, next.target, { caret: next.caret });
     } else {
       core.blur();
     }
   },
 
-  addColumn(core: Core, tableRef: ItemRef, label: string): void {
+  addColumn(core: Core, tableId: ItemId, label: string): void {
     const name = label.trim();
     if (!name) return;
 
-    const rows = rowRefs(core, tableRef);
+    const rows = rowIds(core, tableId);
     if (!rows.length) return;
 
     core.commit((t) => {
-      for (const rowRef of rows) {
-        if (!isEntryRef(rowRef)) continue;
-        if (findChildByLabel(core, rowRef, name)) continue;
+      for (const rowId of rows) {
+        const row = core.item(rowId);
+        if (row.mode.kind !== "direct" || row.content.kind !== "group")
+          continue;
+        if (findChildByLabel(core, rowId, name)) continue;
 
-        const cellId = t.insertChild(rowRef, { kind: "blank" });
-        t.setLabel({ entryId: cellId, path: [] }, name);
+        const cellId = t.insertChild(rowId, { kind: "blank" });
+        t.setLabel(cellId, name);
       }
     });
   },
 
-  removeColumn(core: Core, tableRef: ItemRef, label: string): void {
+  removeColumn(core: Core, tableId: ItemId, label: string): void {
     const name = label.trim();
     if (!name) return;
 
-    const rows = rowRefs(core, tableRef);
+    const rows = rowIds(core, tableId);
     if (!rows.length) return;
 
     core.commit((t) => {
-      for (const rowRef of rows) {
-        if (!isEntryRef(rowRef)) continue;
-        const cell = findChildByLabel(core, rowRef, name);
-        if (!cell || !isEntryRef(cell)) continue;
-        t.remove(cell.entryId);
+      for (const rowId of rows) {
+        const row = core.item(rowId);
+        if (row.mode.kind !== "direct" || row.content.kind !== "group")
+          continue;
+
+        const cell = findChildByLabel(core, rowId, name);
+        if (!cell) continue;
+        t.remove(cell);
       }
     });
   },
 
-  confirm(core: Core, tableRef: ItemRef, sel: Selection): void {
+  confirm(core: Core, tableId: ItemId, sel: Selection): void {
     if (!isFocused(sel)) return;
 
-    if (sel.target === "label" && sameRef(sel.focus.scope, tableRef)) {
-      tableCommands.addRowAfter(core, tableRef, sel.focus.ref);
+    if (sel.target === "label" && sel.focus.container === tableId) {
+      tableCommands.addRowAfter(core, tableId, sel.focus.item);
       return;
     }
 
-    const move = tableNavMove(core, tableRef, sel, "down", "step");
+    const move = tableNavMove(core, tableId, sel, "down", "step");
     if (move) {
       core.focus(move.focus, move.target, { caret: move.caret });
       return;
     }
 
     if (sel.target === "content") {
-      tableCommands.addRowAfter(core, tableRef, sel.focus.scope);
+      tableCommands.addRowAfter(core, tableId, sel.focus.container);
     }
   },
 } as const;
@@ -326,7 +307,7 @@ type TableIntent =
 
 type TableMountCtx = {
   core: Core;
-  tableRef: ItemRef;
+  tableId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   columnsSignal: { value: string[] };
   dispatch: (intent: TableIntent) => void;
@@ -377,19 +358,19 @@ function mountTableHeader(mountCtx: TableMountCtx): Component {
 
 function mountTableCellContent(cellCtx: {
   core: Core;
-  tableRef: ItemRef;
-  rowRef: ItemRef;
-  cellRef: ItemRef;
+  tableId: ItemId;
+  rowId: ItemId;
+  cellId: ItemId;
   dispatch: (intent: TableIntent) => void;
 }): Component {
-  const { core, rowRef, cellRef, dispatch } = cellCtx;
-  const focus: Focus = { scope: rowRef, ref: cellRef };
+  const { core, rowId, cellId, dispatch } = cellCtx;
+  const focus: Focus = { container: rowId, item: cellId };
 
   return contentField({
     core,
     focus,
-    ref: cellRef,
-    commitText: (text) => tableCommands.setText(core, cellRef, text),
+    id: cellId,
+    commitText: (text) => tableCommands.setText(core, cellId, text),
     textKeys: (inp) =>
       bindTextControlKeys(inp, {
         nav: defaultTextNav,
@@ -402,7 +383,7 @@ function mountTableCellContent(cellCtx: {
 
 function mountTableCell(
   mountCtx: TableMountCtx,
-  rowRef: ItemRef,
+  rowId: ItemId,
   col: string,
 ): Component {
   return createComponent((componentCtx) => {
@@ -411,50 +392,47 @@ function mountTableCell(
     hostEl.append(inner);
 
     let cur: Component | null = null;
-    let curCellKey: string | null = null;
+    let curCellId: ItemId | null = null;
 
     const setInner = (node: HTMLElement) => inner.replaceChildren(node);
 
     const mountMissing = () => {
       cur?.dispose();
       cur = null;
-      curCellKey = null;
+      curCellId = null;
       setInner(el("div", "item cell issue", "[missing]"));
     };
 
-    const mountPresent = (cellRef: ItemRef) => {
+    const mountPresent = (cellId: ItemId) => {
       cur?.dispose();
       cur = mountTableCellContent({
         core: mountCtx.core,
-        tableRef: mountCtx.tableRef,
-        rowRef,
-        cellRef,
+        tableId: mountCtx.tableId,
+        rowId,
+        cellId,
         dispatch: mountCtx.dispatch,
       });
-      curCellKey = refKey(cellRef);
+      curCellId = cellId;
       setInner(cur.el);
       componentCtx.use(cur);
     };
 
-    const getCellRef = () => findChildByLabel(mountCtx.core, rowRef, col);
+    const getCellId = () => findChildByLabel(mountCtx.core, rowId, col);
 
     componentCtx.watch(
-      () => {
-        const r = getCellRef();
-        return r ? refKey(r) : null;
-      },
-      (nextKey) => {
-        if (nextKey === curCellKey) return;
-        if (!nextKey) mountMissing();
-        else mountPresent(refFromKey(nextKey));
+      () => getCellId(),
+      (nextId) => {
+        if (nextId === curCellId) return;
+        if (!nextId) mountMissing();
+        else mountPresent(nextId);
       },
     );
 
     componentCtx.on(hostEl, "pointerdown", (e: PointerEvent) => {
-      const nextCell = getCellRef();
+      const nextCell = getCellId();
       const res = nextCell
-        ? focusCell(rowRef, nextCell)
-        : focusRowLabel(mountCtx.tableRef, rowRef);
+        ? focusCell(rowId, nextCell)
+        : focusRowLabel(mountCtx.tableId, rowId);
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
@@ -463,7 +441,7 @@ function mountTableCell(
   });
 }
 
-function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
+function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
   return createComponent((componentCtx) => {
     const rowEl = el("div", "row");
     const labelCell = el("div", "label");
@@ -473,7 +451,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
     const cellsHost = el("div", "row-cells");
     rowEl.append(labelCell, cellsHost);
 
-    const labelFocus: Focus = { scope: mountCtx.tableRef, ref: rowRef };
+    const labelFocus: Focus = { container: mountCtx.tableId, item: rowId };
 
     const labelComp = textField({
       core: mountCtx.core,
@@ -483,15 +461,18 @@ function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
       caret: "fromTarget",
       stopPropagation: true,
       onCommitEvents: ["input", "blur"],
-      commit: (text) => tableCommands.setLabel(mountCtx.core, rowRef, text),
+      commit: (text) => tableCommands.setLabel(mountCtx.core, rowId, text),
       getState: () => {
         const sel = mountCtx.core.selection();
         const editing =
-          isRowLabelSelection(sel, mountCtx.tableRef) &&
-          sameRef(sel.focus.ref, rowRef);
+          isRowLabelSelection(sel, mountCtx.tableId) &&
+          sel.focus.item === rowId;
 
-        const text = mountCtx.core.item(rowRef).label ?? "";
-        const readOnly = !editing || !isEntryRef(rowRef);
+        const row = mountCtx.core.item(rowId);
+        const canEdit = row.mode.kind !== "readonly";
+
+        const text = row.label ?? "";
+        const readOnly = !editing || !canEdit;
         return { text, readOnly, isIssue: false };
       },
       textKeys: (inp) =>
@@ -502,10 +483,10 @@ function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
             const first = mountCtx.columnsSignal.value[0];
             if (!first) return;
 
-            const cell = findChildByLabel(mountCtx.core, rowRef, first);
+            const cell = findChildByLabel(mountCtx.core, rowId, first);
             if (!cell) return;
 
-            const res = focusCell(rowRef, cell);
+            const res = focusCell(rowId, cell);
             mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
           },
           onEscape: () => mountCtx.dispatch({ type: "CANCEL" }),
@@ -516,7 +497,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
     componentCtx.use(labelComp);
 
     const cellList = componentCtx.list(cellsHost, (colName: string) =>
-      mountTableCell(mountCtx, rowRef, colName),
+      mountTableCell(mountCtx, rowId, colName),
     );
 
     componentCtx.watch(
@@ -527,7 +508,7 @@ function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
     );
 
     componentCtx.on(labelCell, "pointerdown", (e: PointerEvent) => {
-      const res = focusRowLabel(mountCtx.tableRef, rowRef);
+      const res = focusRowLabel(mountCtx.tableId, rowId);
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
@@ -539,12 +520,12 @@ function mountTableRow(mountCtx: TableMountCtx, rowRef: ItemRef): Component {
 function mountTableBody(mountCtx: TableMountCtx): Component {
   return createComponent((componentCtx) => {
     const body = el("div", "table-body");
-    const rowList = componentCtx.list(body, (key: string) =>
-      mountTableRow(mountCtx, refFromKey(key)),
+    const rowList = componentCtx.list(body, (rowId: string) =>
+      mountTableRow(mountCtx, rowId),
     );
 
     componentCtx.watch(
-      () => childrenOf(mountCtx.core, mountCtx.tableRef).map(refKey),
+      () => [...childrenOf(mountCtx.core, mountCtx.tableId)],
       (rows) => {
         rowList.update(rows);
       },
@@ -556,12 +537,10 @@ function mountTableBody(mountCtx: TableMountCtx): Component {
 
 export function createTableView(args: {
   core: Core;
-  id: EntryId;
+  id: ItemId;
   focus?: Focus;
 }): DomView {
-  const { core, id } = args;
-
-  const tableRef = tableRefOf(id);
+  const { core, id: tableId } = args;
 
   const root = el("div", "view table");
   root.tabIndex = 0;
@@ -570,10 +549,10 @@ export function createTableView(args: {
   const bodyHost = el("div");
   root.append(headerHost, bodyHost);
 
-  const columnsSignal = computed(() => deriveColumns(core, tableRef));
+  const columnsSignal = computed(() => deriveColumns(core, tableId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    tableNavMove(core, tableRef, sel, dir, mode);
+    tableNavMove(core, tableId, sel, dir, mode);
 
   const dispatch = (intent: TableIntent): void => {
     const sel = core.selection();
@@ -585,7 +564,7 @@ export function createTableView(args: {
         return;
       }
       case "CONFIRM":
-        tableCommands.confirm(core, tableRef, sel);
+        tableCommands.confirm(core, tableId, sel);
         return;
       case "CANCEL":
         core.blur();
@@ -595,7 +574,7 @@ export function createTableView(args: {
 
   const mountCtx: TableMountCtx = {
     core,
-    tableRef,
+    tableId,
     navMove,
     columnsSignal,
     dispatch,
@@ -638,16 +617,16 @@ export function createTableView(args: {
   };
 
   if (core.selection().kind === "idle") {
-    const rows = childrenOf(core, tableRef);
+    const rows = childrenOf(core, tableId);
     if (rows.length) {
       const firstRow = rows[0]!;
-      const res = focusRowLabel(tableRef, firstRow);
+      const res = focusRowLabel(tableId, firstRow);
       core.focus(res.focus, res.target, { caret: res.caret });
     }
   }
 
   return {
-    id: `table:${String(id)}`,
+    id: `table:${String(tableId)}`,
     root,
     onKeyDown,
     dispose() {
