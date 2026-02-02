@@ -15,17 +15,10 @@ export type Rule = (
 ) => readonly Op[];
 
 export type SyncGroup = {
-  add(id: string): void;
-  remove(id: string): void;
+  add(id: EntryId): void;
+  remove(id: EntryId): void;
   clear(): void;
   dispose(): void;
-};
-
-const entryIdFromItemId = (id: string): EntryId | null => {
-  const i = id.indexOf(":");
-  const head = i === -1 ? id : id.slice(0, i);
-  const n = Number(head);
-  return Number.isFinite(n) ? (n as EntryId) : null;
 };
 
 const minId = (ids: Iterable<EntryId>): EntryId | null => {
@@ -64,7 +57,8 @@ export function createShapeSyncGroup(opts: {
 
     const leaderId =
       minId(candidatesTo) ?? minId(candidatesTouched) ?? minId(candidatesFrom);
-    if (leaderId == null || !groups.has(leaderId)) return [];
+    if (leaderId == null || !groups.has(leaderId) || !m.hasEntry(leaderId))
+      return [];
 
     const leaderChildIds = m.childIdsOf(leaderId);
     const desiredLabels: string[] = [];
@@ -132,13 +126,11 @@ export function createShapeSyncGroup(opts: {
   const removeRule = opts.addRule(rule);
 
   return {
-    add(id: string) {
-      const eid = entryIdFromItemId(id);
-      if (eid != null) groups.add(eid);
+    add(id: EntryId) {
+      groups.add(id);
     },
-    remove(id: string) {
-      const eid = entryIdFromItemId(id);
-      if (eid != null) groups.delete(eid);
+    remove(id: EntryId) {
+      groups.delete(id);
     },
     clear() {
       groups.clear();

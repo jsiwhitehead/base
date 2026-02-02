@@ -1,5 +1,5 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { Model, ViewKind, ViewName } from "./model";
+import type { EntryId, Model, ViewKind, ViewName } from "./model";
 
 export const DEFAULT_TARGET = "default" as const;
 
@@ -142,13 +142,14 @@ function computeAnchoredPos(
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
 
-const itemIdFromEntryId = (entryId: number): ItemId => `${String(entryId)}:`;
+export const itemIdFromEntryId = (entryId: EntryId): ItemId =>
+  `${String(entryId)}:`;
 
-const entryIdFromItemId = (id: ItemId): number | null => {
+export const entryIdFromItemId = (id: ItemId): EntryId | null => {
   const i = id.indexOf(":");
   const head = i === -1 ? id : id.slice(0, i);
   const n = Number(head);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) ? (n as EntryId) : null;
 };
 
 export type Runtime<C> = {

@@ -13,6 +13,7 @@ import {
   type ViewName,
   isDerivedContent,
   isLensContent,
+  isGroupContent,
   makeBlankEntry,
   makeGroupEntry,
 } from "./model";
@@ -40,6 +41,7 @@ import {
   defaultTextCaret,
   isTextInput,
 } from "./runtime";
+import { createShapeSyncGroup, type Rule as SyncRule } from "./sync";
 
 export type ItemId = string;
 
@@ -67,24 +69,50 @@ export type Item = {
   mode: Mode;
 };
 
-type ItemRef = { entryId: EntryId; path: readonly number[] };
+export type ItemRef = { entryId: EntryId; path: readonly number[] };
 
-const itemIdOf = (entryId: EntryId, path: readonly number[] = []): ItemId =>
-  `${String(entryId)}:${path.length ? path.join(",") : ""}`;
+export const itemIdOf = (
+  entryId: EntryId,
+  path: readonly number[] = [],
+): ItemId => `${String(entryId)}:${path.length ? path.join(",") : ""}`;
 
-const refFromItemId = (id: ItemId): ItemRef => {
+export const parseItemId = (id: ItemId): ItemRef | null => {
   const i = id.indexOf(":");
-  const head = i === -1 ? id : id.slice(0, i);
+  if (i === -1) return null;
+
+  const head = id.slice(0, i);
   const entryId = Number(head);
-  if (!Number.isFinite(entryId)) throw new Error("Invalid item id");
-  const rest = i === -1 ? "" : id.slice(i + 1);
-  const path = rest.trim() === "" ? [] : rest.split(",").map((x) => Number(x));
-  if (path.some((n) => !Number.isFinite(n))) throw new Error("Invalid item id");
-  return { entryId, path };
+  if (!Number.isFinite(entryId)) return null;
+
+  const rest = id.slice(i + 1);
+  if (!rest.trim()) return { entryId: entryId as EntryId, path: [] };
+
+  const parts = rest.split(",");
+  const path: number[] = [];
+  for (const p of parts) {
+    const n = Number(p);
+    if (!Number.isFinite(n)) return null;
+    path.push(n);
+  }
+
+  return { entryId: entryId as EntryId, path };
 };
 
-const isEntryItemId = (id: ItemId): boolean =>
-  refFromItemId(id).path.length === 0;
+export const refFromItemId = (id: ItemId): ItemRef => {
+  const r = parseItemId(id);
+  if (!r) throw new Error("Invalid item id");
+  return r;
+};
+
+export const isEntryItemId = (id: ItemId): boolean => {
+  const r = parseItemId(id);
+  return !!r && r.path.length === 0;
+};
+
+export const entryIdFromItemId = (id: ItemId): EntryId | null => {
+  const r = parseItemId(id);
+  return r && r.path.length === 0 ? r.entryId : null;
+};
 
 function storedFromScalar(v: ScalarOrBlank): EntryContent {
   return v === null ? { kind: "blank" } : { kind: "scalar", value: v };
@@ -140,11 +168,7 @@ export type LocateResult = {
   siblings: readonly ItemId[];
 };
 
-export type Rule = (
-  model: Model,
-  input: ModelApplyResult,
-  meta?: Transaction["meta"],
-) => readonly Op[];
+export type Rule = SyncRule;
 
 type HistoryEntry = {
   user: Transaction;
@@ -159,8 +183,18 @@ export type Core = {
   commit(run: (t: Tx) => void): ApplyResult;
 
   dispatch(txn: Transaction): ApplyResult;
+  dispatchRemote(txn: Transaction): ApplyResult;
 
-  addRule(rule: Rule): () => void;
+  addRule(rule: Rule, opts?: { id?: string }): () => void;
+
+  sync: {
+    shape: {
+      add(id: ItemId): void;
+      remove(id: ItemId): void;
+      clear(): void;
+      dispose(): void;
+    };
+  };
 
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
@@ -204,7 +238,8 @@ export function createCore(opts: {
     initialSelection: { kind: "idle" },
   });
 
-  const rules: Rule[] = [];
+  const rules: { id: string; run: Rule }[] = [];
+  let nextRuleId = 1;
 
   const history: { undo: HistoryEntry[]; redo: HistoryEntry[] } = {
     undo: [],
@@ -226,96 +261,24 @@ export function createCore(opts: {
     reparented: [...a.reparented, ...b.reparented],
   });
 
-  const inverseOfOp = (op: Op): Op => {
-    if (op.kind === "create") {
-      return model.ops.reparent({ childId: op.entry.id, toOwnerId: null });
-    }
-    if (op.kind === "patch") {
-      const cur = model.peekEntry(op.id);
-      const next: any = {};
-      if (op.next.label !== undefined) next.label = cur.label;
-      if (op.next.view !== undefined) next.view = cur.view;
-      if (op.next.content !== undefined) next.content = cur.content;
-      return model.ops.patch(op.id, next);
-    }
-    const childId = op.spec.childId;
-    const child = model.peekEntry(childId);
-    const ownerId = child.ownerId ?? null;
-    const loc = model.locateInOwner(childId);
-    return model.ops.reparent({
-      childId,
-      toOwnerId: ownerId,
-      ...(loc ? { toIndex: loc.index } : {}),
-    });
-  };
-
-  const applyTxnCapturingInverse = (
-    txn: Transaction,
-  ): { result: ModelApplyResult; inverseOps: Op[] } => {
-    let out = emptyModelApply;
-    const inverseOps: Op[] = [];
-
-    for (const op of txn.ops) {
-      inverseOps.push(inverseOfOp(op));
-      const one = model.apply(model.ops.transaction([op], txn.meta));
-      out = mergeModelApply(out, one);
-    }
-
-    return { result: out, inverseOps };
-  };
-
-  const MAX_RULE_PASSES = 25;
-
-  const runRulesFixpoint = (
-    seed: ModelApplyResult,
-    inverseAcc: Op[],
-  ): ModelApplyResult => {
-    let merged = emptyModelApply;
-    let input = seed;
-
-    for (let pass = 0; pass < MAX_RULE_PASSES; pass++) {
-      let opsOut: Op[] = [];
-      for (const rule of rules) {
-        const ops0 = rule(model, input, { source: "rule" });
-        if (ops0.length) opsOut = opsOut.concat(ops0);
-      }
-      if (!opsOut.length) break;
-
-      const txn = model.ops.transaction(opsOut, { source: "rule" });
-      const { result, inverseOps } = applyTxnCapturingInverse(txn);
-      inverseAcc.push(...inverseOps);
-      merged = mergeModelApply(merged, result);
-      input = result;
-    }
-
-    return merged;
-  };
-
   const toApplyResult = (r: ModelApplyResult): ApplyResult => {
-    const toItemId = (eid: EntryId) => itemIdOf(eid);
+    const toItem = (eid: EntryId) => itemIdOf(eid);
     return {
-      created: r.created.map(toItemId),
-      touched: r.touched.map(toItemId),
+      created: r.created.map(toItem),
+      touched: r.touched.map(toItem),
       reparented: r.reparented.map((x) => ({
-        fromOwnerId: x.fromOwnerId == null ? null : toItemId(x.fromOwnerId),
-        toOwnerId: x.toOwnerId == null ? null : toItemId(x.toOwnerId),
+        fromOwnerId: x.fromOwnerId == null ? null : toItem(x.fromOwnerId),
+        toOwnerId: x.toOwnerId == null ? null : toItem(x.toOwnerId),
         fromIndex: x.fromIndex,
         toIndex: x.toIndex,
       })),
     };
   };
 
-  const entryIdFromItemIdLoose = (id: ItemId): EntryId | null => {
-    const i = id.indexOf(":");
-    const head = i === -1 ? id : id.slice(0, i);
-    const n = Number(head);
-    return Number.isFinite(n) ? n : null;
-  };
-
   const selectionStillValid = (sel: Selection): boolean => {
     if (sel.kind === "idle") return true;
-    const a = entryIdFromItemIdLoose(sel.focus.item);
-    const b = entryIdFromItemIdLoose(sel.focus.container);
+    const a = entryIdFromItemId(sel.focus.item);
+    const b = entryIdFromItemId(sel.focus.container);
     if (a == null || b == null) return false;
     return model.hasEntry(a) && model.hasEntry(b);
   };
@@ -328,45 +291,6 @@ export function createCore(opts: {
       return;
     }
     runtime.setSelection(runtime.selectionSignal.peek());
-  };
-
-  const dispatch = (txn: Transaction): ApplyResult => {
-    let final = emptyModelApply;
-    const inverseAcc: Op[] = [];
-    const isUser = txn.meta?.source === "user";
-
-    batch(() => {
-      const { result: userRes, inverseOps: invUser } =
-        applyTxnCapturingInverse(txn);
-      inverseAcc.push(...invUser);
-      final = mergeModelApply(final, userRes);
-
-      const ruleRes = runRulesFixpoint(userRes, inverseAcc);
-      final = mergeModelApply(final, ruleRes);
-
-      repairSelectionAfterDispatch(txn.meta);
-
-      if (isUser) {
-        const inverse = model.ops.transaction(inverseAcc.toReversed(), {
-          source: "undo",
-        });
-        history.undo.push({ user: txn, inverse });
-        history.redo = [];
-      }
-    });
-
-    return toApplyResult(final);
-  };
-
-  const addRule = (rule: Rule): (() => void) => {
-    rules.push(rule);
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const i = rules.indexOf(rule);
-      if (i >= 0) rules.splice(i, 1);
-    };
   };
 
   const childrenOfResolved = (base: ItemRef, v: Value): readonly ItemId[] => {
@@ -439,14 +363,191 @@ export function createCore(opts: {
     }
   };
 
+  const ensureEntryId = (id: ItemId): EntryId | null => {
+    const r = parseItemId(id);
+    if (!r || r.path.length) return null;
+    return r.entryId;
+  };
+
+  const captureInverseForTxn = (txn: Transaction): Op[] => {
+    const inverses: Op[] = [];
+
+    for (const op of txn.ops) {
+      if (op.kind === "create") {
+        inverses.push(model.ops.remove(op.entry.id));
+        continue;
+      }
+
+      if (op.kind === "patch") {
+        if (!model.hasEntry(op.id)) continue;
+        const cur = model.peekEntry(op.id);
+        const next: any = {};
+        if (op.next.label !== undefined) next.label = cur.label;
+        if (op.next.view !== undefined) next.view = cur.view;
+        if (op.next.content !== undefined) next.content = cur.content;
+        inverses.push(model.ops.patch(op.id, next));
+        continue;
+      }
+
+      if (op.kind === "reparent") {
+        const childId = op.spec.childId;
+        if (!model.hasEntry(childId)) continue;
+        const child = model.peekEntry(childId);
+        const ownerId = child.ownerId ?? null;
+        const loc = model.locateInOwner(childId);
+        inverses.push(
+          model.ops.reparent({
+            childId,
+            toOwnerId: ownerId,
+            ...(loc ? { toIndex: loc.index } : {}),
+          }),
+        );
+        continue;
+      }
+
+      if (op.kind === "remove") {
+        const id = op.id;
+        if (!model.hasEntry(id)) continue;
+
+        const cur = model.peekEntry(id);
+        const ownerId = cur.ownerId ?? null;
+        const loc = model.locateInOwner(id);
+        const prevIndex = loc?.index ?? undefined;
+
+        if (isGroupContent(cur.content)) {
+          const childIds = [...cur.content.childIds].filter((cid) =>
+            model.hasEntry(cid),
+          );
+
+          inverses.push(model.ops.create(cur));
+
+          for (let i = 0; i < childIds.length; i++) {
+            inverses.push(
+              model.ops.reparent({
+                childId: childIds[i]!,
+                toOwnerId: id,
+                toIndex: i,
+              }),
+            );
+          }
+
+          inverses.push(
+            model.ops.reparent({
+              childId: id,
+              toOwnerId: ownerId,
+              ...(prevIndex != null ? { toIndex: prevIndex } : {}),
+            }),
+          );
+        } else {
+          inverses.push(model.ops.create(cur));
+          inverses.push(
+            model.ops.reparent({
+              childId: id,
+              toOwnerId: ownerId,
+              ...(prevIndex != null ? { toIndex: prevIndex } : {}),
+            }),
+          );
+        }
+
+        continue;
+      }
+
+      const never: never = op;
+      throw new Error(`Unknown op: ${String((never as any).kind)}`);
+    }
+
+    return inverses;
+  };
+
+  const applyTxnWithInverse = (
+    txn: Transaction,
+  ): { result: ModelApplyResult; inverseOps: Op[] } => {
+    const inverseOps = captureInverseForTxn(txn);
+    const result = model.apply(txn);
+    return { result, inverseOps };
+  };
+
+  const MAX_RULE_PASSES = 25;
+
+  const runRulesFixpoint = (
+    seed: ModelApplyResult,
+    inverseAcc: Op[],
+  ): ModelApplyResult => {
+    let merged = emptyModelApply;
+    let input = seed;
+
+    for (let pass = 0; pass < MAX_RULE_PASSES; pass++) {
+      let opsOut: Op[] = [];
+      for (const r of rules) {
+        const ops0 = r.run(model, input, { source: "rule" });
+        if (ops0.length) opsOut = opsOut.concat(ops0);
+      }
+      if (!opsOut.length) break;
+
+      const txn = model.ops.transaction(opsOut, { source: "rule" });
+      const { result, inverseOps } = applyTxnWithInverse(txn);
+      inverseAcc.push(...inverseOps);
+      merged = mergeModelApply(merged, result);
+      input = result;
+    }
+
+    return merged;
+  };
+
+  const applyPipeline = (txn: Transaction): ApplyResult => {
+    let final = emptyModelApply;
+    const inverseAcc: Op[] = [];
+    const isUser = txn.meta?.source === "user";
+
+    batch(() => {
+      const { result: userRes, inverseOps: invUser } = applyTxnWithInverse(txn);
+      inverseAcc.push(...invUser);
+      final = mergeModelApply(final, userRes);
+
+      const ruleRes = runRulesFixpoint(userRes, inverseAcc);
+      final = mergeModelApply(final, ruleRes);
+
+      repairSelectionAfterDispatch(txn.meta);
+
+      if (isUser) {
+        const inverse = model.ops.transaction(inverseAcc.toReversed(), {
+          source: "undo",
+        });
+        history.undo.push({ user: txn, inverse });
+        history.redo = [];
+      }
+    });
+
+    return toApplyResult(final);
+  };
+
+  const dispatch = (txn: Transaction): ApplyResult => applyPipeline(txn);
+
+  const dispatchRemote = (txn: Transaction): ApplyResult => {
+    const meta = { ...(txn.meta ?? {}), source: "remote" as const };
+    return applyPipeline(model.ops.transaction(txn.ops, meta));
+  };
+
+  const addRule = (rule: Rule, opts2: { id?: string } = {}): (() => void) => {
+    const id = opts2.id ?? `rule:${nextRuleId++}`;
+    const rec = { id, run: rule };
+    rules.push(rec);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const i = rules.indexOf(rec);
+      if (i >= 0) rules.splice(i, 1);
+    };
+  };
+
+  const shapeSync = createShapeSyncGroup({
+    model,
+    addRule: (ruleFn) => addRule(ruleFn, { id: "sync:shape" }),
+  });
+
   const commit = (run: (t: Tx) => void): ApplyResult => {
     const ops: Op[] = [];
-
-    const ensureEntryId = (id: ItemId): EntryId | null => {
-      const r = refFromItemId(id);
-      if (r.path.length) return null;
-      return r.entryId;
-    };
 
     const t: Tx = {
       setLabel: (id, label) => {
@@ -494,7 +595,7 @@ export function createCore(opts: {
 
       insertChild: (ownerId, opts2) => {
         const ownerEid = ensureEntryId(ownerId);
-        if (ownerEid == null) return itemIdOf(-1);
+        if (ownerEid == null) return itemIdOf(-1 as any);
 
         const id = model.createId();
         const kind = opts2?.kind ?? "blank";
@@ -532,7 +633,7 @@ export function createCore(opts: {
       remove: (id) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.reparent({ childId: eid, toOwnerId: null }));
+        ops.push(model.ops.remove(eid));
       },
     };
 
@@ -577,8 +678,8 @@ export function createCore(opts: {
   };
 
   const locate = (id: ItemId): LocateResult | null => {
-    const r = refFromItemId(id);
-    if (r.path.length) return null;
+    const r = parseItemId(id);
+    if (!r || r.path.length) return null;
 
     const loc = model.locateInOwner(r.entryId);
     if (!loc) return null;
@@ -597,6 +698,7 @@ export function createCore(opts: {
   core = {
     dispose() {
       uninstallGlobal();
+      shapeSync.dispose();
       const { removedIds } = model.pruneUnreachable();
       evaluator.prune(removedIds);
       evaluator.dispose();
@@ -608,8 +710,30 @@ export function createCore(opts: {
     commit,
 
     dispatch,
+    dispatchRemote,
 
     addRule,
+
+    sync: {
+      shape: {
+        add(id: ItemId) {
+          const eid = ensureEntryId(id);
+          if (eid == null) return;
+          shapeSync.add(eid);
+        },
+        remove(id: ItemId) {
+          const eid = ensureEntryId(id);
+          if (eid == null) return;
+          shapeSync.remove(eid);
+        },
+        clear() {
+          shapeSync.clear();
+        },
+        dispose() {
+          shapeSync.dispose();
+        },
+      },
+    },
 
     selection,
     focus,

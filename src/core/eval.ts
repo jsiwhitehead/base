@@ -148,8 +148,11 @@ export function createEvaluator(opts: {
   ): Value => {
     let cur: EntryId | null = fromId;
     while (cur != null) {
+      if (!model.hasEntry(cur)) break;
+
       const ownerId: EntryId | null = model.readEntry(cur).ownerId;
       if (ownerId == null) break;
+      if (!model.hasEntry(ownerId)) break;
 
       const hit = model.findChildIdByLabel(ownerId, name);
       if (hit != null) return evaluateValue(hit, ctx);
@@ -162,10 +165,12 @@ export function createEvaluator(opts: {
   const materializeEntryGroups = (v: Value, ctx: EvalCtx): Value => {
     if (isEntryGroupValue(v)) {
       return V.valueGroup(
-        v.entryIds.map((id) => ({
-          label: model.readEntry(id).label || undefined,
-          value: materializeEntryGroups(evaluateValue(id, ctx), ctx),
-        })),
+        v.entryIds
+          .filter((id) => model.hasEntry(id))
+          .map((id) => ({
+            label: model.readEntry(id).label || undefined,
+            value: materializeEntryGroups(evaluateValue(id, ctx), ctx),
+          })),
       );
     }
     if (isValueGroupValue(v)) {
@@ -216,7 +221,9 @@ export function createEvaluator(opts: {
     if (unwrapped.kind === "blank") return V.blank();
     if (unwrapped.kind === "issue") return unwrapped.value;
 
-    let entryIds: EntryId[] = [...unwrapped.entryIds];
+    let entryIds: EntryId[] = [...unwrapped.entryIds].filter((id) =>
+      model.hasEntry(id),
+    );
 
     const evalRowExpr = (
       expr: string,
@@ -224,6 +231,8 @@ export function createEvaluator(opts: {
       i: number,
       rowCtx: EvalCtx,
     ): Value => {
+      if (!model.hasEntry(rowId)) return V.issue("Missing entry");
+
       const row = evaluateValue(rowId, rowCtx);
       if (isIssueValue(row)) return row;
 
@@ -277,7 +286,11 @@ export function createEvaluator(opts: {
   }
 
   function evaluateValue(id: EntryId, ctx: EvalCtx): Value {
+    if (!model.hasEntry(id)) return V.issue("Missing entry");
+
     return withVisiting(ctx, id, () => {
+      if (!model.hasEntry(id)) return V.issue("Missing entry");
+
       const it = model.readEntry(id);
       switch (it.content.kind) {
         case "blank":
@@ -285,7 +298,9 @@ export function createEvaluator(opts: {
         case "scalar":
           return V.scalar(it.content.value);
         case "group":
-          return V.entryGroup([...it.content.childIds]);
+          return V.entryGroup(
+            [...it.content.childIds].filter((cid) => model.hasEntry(cid)),
+          );
         case "derived": {
           const expr = it.content.expr.trim();
           if (!expr) return V.blank();

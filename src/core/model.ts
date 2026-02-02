@@ -113,7 +113,8 @@ export type EntryPatch = {
 export type Op =
   | { kind: "create"; entry: Entry }
   | { kind: "patch"; id: EntryId; next: EntryPatch }
-  | { kind: "reparent"; spec: ReparentSpec };
+  | { kind: "reparent"; spec: ReparentSpec }
+  | { kind: "remove"; id: EntryId };
 
 export type TransactionMeta = {
   source?: "user" | "remote" | "rule" | "undo" | "redo" | string;
@@ -147,6 +148,7 @@ export type Model = {
     create(entry: Entry): Op;
     patch(id: EntryId, next: EntryPatch): Op;
     reparent(spec: ReparentSpec): Op;
+    remove(id: EntryId): Op;
     transaction(ops: readonly Op[], meta?: Transaction["meta"]): Transaction;
   };
 
@@ -299,6 +301,7 @@ export function createModel(): Model {
       next,
     }),
     reparent: (spec: ReparentSpec): Op => ({ kind: "reparent", spec }),
+    remove: (id: EntryId): Op => ({ kind: "remove", id }),
     transaction: (
       ops2: readonly Op[],
       meta?: Transaction["meta"],
@@ -433,6 +436,59 @@ export function createModel(): Model {
     };
   };
 
+  const remove = (
+    id: EntryId,
+  ): {
+    removedId: EntryId;
+    ownerTouched: EntryId | null;
+    orphanedChildren: EntryId[];
+  } => {
+    if (!entries.has(id)) throw new Error("Unknown entry");
+    if (id === rootId()) throw new Error("Cannot remove root");
+
+    const rec = entryRec(id);
+    const cur = rec.entrySignal.peek();
+
+    const ownerId = cur.ownerId;
+    const orphanedChildren: EntryId[] = [];
+
+    batch(() => {
+      if (ownerId != null) {
+        const owner = getGroupEntry(ownerId);
+        if (!owner) throw new Error("Owner is not a group");
+
+        const { entrySignal: ownerSignal, owner: ownerVal } =
+          expectGroupOwner(ownerId);
+
+        if (ownerVal.content.childIds.includes(id)) {
+          ownerSignal.value = {
+            ...ownerVal,
+            content: {
+              kind: "group",
+              childIds: ownerVal.content.childIds.filter((x) => x !== id),
+            },
+          };
+        }
+      }
+
+      if (isGroupEntry(cur)) {
+        for (const cid of cur.content.childIds) {
+          if (!entries.has(cid)) continue;
+          const childRec = entryRec(cid);
+          const child = childRec.entrySignal.peek();
+          if (child.ownerId === id) {
+            childRec.entrySignal.value = { ...child, ownerId: null };
+            orphanedChildren.push(cid);
+          }
+        }
+      }
+
+      entries.delete(id);
+    });
+
+    return { removedId: id, ownerTouched: ownerId, orphanedChildren };
+  };
+
   const apply = (txn: Transaction): ApplyResult => {
     const created: EntryId[] = [];
     const touched = new Set<EntryId>();
@@ -458,6 +514,14 @@ export function createModel(): Model {
             touched.add(op0.spec.childId);
             if (res.fromOwnerId != null) touched.add(res.fromOwnerId);
             if (res.toOwnerId != null) touched.add(res.toOwnerId);
+            break;
+          }
+
+          case "remove": {
+            const res = remove(op0.id);
+            touched.add(res.removedId);
+            if (res.ownerTouched != null) touched.add(res.ownerTouched);
+            for (const cid of res.orphanedChildren) touched.add(cid);
             break;
           }
 
@@ -502,6 +566,8 @@ export function createModel(): Model {
     const ownerId = child.ownerId;
     if (ownerId == null) return null;
 
+    if (!entries.has(ownerId)) return null;
+
     const owner = peekEntry(ownerId);
     if (!isGroupEntry(owner)) return null;
 
@@ -519,6 +585,8 @@ export function createModel(): Model {
     while (stack.length) {
       const id = stack.pop()!;
       if (seen.has(id)) continue;
+      if (!entries.has(id)) continue;
+
       seen.add(id);
 
       const it = entrySignal(id).peek();
