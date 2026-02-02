@@ -136,7 +136,7 @@ export function focusElOf(c: Component): HTMLElement {
 
 type PointerCaretMode = "zero" | "fromTarget";
 
-function caretFromEl(el0: EventTarget | null): Caret {
+function caretFromTarget(el0: EventTarget | null): Caret {
   const el = el0 instanceof HTMLElement ? el0 : null;
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     const start = el.selectionStart ?? 0;
@@ -294,7 +294,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
           bag.add(
             on(el0, "pointerdown", (e: PointerEvent) => {
               const caret0 =
-                caretMode === "fromTarget" ? caretFromEl(e.target) : undefined;
+                caretMode === "fromTarget" ? caretFromTarget(e.target) : null;
 
               core.focus(focus, target, caret0 ? { caret: caret0 } : undefined);
 

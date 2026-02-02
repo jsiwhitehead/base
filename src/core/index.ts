@@ -272,6 +272,17 @@ export function createCore(opts: {
       return r.entryId;
     };
 
+    const contentDrafts = new Map<EntryId, EntryContent>();
+    const trackContent = (entryId: EntryId, content: EntryContent): void => {
+      contentDrafts.set(entryId, content);
+    };
+    const currentContent = (entryId: EntryId): EntryContent | null => {
+      const draft = contentDrafts.get(entryId);
+      if (draft) return draft;
+      if (!model.hasEntry(entryId)) return null;
+      return model.peekEntry(entryId).content;
+    };
+
     const t: Tx = {
       setLabel: (id, label) => {
         const eid = ensureEntryId(id);
@@ -288,7 +299,9 @@ export function createCore(opts: {
       setScalar: (id, value) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patch(eid, { content: storedFromScalar(value) }));
+        const content = storedFromScalar(value);
+        ops.push(model.ops.patch(eid, { content }));
+        trackContent(eid, content);
       },
 
       setSource: (id, source) => {
@@ -296,38 +309,39 @@ export function createCore(opts: {
         if (eid == null) return;
 
         if (source.type === "derived") {
+          const content: EntryContent = {
+            kind: "derived",
+            expr: source.expr,
+          };
           ops.push(
             model.ops.patch(eid, {
-              content: {
-                kind: "derived",
-                expr: source.expr,
-              },
+              content,
             }),
           );
+          trackContent(eid, content);
           return;
         }
 
+        const content: EntryContent = {
+          kind: "lens",
+          from: source.from,
+          where: source.where,
+          orderBy: source.orderBy,
+        };
         ops.push(
           model.ops.patch(eid, {
-            content: {
-              kind: "lens",
-              from: source.from,
-              where: source.where,
-              orderBy: source.orderBy,
-            },
+            content,
           }),
         );
+        trackContent(eid, content);
       },
 
       insertChild: (ownerId, opts2) => {
         const ownerEid = ensureEntryId(ownerId);
         if (ownerEid == null) return itemIdOf(-1);
 
-        const ownerItem = item(ownerId);
-        if (
-          ownerItem.mode.kind !== "direct" ||
-          ownerItem.content.kind !== "group"
-        ) {
+        const ownerContent = currentContent(ownerEid);
+        if (!ownerContent || ownerContent.kind !== "group") {
           if (DEV) throw new Error("Owner is not a direct editable group");
           return itemIdOf(-1);
         }
@@ -336,6 +350,8 @@ export function createCore(opts: {
         const kind = opts2?.kind ?? "blank";
         const entry: Entry =
           kind === "group" ? makeGroupEntry(id) : makeBlankEntry(id);
+
+        trackContent(id, entry.content);
 
         ops.push(model.ops.create(entry));
         ops.push(

@@ -286,8 +286,9 @@ function readonlyItemText(core: Core, id: ItemId): Component {
     ensureTabbable(d);
 
     ctx.watch(
-      () => core.item(id).content,
-      (c) => {
+      () => core.item(id),
+      (snap) => {
+        const c = snap.content;
         const isIssue = c.kind === "issue";
         const text =
           c.kind === "issue"
@@ -326,8 +327,7 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
     const slot = ctx.slot(hostEl);
 
     const setFocusEl = (comp: Component | null) => {
-      const next = comp ? focusElOf(comp) : hostEl;
-      focusEl = next;
+      focusEl = comp ? focusElOf(comp) : hostEl;
     };
     setFocusEl(null);
 
@@ -395,9 +395,9 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
 
       ctx.watch(
         () => {
-          const c0 = core.item(opts.id).content;
-          if (c0.kind !== "group") return [] as string[];
-          return [...c0.children];
+          const snap = core.item(opts.id);
+          const c0 = snap.content;
+          return c0.kind === "group" ? [...c0.children] : [];
         },
         (ids) => {
           children.update(ids);

@@ -22,7 +22,6 @@ import {
   textField,
   contentField,
   ensureTabbable,
-  on,
 } from "../dom";
 
 type NavResult = {
@@ -398,10 +397,9 @@ function mountTableCellContent(cellCtx: {
 
     const scope = ctx.focus(core, focus, { default: () => inner.focusEl });
     scope.elementFor(DEFAULT_TARGET, () => inner.focusEl);
-
-    ctx.on(inner.focusEl, "pointerdown", (e: PointerEvent) => {
-      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
-      e.stopPropagation();
+    scope.selectOn(inner.focusEl as HTMLElement, {
+      target: DEFAULT_TARGET,
+      caret: "fromTarget",
     });
 
     wrap.replaceChildren(inner.el);
@@ -462,7 +460,7 @@ function mountTableCell(
       const nextCell = getCellId();
       const res = nextCell
         ? focusCell(rowId, nextCell, caretFromTarget(e.target))
-        : focusRowLabel(mountCtx.tableId, rowId);
+        : focusRowLabel(mountCtx.tableId, rowId, caretFromTarget(e.target));
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
@@ -521,13 +519,11 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       default: () => labelComp.focusEl,
     });
     scope.elementFor("label", () => labelComp.focusEl);
-
-    componentCtx.on(labelComp.focusEl, "pointerdown", (e: PointerEvent) => {
-      mountCtx.core.focus(labelFocus, "label", {
-        caret: caretFromTarget(e.target),
-      });
-      e.stopPropagation();
+    scope.selectOn(labelComp.focusEl, {
+      target: "label",
+      caret: "fromTarget",
     });
+    scope.selectOn(labelCell, { target: "label", caret: "fromTarget" });
 
     labelHost.replaceChildren(labelComp.el);
     componentCtx.use(labelComp);
@@ -543,16 +539,6 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       },
     );
 
-    componentCtx.on(labelCell, "pointerdown", (e: PointerEvent) => {
-      const res = focusRowLabel(
-        mountCtx.tableId,
-        rowId,
-        caretFromTarget(e.target),
-      );
-      mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
-      e.stopPropagation();
-    });
-
     return rowEl;
   });
 }
@@ -565,7 +551,11 @@ function mountTableBody(mountCtx: TableMountCtx): Component {
     );
 
     componentCtx.watch(
-      () => [...childrenOf(mountCtx.core, mountCtx.tableId)],
+      () => {
+        const snap = mountCtx.core.item(mountCtx.tableId);
+        const c = snap.content;
+        return c.kind === "group" ? [...c.children] : [];
+      },
       (rows) => {
         rowList.update(rows);
       },

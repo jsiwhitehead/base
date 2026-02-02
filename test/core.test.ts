@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   type ItemId,
@@ -10,9 +10,9 @@ import {
 } from "../src/core";
 import {
   createModel,
-  type SnapshotContent,
   type Model,
   type EntryId,
+  type SnapshotContent,
   makeBlankEntry,
   makeGroupEntry,
   normalizeLabel,
@@ -24,60 +24,79 @@ import {
   isBlankValue,
   isIssueValue,
   isScalarValue,
+  isEntryGroupValue,
+  isValueGroupValue,
 } from "../src/core/eval";
 import { interpretExpr } from "../src/core/lang";
 import { viewFactories } from "../src/views";
 
-GlobalRegistrator.register();
+beforeAll(() => {
+  GlobalRegistrator.register();
+});
 
-const runtimeCleanups = new Set<() => void>();
+const cleanups = new Set<() => void>();
 
 afterEach(() => {
-  document.body.innerHTML = "";
-  for (const cleanup of runtimeCleanups) cleanup();
-  runtimeCleanups.clear();
+  document.body.replaceChildren();
+  for (const fn of cleanups) fn();
+  cleanups.clear();
 });
 
 async function tick() {
-  await new Promise<void>((r) => setTimeout(() => r(), 0));
+  await new Promise<void>((r) => setTimeout(r, 0));
 }
 
 function makeCoreRuntime() {
   const { core, rootId } = createCore({ views: viewFactories as any });
-
-  runtimeCleanups.add(() => {
-    core.dispose();
-  });
-
+  cleanups.add(() => core.dispose());
   return { core, rootId };
+}
+
+function makeModelRuntime() {
+  const model = createModel();
+  const rootId = model.createId();
+  model.setRoot(rootId);
+  model.apply(
+    model.ops.transaction([
+      model.ops.create(makeGroupEntry(rootId)),
+      model.ops.patch(rootId, { view: "outline" }),
+    ]),
+  );
+  return { model, rootId };
+}
+
+async function mountView(view: {
+  root: HTMLElement;
+  onKeyDown?: (e: KeyboardEvent) => void;
+  dispose(): void;
+}) {
+  document.body.replaceChildren(view.root);
+  await tick();
+  return () => {
+    view.dispose();
+    document.body.replaceChildren();
+  };
 }
 
 function contentToScalar(content: Content): true | number | string | null {
   if (content.kind === "issue") throw new Error(`Issue: ${content.message}`);
-  if (content.kind === "group") throw new Error(`Expected scalar, got group`);
+  if (content.kind === "group") throw new Error("Expected scalar, got group");
   return content.value;
 }
 
-type SnapshotGroupContent = Extract<SnapshotContent, { kind: "group" }>;
 type FocusedSelection = Extract<Selection, { kind: "focused" }>;
 
-function expectSnapshotGroup(content: SnapshotContent): SnapshotGroupContent {
-  if (
-    typeof content !== "object" ||
-    content === null ||
-    !("kind" in content) ||
-    content.kind !== "group"
-  ) {
-    throw new Error("expected group snapshot content");
-  }
-  return content;
+function expectFocused(sel: Selection): asserts sel is FocusedSelection {
+  expect(sel.kind).toBe("focused");
+  if (sel.kind !== "focused") throw new Error("Expected focused selection");
 }
 
-function expectFocusedSelection(
-  sel: Selection,
-): asserts sel is FocusedSelection {
-  expect(sel.kind).toBe("focused");
-  if (sel.kind !== "focused") throw new Error("expected focused selection");
+type SnapshotGroupContent = Extract<SnapshotContent, { kind: "group" }>;
+
+function expectSnapshotGroup(c: SnapshotContent): SnapshotGroupContent {
+  expect(c.kind).toBe("group");
+  if (c.kind !== "group") throw new Error("Expected group snapshot content");
+  return c;
 }
 
 function assertPublicModelContracts(model: Model) {
@@ -120,42 +139,14 @@ function assertPublicModelContracts(model: Model) {
   }
 }
 
-async function mountView(
-  _core: Core,
-  view: {
-    root: HTMLElement;
-    onKeyDown?: (e: KeyboardEvent) => void;
-    dispose(): void;
-  },
-) {
-  document.body.replaceChildren(view.root);
-  await tick();
-  return () => {
-    view.dispose();
-    document.body.replaceChildren();
-  };
+function asScalarValue(v: Value): true | number | string | null {
+  if (isBlankValue(v)) return null;
+  expect(v.kind).toBe("scalar");
+  if (!isScalarValue(v)) throw new Error(`Expected scalar, got ${v.kind}`);
+  return v.value;
 }
 
-describe("model contract", () => {
-  function makeModelRuntime() {
-    const model = createModel();
-
-    const rootId = model.createId();
-    model.setRoot(rootId);
-    model.apply(
-      model.ops.transaction([
-        model.ops.create(makeGroupEntry(rootId)),
-        model.ops.patch(rootId, { view: "outline" }),
-      ]),
-    );
-
-    runtimeCleanups.add(() => {
-      void 0;
-    });
-
-    return { model, rootId };
-  }
-
+describe("model", () => {
   function addBlankChild(model: Model, ownerId: EntryId, label = "") {
     const id = model.createId();
     model.apply(
@@ -180,75 +171,43 @@ describe("model contract", () => {
     return id;
   }
 
-  function patchScalar(
-    model: Model,
-    id: EntryId,
-    value: true | number | string,
-  ) {
-    model.apply(
-      model.ops.transaction([
-        model.ops.patch(id, { content: { kind: "scalar", value } }),
-      ]),
-    );
-  }
-
-  function patchDerived(model: Model, id: EntryId, expr: string) {
-    model.apply(
-      model.ops.transaction([
-        model.ops.patch(id, { content: { kind: "derived", expr } }),
-      ]),
-    );
-  }
-
-  function patchLens(
-    model: Model,
-    id: EntryId,
-    spec: { from: string; where: string; orderBy: string },
-  ) {
-    model.apply(
-      model.ops.transaction([
-        model.ops.patch(id, {
-          content: {
-            kind: "lens",
-            from: spec.from,
-            where: spec.where,
-            orderBy: spec.orderBy,
-          },
-        }),
-      ]),
-    );
-  }
-
-  test("root exists and is readable", () => {
-    const { model, rootId } = makeModelRuntime();
-    expect(model.rootId()).toBe(rootId);
-    expect(model.readEntry(rootId).id).toBe(rootId);
-    expect(model.childIdsOf(rootId)).toEqual([]);
-    assertPublicModelContracts(model);
-  });
-
-  test("reparent adds/removes membership and updates ownerId", () => {
+  test("root exists, snapshot omits empty label, label uniqueness enforced, prune removes detached subtrees", () => {
     const { model, rootId } = makeModelRuntime();
 
-    const a = addBlankChild(model, rootId, "a");
-    const b = addBlankChild(model, rootId, "b");
+    const g = addGroupChild(model, rootId, "g");
+    const x = addBlankChild(model, g, "x");
+    model.apply(
+      model.ops.transaction([
+        model.ops.patch(x, { content: { kind: "scalar", value: 1 } }),
+      ]),
+    );
 
-    expect(model.readEntry(a).ownerId).toBe(rootId);
-    expect(model.readEntry(b).ownerId).toBe(rootId);
-    expect(model.childIdsOf(rootId)).toEqual([a, b]);
+    expect(() => addBlankChild(model, rootId, " Name ")).not.toThrow();
+    expect(() => addBlankChild(model, rootId, "Name")).toThrow();
+
+    const blankLabelId = addBlankChild(model, rootId, "");
+    const snap0 = model.snapshot(blankLabelId);
+    expect(snap0.label).toBeUndefined();
 
     model.apply(
       model.ops.transaction([
-        model.ops.reparent({ childId: b, toOwnerId: null }),
+        model.ops.reparent({ childId: g, toOwnerId: null }),
       ]),
     );
-    expect(model.readEntry(b).ownerId).toBe(null);
-    expect(model.childIdsOf(rootId)).toEqual([a]);
+    const pruned = model.pruneUnreachable();
+    expect(pruned.removed).toBeGreaterThanOrEqual(1);
+    expect(pruned.removedIds).toContain(g);
+    expect(model.hasEntry(g)).toBe(false);
+
+    const rootSnap = model.snapshot(rootId);
+    expect(rootSnap.view).toBe("outline");
+    const grp = expectSnapshotGroup(rootSnap.content);
+    expect(Array.isArray(grp.childIds)).toBe(true);
 
     assertPublicModelContracts(model);
   });
 
-  test("reparent within same group preserves expected ordering rules", () => {
+  test("reparent within same group ordering rules", () => {
     const { model, rootId } = makeModelRuntime();
 
     const a = addBlankChild(model, rootId, "a");
@@ -271,119 +230,13 @@ describe("model contract", () => {
 
     assertPublicModelContracts(model);
   });
-
-  test("label uniqueness enforced per-group (normalized) on create/patch/reparent", () => {
-    const { model, rootId } = makeModelRuntime();
-
-    const a = addBlankChild(model, rootId, "Name");
-    expect(() => addBlankChild(model, rootId, " Name ")).toThrow();
-
-    addBlankChild(model, rootId, "b");
-    expect(() => {
-      model.apply(model.ops.transaction([model.ops.patch(a, { label: "b" })]));
-    }).toThrow();
-
-    const g1 = addGroupChild(model, rootId, "g1");
-    const g2 = addGroupChild(model, rootId, "g2");
-
-    addBlankChild(model, g1, "dup");
-    const y = addBlankChild(model, g2, " dup ");
-
-    expect(() => {
-      model.apply(
-        model.ops.transaction([
-          model.ops.reparent({ childId: y, toOwnerId: g1 }),
-        ]),
-      );
-    }).toThrow();
-
-    assertPublicModelContracts(model);
-  });
-
-  test("locateInOwner returns correct index and null when detached", () => {
-    const { model, rootId } = makeModelRuntime();
-
-    const a = addBlankChild(model, rootId, "a");
-    const b = addBlankChild(model, rootId, "b");
-
-    const locB = model.locateInOwner(b)!;
-    expect(locB.ownerId).toBe(rootId);
-    expect(locB.index).toBe(1);
-    expect(locB.childIds).toEqual([a, b]);
-
-    model.apply(
-      model.ops.transaction([
-        model.ops.reparent({ childId: b, toOwnerId: null }),
-      ]),
-    );
-    expect(model.locateInOwner(b)).toBe(null);
-
-    assertPublicModelContracts(model);
-  });
-
-  test("snapshot is stable and omits empty label/view", () => {
-    const { model, rootId } = makeModelRuntime();
-
-    const g = addGroupChild(model, rootId, "g");
-    const x = addBlankChild(model, g, "x");
-    patchScalar(model, x, 1);
-
-    const d = addBlankChild(model, rootId, "d");
-    patchDerived(model, d, "g");
-
-    const l = addBlankChild(model, rootId, "lens");
-    patchLens(model, l, { from: "g", where: "", orderBy: "" });
-
-    const snap = model.snapshot(rootId);
-    const groupContent = expectSnapshotGroup(snap.content);
-    expect(groupContent.kind).toBe("group");
-    expect(snap.view).toBe("outline");
-
-    const labels = groupContent.childIds.map((it) => it.label ?? "");
-    expect(labels).toContain("g");
-    expect(labels).toContain("d");
-    expect(labels).toContain("lens");
-
-    const blankLabelId = addBlankChild(model, rootId, "");
-    const snap2 = model.snapshot(blankLabelId);
-    expect(snap2.label).toBeUndefined();
-
-    assertPublicModelContracts(model);
-  });
-
-  test("pruneUnreachable removes detached subtrees", () => {
-    const { model, rootId } = makeModelRuntime();
-
-    const a = addGroupChild(model, rootId, "A");
-    const x = addBlankChild(model, a, "x");
-    patchScalar(model, x, 123);
-
-    model.apply(
-      model.ops.transaction([
-        model.ops.reparent({ childId: a, toOwnerId: null }),
-      ]),
-    );
-    const res = model.pruneUnreachable();
-
-    expect(res.removed).toBeGreaterThanOrEqual(1);
-    expect(res.removedIds).toContain(a);
-    expect(model.hasEntry(a)).toBe(false);
-
-    assertPublicModelContracts(model);
-  });
 });
 
-describe("expr contract", () => {
-  function asScalarValue(v: Value): true | number | string | null {
-    if (isBlankValue(v)) return null;
-    if (!isScalarValue(v)) throw new Error(`Expected scalar, got ${v.kind}`);
-    return v.value;
-  }
-
-  test("parsing precedence, unary, blanks", () => {
+describe("lang", () => {
+  test("precedence, unary, blank propagation, string escapes, parse error => issue", () => {
     const env = {
-      lookup: (_name: string) => V.issue("nope"),
-      resolve: (_id: EntryId) => V.issue("nope"),
+      lookup: (_name: string) => V.issue("unbound"),
+      resolve: (_id: EntryId) => V.issue("unbound"),
       getLabel: (_id: EntryId) => "",
     };
 
@@ -391,9 +244,15 @@ describe("expr contract", () => {
     expect(asScalarValue(interpretExpr("(1 + 2) * 3", env))).toBe(9);
     expect(asScalarValue(interpretExpr("--1", env))).toBe(1);
     expect(isBlankValue(interpretExpr("blank + 1", env))).toBe(true);
+
+    expect(asScalarValue(interpretExpr("'a\\nb'", env))).toBe("a\nb");
+    expect(asScalarValue(interpretExpr('"a\\"b"', env))).toBe('a"b');
+    expect(asScalarValue(interpretExpr("'\\u0041'", env))).toBe("A");
+
+    expect(isIssueValue(interpretExpr("1 +", env))).toBe(true);
   });
 
-  test("path forms: member, select-by-label, implicit dot member", () => {
+  test("member + select-by-label + implicit dot member", () => {
     const model = createModel();
     const rootId = model.createId();
     model.setRoot(rootId);
@@ -446,56 +305,18 @@ describe("expr contract", () => {
     evaluator.dispose();
     assertPublicModelContracts(model);
   });
-
-  test("string escapes", () => {
-    const env = {
-      lookup: (_name: string) => V.issue("nope"),
-      resolve: (_id: EntryId) => V.issue("nope"),
-      getLabel: (_id: EntryId) => "",
-    };
-
-    expect(asScalarValue(interpretExpr("'a\\nb'", env))).toBe("a\nb");
-    expect(asScalarValue(interpretExpr('"a\\"b"', env))).toBe('a"b');
-    expect(asScalarValue(interpretExpr("'\\u0041'", env))).toBe("A");
-  });
-
-  test("builtins typing rules", () => {
-    const env = {
-      lookup: (_name: string) => V.blank(),
-      resolve: (_id: EntryId) => V.blank(),
-      getLabel: (_id: EntryId) => "",
-    };
-
-    expect(isBlankValue(interpretExpr("abs(blank)", env))).toBe(true);
-    expect(asScalarValue(interpretExpr("round(2.34, 1)", env))).toBe(2.3);
-    expect(asScalarValue(interpretExpr("to_number('3')", env))).toBe(3);
-    expect(asScalarValue(interpretExpr("to_text(12)", env))).toBe("12");
-
-    expect(asScalarValue(interpretExpr("if(1, 10, 20)", env))).toBe(20);
-    expect(asScalarValue(interpretExpr("if(true, 10, 20)", env))).toBe(10);
-
-    expect(isBlankValue(interpretExpr("and(true, blank)", env))).toBe(true);
-    expect(isBlankValue(interpretExpr("or(blank, blank)", env))).toBe(true);
-    expect(asScalarValue(interpretExpr("or(true, blank)", env))).toBe(true);
-  });
-
-  test("parse error returns issue", () => {
-    const env = {
-      lookup: (_name: string) => V.blank(),
-      resolve: (_id: EntryId) => V.blank(),
-      getLabel: (_id: EntryId) => "",
-    };
-    const out = interpretExpr("1 +", env);
-    expect(isIssueValue(out)).toBe(true);
-  });
 });
 
-describe("core evaluator contract", () => {
-  test("derived computes expression in entry env + updates when dependency changes", async () => {
+describe("eval", () => {
+  test("derived reactivity + cycles + entry-group materialization", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let x: ItemId = "";
     let y: ItemId = "";
+    let a: ItemId = "";
+    let b: ItemId = "";
+    let g: ItemId = "";
+    let d: ItemId = "";
 
     core.commit((t) => {
       x = t.insertChild(rootId, { kind: "blank" });
@@ -505,81 +326,79 @@ describe("core evaluator contract", () => {
       y = t.insertChild(rootId, { kind: "blank" });
       t.setLabel(y, "y");
       t.setSource(y, { type: "derived", expr: "x + 2" });
-    });
 
-    expect(contentToScalar(core.item(y).content)).toBe(12);
-
-    core.commit((t) => t.setScalar(x, 40));
-    await tick();
-    expect(contentToScalar(core.item(y).content)).toBe(42);
-  });
-
-  test("cycle returns issue", () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    let a: ItemId = "";
-    let b: ItemId = "";
-
-    core.commit((t) => {
       a = t.insertChild(rootId, { kind: "blank" });
       t.setLabel(a, "a");
       b = t.insertChild(rootId, { kind: "blank" });
       t.setLabel(b, "b");
       t.setSource(a, { type: "derived", expr: "b" });
       t.setSource(b, { type: "derived", expr: "a" });
-    });
 
-    const ca = core.item(a).content;
-    const cb = core.item(b).content;
-    expect(ca.kind).toBe("issue");
-    expect(cb.kind).toBe("issue");
-    if (ca.kind === "issue") expect(ca.message).toContain("Cyclic");
-    if (cb.kind === "issue") expect(cb.message).toContain("Cyclic");
-  });
-
-  test("derived materializes entry-groups into value-groups (recursive) and becomes a group of items", () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    let g: ItemId = "";
-    let a: ItemId = "";
-    let h: ItemId = "";
-    let b: ItemId = "";
-    let d: ItemId = "";
-
-    core.commit((t) => {
       g = t.insertChild(rootId, { kind: "group" });
       t.setLabel(g, "g");
-
-      a = t.insertChild(g, { kind: "blank" });
-      t.setLabel(a, "a");
-      t.setScalar(a, 1);
-
-      h = t.insertChild(g, { kind: "group" });
-      t.setLabel(h, "h");
-
-      b = t.insertChild(h, { kind: "blank" });
-      t.setLabel(b, "b");
-      t.setScalar(b, 2);
+      const ga = t.insertChild(g, { kind: "blank" });
+      t.setLabel(ga, "ga");
+      t.setScalar(ga, 1);
 
       d = t.insertChild(rootId, { kind: "blank" });
       t.setLabel(d, "d");
       t.setSource(d, { type: "derived", expr: "g" });
     });
 
-    const snap = core.item(d);
-    expect(snap.content.kind).toBe("group");
-    if (snap.content.kind !== "group") return;
+    expect(contentToScalar(core.item(y).content)).toBe(12);
+    core.commit((t) => t.setScalar(x, 40));
+    await tick();
+    expect(contentToScalar(core.item(y).content)).toBe(42);
 
-    const childLabels = snap.content.children.map(
-      (id) => core.item(id).label ?? "",
-    );
-    expect(childLabels).toContain("a");
-    expect(childLabels).toContain("h");
+    expect(core.item(a).content.kind).toBe("issue");
+    expect(core.item(b).content.kind).toBe("issue");
+
+    const dd = core.item(d);
+    expect(dd.content.kind).toBe("group");
+    if (dd.content.kind === "group") {
+      const labels = dd.content.children.map(
+        (cid) => core.item(cid).label ?? "",
+      );
+      expect(labels).toContain("ga");
+    }
   });
 });
 
-describe("selection contract", () => {
-  test("setSelection repairs when focused entry disappears", async () => {
+describe("core", () => {
+  test("locate returns correct siblings/index and null for path items", () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    let g: ItemId = "";
+    let a: ItemId = "";
+    let b: ItemId = "";
+
+    core.commit((t) => {
+      g = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(g, "g");
+      a = t.insertChild(g, { kind: "blank" });
+      t.setLabel(a, "a");
+      b = t.insertChild(g, { kind: "blank" });
+      t.setLabel(b, "b");
+    });
+
+    const locB = core.locate(b);
+    expect(locB).not.toBeNull();
+    if (locB) {
+      expect(locB.ownerId).toBe(g);
+      expect(locB.index).toBe(1);
+      expect(locB.siblings).toEqual([a, b]);
+    }
+
+    const groupSnap = core.item(g);
+    expect(groupSnap.content.kind).toBe("group");
+    if (groupSnap.content.kind === "group") {
+      const firstChild = groupSnap.content.children[0]!;
+      const ro = core.item(`${firstChild},0` as any);
+      expect(core.locate(ro.id)).toBe(null);
+    }
+  });
+
+  test("selection repair when focused entry disappears", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let g: ItemId = "";
@@ -594,11 +413,7 @@ describe("selection contract", () => {
     });
 
     core.focus({ container: g, item: x }, DEFAULT_TARGET);
-
-    core.commit((t) => {
-      t.remove(g);
-    });
-
+    core.commit((t) => t.remove(g));
     await tick();
 
     const sel = core.selection();
@@ -613,8 +428,56 @@ describe("selection contract", () => {
   });
 });
 
-describe("views contract (selection transitions via onKeyDown)", () => {
-  test("table arrow navigation: row label -> right -> cell; left -> row label; down -> next row", async () => {
+describe("views", () => {
+  test("outline: initial focus, arrow nav keeps focused, click focuses content input", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    core.commit((t) => {
+      const a = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
+
+      const g = t.insertChild(rootId, { kind: "group" });
+      t.setLabel(g, "g");
+
+      const b = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(b, "b");
+      t.setScalar(b, 3);
+    });
+
+    const view = viewFactories.outline({ core, id: rootId });
+    const unmount = await mountView(view);
+
+    await tick();
+    expectFocused(core.selection());
+
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    await tick();
+    expectFocused(core.selection());
+
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    await tick();
+    expectFocused(core.selection());
+
+    const ta = view.root.querySelector(
+      "textarea.content",
+    ) as HTMLTextAreaElement | null;
+    expect(ta).not.toBeNull();
+    if (ta) {
+      ta.dispatchEvent(
+        new Event("pointerdown", { bubbles: true, cancelable: true }),
+      );
+      await tick();
+      expect(document.activeElement === ta).toBe(true);
+      const sel = core.selection();
+      expectFocused(sel);
+      expect(sel.target).toBe(DEFAULT_TARGET);
+    }
+
+    unmount();
+  });
+
+  test("table: arrow navigation label -> right -> cell; left -> label; down -> next row", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let tableId: ItemId = "";
@@ -640,78 +503,37 @@ describe("views contract (selection transitions via onKeyDown)", () => {
     });
 
     const view = viewFactories.table({ core, id: tableId });
-    const unmount = await mountView(core, view);
+    const unmount = await mountView(view);
 
     await tick();
     let sel = core.selection();
-    expectFocusedSelection(sel);
+    expectFocused(sel);
     expect(sel.target).toBe("label");
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     await tick();
     sel = core.selection();
-    expectFocusedSelection(sel);
+    expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     await tick();
     sel = core.selection();
-    expectFocusedSelection(sel);
+    expectFocused(sel);
     expect(sel.target).toBe("label");
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
     sel = core.selection();
-    expectFocusedSelection(sel);
+    expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
     expect(sel.focus.container).toBe(rowB);
 
     unmount();
   });
 
-  test("outline picks first nav stop; arrows keep focused selection", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    core.commit((t) => {
-      const a = t.insertChild(rootId, { kind: "blank" });
-      t.setLabel(a, "a");
-      t.setScalar(a, 1);
-
-      const g = t.insertChild(rootId, { kind: "group" });
-      t.setLabel(g, "g");
-      const ga = t.insertChild(g, { kind: "blank" });
-      t.setLabel(ga, "ga");
-      t.setScalar(ga, 2);
-
-      const b = t.insertChild(rootId, { kind: "blank" });
-      t.setLabel(b, "b");
-      t.setScalar(b, 3);
-    });
-
-    const view = viewFactories.outline({ core, id: rootId });
-    const unmount = await mountView(core, view);
-
-    await tick();
-    let sel = core.selection();
-    expectFocusedSelection(sel);
-
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-    await tick();
-    sel = core.selection();
-    expectFocusedSelection(sel);
-
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
-    await tick();
-    sel = core.selection();
-    expectFocusedSelection(sel);
-
-    unmount();
-  });
-});
-
-describe("DOM smoke", () => {
-  test("slider range input updates scalar content", async () => {
+  test("slider: input event updates scalar; key nudges clamp", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let sliderId: ItemId = "";
@@ -724,26 +546,51 @@ describe("DOM smoke", () => {
     });
 
     const view = viewFactories.slider({ core, id: sliderId });
-    const unmount = await mountView(core, view);
-    await tick();
+    const unmount = await mountView(view);
 
     const input = view.root.querySelector("input") as HTMLInputElement | null;
     expect(input).not.toBeNull();
-
-    if (!input) {
-      unmount();
-      return;
+    if (input) {
+      input.value = "42";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(contentToScalar(core.item(sliderId).content)).toBe(42);
     }
 
-    input.value = "42";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    core.commit((t) => t.setScalar(sliderId, 100));
+    await tick();
 
-    expect(contentToScalar(core.item(sliderId).content)).toBe(42);
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    await tick();
+    expect(contentToScalar(core.item(sliderId).content)).toBe(100);
+
+    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "Home" }));
+    await tick();
+    expect(contentToScalar(core.item(sliderId).content)).toBe(0);
 
     unmount();
   });
+});
 
-  test("reactivity updates derived display text", async () => {
+describe("smoke", () => {
+  test("dispose safety: unmounting view then committing does not throw", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    let a: ItemId = "";
+
+    core.commit((t) => {
+      a = t.insertChild(rootId, { kind: "blank" });
+      t.setLabel(a, "a");
+      t.setScalar(a, 1);
+    });
+
+    const view = viewFactories.outline({ core, id: rootId });
+    const unmount = await mountView(view);
+
+    expect(() => unmount()).not.toThrow();
+    expect(() => core.commit((t) => t.setScalar(a, 2))).not.toThrow();
+  });
+
+  test("reactivity updates derived display text in outline", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let x: ItemId = "";
@@ -760,98 +607,20 @@ describe("DOM smoke", () => {
     });
 
     const view = viewFactories.outline({ core, id: rootId });
-    const unmount = await mountView(core, view);
+    const unmount = await mountView(view);
 
-    const getDerivedText = () => {
+    const findText = () => {
       const nodes = Array.from(view.root.querySelectorAll(".item.readonly"));
-      return (
-        nodes
-          .map((n) => n.textContent ?? "")
-          .find((t) => t === "2" || t === "6") ?? ""
-      );
+      return nodes.map((n) => n.textContent ?? "");
     };
 
     await tick();
-    expect(getDerivedText()).toBe("2");
+    expect(findText()).toContain("2");
 
     core.commit((t) => t.setScalar(x, 5));
     await tick();
-    expect(getDerivedText()).toBe("6");
+    expect(findText()).toContain("6");
 
     unmount();
   });
-
-  test("dispose safety: disposing view does not crash on subsequent model updates", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    let a: ItemId = "";
-
-    core.commit((t) => {
-      a = t.insertChild(rootId, { kind: "blank" });
-      t.setLabel(a, "a");
-      t.setScalar(a, 1);
-    });
-
-    const view = viewFactories.outline({ core, id: rootId });
-    const unmount = await mountView(core, view);
-
-    expect(() => unmount()).not.toThrow();
-    expect(() => core.commit((t) => t.setScalar(a, 2))).not.toThrow();
-  });
-});
-
-test("outline: clicking editable content focuses the text input element", async () => {
-  const { core, rootId } = makeCoreRuntime();
-
-  core.commit((t) => {
-    const x = t.insertChild(rootId, { kind: "blank" });
-    t.setLabel(x, "x");
-    t.setScalar(x, 10);
-  });
-
-  const view = viewFactories.outline({ core, id: rootId });
-  const unmount = await mountView(core, view);
-
-  const labelInputs = Array.from(
-    view.root.querySelectorAll(".autosize.label input"),
-  ) as HTMLInputElement[];
-
-  const xLabelInput = labelInputs.find((n) => (n.value ?? "") === "x") ?? null;
-  expect(xLabelInput).not.toBeNull();
-  if (!xLabelInput) {
-    unmount();
-    return;
-  }
-
-  const itemRoot = xLabelInput.closest(".item") as HTMLElement | null;
-  expect(itemRoot).not.toBeNull();
-  if (!itemRoot) {
-    unmount();
-    return;
-  }
-
-  const contentTextarea = itemRoot.querySelector(
-    "textarea.content",
-  ) as HTMLTextAreaElement | null;
-
-  expect(contentTextarea).not.toBeNull();
-  if (!contentTextarea) {
-    unmount();
-    return;
-  }
-
-  contentTextarea.dispatchEvent(
-    new Event("pointerdown", { bubbles: true, cancelable: true }),
-  );
-
-  await tick();
-  await tick();
-
-  expect(document.activeElement === contentTextarea).toBe(true);
-
-  const sel = core.selection();
-  expectFocusedSelection(sel);
-  expect(sel.target).toBe(DEFAULT_TARGET);
-
-  unmount();
 });

@@ -156,16 +156,8 @@ function mountSlider({
 
     const scope = componentCtx.focus(core, focus, { default: () => input });
     scope.elementFor(DEFAULT_TARGET, () => input);
-
-    componentCtx.on(root, "pointerdown", (e: PointerEvent) => {
-      core.focus(focus, DEFAULT_TARGET);
-      e.stopPropagation();
-    });
-
-    componentCtx.on(input, "pointerdown", (e: PointerEvent) => {
-      core.focus(focus, DEFAULT_TARGET);
-      e.stopPropagation();
-    });
+    scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
+    scope.selectOn(input, { target: DEFAULT_TARGET, caret: "zero" });
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;

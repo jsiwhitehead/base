@@ -1,3 +1,4 @@
+export type { FocusScope } from "./base";
 export type { NavDir, NavMode } from "./controls";
 
 export { el, on, stopEvent, ensureTabbable, reconcileChildren } from "./base";

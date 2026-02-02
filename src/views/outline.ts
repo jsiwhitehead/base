@@ -25,6 +25,7 @@ import {
   textField,
   autosizeTextField,
   contentField,
+  type FocusScope,
 } from "../dom";
 
 type SourceField = {
@@ -219,16 +220,10 @@ export const outlineCommands = {
   insertSibling(core: Core, sel: Selection, side: "before" | "after"): void {
     if (sel.kind !== "focused") return;
 
-    const containerId = sel.focus.container;
-    const itemId = sel.focus.item;
+    const loc = core.locate(sel.focus.item);
+    if (!loc) return;
 
-    const container = core.item(containerId).content;
-    if (container.kind !== "group") return;
-
-    const siblings = container.children;
-    const idx = siblings.indexOf(itemId);
-    if (idx < 0) return;
-
+    const { ownerId: containerId, index: idx } = loc;
     const at = side === "before" ? idx : idx + 1;
 
     let id: ItemId = "";
@@ -249,21 +244,18 @@ export const outlineCommands = {
   ): void {
     if (sel.kind !== "focused") return;
 
-    const containerId = sel.focus.container;
     const id = sel.focus.item;
-
     const snap = core.item(id);
+
+    const loc = core.locate(id);
+    if (!loc) return;
+
+    const { ownerId: containerId, index: idx } = loc;
+
     if (!(snap.mode.kind === "direct" && snap.content.kind === "scalar")) {
       outlineCommands.insertSibling(core, sel, "after");
       return;
     }
-
-    const container = core.item(containerId).content;
-    if (container.kind !== "group") return;
-
-    const siblings = container.children;
-    const idx = siblings.indexOf(id);
-    if (idx < 0) return;
 
     const curText = scalarToText(snap.content.value);
     const len = curText.length;
@@ -290,13 +282,10 @@ export const outlineCommands = {
   joinBoundary(core: Core, sel: Selection, dir: "backward" | "forward"): void {
     if (sel.kind !== "focused") return;
 
-    const containerId = sel.focus.container;
-    const container = core.item(containerId).content;
-    if (container.kind !== "group") return;
+    const loc = core.locate(sel.focus.item);
+    if (!loc) return;
 
-    const siblings = container.children;
-    const idx = siblings.indexOf(sel.focus.item);
-    if (idx < 0) return;
+    const { ownerId: containerId, index: idx, siblings } = loc;
 
     const neighbor =
       dir === "backward"
@@ -329,15 +318,10 @@ export const outlineCommands = {
   removeItem(core: Core, sel: Selection, prefer: "prev" | "next"): void {
     if (sel.kind !== "focused") return;
 
-    const containerId = sel.focus.container;
-    const id = sel.focus.item;
+    const loc = core.locate(sel.focus.item);
+    if (!loc) return;
 
-    const container = core.item(containerId).content;
-    if (container.kind !== "group") return;
-
-    const siblings = container.children;
-    const idx = siblings.indexOf(id);
-    if (idx < 0) return;
+    const { ownerId: containerId, index: idx, siblings } = loc;
 
     const prev = siblings[idx - 1] ?? null;
     const next = siblings[idx + 1] ?? null;
@@ -345,7 +329,7 @@ export const outlineCommands = {
     const chosen =
       prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
 
-    core.commit((t) => t.remove(id));
+    core.commit((t) => t.remove(sel.focus.item));
 
     if (chosen) {
       const it = core.item(chosen);
@@ -355,6 +339,7 @@ export const outlineCommands = {
         it.content.kind === "scalar"
           ? caretAt(scalarToText(it.content.value).length)
           : caret0();
+
       core.focus(
         { container: containerId, item: chosen },
         defaultTargetFor(core, chosen),
@@ -373,17 +358,14 @@ export const outlineCommands = {
   ): void {
     if (sel.kind !== "focused") return;
 
-    const containerId = sel.focus.container;
     const id = sel.focus.item;
 
-    const container = core.item(containerId).content;
-    if (container.kind !== "group") return;
-
-    const siblings = container.children;
-    const idx = siblings.indexOf(id);
-    if (idx < 0) return;
-
     if (dir === "in") {
+      const loc = core.locate(id);
+      if (!loc) return;
+
+      const { ownerId: containerId, index: idx } = loc;
+
       const label = core.item(id).label ?? "";
       let wrapperId: ItemId = "";
 
@@ -402,13 +384,17 @@ export const outlineCommands = {
       return;
     }
 
+    const loc = core.locate(id);
+    if (!loc) return;
+
+    const { ownerId: containerId } = loc;
     const parentId = findPresentedParent(rootId, core, containerId);
     if (!parentId) return;
 
-    const parentContent = core.item(parentId).content;
-    if (parentContent.kind !== "group") return;
+    const parentSnap = core.item(parentId);
+    if (parentSnap.content.kind !== "group") return;
 
-    const wrapperIdx = parentContent.children.indexOf(containerId);
+    const wrapperIdx = parentSnap.content.children.indexOf(containerId);
     if (wrapperIdx < 0) return;
 
     const wrapperLabel = core.item(containerId).label ?? "";
@@ -483,13 +469,11 @@ type OutlineMountCtx = {
   dispatch: (intent: OutlineIntent) => void;
 };
 
-type TargetsByKey = Map<string, HTMLElement>;
-
 function mountOutlineHeader(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   fields: readonly SourceField[],
-  onTargets: (targets: TargetsByKey) => void,
+  scope: FocusScope,
 ): Component {
   const { core, dispatch } = mountCtx;
   const id = focus.item;
@@ -514,16 +498,19 @@ function mountOutlineHeader(
 
     const labelComp = autosizeTextField({
       commit: commitLabel,
-      getState: () => ({
-        text: core.item(id).label ?? "",
-        readOnly: !canEditLabel,
-        isIssue: false,
-      }),
+      getState: () => {
+        const snap = core.item(id);
+        return {
+          text: snap.label ?? "",
+          readOnly: !canEditLabel,
+          isIssue: false,
+        };
+      },
       onCommitEvents: ["blur"],
       wrapClassName: "autosize label",
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement;
-        return on(inputEl, "keydown", (e: KeyboardEvent) => {
+        const handler = (e: KeyboardEvent) => {
           if (e.key === " ") {
             e.preventDefault();
             return;
@@ -534,23 +521,18 @@ function mountOutlineHeader(
             if (e.key === "Enter") commitLabel(inputEl.value);
             toContent();
           }
-        });
+        };
+        return on(inputEl, "keydown", handler);
       },
     });
 
     labelHost.replaceChildren(labelComp.el);
     componentCtx.use(labelComp);
 
-    const targets: TargetsByKey = new Map();
-    targets.set("label", labelComp.focusEl);
-
-    componentCtx.on(labelComp.focusEl, "pointerdown", (e: PointerEvent) => {
-      const caret = {
-        start: labelComp.focusEl.selectionStart ?? 0,
-        end: labelComp.focusEl.selectionEnd ?? 0,
-      };
-      core.focus(focus, "label", { caret });
-      e.stopPropagation();
+    scope.elementFor("label", () => labelComp.focusEl);
+    scope.selectOn(labelComp.focusEl, {
+      target: "label",
+      caret: "fromTarget",
     });
 
     for (const f of fields) {
@@ -578,73 +560,28 @@ function mountOutlineHeader(
           return { text, readOnly: false, isIssue: false };
         },
         onCommitEvents: ["blur"],
-        textKeys: (inp) => {
-          const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
-          const boundaryNav = (dir: "left" | "right") =>
-            dispatch({ type: "NAV", dir, mode: "step" });
-
-          return on(inputEl, "keydown", (e: KeyboardEvent) => {
-            const noModifiers =
-              !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
-
-            if (
-              noModifiers &&
-              (e.key === "ArrowLeft" || e.key === "ArrowRight")
-            ) {
-              const start = inputEl.selectionStart ?? 0;
-              const end = inputEl.selectionEnd ?? start;
-              const hasSel = start !== end;
-              const len = inputEl.value.length;
-
-              if (!hasSel && e.key === "ArrowLeft" && start === 0) {
-                e.preventDefault();
-                e.stopPropagation();
-                boundaryNav("left");
-                return;
-              }
-
-              if (!hasSel && e.key === "ArrowRight" && end === len) {
-                e.preventDefault();
-                e.stopPropagation();
-                boundaryNav("right");
-                return;
-              }
-            }
-
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              e.stopPropagation();
-              commitField(inputEl.value);
-              return;
-            }
-
-            if (e.key === "Escape") {
-              e.preventDefault();
-              e.stopPropagation();
-              toContent();
-            }
-          });
-        },
+        textKeys: (inp) =>
+          bindTextControlKeys(inp, {
+            nav: {
+              yieldUpDown: "always",
+              yieldLeftRight: "always",
+            },
+            onNav: (dir, _mode) => {
+              if (dir === "left" || dir === "right")
+                dispatch({ type: "NAV", dir, mode: "step" });
+            },
+            onEnter: () => commitField((inp as any).value),
+            onEscape: () => toContent(),
+          }),
       });
 
       valueHost.replaceChildren(fc.el);
       componentCtx.use(fc);
 
       const tkey = `source:${f.key}`;
-      targets.set(tkey, fc.focusEl);
-
-      componentCtx.on(fc.focusEl, "pointerdown", (e: PointerEvent) => {
-        const caret = {
-          start: fc.focusEl.selectionStart ?? 0,
-          end: fc.focusEl.selectionEnd ?? 0,
-        };
-        core.focus(focus, tkey, { caret });
-        e.stopPropagation();
-      });
+      scope.elementFor(tkey, () => fc.focusEl);
+      scope.selectOn(fc.focusEl, { target: tkey, caret: "fromTarget" });
     }
-
-    onTargets(targets);
-    componentCtx.onCleanup(() => onTargets(new Map()));
 
     return wrap;
   });
@@ -653,12 +590,15 @@ function mountOutlineHeader(
 function mountOutlineChildren(
   mountCtx: OutlineMountCtx,
   focus: Focus,
+  scope: FocusScope,
 ): Component {
   const { core } = mountCtx;
 
   return createComponent((componentCtx) => {
     const container = el("div", "group");
     ensureTabbable(container);
+
+    scope.selectOn(container, { caret: "zero" });
 
     const mgr = componentCtx.list(container, (childId: string) => {
       const childFocus: Focus = { container: focus.item, item: childId };
@@ -670,21 +610,12 @@ function mountOutlineChildren(
 
     componentCtx.watch(
       () => {
-        const c = core.item(focus.item).content;
+        const snap = core.item(focus.item);
+        const c = snap.content;
         return c.kind === "group" ? [...c.children] : [];
       },
       (ids) => mgr.update(ids),
     );
-
-    componentCtx.on(container, "pointerdown", (e: PointerEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
-        return;
-      core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
-      e.stopPropagation();
-    });
 
     return container;
   });
@@ -695,6 +626,7 @@ type ContentTargetRef = { current: HTMLElement | null };
 function mountOutlineBody(
   mountCtx: OutlineMountCtx,
   focus: Focus,
+  scope: FocusScope,
   contentTargetRef: ContentTargetRef,
 ): Component {
   const { core, dispatch } = mountCtx;
@@ -707,18 +639,11 @@ function mountOutlineBody(
     if (nested) {
       ensureTabbable(nested.el);
       contentTargetRef.current = nested.el;
+
       hostEl.replaceChildren(nested.el);
       componentCtx.use(nested);
 
-      componentCtx.on(hostEl, "pointerdown", (e: PointerEvent) => {
-        if (
-          e.target instanceof HTMLInputElement ||
-          e.target instanceof HTMLTextAreaElement
-        )
-          return;
-        core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
-        e.stopPropagation();
-      });
+      scope.selectOn(nested.el, { caret: "zero" });
 
       componentCtx.onCleanup(() => {
         contentTargetRef.current = hostEl;
@@ -769,10 +694,11 @@ function mountOutlineBody(
       renderGroupChild: (childId) => {
         const d = el("div", "item readonly");
         ensureTabbable(d);
-        return createComponent((componentCtx) => {
-          componentCtx.watch(
-            () => core.item(childId).content,
-            (c) => {
+        return createComponent((cctx) => {
+          cctx.watch(
+            () => core.item(childId),
+            (snap) => {
+              const c = snap.content;
               const isIssue = c.kind === "issue";
               const text =
                 c.kind === "issue"
@@ -792,21 +718,13 @@ function mountOutlineBody(
     });
 
     contentTargetRef.current = vf.focusEl;
+
     hostEl.replaceChildren(vf.el);
     componentCtx.use(vf);
 
-    componentCtx.on(vf.focusEl, "pointerdown", (e: PointerEvent) => {
-      const t = e.target as any;
-      const caret =
-        t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement
-          ? { start: t.selectionStart ?? 0, end: t.selectionEnd ?? 0 }
-          : undefined;
-      core.focus(
-        focus,
-        DEFAULT_TARGET,
-        caret ? { caret } : { caret: caret0() },
-      );
-      e.stopPropagation();
+    scope.selectOn(vf.focusEl as HTMLElement, {
+      target: DEFAULT_TARGET,
+      caret: "fromTarget",
     });
 
     componentCtx.onCleanup(() => {
@@ -833,50 +751,14 @@ function mountOutlineNode(
     const headerSlot = componentCtx.slot(headerContainer);
     const contentSlot = componentCtx.slot(contentContainer);
 
-    let headerTargets: TargetsByKey = new Map();
     const contentTargetRef: ContentTargetRef = { current: contentContainer };
 
     const scope = componentCtx.focus(core, focus, {
       default: () => contentTargetRef.current ?? contentContainer,
     });
 
-    scope.elementFor("label", () => headerTargets.get("label") ?? null);
-    const elementFor = (target: string): HTMLElement | null => {
-      if (target === DEFAULT_TARGET)
-        return contentTargetRef.current ?? contentContainer;
-      return headerTargets.get(target) ?? null;
-    };
-
-    scope.elementFor(DEFAULT_TARGET, () => elementFor(DEFAULT_TARGET));
-    scope.elementFor("label", () => elementFor("label"));
-
-    const setHeaderTargets = (targets: TargetsByKey) => {
-      headerTargets = targets;
-      for (const [k] of targets)
-        scope.elementFor(k, () => headerTargets.get(k) ?? null);
-    };
-
-    componentCtx.on(root, "pointerdown", (e: PointerEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
-        return;
-
-      const sel = core.selection();
-      const alreadyFocused =
-        sel.kind === "focused" &&
-        sel.focus.item === focus.item &&
-        sel.focus.container === focus.container;
-
-      if (!alreadyFocused) {
-        core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
-      } else if (sel.target !== DEFAULT_TARGET) {
-        core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
-      }
-
-      e.stopPropagation();
-    });
+    scope.elementFor(DEFAULT_TARGET, () => contentTargetRef.current);
+    scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
 
     componentCtx.watch(
       () => {
@@ -900,10 +782,10 @@ function mountOutlineNode(
         const snap = core.item(focus.item);
         const label = (snap.label ?? "").trim();
         const fields =
-          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
+          snap.mode.kind === "source"
+            ? fieldsFromSource(snap.mode.source)
+            : [];
         const content = snap.content;
-        const mode: "children" | "body" =
-          content.kind === "group" ? "children" : "body";
 
         const sel = core.selection();
         const labelFocused =
@@ -915,7 +797,10 @@ function mountOutlineNode(
         return {
           label,
           fields,
-          mode,
+          mode:
+            content.kind === "group"
+              ? ("children" as const)
+              : ("body" as const),
           isIssue: content.kind === "issue",
           labelFocused,
         };
@@ -932,12 +817,9 @@ function mountOutlineNode(
           if (needHeader) {
             if (headerContainer.parentElement !== root)
               root.insertBefore(headerContainer, contentContainer);
-            headerSlot.set(
-              mountOutlineHeader(mountCtx, focus, fields, setHeaderTargets),
-            );
+            headerSlot.set(mountOutlineHeader(mountCtx, focus, fields, scope));
           } else {
             headerSlot.set(null);
-            setHeaderTargets(new Map());
             if (headerContainer.parentElement === root)
               headerContainer.remove();
           }
@@ -949,13 +831,13 @@ function mountOutlineNode(
           lastContentMode = mode;
 
           if (mode === "children") {
-            const kids = mountOutlineChildren(mountCtx, focus);
+            const kids = mountOutlineChildren(mountCtx, focus, scope);
             contentSlot.set(kids);
             ensureTabbable(kids.el);
             contentTargetRef.current = kids.el;
           } else {
             contentSlot.set(
-              mountOutlineBody(mountCtx, focus, contentTargetRef),
+              mountOutlineBody(mountCtx, focus, scope, contentTargetRef),
             );
           }
         }
