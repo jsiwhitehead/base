@@ -1,11 +1,11 @@
 import { batch } from "@preact/signals-core";
 import {
   createModel,
-  parseScalar,
   type ApplyResult as ModelApplyResult,
   type Entry,
   type EntryContent,
   type EntryId,
+  type Model,
   type Op,
   type Transaction,
   type ViewKind,
@@ -183,6 +183,9 @@ export type Core = {
 
   dispatch(txn: Transaction): ApplyResult;
   dispatchRemote(txn: Transaction): ApplyResult;
+
+  undo(): ApplyResult;
+  redo(): ApplyResult;
 
   addRule(rule: Rule, opts?: { id?: string }): () => void;
 
@@ -459,54 +462,6 @@ export function createCore(opts: {
 
   const MAX_RULE_PASSES = 25;
 
-  const addRule = (rule: Rule, opts2: { id?: string } = {}): (() => void) => {
-    const id = opts2.id ?? `rule:${nextRuleId++}`;
-    const rec = { id, run: rule };
-    rules.push(rec);
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const i = rules.indexOf(rec);
-      if (i >= 0) rules.splice(i, 1);
-    };
-  };
-
-  const shapeSync = createShapeSyncGroup({
-    model,
-    addRule: (ruleFn) => addRule(ruleFn, { id: "sync:shape" }),
-  });
-
-  const ensureTableRoots = (
-    seed: ModelApplyResult,
-    inverseAcc: Op[],
-  ): ModelApplyResult => {
-    const ids = new Set<EntryId>([...seed.created, ...seed.touched]);
-    const ops: Op[] = [];
-
-    for (const id of ids) {
-      if (!model.hasEntry(id)) continue;
-
-      const it = model.peekEntry(id);
-      if (it.view !== "table") continue;
-
-      shapeSync.add(id);
-
-      if (!isGroupContent(it.content)) {
-        ops.push(
-          model.ops.patch(id, { content: { kind: "group", childIds: [] } }),
-        );
-      }
-    }
-
-    if (!ops.length) return emptyModelApply;
-
-    const txn = model.ops.transaction(ops, { source: "rule" });
-    const { result, inverseOps } = applyTxnWithInverse(txn);
-    inverseAcc.push(...inverseOps);
-    return result;
-  };
-
   const runRulesFixpoint = (
     seed: ModelApplyResult,
     inverseAcc: Op[],
@@ -532,24 +487,163 @@ export function createCore(opts: {
     return merged;
   };
 
+  const shapeSync = createShapeSyncGroup({
+    model,
+    addRule: (ruleFn) =>
+      addRule(ruleFn, { id: "sync:shape" }) as unknown as () => void,
+  });
+
+  const tableRowSync = (() => {
+    const rows = new Set<EntryId>();
+
+    const clearDead = () => {
+      for (const id of rows) {
+        if (!model.hasEntry(id)) {
+          rows.delete(id);
+          shapeSync.remove(id);
+        }
+      }
+    };
+
+    const addRow = (id: EntryId) => {
+      if (rows.has(id)) return;
+      rows.add(id);
+      shapeSync.add(id);
+    };
+
+    const removeRow = (id: EntryId) => {
+      if (!rows.has(id)) return;
+      rows.delete(id);
+      shapeSync.remove(id);
+    };
+
+    const setRows = (desired: Set<EntryId>) => {
+      for (const id of rows) {
+        if (!desired.has(id)) removeRow(id);
+      }
+      for (const id of desired) addRow(id);
+    };
+
+    return { clearDead, setRows };
+  })();
+
+  const findTablesAndRows = (): {
+    tableIds: EntryId[];
+    rowIds: Set<EntryId>;
+  } => {
+    const tableIds: EntryId[] = [];
+    const rowIds = new Set<EntryId>();
+
+    const stack: EntryId[] = [model.rootId()];
+    const seen = new Set<EntryId>();
+
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (!model.hasEntry(id)) continue;
+
+      const it = model.peekEntry(id);
+      const isTable = it.view === "table";
+      if (isTable) tableIds.push(id);
+
+      if (isGroupContent(it.content)) {
+        for (const cid of it.content.childIds) {
+          if (isTable) rowIds.add(cid);
+          stack.push(cid);
+        }
+      }
+    }
+
+    return { tableIds, rowIds };
+  };
+
+  const reconcileTablesOps = (): Op[] => {
+    const { tableIds, rowIds } = findTablesAndRows();
+    const opsOut: Op[] = [];
+
+    for (const tableId of tableIds) {
+      if (!model.hasEntry(tableId)) continue;
+      const t = model.peekEntry(tableId);
+
+      if (!isGroupContent(t.content)) {
+        opsOut.push(
+          model.ops.patch(tableId, {
+            content: { kind: "group", childIds: [] },
+          }),
+        );
+        continue;
+      }
+
+      for (const rid of t.content.childIds) {
+        if (!model.hasEntry(rid)) continue;
+        const row = model.peekEntry(rid);
+        if (!isGroupContent(row.content)) {
+          opsOut.push(
+            model.ops.patch(rid, {
+              content: { kind: "group", childIds: [] },
+            }),
+          );
+        }
+      }
+    }
+
+    tableRowSync.clearDead();
+    tableRowSync.setRows(rowIds);
+
+    return opsOut;
+  };
+
+  const applyInvariantOps = (
+    meta: Transaction["meta"] | undefined,
+    inverseAcc: Op[],
+  ): ModelApplyResult => {
+    const opsOut = reconcileTablesOps();
+    if (!opsOut.length) return emptyModelApply;
+
+    const txn = model.ops.transaction(opsOut, { source: "rule" });
+    const { result, inverseOps } = applyTxnWithInverse(txn);
+
+    if (meta?.source !== "remote") inverseAcc.push(...inverseOps);
+
+    evaluator.prune(result.touched);
+    return result;
+  };
+
   const applyPipeline = (txn: Transaction): ApplyResult => {
     let final = emptyModelApply;
     const inverseAcc: Op[] = [];
-    const isUser = txn.meta?.source === "user";
+    const src = txn.meta?.source;
 
     batch(() => {
+      const isRemote = src === "remote";
+
+      if (isRemote) {
+        const res = model.apply(txn);
+        final = mergeModelApply(final, res);
+
+        const invRes = applyInvariantOps(txn.meta, inverseAcc);
+        final = mergeModelApply(final, invRes);
+
+        repairSelectionAfterDispatch(txn.meta);
+
+        return;
+      }
+
+      const isUser = src === "user";
+
       const { result: userRes, inverseOps: invUser } = applyTxnWithInverse(txn);
       inverseAcc.push(...invUser);
       final = mergeModelApply(final, userRes);
 
-      const tableRes = ensureTableRoots(userRes, inverseAcc);
-      final = mergeModelApply(final, tableRes);
+      const invRes1 = applyInvariantOps(txn.meta, inverseAcc);
+      final = mergeModelApply(final, invRes1);
 
-      const ruleSeed = mergeModelApply(userRes, tableRes);
-      const ruleRes = runRulesFixpoint(ruleSeed, inverseAcc);
+      const ruleRes = runRulesFixpoint(userRes, inverseAcc);
       final = mergeModelApply(final, ruleRes);
 
-      shapeSync.pruneMissing();
+      const invRes2 = applyInvariantOps(txn.meta, inverseAcc);
+      final = mergeModelApply(final, invRes2);
 
       repairSelectionAfterDispatch(txn.meta);
 
@@ -570,6 +664,19 @@ export function createCore(opts: {
   const dispatchRemote = (txn: Transaction): ApplyResult => {
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
     return applyPipeline(model.ops.transaction(txn.ops, meta));
+  };
+
+  const addRule = (rule: Rule, opts2: { id?: string } = {}): (() => void) => {
+    const id = opts2.id ?? `rule:${nextRuleId++}`;
+    const rec = { id, run: rule };
+    rules.push(rec);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const i = rules.indexOf(rec);
+      if (i >= 0) rules.splice(i, 1);
+    };
   };
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
@@ -670,6 +777,27 @@ export function createCore(opts: {
     return dispatch(txn);
   };
 
+  const undo = (): ApplyResult => {
+    const last = history.undo.pop() ?? null;
+    if (!last) return toApplyResult(emptyModelApply);
+    const res = dispatch(last.inverse);
+    history.redo.push(last);
+    return res;
+  };
+
+  const redo = (): ApplyResult => {
+    const last = history.redo.pop() ?? null;
+    if (!last) return toApplyResult(emptyModelApply);
+
+    const replay = model.ops.transaction(last.user.ops, { source: "redo" });
+    const res = dispatch(replay);
+
+    const newUndoTop = history.undo.at(-1) ?? null;
+    if (newUndoTop) history.redo = [...history.redo, newUndoTop];
+
+    return res;
+  };
+
   const focus = (
     f: Focus,
     target: string = DEFAULT_TARGET,
@@ -724,8 +852,8 @@ export function createCore(opts: {
   core = {
     dispose() {
       uninstallGlobal();
+      shapeSync.dispose();
       const { removedIds } = model.pruneUnreachable();
-      shapeSync.pruneMissing();
       evaluator.prune(removedIds);
       evaluator.dispose();
       runtime.dispose();
@@ -737,6 +865,9 @@ export function createCore(opts: {
 
     dispatch,
     dispatchRemote,
+
+    undo,
+    redo,
 
     addRule,
 
@@ -757,4 +888,4 @@ export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
 export type { ViewName, ViewKind };
 export { DEFAULT_TARGET };
-export { parseScalar, clamp, isTextInput, defaultTextCaret };
+export { clamp, isTextInput, defaultTextCaret };
