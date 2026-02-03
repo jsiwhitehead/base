@@ -6,7 +6,6 @@ import {
   type Entry,
   type EntryContent,
   type EntryId,
-  type Model,
   type Op,
   type Transaction,
   type ViewKind,
@@ -186,15 +185,6 @@ export type Core = {
   dispatchRemote(txn: Transaction): ApplyResult;
 
   addRule(rule: Rule, opts?: { id?: string }): () => void;
-
-  sync: {
-    shape: {
-      add(id: ItemId): void;
-      remove(id: ItemId): void;
-      clear(): void;
-      dispose(): void;
-    };
-  };
 
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
@@ -469,6 +459,54 @@ export function createCore(opts: {
 
   const MAX_RULE_PASSES = 25;
 
+  const addRule = (rule: Rule, opts2: { id?: string } = {}): (() => void) => {
+    const id = opts2.id ?? `rule:${nextRuleId++}`;
+    const rec = { id, run: rule };
+    rules.push(rec);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const i = rules.indexOf(rec);
+      if (i >= 0) rules.splice(i, 1);
+    };
+  };
+
+  const shapeSync = createShapeSyncGroup({
+    model,
+    addRule: (ruleFn) => addRule(ruleFn, { id: "sync:shape" }),
+  });
+
+  const ensureTableRoots = (
+    seed: ModelApplyResult,
+    inverseAcc: Op[],
+  ): ModelApplyResult => {
+    const ids = new Set<EntryId>([...seed.created, ...seed.touched]);
+    const ops: Op[] = [];
+
+    for (const id of ids) {
+      if (!model.hasEntry(id)) continue;
+
+      const it = model.peekEntry(id);
+      if (it.view !== "table") continue;
+
+      shapeSync.add(id);
+
+      if (!isGroupContent(it.content)) {
+        ops.push(
+          model.ops.patch(id, { content: { kind: "group", childIds: [] } }),
+        );
+      }
+    }
+
+    if (!ops.length) return emptyModelApply;
+
+    const txn = model.ops.transaction(ops, { source: "rule" });
+    const { result, inverseOps } = applyTxnWithInverse(txn);
+    inverseAcc.push(...inverseOps);
+    return result;
+  };
+
   const runRulesFixpoint = (
     seed: ModelApplyResult,
     inverseAcc: Op[],
@@ -504,8 +542,14 @@ export function createCore(opts: {
       inverseAcc.push(...invUser);
       final = mergeModelApply(final, userRes);
 
-      const ruleRes = runRulesFixpoint(userRes, inverseAcc);
+      const tableRes = ensureTableRoots(userRes, inverseAcc);
+      final = mergeModelApply(final, tableRes);
+
+      const ruleSeed = mergeModelApply(userRes, tableRes);
+      const ruleRes = runRulesFixpoint(ruleSeed, inverseAcc);
       final = mergeModelApply(final, ruleRes);
+
+      shapeSync.pruneMissing();
 
       repairSelectionAfterDispatch(txn.meta);
 
@@ -527,24 +571,6 @@ export function createCore(opts: {
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
     return applyPipeline(model.ops.transaction(txn.ops, meta));
   };
-
-  const addRule = (rule: Rule, opts2: { id?: string } = {}): (() => void) => {
-    const id = opts2.id ?? `rule:${nextRuleId++}`;
-    const rec = { id, run: rule };
-    rules.push(rec);
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const i = rules.indexOf(rec);
-      if (i >= 0) rules.splice(i, 1);
-    };
-  };
-
-  const shapeSync = createShapeSyncGroup({
-    model,
-    addRule: (ruleFn) => addRule(ruleFn, { id: "sync:shape" }),
-  });
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
     const ops: Op[] = [];
@@ -698,8 +724,8 @@ export function createCore(opts: {
   core = {
     dispose() {
       uninstallGlobal();
-      shapeSync.dispose();
       const { removedIds } = model.pruneUnreachable();
+      shapeSync.pruneMissing();
       evaluator.prune(removedIds);
       evaluator.dispose();
       runtime.dispose();
@@ -713,27 +739,6 @@ export function createCore(opts: {
     dispatchRemote,
 
     addRule,
-
-    sync: {
-      shape: {
-        add(id: ItemId) {
-          const eid = ensureEntryId(id);
-          if (eid == null) return;
-          shapeSync.add(eid);
-        },
-        remove(id: ItemId) {
-          const eid = ensureEntryId(id);
-          if (eid == null) return;
-          shapeSync.remove(eid);
-        },
-        clear() {
-          shapeSync.clear();
-        },
-        dispose() {
-          shapeSync.dispose();
-        },
-      },
-    },
 
     selection,
     focus,

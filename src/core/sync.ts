@@ -17,7 +17,9 @@ export type Rule = (
 export type SyncGroup = {
   add(id: EntryId): void;
   remove(id: EntryId): void;
+  has(id: EntryId): boolean;
   clear(): void;
+  pruneMissing(): EntryId[];
   dispose(): void;
 };
 
@@ -125,6 +127,17 @@ export function createShapeSyncGroup(opts: {
 
   const removeRule = opts.addRule(rule);
 
+  const pruneMissing = (): EntryId[] => {
+    const removed: EntryId[] = [];
+    for (const id of groups) {
+      if (!model.hasEntry(id)) {
+        groups.delete(id);
+        removed.push(id);
+      }
+    }
+    return removed;
+  };
+
   return {
     add(id: EntryId) {
       groups.add(id);
@@ -132,9 +145,13 @@ export function createShapeSyncGroup(opts: {
     remove(id: EntryId) {
       groups.delete(id);
     },
+    has(id: EntryId) {
+      return groups.has(id);
+    },
     clear() {
       groups.clear();
     },
+    pruneMissing,
     dispose() {
       groups.clear();
       removeRule();
