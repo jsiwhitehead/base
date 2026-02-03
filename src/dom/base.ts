@@ -80,12 +80,7 @@ export function setDataBool(el0: HTMLElement, key: string, on0: boolean): void {
 
 export function applyUiItemState(
   root: HTMLElement,
-  args: {
-    core: Core;
-    focus: Focus;
-    view: ViewName;
-    part?: string;
-  },
+  args: { core: Core; focus: Focus; view: ViewName; part?: string },
 ): void {
   const { core, focus, view } = args;
 
@@ -97,8 +92,7 @@ export function applyUiItemState(
     sel.focus.item === focus.item &&
     sel.focus.container === focus.container;
 
-  setData(root, "item", focus.item);
-  setData(root, "container", focus.container);
+  setData(root, "id", focus.item);
   setData(root, "view", view);
   setData(root, "kind", snap.content.kind);
   setData(root, "mode", snap.mode.kind);

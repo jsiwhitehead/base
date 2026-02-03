@@ -348,6 +348,7 @@ function mountRowLabelCell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         const readOnly = !editing || !canEdit;
         return { text, readOnly, isIssue: false };
       },
+      onCommitEvents: ["blur"],
       target: "label",
       textKeys: (inp) =>
         bindTextControlKeys(inp, {
@@ -370,6 +371,7 @@ function mountRowLabelCell(mountCtx: TableMountCtx, rowId: ItemId): Component {
     const scope = componentCtx.focus(mountCtx.core, labelFocus, {
       default: () => labelComp.focusEl,
     });
+
     scope.elementFor("label", () => labelComp.focusEl);
     scope.selectOn(labelComp.focusEl, { target: "label", caret: "fromTarget" });
     scope.selectOn(hostEl, { target: "label", caret: "fromTarget" });
@@ -383,7 +385,6 @@ function mountRowLabelCell(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
 function mountTableCellContent(cellCtx: {
   core: Core;
-  tableId: ItemId;
   rowId: ItemId;
   cellId: ItemId;
   dispatch: (intent: TableIntent) => void;
@@ -392,31 +393,39 @@ function mountTableCellContent(cellCtx: {
   const focus: Focus = { container: rowId, item: cellId };
 
   return createComponent((ctx) => {
-    const wrap = el("div");
+    const wrap = el("div", "ui-cell-inner");
 
-    const inner = contentField({
-      core,
-      id: cellId,
-      target: DEFAULT_TARGET,
-      commitText: (text) => tableCommands.setText(core, cellId, text),
-      textKeys: (inp) =>
-        bindTextControlKeys(inp, {
-          nav: defaultTextNav,
-          onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-          onEnter: () => dispatch({ type: "CONFIRM" }),
-          onEscape: () => dispatch({ type: "CANCEL" }),
-        }),
-    });
+    const nested = core.mountView({ id: cellId, focus, continueAs: "table" });
 
-    const scope = ctx.focus(core, focus, { default: () => inner.focusEl });
-    scope.elementFor(DEFAULT_TARGET, () => inner.focusEl);
-    scope.selectOn(inner.focusEl as HTMLElement, {
-      target: DEFAULT_TARGET,
-      caret: "fromTarget",
-    });
+    if (nested) {
+      ensureTabbable(nested.el);
+      wrap.replaceChildren(nested.el);
+      ctx.use(nested);
+    } else {
+      const inner = contentField({
+        core,
+        id: cellId,
+        target: DEFAULT_TARGET,
+        commitText: (text) => tableCommands.setText(core, cellId, text),
+        textKeys: (inp) =>
+          bindTextControlKeys(inp, {
+            nav: defaultTextNav,
+            onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
+            onEnter: () => dispatch({ type: "CONFIRM" }),
+            onEscape: () => dispatch({ type: "CANCEL" }),
+          }),
+      });
 
-    wrap.replaceChildren(inner.el);
-    ctx.use(inner);
+      const scope = ctx.focus(core, focus, { default: () => inner.focusEl });
+      scope.elementFor(DEFAULT_TARGET, () => inner.focusEl);
+      scope.selectOn(inner.focusEl as HTMLElement, {
+        target: DEFAULT_TARGET,
+        caret: "fromTarget",
+      });
+
+      wrap.replaceChildren(inner.el);
+      ctx.use(inner);
+    }
 
     return wrap;
   });
@@ -444,7 +453,6 @@ function mountTableCell(
       cur?.dispose();
       cur = mountTableCellContent({
         core: mountCtx.core,
-        tableId: mountCtx.tableId,
         rowId,
         cellId,
         dispatch: mountCtx.dispatch,
@@ -564,13 +572,6 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
         const first = rowEl.firstElementChild;
         if (first !== rowLabelCell.el)
           rowEl.insertBefore(rowLabelCell.el, first);
-
-        for (const el0 of Array.from(rowEl.children)) {
-          if (el0 === rowLabelCell.el) continue;
-          const col = (el0 as HTMLElement).getAttribute("data-col");
-          if (!col) continue;
-          (el0 as HTMLElement).classList.add("ui-cell", "ui-cell-data");
-        }
       },
     );
 

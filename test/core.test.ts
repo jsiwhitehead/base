@@ -689,7 +689,7 @@ describe("core", () => {
 });
 
 describe("views", () => {
-  test("outline: initial focus, arrow nav keeps focused, click focuses content input", async () => {
+  test("outline: initial focus, arrow nav keeps focused, click focuses default input", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     core.commit((t) => {

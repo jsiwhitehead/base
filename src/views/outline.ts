@@ -479,7 +479,7 @@ function mountOutlineMeta(
   fields: readonly SourceField[],
   scope: FocusScope,
 ): Component {
-  const { core, dispatch } = mountCtx;
+  const { core } = mountCtx;
   const id = focus.item;
 
   return createComponent((componentCtx) => {
@@ -558,9 +558,8 @@ function mountOutlineMeta(
         commit: commitField,
         getState: () => {
           const snap = core.item(id);
-          if (snap.mode.kind !== "source") {
+          if (snap.mode.kind !== "source")
             return { text: "", readOnly: true, isIssue: false };
-          }
           const text =
             fieldsFromSource(snap.mode.source).find((x) => x.key === f.key)
               ?.text ?? "";
@@ -573,7 +572,7 @@ function mountOutlineMeta(
             nav: { yieldUpDown: "always", yieldLeftRight: "always" },
             onNav: (dir) => {
               if (dir === "left" || dir === "right")
-                dispatch({ type: "NAV", dir, mode: "step" });
+                mountCtx.dispatch({ type: "NAV", dir, mode: "step" });
             },
             onEnter: () => commitField((inp as any).value),
             onEscape: () => toContent(),
