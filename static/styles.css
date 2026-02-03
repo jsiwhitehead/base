@@ -73,11 +73,13 @@
   flex: 1;
 }
 
-[data-rule] {
-  position: relative;
+.ui-item[data-view="outline"] {
+  padding-left: calc(var(--ui-rule-w) + var(--ui-rule-gap));
+  padding-top: 1px;
+  padding-bottom: 1px;
 }
 
-[data-rule]::before {
+.ui-item[data-view="outline"]::before {
   content: "";
   position: absolute;
   left: 0;
@@ -88,14 +90,8 @@
   border-radius: var(--ui-radius);
 }
 
-.ui-item[data-focused="true"][data-rule]::before {
+.ui-item[data-view="outline"][data-focused="true"]::before {
   background: var(--ui-blue-normal);
-}
-
-.ui-item[data-view="outline"] {
-  padding-left: calc(var(--ui-rule-w) + var(--ui-rule-gap));
-  padding-top: 1px;
-  padding-bottom: 1px;
 }
 
 .ui-item[data-view="outline"] > .ui-meta-host {
@@ -114,7 +110,7 @@
   min-height: 20px;
 }
 
-.ui-item[data-view="table"] {
+.ui-item[data-view="table"][data-part="table"] {
   display: block;
 }
 
@@ -156,11 +152,26 @@
   min-width: 60px;
 }
 
-.ui-item[data-view="table"][data-focused="true"] > .ui-row-label {
+.ui-item[data-view="table"][data-part="row"][data-focused="true"]
+  > .ui-row-label {
   color: var(--ui-blue-dark);
 }
 
-.ui-item[data-view="table"][data-focused="true"]::before {
+.ui-item[data-view="table"][data-part="row"] {
+  position: relative;
+}
+
+.ui-item[data-view="table"][data-part="row"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: transparent;
+}
+
+.ui-item[data-view="table"][data-part="row"][data-focused="true"]::before {
   background: var(--ui-blue-light);
 }
 
@@ -169,6 +180,21 @@
   align-items: center;
   gap: var(--ui-rule-gap);
   padding-left: calc(var(--ui-rule-w) + var(--ui-rule-gap));
+}
+
+.ui-item[data-view="slider"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: var(--ui-rule-w);
+  background: var(--ui-grey-light);
+  border-radius: var(--ui-radius);
+}
+
+.ui-item[data-view="slider"][data-focused="true"]::before {
+  background: var(--ui-blue-normal);
 }
 
 .ui-slider input[type="range"] {
@@ -208,8 +234,4 @@
 
 .hidden {
   display: none !important;
-}
-
-.is-issue {
-  color: var(--ui-fg-issue);
 }

@@ -862,7 +862,7 @@ describe("views", () => {
     await tick();
 
     const nestedTableRoot = outline.root.querySelector(
-      `.ui-item[data-view="table"], [data-view="table"]`,
+      `.ui-item[data-view="table"][data-part="table"]`,
     );
     expect(nestedTableRoot).not.toBeNull();
 
@@ -971,9 +971,7 @@ describe("smoke", () => {
 
     const findText = () => {
       const nodes = Array.from(
-        view.root.querySelectorAll(
-          `.ui-item[data-mode="readonly"], .ui-item[data-readonly="true"], [data-mode="readonly"], [data-readonly="true"]`,
-        ),
+        view.root.querySelectorAll(`.ui-item[data-mode="readonly"]`),
       );
       return nodes.map((n) => n.textContent ?? "");
     };

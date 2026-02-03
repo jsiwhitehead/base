@@ -15,15 +15,13 @@ import {
   type NavMode,
   defaultTextNav,
   el,
-  reconcileChildren,
   stopEvent,
   bindTextControlKeys,
   createComponent,
   textField,
   contentField,
   ensureTabbable,
-  setData,
-  setDataBool,
+  applyUiItemState,
 } from "../dom";
 
 type NavResult = {
@@ -324,34 +322,9 @@ type TableIntent =
 type TableMountCtx = {
   core: Core;
   tableId: ItemId;
-  navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
   columnsSignal: { value: string[] };
   dispatch: (intent: TableIntent) => void;
 };
-
-function applyItemDatasets(
-  root: HTMLElement,
-  core: Core,
-  focus: Focus,
-  view: string,
-  rule: string,
-): void {
-  const snap = core.item(focus.item);
-
-  const sel = core.selection();
-  const focused =
-    sel.kind === "focused" &&
-    sel.focus.item === focus.item &&
-    sel.focus.container === focus.container;
-
-  setData(root, "item", focus.item);
-  setData(root, "container", focus.container);
-  setData(root, "view", view);
-  setData(root, "rule", rule);
-  setData(root, "kind", snap.content.kind);
-  setData(root, "mode", snap.mode.kind);
-  setDataBool(root, "focused", focused);
-}
 
 function mountRowLabelCell(mountCtx: TableMountCtx, rowId: ItemId): Component {
   return createComponent((componentCtx) => {
@@ -375,6 +348,7 @@ function mountRowLabelCell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         const readOnly = !editing || !canEdit;
         return { text, readOnly, isIssue: false };
       },
+      target: "label",
       textKeys: (inp) =>
         bindTextControlKeys(inp, {
           nav: defaultTextNav,
@@ -423,6 +397,7 @@ function mountTableCellContent(cellCtx: {
     const inner = contentField({
       core,
       id: cellId,
+      target: DEFAULT_TARGET,
       commitText: (text) => tableCommands.setText(core, cellId, text),
       textKeys: (inp) =>
         bindTextControlKeys(inp, {
@@ -525,7 +500,13 @@ function mountTableHeader(mountCtx: TableMountCtx): Component {
         desired.push(cell);
       }
 
-      reconcileChildren(headerRow, desired);
+      for (let i = 0; i < desired.length; i++) {
+        const next = desired[i]!;
+        const cur = headerRow.children.item(i);
+        if (cur !== next) headerRow.insertBefore(next, cur);
+      }
+      while (headerRow.children.length > desired.length)
+        headerRow.lastElementChild?.remove();
 
       const keep = new Set(cols);
       for (const [name, cell] of columnEls) {
@@ -552,39 +533,38 @@ function mountTableRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
   return createComponent((componentCtx) => {
     const rowEl = el("div", "ui-item ui-table-row");
+
     const rowLabelCell = mountRowLabelCell(mountCtx, rowId);
     rowEl.append(rowLabelCell.el);
     componentCtx.use(rowLabelCell);
 
-    componentCtx.watch(
-      () => {
-        applyItemDatasets(rowEl, core, rowFocus, "table", "row");
-        return mountCtx.columnsSignal.value;
-      },
-      (cols) => {
-        for (const col of cols) {
-          if (rowEl.querySelector(`[data-col="${CSS.escape(col)}"]`)) continue;
-        }
-      },
-    );
-
     const cellList = componentCtx.list(rowEl, (colName: string) => {
-      if (colName === "__label__") {
-        return { el: document.createElement("div"), dispose() {} };
-      }
       const c = mountTableCell(mountCtx, rowId, colName);
       (c.el as HTMLElement).setAttribute("data-col", colName);
       return c;
     });
 
     componentCtx.watch(
-      () => ["__label__", ...mountCtx.columnsSignal.value],
+      () => core.selection(),
+      () => {
+        applyUiItemState(rowEl, {
+          core,
+          focus: rowFocus,
+          view: "table",
+          part: "row",
+        });
+      },
+    );
+
+    componentCtx.watch(
+      () => mountCtx.columnsSignal.value,
       (cols) => {
-        const desired = ["__label__", ...mountCtx.columnsSignal.value];
-        cellList.update(desired);
+        cellList.update(cols);
+
         const first = rowEl.firstElementChild;
         if (first !== rowLabelCell.el)
           rowEl.insertBefore(rowLabelCell.el, first);
+
         for (const el0 of Array.from(rowEl.children)) {
           if (el0 === rowLabelCell.el) continue;
           const col = (el0 as HTMLElement).getAttribute("data-col");
@@ -644,15 +624,12 @@ export function createTableView(args: {
 
   const columnsSignal = computed(() => deriveColumns(core, tableId));
 
-  const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    tableNavMove(core, tableId, sel, dir, mode);
-
   const dispatch = (intent: TableIntent): void => {
     const sel = core.selection();
 
     switch (intent.type) {
       case "NAV": {
-        const res = navMove(sel, intent.dir, intent.mode);
+        const res = tableNavMove(core, tableId, sel, intent.dir, intent.mode);
         if (res) core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
@@ -665,13 +642,7 @@ export function createTableView(args: {
     }
   };
 
-  const mountCtx: TableMountCtx = {
-    core,
-    tableId,
-    navMove,
-    columnsSignal,
-    dispatch,
-  };
+  const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
 
   const header = mountTableHeader(mountCtx);
   const body = mountTableBody(mountCtx);
@@ -720,25 +691,12 @@ export function createTableView(args: {
 
   const tableFocus: Focus = args.focus ?? { container: tableId, item: tableId };
 
-  const applyRootDatasets = () => {
-    const sel = core.selection();
-    const focused =
-      sel.kind === "focused" &&
-      sel.focus.item === tableId &&
-      sel.focus.container === tableId;
-
-    const snap = core.item(tableId);
-
-    setData(root, "item", tableId);
-    setData(root, "container", tableId);
-    setData(root, "view", "table");
-    setData(root, "rule", "table");
-    setData(root, "kind", snap.content.kind);
-    setData(root, "mode", snap.mode.kind);
-    setDataBool(root, "focused", focused);
-  };
-
-  applyRootDatasets();
+  applyUiItemState(root, {
+    core,
+    focus: tableFocus,
+    view: "table",
+    part: "table",
+  });
 
   return {
     id: `table:${String(tableId)}`,

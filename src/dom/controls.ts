@@ -7,7 +7,9 @@ import {
   ensureTabbable,
   type FocusComponent,
   focusElOf,
+  setData,
 } from "./base";
+import { DEFAULT_TARGET } from "../core/runtime";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -200,6 +202,7 @@ export type TextFieldOpts = {
   getState: () => TextFieldState;
   onCommitEvents?: readonly ("input" | "blur")[];
   textKeys?: (inp: TextInputElement) => (() => void) | void;
+  target?: string;
 };
 
 export function textField(
@@ -208,6 +211,8 @@ export function textField(
   const c = createComponent((ctx) => {
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
+
+    setData(inp, "target", opts.target ?? DEFAULT_TARGET);
 
     registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
       opts.commit(inp.value),
@@ -219,7 +224,6 @@ export function textField(
       () => opts.getState(),
       (st) => {
         inp.readOnly = st.readOnly;
-        inp.classList.toggle("is-issue", st.isIssue);
         syncValue(inp, st.text);
       },
     );
@@ -256,6 +260,8 @@ export function autosizeTextField(
     focusEl = inp;
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
+    setData(inp, "target", opts.target ?? DEFAULT_TARGET);
+
     wrap.append(mirror, inp);
 
     registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
@@ -268,7 +274,6 @@ export function autosizeTextField(
       () => opts.getState(),
       (st) => {
         inp.readOnly = st.readOnly;
-        inp.classList.toggle("is-issue", st.isIssue);
         syncValue(inp, st.text);
         mirror.textContent = st.text.length ? st.text : " ";
       },
@@ -280,16 +285,16 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-function readonlyText(core: Core, id: ItemId): Component {
+function readonlyScalarText(core: Core, id: ItemId): Component {
   return createComponent((ctx) => {
     const d = el("div");
     ensureTabbable(d);
+    setData(d, "target", DEFAULT_TARGET);
 
     ctx.watch(
       () => core.item(id),
       (snap) => {
         const c = snap.content;
-        const isIssue = c.kind === "issue";
         const text =
           c.kind === "issue"
             ? c.message
@@ -299,7 +304,6 @@ function readonlyText(core: Core, id: ItemId): Component {
                 : String(c.value)
               : "";
         d.textContent = text;
-        d.classList.toggle("is-issue", isIssue);
       },
     );
 
@@ -314,6 +318,7 @@ export type ContentFieldOpts = {
   textKeys?: (inp: TextInputElement) => (() => void) | void;
   renderGroupChild?: (childId: ItemId) => Component;
   commitText?: (text: string) => void;
+  target?: string;
 };
 
 export function contentField(opts: ContentFieldOpts): FocusComponent {
@@ -323,7 +328,6 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
     const hostEl = el("div");
     if (opts.className) hostEl.className = opts.className;
 
-    const core = opts.core;
     const slot = ctx.slot(hostEl);
 
     const setFocusEl = (comp: Component | null) => {
@@ -336,7 +340,7 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
         multiline: true,
         commit: (text) => opts.commitText?.(text),
         getState: () => {
-          const snap = core.item(opts.id);
+          const snap = opts.core.item(opts.id);
           const c0 = snap.content;
 
           const canEdit = snap.mode.kind === "direct" && c0.kind === "scalar";
@@ -349,7 +353,6 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
             };
           }
 
-          const isIssue = c0.kind === "issue";
           const text =
             c0.kind === "issue"
               ? c0.message
@@ -358,17 +361,19 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
                   ? ""
                   : String(c0.value)
                 : "";
-          return { text, readOnly: true, isIssue };
+          return { text, readOnly: true, isIssue: c0.kind === "issue" };
         },
         textKeys: opts.textKeys,
+        target: opts.target ?? DEFAULT_TARGET,
       });
     };
 
     const mountReadonly = (): Component => {
       const d = el("div");
       ensureTabbable(d);
+      setData(d, "target", opts.target ?? DEFAULT_TARGET);
 
-      const inner = readonlyText(core, opts.id);
+      const inner = readonlyScalarText(opts.core, opts.id);
       d.replaceChildren(inner.el);
       ctx.use(inner);
 
@@ -384,16 +389,18 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
     const mountGroup = (): Component => {
       const wrap = el("div");
       ensureTabbable(wrap);
+      setData(wrap, "target", opts.target ?? DEFAULT_TARGET);
 
       const children = ctx.list(wrap, (childId: string) => {
         const c0 =
-          opts.renderGroupChild?.(childId) ?? readonlyText(core, childId);
+          opts.renderGroupChild?.(childId) ??
+          readonlyScalarText(opts.core, childId);
         return c0;
       });
 
       ctx.watch(
         () => {
-          const snap = core.item(opts.id);
+          const snap = opts.core.item(opts.id);
           const c0 = snap.content;
           return c0.kind === "group" ? [...c0.children] : [];
         },
@@ -408,7 +415,7 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
     let currentKind: "group" | "scalar" | "readonly" | null = null;
 
     ctx.watch(
-      () => core.item(opts.id),
+      () => opts.core.item(opts.id),
       (snap) => {
         const c0 = snap.content;
 

@@ -27,7 +27,7 @@ import {
   contentField,
   type FocusScope,
   setData,
-  setDataBool,
+  applyUiItemState,
 } from "../dom";
 
 type SourceField = {
@@ -381,7 +381,9 @@ export const outlineCommands = {
       core.focus(
         { container: wrapperId, item: id },
         defaultTargetFor(core, id),
-        { caret: caret0() },
+        {
+          caret: caret0(),
+        },
       );
       return;
     }
@@ -471,30 +473,6 @@ type OutlineMountCtx = {
   dispatch: (intent: OutlineIntent) => void;
 };
 
-function applyItemDatasets(
-  root: HTMLElement,
-  core: Core,
-  focus: Focus,
-  view: string,
-  rule: string,
-): void {
-  const snap = core.item(focus.item);
-
-  const sel = core.selection();
-  const focused =
-    sel.kind === "focused" &&
-    sel.focus.item === focus.item &&
-    sel.focus.container === focus.container;
-
-  setData(root, "item", focus.item);
-  setData(root, "container", focus.container);
-  setData(root, "view", view);
-  setData(root, "rule", rule);
-  setData(root, "kind", snap.content.kind);
-  setData(root, "mode", snap.mode.kind);
-  setDataBool(root, "focused", focused);
-}
-
 function mountOutlineMeta(
   mountCtx: OutlineMountCtx,
   focus: Focus,
@@ -534,6 +512,7 @@ function mountOutlineMeta(
       },
       onCommitEvents: ["blur"],
       wrapClassName: "autosize",
+      target: "label",
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement;
         const handler = (e: KeyboardEvent) => {
@@ -556,10 +535,7 @@ function mountOutlineMeta(
     componentCtx.use(labelComp);
 
     scope.elementFor("label", () => labelComp.focusEl);
-    scope.selectOn(labelComp.focusEl, {
-      target: "label",
-      caret: "fromTarget",
-    });
+    scope.selectOn(labelComp.focusEl, { target: "label", caret: "fromTarget" });
 
     const fieldEls: HTMLElement[] = [];
 
@@ -575,6 +551,8 @@ function mountOutlineMeta(
         outlineCommands.commitSourceField(core, id, f.key, text);
       };
 
+      const tkey = `source:${f.key}`;
+
       const fc = textField({
         multiline: f.multiline,
         commit: commitField,
@@ -589,13 +567,11 @@ function mountOutlineMeta(
           return { text, readOnly: false, isIssue: false };
         },
         onCommitEvents: ["blur"],
+        target: tkey,
         textKeys: (inp) =>
           bindTextControlKeys(inp, {
-            nav: {
-              yieldUpDown: "always",
-              yieldLeftRight: "always",
-            },
-            onNav: (dir, _mode) => {
+            nav: { yieldUpDown: "always", yieldLeftRight: "always" },
+            onNav: (dir) => {
               if (dir === "left" || dir === "right")
                 dispatch({ type: "NAV", dir, mode: "step" });
             },
@@ -607,7 +583,6 @@ function mountOutlineMeta(
       fieldValue.replaceChildren(fc.el);
       componentCtx.use(fc);
 
-      const tkey = `source:${f.key}`;
       scope.elementFor(tkey, () => fc.focusEl);
       scope.selectOn(fc.focusEl, { target: tkey, caret: "fromTarget" });
     }
@@ -647,10 +622,7 @@ function mountOutlineChildren(
 
     const mgr = componentCtx.list(container, (childId: string) => {
       const childFocus: Focus = { container: focus.item, item: childId };
-      return mountOutlineNode(mountCtx, {
-        focus: childFocus,
-        showMeta: true,
-      });
+      return mountOutlineNode(mountCtx, { focus: childFocus, showMeta: true });
     });
 
     componentCtx.watch(
@@ -716,6 +688,7 @@ function mountOutlineBody(
     const vf = contentField({
       core,
       id,
+      target: DEFAULT_TARGET,
       commitText: (text) => outlineCommands.setText(core, id, text),
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
@@ -756,11 +729,11 @@ function mountOutlineBody(
         createComponent((cctx) => {
           const d = el("div", "outline-inline");
           ensureTabbable(d);
+          setData(d, "target", DEFAULT_TARGET);
           cctx.watch(
             () => core.item(childId),
             (snap2) => {
               const c = snap2.content;
-              const isIssue = c.kind === "issue";
               const text =
                 c.kind === "issue"
                   ? c.message
@@ -770,7 +743,6 @@ function mountOutlineBody(
                       : String(c.value)
                     : "";
               d.textContent = text;
-              d.classList.toggle("is-issue", isIssue);
             },
           );
           return d;
@@ -822,7 +794,7 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        applyItemDatasets(root, core, focus, "outline", "item");
+        applyUiItemState(root, { core, focus, view: "outline" });
 
         const snap = core.item(focus.item);
         const label = (snap.label ?? "").trim();
@@ -980,7 +952,9 @@ export function createOutlineView(args: {
       core.focus(
         { container: rootId, item: first },
         defaultTargetFor(core, first),
-        { caret: caret0() },
+        {
+          caret: caret0(),
+        },
       );
     }
   }

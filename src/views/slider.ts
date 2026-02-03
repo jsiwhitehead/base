@@ -7,7 +7,7 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import { el, stopEvent, createComponent, setData, setDataBool } from "../dom";
+import { el, stopEvent, createComponent, applyUiItemState } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -169,6 +169,13 @@ function mountSlider({
     });
 
     componentCtx.watch(
+      () => core.selection(),
+      () => {
+        applyUiItemState(root, { core, focus, view: "slider" });
+      },
+    );
+
+    componentCtx.watch(
       () => {
         const cur = getScalarOr(core, id, opts.min);
         const clamped0 = clamp(cur, opts.min, opts.max);
@@ -184,27 +191,6 @@ function mountSlider({
       () => !canSetScalar(core, id),
       (shouldDisable) => {
         if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
-        setDataBool(root, "readonly", shouldDisable);
-      },
-    );
-
-    componentCtx.watch(
-      () => core.selection(),
-      (sel) => {
-        const focused =
-          sel.kind === "focused" &&
-          sel.focus.item === focus.item &&
-          sel.focus.container === focus.container;
-
-        const snap = core.item(id);
-
-        setData(root, "item", focus.item);
-        setData(root, "container", focus.container);
-        setData(root, "view", "slider");
-        setData(root, "rule", "slider");
-        setData(root, "kind", snap.content.kind);
-        setData(root, "mode", snap.mode.kind);
-        setDataBool(root, "focused", focused);
       },
     );
 

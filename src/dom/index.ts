@@ -9,6 +9,7 @@ export {
   reconcileChildren,
   setData,
   setDataBool,
+  applyUiItemState,
 } from "./base";
 
 export { createComponent } from "./base";

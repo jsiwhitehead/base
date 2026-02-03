@@ -1,5 +1,5 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Core, Focus, Component, Caret } from "../core";
+import type { Core, Focus, Component, Caret, ViewName } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core/runtime";
 
 export class Disposer {
@@ -78,6 +78,36 @@ export function setDataBool(el0: HTMLElement, key: string, on0: boolean): void {
   (el0.dataset as any)[key] = on0 ? "true" : "false";
 }
 
+export function applyUiItemState(
+  root: HTMLElement,
+  args: {
+    core: Core;
+    focus: Focus;
+    view: ViewName;
+    part?: string;
+  },
+): void {
+  const { core, focus, view } = args;
+
+  const snap = core.item(focus.item);
+  const sel = core.selection();
+
+  const focused =
+    sel.kind === "focused" &&
+    sel.focus.item === focus.item &&
+    sel.focus.container === focus.container;
+
+  setData(root, "item", focus.item);
+  setData(root, "container", focus.container);
+  setData(root, "view", view);
+  setData(root, "kind", snap.content.kind);
+  setData(root, "mode", snap.mode.kind);
+  setDataBool(root, "focused", focused);
+
+  if (args.part) setData(root, "part", args.part);
+  else setData(root, "part", null);
+}
+
 type ChildRec = { element: HTMLElement; dispose: () => void };
 
 class ChildManager<Id extends string | number> {
@@ -153,10 +183,10 @@ export function focusElOf(c: Component): HTMLElement {
 type PointerCaretMode = "zero" | "fromTarget";
 
 function caretFromTarget(el0: EventTarget | null): Caret {
-  const el = el0 instanceof HTMLElement ? el0 : null;
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    const start = el.selectionStart ?? 0;
-    const end = el.selectionEnd ?? start;
+  const el1 = el0 instanceof HTMLElement ? el0 : null;
+  if (el1 instanceof HTMLInputElement || el1 instanceof HTMLTextAreaElement) {
+    const start = el1.selectionStart ?? 0;
+    const end = el1.selectionEnd ?? start;
     return { start, end };
   }
   return { start: 0, end: 0 };
