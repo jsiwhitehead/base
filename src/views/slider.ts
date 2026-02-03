@@ -7,7 +7,7 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import { el, stopEvent, createComponent } from "../dom";
+import { el, stopEvent, createComponent, setData, setDataBool } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -143,7 +143,7 @@ function mountSlider({
   dispatch,
 }: SliderMountCtx): Component {
   return createComponent((componentCtx) => {
-    const root = el("div", "view slider");
+    const root = el("div", "ui-item ui-slider");
 
     const input = document.createElement("input");
     input.type = "range";
@@ -151,7 +151,7 @@ function mountSlider({
     input.max = String(opts.max);
     input.step = String(opts.step);
 
-    const valueEl = el("div", "slider-value");
+    const valueEl = el("div", "ui-slider-value");
     root.append(input, valueEl);
 
     const scope = componentCtx.focus(core, focus, { default: () => input });
@@ -171,8 +171,8 @@ function mountSlider({
     componentCtx.watch(
       () => {
         const cur = getScalarOr(core, id, opts.min);
-        const clamped = clamp(cur, opts.min, opts.max);
-        return formatNumberForStep(clamped, opts.step);
+        const clamped0 = clamp(cur, opts.min, opts.max);
+        return formatNumberForStep(clamped0, opts.step);
       },
       (str) => {
         if (input.value !== str) input.value = str;
@@ -184,7 +184,27 @@ function mountSlider({
       () => !canSetScalar(core, id),
       (shouldDisable) => {
         if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
-        root.classList.toggle("readonly", shouldDisable);
+        setDataBool(root, "readonly", shouldDisable);
+      },
+    );
+
+    componentCtx.watch(
+      () => core.selection(),
+      (sel) => {
+        const focused =
+          sel.kind === "focused" &&
+          sel.focus.item === focus.item &&
+          sel.focus.container === focus.container;
+
+        const snap = core.item(id);
+
+        setData(root, "item", focus.item);
+        setData(root, "container", focus.container);
+        setData(root, "view", "slider");
+        setData(root, "rule", "slider");
+        setData(root, "kind", snap.content.kind);
+        setData(root, "mode", snap.mode.kind);
+        setDataBool(root, "focused", focused);
       },
     );
 

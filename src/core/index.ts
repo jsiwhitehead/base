@@ -5,7 +5,6 @@ import {
   type Entry,
   type EntryContent,
   type EntryId,
-  type Model,
   type Op,
   type Transaction,
   type ViewKind,
@@ -15,6 +14,7 @@ import {
   isGroupContent,
   makeBlankEntry,
   makeGroupEntry,
+  parseScalar,
 } from "./model";
 import {
   createEvaluator,
@@ -888,4 +888,4 @@ export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
 export type { ViewName, ViewKind };
 export { DEFAULT_TARGET };
-export { clamp, isTextInput, defaultTextCaret };
+export { parseScalar, clamp, isTextInput, defaultTextCaret };

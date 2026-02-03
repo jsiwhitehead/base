@@ -143,6 +143,17 @@ function asScalarValue(v: Value): true | number | string | null {
   return v.value;
 }
 
+function queryTargetInput(root: HTMLElement, target: string) {
+  return (
+    (root.querySelector(
+      `[data-target="${target}"] textarea, [data-target="${target}"] input`,
+    ) as HTMLTextAreaElement | HTMLInputElement | null) ??
+    (root.querySelector(
+      `textarea[data-target="${target}"], input[data-target="${target}"]`,
+    ) as HTMLTextAreaElement | HTMLInputElement | null)
+  );
+}
+
 describe("model", () => {
   function addBlankChild(model: Model, ownerId: EntryId, label = "") {
     const id = model.createId();
@@ -708,16 +719,14 @@ describe("views", () => {
     await tick();
     expectFocused(core.selection());
 
-    const ta = view.root.querySelector(
-      "textarea.content",
-    ) as HTMLTextAreaElement | null;
-    expect(ta).not.toBeNull();
-    if (ta) {
-      ta.dispatchEvent(
+    const el = queryTargetInput(view.root, DEFAULT_TARGET);
+    expect(el).not.toBeNull();
+    if (el) {
+      el.dispatchEvent(
         new Event("pointerdown", { bubbles: true, cancelable: true }),
       );
       await tick();
-      expect(document.activeElement === ta).toBe(true);
+      expect(document.activeElement === el).toBe(true);
       const sel = core.selection();
       expectFocused(sel);
       expect(sel.target).toBe(DEFAULT_TARGET);
@@ -740,16 +749,14 @@ describe("views", () => {
 
     await tick();
 
-    const ta = view.root.querySelector(
-      "textarea.content",
-    ) as HTMLTextAreaElement | null;
-    expect(ta).not.toBeNull();
-    ta!.dispatchEvent(
+    const el = queryTargetInput(view.root, DEFAULT_TARGET);
+    expect(el).not.toBeNull();
+    el!.dispatchEvent(
       new Event("pointerdown", { bubbles: true, cancelable: true }),
     );
     await tick();
 
-    ta!.dispatchEvent(
+    el!.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "=",
         bubbles: true,
@@ -854,15 +861,17 @@ describe("views", () => {
 
     await tick();
 
-    const nestedTableRoot = outline.root.querySelector(".view.table");
+    const nestedTableRoot = outline.root.querySelector(
+      `.ui-item[data-view="table"], [data-view="table"]`,
+    );
     expect(nestedTableRoot).not.toBeNull();
 
-    const cellTextarea = outline.root.querySelector(
-      ".view.table textarea.content",
-    ) as HTMLTextAreaElement | null;
-    expect(cellTextarea).not.toBeNull();
+    const cellInput = nestedTableRoot
+      ? queryTargetInput(nestedTableRoot as HTMLElement, DEFAULT_TARGET)
+      : null;
+    expect(cellInput).not.toBeNull();
 
-    cellTextarea!.dispatchEvent(
+    cellInput!.dispatchEvent(
       new Event("pointerdown", { bubbles: true, cancelable: true }),
     );
     await tick();
@@ -897,7 +906,9 @@ describe("views", () => {
     const view = viewFactories.slider({ core, id: sliderId });
     const unmount = await mountView(view);
 
-    const input = view.root.querySelector("input") as HTMLInputElement | null;
+    const input = view.root.querySelector(
+      `input[type="range"]`,
+    ) as HTMLInputElement | null;
     expect(input).not.toBeNull();
     if (input) {
       input.value = "42";
@@ -959,16 +970,20 @@ describe("smoke", () => {
     const unmount = await mountView(view);
 
     const findText = () => {
-      const nodes = Array.from(view.root.querySelectorAll(".item.readonly"));
+      const nodes = Array.from(
+        view.root.querySelectorAll(
+          `.ui-item[data-mode="readonly"], .ui-item[data-readonly="true"], [data-mode="readonly"], [data-readonly="true"]`,
+        ),
+      );
       return nodes.map((n) => n.textContent ?? "");
     };
 
     await tick();
-    expect(findText()).toContain("2");
+    expect(findText().join("\n")).toContain("2");
 
     core.commit((t) => t.setScalar(x, 5));
     await tick();
-    expect(findText()).toContain("6");
+    expect(findText().join("\n")).toContain("6");
 
     unmount();
   });

@@ -219,7 +219,7 @@ export function textField(
       () => opts.getState(),
       (st) => {
         inp.readOnly = st.readOnly;
-        inp.classList.toggle("issue", st.isIssue);
+        inp.classList.toggle("is-issue", st.isIssue);
         syncValue(inp, st.text);
       },
     );
@@ -268,7 +268,7 @@ export function autosizeTextField(
       () => opts.getState(),
       (st) => {
         inp.readOnly = st.readOnly;
-        inp.classList.toggle("issue", st.isIssue);
+        inp.classList.toggle("is-issue", st.isIssue);
         syncValue(inp, st.text);
         mirror.textContent = st.text.length ? st.text : " ";
       },
@@ -280,9 +280,9 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-function readonlyItemText(core: Core, id: ItemId): Component {
+function readonlyText(core: Core, id: ItemId): Component {
   return createComponent((ctx) => {
-    const d = el("div", "item readonly");
+    const d = el("div");
     ensureTabbable(d);
 
     ctx.watch(
@@ -299,7 +299,7 @@ function readonlyItemText(core: Core, id: ItemId): Component {
                 : String(c.value)
               : "";
         d.textContent = text;
-        d.classList.toggle("issue", isIssue);
+        d.classList.toggle("is-issue", isIssue);
       },
     );
 
@@ -331,10 +331,9 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
     };
     setFocusEl(null);
 
-    const mountText = (): FocusComponent<TextInputElement> => {
+    const mountScalarEditor = (): FocusComponent<TextInputElement> => {
       return textField({
         multiline: true,
-        className: "content",
         commit: (text) => opts.commitText?.(text),
         getState: () => {
           const snap = core.item(opts.id);
@@ -365,11 +364,11 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
       });
     };
 
-    const mountReadonlyText = (): Component => {
-      const d = el("div", "item readonly");
+    const mountReadonly = (): Component => {
+      const d = el("div");
       ensureTabbable(d);
 
-      const inner = readonlyItemText(core, opts.id);
+      const inner = readonlyText(core, opts.id);
       d.replaceChildren(inner.el);
       ctx.use(inner);
 
@@ -383,13 +382,12 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
     };
 
     const mountGroup = (): Component => {
-      const wrap = el("div", "group");
+      const wrap = el("div");
       ensureTabbable(wrap);
 
       const children = ctx.list(wrap, (childId: string) => {
         const c0 =
-          opts.renderGroupChild?.(childId) ?? readonlyItemText(core, childId);
-        c0.el.classList.add("item");
+          opts.renderGroupChild?.(childId) ?? readonlyText(core, childId);
         return c0;
       });
 
@@ -407,7 +405,7 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
       return { el: wrap, dispose: () => wrap.replaceChildren() };
     };
 
-    let currentKind: "group" | "text" | "readonly" | null = null;
+    let currentKind: "group" | "scalar" | "readonly" | null = null;
 
     ctx.watch(
       () => core.item(opts.id),
@@ -418,7 +416,7 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
           c0.kind === "group"
             ? "group"
             : snap.mode.kind === "direct" && c0.kind === "scalar"
-              ? "text"
+              ? "scalar"
               : "readonly";
 
         if (nextKind === currentKind) return;
@@ -427,9 +425,9 @@ export function contentField(opts: ContentFieldOpts): FocusComponent {
         const nextComp =
           nextKind === "group"
             ? mountGroup()
-            : nextKind === "text"
-              ? mountText()
-              : mountReadonlyText();
+            : nextKind === "scalar"
+              ? mountScalarEditor()
+              : mountReadonly();
 
         slot.set(nextComp);
         setFocusEl(nextComp);

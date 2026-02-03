@@ -62,6 +62,22 @@ export function reconcileChildren(
     parent.lastElementChild?.remove();
 }
 
+export function setData(
+  el0: HTMLElement,
+  key: string,
+  value: string | number | boolean | null | undefined,
+): void {
+  if (value == null || value === "") {
+    delete (el0.dataset as any)[key];
+    return;
+  }
+  (el0.dataset as any)[key] = String(value);
+}
+
+export function setDataBool(el0: HTMLElement, key: string, on0: boolean): void {
+  (el0.dataset as any)[key] = on0 ? "true" : "false";
+}
+
 type ChildRec = { element: HTMLElement; dispose: () => void };
 
 class ChildManager<Id extends string | number> {

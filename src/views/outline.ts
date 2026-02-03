@@ -26,6 +26,8 @@ import {
   autosizeTextField,
   contentField,
   type FocusScope,
+  setData,
+  setDataBool,
 } from "../dom";
 
 type SourceField = {
@@ -469,7 +471,31 @@ type OutlineMountCtx = {
   dispatch: (intent: OutlineIntent) => void;
 };
 
-function mountOutlineHeader(
+function applyItemDatasets(
+  root: HTMLElement,
+  core: Core,
+  focus: Focus,
+  view: string,
+  rule: string,
+): void {
+  const snap = core.item(focus.item);
+
+  const sel = core.selection();
+  const focused =
+    sel.kind === "focused" &&
+    sel.focus.item === focus.item &&
+    sel.focus.container === focus.container;
+
+  setData(root, "item", focus.item);
+  setData(root, "container", focus.container);
+  setData(root, "view", view);
+  setData(root, "rule", rule);
+  setData(root, "kind", snap.content.kind);
+  setData(root, "mode", snap.mode.kind);
+  setDataBool(root, "focused", focused);
+}
+
+function mountOutlineMeta(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   fields: readonly SourceField[],
@@ -479,10 +505,10 @@ function mountOutlineHeader(
   const id = focus.item;
 
   return createComponent((componentCtx) => {
-    const wrap = el("div");
-    const labelHost = el("div");
-    const fieldsHost = el("div", "header-fields");
-    wrap.append(labelHost, fieldsHost);
+    const meta = el("div", "ui-meta");
+    const labelWrap = el("div", "ui-label");
+    const sourceWrap = el("div", "ui-source");
+    meta.append(labelWrap, sourceWrap);
 
     const toContent = () =>
       core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
@@ -507,7 +533,7 @@ function mountOutlineHeader(
         };
       },
       onCommitEvents: ["blur"],
-      wrapClassName: "autosize label",
+      wrapClassName: "autosize",
       textKeys: (inp) => {
         const inputEl = inp as HTMLInputElement;
         const handler = (e: KeyboardEvent) => {
@@ -526,7 +552,7 @@ function mountOutlineHeader(
       },
     });
 
-    labelHost.replaceChildren(labelComp.el);
+    labelWrap.replaceChildren(labelComp.el);
     componentCtx.use(labelComp);
 
     scope.elementFor("label", () => labelComp.focusEl);
@@ -535,12 +561,15 @@ function mountOutlineHeader(
       caret: "fromTarget",
     });
 
+    const fieldEls: HTMLElement[] = [];
+
     for (const f of fields) {
-      const labelEl = el("span", "equals", f.label);
-      const valueHost = el("div");
-      const row = el("div", "wrap");
-      row.append(labelEl, valueHost);
-      fieldsHost.append(row);
+      const row = el("div", "ui-source-field");
+      const fieldLabel = el("div", "ui-source-key", f.label);
+      const fieldValue = el("div", "ui-source-val");
+      row.append(fieldLabel, fieldValue);
+      sourceWrap.append(row);
+      fieldEls.push(row);
 
       const commitField = (text: string) => {
         outlineCommands.commitSourceField(core, id, f.key, text);
@@ -575,7 +604,7 @@ function mountOutlineHeader(
           }),
       });
 
-      valueHost.replaceChildren(fc.el);
+      fieldValue.replaceChildren(fc.el);
       componentCtx.use(fc);
 
       const tkey = `source:${f.key}`;
@@ -583,20 +612,36 @@ function mountOutlineHeader(
       scope.selectOn(fc.focusEl, { target: tkey, caret: "fromTarget" });
     }
 
-    return wrap;
+    componentCtx.watch(
+      () => core.item(id).mode.kind === "source",
+      (isSource) => {
+        if (!isSource) {
+          for (const n of fieldEls) n.remove();
+          fieldEls.length = 0;
+          sourceWrap.replaceChildren();
+        }
+      },
+    );
+
+    return meta;
   });
 }
+
+type ContentTargetRef = { current: HTMLElement | null };
 
 function mountOutlineChildren(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   scope: FocusScope,
+  contentTargetRef: ContentTargetRef,
 ): Component {
   const { core } = mountCtx;
 
   return createComponent((componentCtx) => {
-    const container = el("div", "group");
+    const container = el("div", "outline-children");
     ensureTabbable(container);
+
+    contentTargetRef.current = container;
 
     scope.selectOn(container, { caret: "zero" });
 
@@ -604,7 +649,7 @@ function mountOutlineChildren(
       const childFocus: Focus = { container: focus.item, item: childId };
       return mountOutlineNode(mountCtx, {
         focus: childFocus,
-        showHeader: true,
+        showMeta: true,
       });
     });
 
@@ -617,11 +662,13 @@ function mountOutlineChildren(
       (ids) => mgr.update(ids),
     );
 
+    componentCtx.onCleanup(() => {
+      contentTargetRef.current = container;
+    });
+
     return container;
   });
 }
-
-type ContentTargetRef = { current: HTMLElement | null };
 
 function mountOutlineBody(
   mountCtx: OutlineMountCtx,
@@ -633,7 +680,7 @@ function mountOutlineBody(
   const id = focus.item;
 
   return createComponent((componentCtx) => {
-    const hostEl = el("div");
+    const hostEl = el("div", "outline-body");
 
     const nested = core.mountView({ id, focus, continueAs: "outline" });
     if (nested) {
@@ -653,10 +700,14 @@ function mountOutlineBody(
     }
 
     const snap = core.item(id);
+
     if (snap.content.kind === "group") {
-      const childrenComp = mountOutlineChildren(mountCtx, focus, scope);
-      ensureTabbable(childrenComp.el);
-      contentTargetRef.current = childrenComp.el;
+      const childrenComp = mountOutlineChildren(
+        mountCtx,
+        focus,
+        scope,
+        contentTargetRef,
+      );
       hostEl.replaceChildren(childrenComp.el);
       componentCtx.use(childrenComp);
       return hostEl;
@@ -701,14 +752,14 @@ function mountOutlineBody(
           for (const fn of stops.toReversed()) fn();
         };
       },
-      renderGroupChild: (childId) => {
-        const d = el("div", "item readonly");
-        ensureTabbable(d);
-        return createComponent((cctx) => {
+      renderGroupChild: (childId) =>
+        createComponent((cctx) => {
+          const d = el("div", "outline-inline");
+          ensureTabbable(d);
           cctx.watch(
             () => core.item(childId),
-            (snap) => {
-              const c = snap.content;
+            (snap2) => {
+              const c = snap2.content;
               const isIssue = c.kind === "issue";
               const text =
                 c.kind === "issue"
@@ -719,12 +770,11 @@ function mountOutlineBody(
                       : String(c.value)
                     : "";
               d.textContent = text;
-              d.classList.toggle("issue", isIssue);
+              d.classList.toggle("is-issue", isIssue);
             },
           );
           return d;
-        });
-      },
+        }),
     });
 
     contentTargetRef.current = vf.focusEl;
@@ -747,24 +797,24 @@ function mountOutlineBody(
 
 function mountOutlineNode(
   mountCtx: OutlineMountCtx,
-  spec: { focus: Focus; showHeader: boolean },
+  spec: { focus: Focus; showMeta: boolean },
 ): Component {
   const { core } = mountCtx;
   const focus = spec.focus;
 
   return createComponent((componentCtx) => {
-    const root = el("div", "item");
-    const headerContainer = el("div", "header");
-    const contentContainer = el("div", "content-host");
-    root.append(contentContainer);
+    const root = el("div", "ui-item");
+    const metaHost = el("div");
+    const bodyHost = el("div");
+    root.append(metaHost, bodyHost);
 
-    const headerSlot = componentCtx.slot(headerContainer);
-    const contentSlot = componentCtx.slot(contentContainer);
+    const metaSlot = componentCtx.slot(metaHost);
+    const bodySlot = componentCtx.slot(bodyHost);
 
-    const contentTargetRef: ContentTargetRef = { current: contentContainer };
+    const contentTargetRef: ContentTargetRef = { current: bodyHost };
 
     const scope = componentCtx.focus(core, focus, {
-      default: () => contentTargetRef.current ?? contentContainer,
+      default: () => contentTargetRef.current ?? bodyHost,
     });
 
     scope.elementFor(DEFAULT_TARGET, () => contentTargetRef.current);
@@ -772,28 +822,12 @@ function mountOutlineNode(
 
     componentCtx.watch(
       () => {
-        const sel = core.selection();
-        return (
-          sel.kind === "focused" &&
-          sel.focus.item === focus.item &&
-          sel.focus.container === focus.container
-        );
-      },
-      (focused) => {
-        root.classList.toggle("focused", focused);
-      },
-    );
+        applyItemDatasets(root, core, focus, "outline", "item");
 
-    let lastHeaderKey: string | null = null;
-    let lastContentMode: "children" | "body" | null = null;
-
-    componentCtx.watch(
-      () => {
         const snap = core.item(focus.item);
         const label = (snap.label ?? "").trim();
         const fields =
           snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
-        const content = snap.content;
 
         const sel = core.selection();
         const labelFocused =
@@ -802,43 +836,25 @@ function mountOutlineNode(
           sel.focus.container === focus.container &&
           sel.target === "label";
 
-        return {
-          label,
-          fields,
-          mode: "body" as const,
-          isIssue: content.kind === "issue",
-          labelFocused,
-        };
+        const needMeta =
+          spec.showMeta && (label !== "" || fields.length > 0 || labelFocused);
+
+        return { needMeta, fields };
       },
-      ({ label, fields, mode, isIssue, labelFocused }) => {
-        const needHeader =
-          spec.showHeader &&
-          (label !== "" || fields.length > 0 || labelFocused);
-        const headerKey = `${needHeader ? "on" : "off"}:${fields.length}`;
-
-        if (headerKey !== lastHeaderKey) {
-          lastHeaderKey = headerKey;
-
-          if (needHeader) {
-            if (headerContainer.parentElement !== root)
-              root.insertBefore(headerContainer, contentContainer);
-            headerSlot.set(mountOutlineHeader(mountCtx, focus, fields, scope));
-          } else {
-            headerSlot.set(null);
-            if (headerContainer.parentElement === root)
-              headerContainer.remove();
-          }
+      ({ needMeta, fields }) => {
+        if (needMeta) {
+          metaSlot.set(mountOutlineMeta(mountCtx, focus, fields, scope));
+          if (!metaHost.classList.contains("ui-meta-host"))
+            metaHost.className = "ui-meta-host";
+        } else {
+          metaSlot.set(null);
+          metaHost.replaceChildren();
+          metaHost.className = "";
         }
 
-        contentContainer.classList.toggle("issue", isIssue);
-
-        if (mode !== lastContentMode) {
-          lastContentMode = mode;
-
-          contentSlot.set(
-            mountOutlineBody(mountCtx, focus, scope, contentTargetRef),
-          );
-        }
+        bodySlot.set(
+          mountOutlineBody(mountCtx, focus, scope, contentTargetRef),
+        );
       },
     );
 
@@ -853,7 +869,6 @@ export function createOutlineView(args: {
 }): DomView {
   const { core, id: rootId } = args;
 
-  const root = el("div", "view outline");
   const navStopsSignal = computed(() => collectNavStopsFrom(core, rootId));
 
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
@@ -906,11 +921,10 @@ export function createOutlineView(args: {
 
   const node = mountOutlineNode(mountCtx, {
     focus: args.focus ?? { container: rootId, item: rootId },
-    showHeader: false,
+    showMeta: false,
   });
 
-  root.append(node.el);
-  ensureTabbable(root);
+  ensureTabbable(node.el);
 
   const onKeyDown = (e: KeyboardEvent) => {
     const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
@@ -973,11 +987,11 @@ export function createOutlineView(args: {
 
   return {
     id: `outline:${String(rootId)}`,
-    root,
+    root: node.el,
     onKeyDown,
     dispose() {
       node.dispose();
-      root.replaceChildren();
+      node.el.replaceChildren();
     },
   };
 }
