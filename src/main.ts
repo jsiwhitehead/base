@@ -27,7 +27,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   devAssert(hostEl, "Missing app root element (#root)");
 
-  const { core, rootId } = createCore({ views: viewFactories as any });
+  const { core, rootId } = createCore({ views: viewFactories });
 
   core.commit((t) => {
     t.setView(rootId, rootView as ViewKind);

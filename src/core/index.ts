@@ -7,6 +7,7 @@ import {
   type EntryId,
   type Op,
   type Transaction,
+  type TransactionMeta,
   type ViewKind,
   type ViewName,
   isDerivedContent,
@@ -167,8 +168,6 @@ export type LocateResult = {
   siblings: readonly ItemId[];
 };
 
-export type Rule = SyncRule;
-
 type HistoryEntry = {
   user: Transaction;
   inverse: Transaction;
@@ -181,13 +180,8 @@ export type Core = {
 
   commit(run: (t: Tx) => void): ApplyResult;
 
-  dispatch(txn: Transaction): ApplyResult;
-  dispatchRemote(txn: Transaction): ApplyResult;
-
   undo(): ApplyResult;
   redo(): ApplyResult;
-
-  addRule(rule: Rule, opts?: { id?: string }): () => void;
 
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
@@ -209,8 +203,15 @@ export type Core = {
   }): Component | null;
 };
 
+export type CollabWire = {
+  origin: string;
+  send(txn: Transaction): void;
+  subscribe(onTxn: (txn: Transaction) => void): () => void;
+};
+
 export function createCore(opts: {
   views: Partial<Record<ViewName, ViewFactory<Core>>>;
+  collab?: CollabWire;
 }): { core: Core; rootId: ItemId } {
   const model = createModel();
 
@@ -231,7 +232,7 @@ export function createCore(opts: {
     initialSelection: { kind: "idle" },
   });
 
-  const rules: { id: string; run: Rule }[] = [];
+  const rules: { id: string; run: SyncRule }[] = [];
   let nextRuleId = 1;
 
   const history: { undo: HistoryEntry[]; redo: HistoryEntry[] } = {
@@ -487,10 +488,25 @@ export function createCore(opts: {
     return merged;
   };
 
+  const addRuleInternal = (
+    rule: SyncRule,
+    opts2: { id?: string } = {},
+  ): (() => void) => {
+    const id = opts2.id ?? `rule:${nextRuleId++}`;
+    const rec = { id, run: rule };
+    rules.push(rec);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const i = rules.indexOf(rec);
+      if (i >= 0) rules.splice(i, 1);
+    };
+  };
+
   const shapeSync = createShapeSyncGroup({
     model,
-    addRule: (ruleFn) =>
-      addRule(ruleFn, { id: "sync:shape" }) as unknown as () => void,
+    addRule: (ruleFn) => addRuleInternal(ruleFn, { id: "sync:shape" }),
   });
 
   const tableRowSync = (() => {
@@ -659,24 +675,42 @@ export function createCore(opts: {
     return toApplyResult(final);
   };
 
-  const dispatch = (txn: Transaction): ApplyResult => applyPipeline(txn);
+  let localSeq = 0;
 
-  const dispatchRemote = (txn: Transaction): ApplyResult => {
-    const meta = { ...(txn.meta ?? {}), source: "remote" as const };
-    return applyPipeline(model.ops.transaction(txn.ops, meta));
+  const stampLocalMeta = (
+    meta: TransactionMeta | undefined,
+  ): TransactionMeta => {
+    const base = meta ?? {};
+    const origin = opts.collab?.origin;
+    const seq = origin ? ++localSeq : undefined;
+    return {
+      ...base,
+      ...(origin ? { origin } : {}),
+      ...(seq != null ? { seq } : {}),
+    };
   };
 
-  const addRule = (rule: Rule, opts2: { id?: string } = {}): (() => void) => {
-    const id = opts2.id ?? `rule:${nextRuleId++}`;
-    const rec = { id, run: rule };
-    rules.push(rec);
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const i = rules.indexOf(rec);
-      if (i >= 0) rules.splice(i, 1);
-    };
+  const sendLocalTxn = (txn: Transaction): void => {
+    if (!opts.collab) return;
+    opts.collab.send(txn);
+  };
+
+  const applyLocal = (txn: Transaction): ApplyResult => {
+    const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
+    const res = applyPipeline(stamped);
+    sendLocalTxn(stamped);
+    return res;
+  };
+
+  const applyRemote = (txn: Transaction): ApplyResult => {
+    if (
+      opts.collab &&
+      txn.meta?.origin &&
+      txn.meta.origin === opts.collab.origin
+    )
+      return toApplyResult(emptyModelApply);
+    const meta = { ...(txn.meta ?? {}), source: "remote" as const };
+    return applyPipeline(model.ops.transaction(txn.ops, meta));
   };
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
@@ -774,13 +808,13 @@ export function createCore(opts: {
     if (!ops.length) return toApplyResult(emptyModelApply);
 
     const txn = model.ops.transaction(ops, { source: "user" });
-    return dispatch(txn);
+    return applyLocal(txn);
   };
 
   const undo = (): ApplyResult => {
     const last = history.undo.pop() ?? null;
     if (!last) return toApplyResult(emptyModelApply);
-    const res = dispatch(last.inverse);
+    const res = applyLocal(last.inverse);
     history.redo.push(last);
     return res;
   };
@@ -790,7 +824,7 @@ export function createCore(opts: {
     if (!last) return toApplyResult(emptyModelApply);
 
     const replay = model.ops.transaction(last.user.ops, { source: "redo" });
-    const res = dispatch(replay);
+    const res = applyLocal(replay);
 
     const newUndoTop = history.undo.at(-1) ?? null;
     if (newUndoTop) history.redo = [...history.redo, newUndoTop];
@@ -849,8 +883,15 @@ export function createCore(opts: {
 
   const rootId = itemIdOf(rootEntryId);
 
+  const unsubscribeCollab = opts.collab
+    ? opts.collab.subscribe((txn) => {
+        applyRemote(txn);
+      })
+    : null;
+
   core = {
     dispose() {
+      unsubscribeCollab?.();
       uninstallGlobal();
       shapeSync.dispose();
       const { removedIds } = model.pruneUnreachable();
@@ -863,13 +904,8 @@ export function createCore(opts: {
 
     commit,
 
-    dispatch,
-    dispatchRemote,
-
     undo,
     redo,
-
-    addRule,
 
     selection,
     focus,
