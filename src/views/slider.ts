@@ -161,9 +161,9 @@ function mountSlider({
     root.append(input, valueEl);
 
     const scope = ctx.focus(core, focus, { default: () => input });
-    scope.elementFor(DEFAULT_TARGET, () => input);
-    scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
-    scope.selectOn(input, { target: DEFAULT_TARGET, caret: "zero" });
+    scope.target(DEFAULT_TARGET, () => input);
+    scope.select(root, { target: DEFAULT_TARGET, caret: "zero" });
+    scope.select(input, { target: DEFAULT_TARGET, caret: "zero" });
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
@@ -174,31 +174,24 @@ function mountSlider({
       commitValue(Number(input.value));
     });
 
-    ctx.watch(
-      () => core.selection(),
-      () => {
-        applyUiItemState(root, { core, focus, view: "slider" });
-      },
-    );
+    ctx.effect(() => {
+      core.selection();
+      applyUiItemState(root, { core, focus, view: "slider" });
+    });
 
-    ctx.watch(
-      () => {
-        const cur = getScalarOr(core, id, opts.min);
-        const clamped0 = clamp(cur, opts.min, opts.max);
-        return formatNumberForStep(clamped0, opts.step);
-      },
-      (str) => {
-        if (input.value !== str) input.value = str;
-        if (valueEl.textContent !== str) valueEl.textContent = str;
-      },
-    );
+    ctx.effect(() => {
+      const cur = getScalarOr(core, id, opts.min);
+      const clamped0 = clamp(cur, opts.min, opts.max);
+      const str = formatNumberForStep(clamped0, opts.step);
 
-    ctx.watch(
-      () => !canSetScalar(core, id),
-      (shouldDisable) => {
-        if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
-      },
-    );
+      if (input.value !== str) input.value = str;
+      if (valueEl.textContent !== str) valueEl.textContent = str;
+    });
+
+    ctx.effect(() => {
+      const shouldDisable = !canSetScalar(core, id);
+      if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
+    });
 
     ctx.on(root, "keydown", (e: KeyboardEvent) => {
       handleSliderKey(e, dispatch);

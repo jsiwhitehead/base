@@ -1,4 +1,4 @@
-import { computed, effect } from "@preact/signals-core";
+import { effect } from "@preact/signals-core";
 import type { Core, Focus, Component, Caret, ViewName } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core/runtime";
 
@@ -144,22 +144,6 @@ class ChildManager<Id extends string | number> {
   }
 }
 
-function shallowEqual(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
-
-  const aKeys = Object.keys(a as object);
-  const bKeys = Object.keys(b as object);
-  if (aKeys.length !== bKeys.length) return false;
-
-  for (const k of aKeys) {
-    if (!(k in (b as object)) || !Object.is((a as any)[k], (b as any)[k])) {
-      return false;
-    }
-  }
-  return true;
-}
-
 export type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
 };
@@ -185,9 +169,9 @@ function caretFromTarget(el0: EventTarget | null): Caret {
 }
 
 export type FocusScope = {
-  elementFor(target: string, getEl: () => HTMLElement | null): void;
+  target(name: string, getEl: () => HTMLElement | null): void;
 
-  selectOn(
+  select(
     el0: HTMLElement,
     opts?: {
       target?: string;
@@ -198,23 +182,16 @@ export type FocusScope = {
 };
 
 export type Ctx = {
-  onCleanup(fn: (() => void) | null | undefined): void;
-
-  use(x: { dispose(): void } | (() => void) | null | undefined): void;
+  cleanup(fn: (() => void) | null | undefined): void;
 
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
-    el0: T,
+    target: T,
     type: K,
     handler: (e: HTMLElementEventMap[K]) => void,
     opts?: AddEventListenerOptions,
   ): void;
 
-  watch<T extends readonly unknown[]>(
-    ...args: [
-      ...computes: { [K in keyof T]: () => T[K] },
-      run: (...vals: T) => void | (() => void),
-    ]
-  ): void;
+  effect(run: () => void | (() => void)): void;
 
   slot(host: HTMLElement): { set(next: Component | null): void };
 
@@ -237,35 +214,30 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
   const bag = new Disposer();
 
   const ctx: Ctx = {
-    onCleanup(fn) {
+    cleanup(fn) {
       bag.add(fn);
     },
 
-    use(x) {
-      if (!x) return;
-      if (typeof x === "function") bag.add(x);
-      else bag.add(() => x.dispose());
+    on(target, type, handler, opts) {
+      bag.add(on(target, type, handler, opts));
     },
 
-    on(el0, type, handler, opts) {
-      bag.add(on(el0, type, handler, opts));
-    },
+    effect(run) {
+      let prevCleanup: (() => void) | null = null;
 
-    watch(...args) {
-      const run = args.at(-1) as (...vals: any[]) => void | (() => void);
-      const sigs = args.slice(0, -1).map((c) => computed(c as () => unknown));
+      const disposeEffect = effect(() => {
+        prevCleanup?.();
+        prevCleanup = null;
 
-      let prev: unknown[] | null = null;
-
-      const memo = computed(() => {
-        const next = sigs.map((s) => s.value);
-        if (prev && next.every((v, i) => shallowEqual(v, prev![i])))
-          return prev;
-        prev = next;
-        return next;
+        const next = run();
+        if (typeof next === "function") prevCleanup = next;
       });
 
-      bag.add(effect(() => run(...memo.value)));
+      bag.add(() => {
+        prevCleanup?.();
+        prevCleanup = null;
+      });
+      bag.add(disposeEffect);
     },
 
     slot(host) {
@@ -317,23 +289,24 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       bag.add(unbind);
 
       const scope: FocusScope = {
-        elementFor(target, getEl) {
-          targets.set(target, getEl);
+        target(name, getEl) {
+          targets.set(name, getEl);
         },
 
-        selectOn(el0, opts = {}) {
+        select(el0, opts = {}) {
           const target = opts.target ?? DEFAULT_TARGET;
           const caretMode = opts.caret ?? "zero";
           const stop = opts.stopPropagation ?? true;
 
           bag.add(
-            on(el0, "pointerdown", (e: PointerEvent) => {
+            on(el0, "pointerdown", (e: Event) => {
+              const pe = e as PointerEvent;
               const caret0 =
-                caretMode === "fromTarget" ? caretFromTarget(e.target) : null;
+                caretMode === "fromTarget" ? caretFromTarget(pe.target) : null;
 
               core.focus(focus, target, caret0 ? { caret: caret0 } : undefined);
 
-              if (stop) e.stopPropagation();
+              if (stop) pe.stopPropagation();
             }),
           );
         },

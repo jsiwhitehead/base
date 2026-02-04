@@ -21,7 +21,6 @@ import {
   ensureTabbable,
   applyUiItemState,
   type FocusScope,
-  on,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
@@ -278,6 +277,8 @@ function mountRowMeta(args: {
     const labelWrap = el("div", "ui-label");
     meta.append(labelWrap);
 
+    const labelSlot = ctx.slot(labelWrap);
+
     const labelComp = textField({
       multiline: false,
       commit: (text) => tableCommands.setLabel(core, rowId, text),
@@ -301,11 +302,11 @@ function mountRowMeta(args: {
         }),
     });
 
-    labelWrap.replaceChildren(labelComp.el);
-    ctx.use(labelComp);
+    labelSlot.set(labelComp);
+    ctx.cleanup(() => labelComp.dispose());
 
-    scope.elementFor(DEFAULT_TARGET, () => labelComp.focusEl);
-    scope.selectOn(labelComp.focusEl, {
+    scope.target(DEFAULT_TARGET, () => labelComp.focusEl);
+    scope.select(labelComp.focusEl, {
       target: DEFAULT_TARGET,
       caret: "fromTarget",
     });
@@ -321,46 +322,22 @@ function mountCellHost(
 ): Component {
   return createComponent((ctx) => {
     const host = el("div", "ui-table-cell");
-    (host as HTMLElement).setAttribute("data-col", col);
+    host.setAttribute("data-col", col);
 
     const slot = ctx.slot(host);
 
-    let cur: Component | null = null;
-    let curId: ItemId | null = null;
-
-    const setCur = (next: Component | null, id: ItemId | null) => {
-      if (cur === next && curId === id) return;
-      cur?.dispose();
-      cur = next;
-      curId = id;
-      slot.set(next);
-    };
-
     const getCellId = () => findChildByLabel(mountCtx.core, rowId, col);
 
-    ctx.watch(
-      () => getCellId(),
-      (id) => {
-        if (!id) {
-          setCur({ el: el("div"), dispose: () => {} }, null);
-          return;
-        }
-
-        const focus: Focus = { container: rowId, item: id };
-        const mounted = mountCtx.core.mountView({
-          id,
-          focus,
-          continueAs: "table",
-        });
-
-        if (mounted) {
-          setCur(mounted, id);
-          return;
-        }
-
-        setCur({ el: el("div"), dispose: () => {} }, id);
-      },
-    );
+    ctx.effect(() => {
+      const id = getCellId();
+      if (!id) {
+        slot.set({ el: el("div"), dispose: () => {} });
+        return;
+      }
+      const focus: Focus = { container: rowId, item: id };
+      const mounted = mountCtx.core.mountView({ id, focus });
+      slot.set(mounted);
+    });
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
       const nextCell = getCellId();
@@ -393,25 +370,20 @@ function mountRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       dispatch,
     });
     rowItem.append(metaComp.el);
-    ctx.use(metaComp);
+    ctx.cleanup(() => metaComp.dispose());
 
     const cellList = ctx.list(rowItem, (colName: string) =>
       mountCellHost(mountCtx, rowId, colName),
     );
 
-    ctx.watch(
-      () => mountCtx.columnsSignal.value,
-      (cols) => {
-        cellList.update(cols);
-      },
-    );
+    ctx.effect(() => {
+      cellList.update(mountCtx.columnsSignal.value);
+    });
 
-    ctx.watch(
-      () => core.selection(),
-      () => {
-        applyUiItemState(rowItem, { core, focus, view: "table", part: "row" });
-      },
-    );
+    ctx.effect(() => {
+      core.selection();
+      applyUiItemState(rowItem, { core, focus, view: "table", part: "row" });
+    });
 
     ctx.on(rowItem, "pointerdown", (e: PointerEvent) => {
       if (e.target instanceof HTMLElement && e.target.closest(".ui-table-cell"))
@@ -467,10 +439,9 @@ function mountHeader(mountCtx: TableMountCtx): Component {
       }
     };
 
-    ctx.watch(
-      () => mountCtx.columnsSignal.value,
-      (cols) => reconcile(cols),
-    );
+    ctx.effect(() => {
+      reconcile(mountCtx.columnsSignal.value);
+    });
 
     return header;
   });
@@ -480,16 +451,13 @@ function mountBody(mountCtx: TableMountCtx): Component {
   return createComponent((ctx) => {
     const body = el("div", "ui-table-body");
 
-    const rows = ctx.list(body, (rowId: string) => mountRow(mountCtx, rowId));
+    const rows = ctx.list(body, (rid: string) => mountRow(mountCtx, rid));
 
-    ctx.watch(
-      () => {
-        const snap = mountCtx.core.item(mountCtx.tableId);
-        const c = snap.content;
-        return c.kind === "group" ? [...c.children] : [];
-      },
-      (ids) => rows.update(ids),
-    );
+    ctx.effect(() => {
+      const snap = mountCtx.core.item(mountCtx.tableId);
+      const c = snap.content;
+      rows.update(c.kind === "group" ? [...c.children] : []);
+    });
 
     return body;
   });
@@ -502,35 +470,61 @@ export function createTableView(args: {
 }): DomView {
   const { core, id: tableId } = args;
 
-  const rootItem = el("div", "ui-item");
-  ensureTabbable(rootItem);
+  const comp = createComponent((ctx) => {
+    const rootItem = el("div", "ui-item");
+    ensureTabbable(rootItem);
 
-  const columnsSignal = computed(() => deriveColumns(core, tableId));
+    const columnsSignal = computed(() => deriveColumns(core, tableId));
 
-  const dispatch = (intent: TableIntent): void => {
-    const sel = core.selection();
+    const dispatch = (intent: TableIntent): void => {
+      const sel = core.selection();
 
-    switch (intent.type) {
-      case "NAV": {
-        const res = tableNavMove(core, tableId, sel, intent.dir, intent.mode);
-        if (res) core.focus(res.focus, res.target, { caret: res.caret });
-        return;
+      switch (intent.type) {
+        case "NAV": {
+          const res = tableNavMove(core, tableId, sel, intent.dir, intent.mode);
+          if (res) core.focus(res.focus, res.target, { caret: res.caret });
+          return;
+        }
+        case "CONFIRM":
+          tableCommands.confirm(core, tableId, sel);
+          return;
+        case "CANCEL":
+          core.blur();
+          return;
       }
-      case "CONFIRM":
-        tableCommands.confirm(core, tableId, sel);
-        return;
-      case "CANCEL":
-        core.blur();
-        return;
+    };
+
+    const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
+
+    const header = mountHeader(mountCtx);
+    const body = mountBody(mountCtx);
+
+    rootItem.replaceChildren(header.el, body.el);
+
+    ctx.cleanup(() => header.dispose());
+    ctx.cleanup(() => body.dispose());
+
+    const tableFocus: Focus = args.focus ?? {
+      container: tableId,
+      item: tableId,
+    };
+
+    ctx.effect(() => {
+      core.selection();
+      applyUiItemState(rootItem, { core, focus: tableFocus, view: "table" });
+    });
+
+    if (core.selection().kind === "idle") {
+      const rows0 = childrenOf(core, tableId);
+      if (rows0.length) {
+        const firstRow = rows0[0]!;
+        const res = focusRowLabel(tableId, firstRow);
+        core.focus(res.focus, res.target, { caret: res.caret });
+      }
     }
-  };
 
-  const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
-
-  const header = mountHeader(mountCtx);
-  const body = mountBody(mountCtx);
-
-  rootItem.replaceChildren(header.el, body.el);
+    return rootItem;
+  });
 
   const onKeyDown = (e: KeyboardEvent) => {
     const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
@@ -545,54 +539,31 @@ export function createTableView(args: {
     const dir = arrowDir[e.key];
     if (dir) {
       stopEvent(e);
-      dispatch({ type: "NAV", dir, mode });
+      const sel = core.selection();
+      const res = tableNavMove(core, tableId, sel, dir, mode);
+      if (res) core.focus(res.focus, res.target, { caret: res.caret });
       return;
     }
 
     if (e.key === "Enter") {
       stopEvent(e);
-      dispatch({ type: "CONFIRM" });
+      tableCommands.confirm(core, tableId, core.selection());
       return;
     }
 
     if (e.key === "Escape") {
       stopEvent(e);
-      dispatch({ type: "CANCEL" });
+      core.blur();
       return;
     }
   };
 
-  const tableFocus: Focus = args.focus ?? { container: tableId, item: tableId };
-
-  ctxApplyRootState();
-
-  function ctxApplyRootState() {
-    applyUiItemState(rootItem, { core, focus: tableFocus, view: "table" });
-  }
-
-  const rootUnsub = on(rootItem, "pointerdown", () => {
-    const sel = core.selection();
-    if (sel.kind !== "idle") return;
-  });
-
-  if (core.selection().kind === "idle") {
-    const rows0 = childrenOf(core, tableId);
-    if (rows0.length) {
-      const firstRow = rows0[0]!;
-      const res = focusRowLabel(tableId, firstRow);
-      core.focus(res.focus, res.target, { caret: res.caret });
-    }
-  }
-
   return {
     id: `table:${String(tableId)}`,
-    root: rootItem,
+    root: comp.el,
     onKeyDown,
     dispose() {
-      rootUnsub();
-      header.dispose();
-      body.dispose();
-      rootItem.replaceChildren();
+      comp.dispose();
     },
   };
 }

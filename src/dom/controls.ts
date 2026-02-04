@@ -148,7 +148,7 @@ type TextCommitEvent = "input" | "blur";
 function registerCommitHandlers(
   ctx: {
     on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
-      el0: T,
+      target: T,
       type: K,
       handler: (e: HTMLElementEventMap[K]) => void,
       opts?: AddEventListenerOptions,
@@ -217,15 +217,13 @@ export function textField(
       opts.commit(inp.value),
     );
 
-    if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
+    if (opts.textKeys) ctx.cleanup(opts.textKeys(inp) ?? null);
 
-    ctx.watch(
-      () => opts.getState(),
-      (st) => {
-        inp.readOnly = st.readOnly;
-        syncValue(inp, st.text);
-      },
-    );
+    ctx.effect(() => {
+      const st = opts.getState();
+      inp.readOnly = st.readOnly;
+      syncValue(inp, st.text);
+    });
 
     return inp;
   });
@@ -267,16 +265,14 @@ export function autosizeTextField(
       opts.commit(inp.value),
     );
 
-    if (opts.textKeys) ctx.use(opts.textKeys(inp) ?? null);
+    if (opts.textKeys) ctx.cleanup(opts.textKeys(inp) ?? null);
 
-    ctx.watch(
-      () => opts.getState(),
-      (st) => {
-        inp.readOnly = st.readOnly;
-        syncValue(inp, st.text);
-        mirror.textContent = st.text.length ? st.text : " ";
-      },
-    );
+    ctx.effect(() => {
+      const st = opts.getState();
+      inp.readOnly = st.readOnly;
+      syncValue(inp, st.text);
+      mirror.textContent = st.text.length ? st.text : " ";
+    });
 
     return wrap;
   });
@@ -330,20 +326,18 @@ export function scalarField(opts: ScalarFieldOpts): FocusComponent {
 
     const slot = ctx.slot(host);
 
+    const getState = () =>
+      (opts.getState ?? (() => deriveScalarFieldState(opts.core, opts.id)))();
+
     const mountReadonly = (): FocusComponent<HTMLElement> => {
       const d = el("div");
       ensureTabbable(d);
       setData(d, "target", target);
 
-      ctx.watch(
-        () =>
-          (
-            opts.getState ?? (() => deriveScalarFieldState(opts.core, opts.id))
-          )(),
-        (st) => {
-          d.textContent = st.text;
-        },
-      );
+      ctx.effect(() => {
+        const st = getState();
+        d.textContent = st.text;
+      });
 
       return { el: d, focusEl: d, dispose: () => d.replaceChildren() };
     };
@@ -354,8 +348,7 @@ export function scalarField(opts: ScalarFieldOpts): FocusComponent {
         className: "",
         commit: (text) => opts.commitText?.(text),
         getState: () => {
-          const st =
-            opts.getState?.() ?? deriveScalarFieldState(opts.core, opts.id);
+          const st = getState();
           return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
         },
         onCommitEvents: opts.onCommitEvents,
@@ -374,18 +367,15 @@ export function scalarField(opts: ScalarFieldOpts): FocusComponent {
       focusEl = next.focusEl;
     };
 
-    ctx.watch(
-      () =>
-        (opts.getState ?? (() => deriveScalarFieldState(opts.core, opts.id)))(),
-      (st) => {
-        const nextEditable = !!st.editable;
-        if (curEditable === nextEditable && cur) return;
-        curEditable = nextEditable;
-        setCur(nextEditable ? mountEditor() : mountReadonly());
-      },
-    );
+    ctx.effect(() => {
+      const st = getState();
+      const nextEditable = !!st.editable;
+      if (curEditable === nextEditable && cur) return;
+      curEditable = nextEditable;
+      setCur(nextEditable ? mountEditor() : mountReadonly());
+    });
 
-    ctx.onCleanup(() => {
+    ctx.cleanup(() => {
       focusEl = host;
     });
 
