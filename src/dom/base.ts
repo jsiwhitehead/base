@@ -97,9 +97,7 @@ export function applyUiItemState(
   setData(root, "kind", snap.content.kind);
   setData(root, "mode", snap.mode.kind);
   setDataBool(root, "focused", focused);
-
-  if (args.part) setData(root, "part", args.part);
-  else setData(root, "part", null);
+  setData(root, "part", args.part ?? null);
 }
 
 type ChildRec = { element: HTMLElement; dispose: () => void };

@@ -148,8 +148,8 @@ function mountSlider({
   opts,
   dispatch,
 }: SliderMountCtx): Component {
-  return createComponent((componentCtx) => {
-    const root = el("div", "ui-item ui-slider");
+  return createComponent((ctx) => {
+    const root = el("div", "ui-item");
 
     const input = document.createElement("input");
     input.type = "range";
@@ -160,7 +160,7 @@ function mountSlider({
     const valueEl = el("div", "ui-slider-value");
     root.append(input, valueEl);
 
-    const scope = componentCtx.focus(core, focus, { default: () => input });
+    const scope = ctx.focus(core, focus, { default: () => input });
     scope.elementFor(DEFAULT_TARGET, () => input);
     scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
     scope.selectOn(input, { target: DEFAULT_TARGET, caret: "zero" });
@@ -170,18 +170,18 @@ function mountSlider({
       sliderCommands.setScalarValue(core, focus, id, next);
     };
 
-    componentCtx.on(input, "input", () => {
+    ctx.on(input, "input", () => {
       commitValue(Number(input.value));
     });
 
-    componentCtx.watch(
+    ctx.watch(
       () => core.selection(),
       () => {
         applyUiItemState(root, { core, focus, view: "slider" });
       },
     );
 
-    componentCtx.watch(
+    ctx.watch(
       () => {
         const cur = getScalarOr(core, id, opts.min);
         const clamped0 = clamp(cur, opts.min, opts.max);
@@ -193,14 +193,14 @@ function mountSlider({
       },
     );
 
-    componentCtx.watch(
+    ctx.watch(
       () => !canSetScalar(core, id),
       (shouldDisable) => {
         if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
       },
     );
 
-    componentCtx.on(root, "keydown", (e: KeyboardEvent) => {
+    ctx.on(root, "keydown", (e: KeyboardEvent) => {
       handleSliderKey(e, dispatch);
     });
 

@@ -18,16 +18,15 @@ import {
   defaultTextNav,
   el,
   on,
-  ensureTabbable,
   stopEvent,
   bindTextControlKeys,
   createComponent,
   autosizeTextField,
-  textField,
   scalarField,
   type FocusScope,
-  setData,
   applyUiItemState,
+  ensureTabbable,
+  textField,
 } from "../dom";
 
 type SourceField = {
@@ -345,9 +344,7 @@ export const outlineCommands = {
       core.focus(
         { container: containerId, item: chosen },
         defaultTargetFor(core, chosen),
-        {
-          caret,
-        },
+        { caret },
       );
     } else {
       core.blur();
@@ -383,9 +380,7 @@ export const outlineCommands = {
       core.focus(
         { container: wrapperId, item: id },
         defaultTargetFor(core, id),
-        {
-          caret: caret0(),
-        },
+        { caret: caret0() },
       );
       return;
     }
@@ -478,14 +473,14 @@ type OutlineMountCtx = {
 function mountMeta(
   mountCtx: OutlineMountCtx,
   focus: Focus,
-  fields: readonly SourceField[],
   scope: FocusScope,
 ): Component {
-  const { core } = mountCtx;
+  const { core, dispatch } = mountCtx;
   const id = focus.item;
 
-  return createComponent((componentCtx) => {
+  return createComponent((ctx) => {
     const meta = el("div", "ui-meta");
+
     const labelWrap = el("div", "ui-label");
     const sourceWrap = el("div", "ui-source");
     meta.append(labelWrap, sourceWrap);
@@ -516,6 +511,7 @@ function mountMeta(
       wrapClassName: "autosize",
       target: "label",
       textKeys: (inp) => {
+        inp.tabIndex = -1;
         const inputEl = inp as HTMLInputElement;
         const handler = (e: KeyboardEvent) => {
           if (e.key === " ") {
@@ -533,77 +529,92 @@ function mountMeta(
       },
     });
 
+    labelComp.focusEl.tabIndex = -1;
+
     labelWrap.replaceChildren(labelComp.el);
-    componentCtx.use(labelComp);
+    ctx.use(labelComp);
 
     scope.elementFor("label", () => labelComp.focusEl);
     scope.selectOn(labelComp.focusEl, { target: "label", caret: "fromTarget" });
 
-    const fieldEls: HTMLElement[] = [];
+    const mountFields = (fields: readonly SourceField[]) => {
+      sourceWrap.replaceChildren();
+      for (const f of fields) {
+        const row = el("div", "ui-source-row");
+        const keyEl = el("div", "ui-source-key", f.label);
+        const valEl = el("div", "ui-source-val");
+        row.append(keyEl, valEl);
+        sourceWrap.append(row);
 
-    for (const f of fields) {
-      const row = el("div", "ui-source-field");
-      const fieldLabel = el("div", "ui-source-key", f.label);
-      const fieldValue = el("div", "ui-source-val");
-      row.append(fieldLabel, fieldValue);
-      sourceWrap.append(row);
-      fieldEls.push(row);
+        const commitField = (text: string) => {
+          outlineCommands.commitSourceField(core, id, f.key, text);
+        };
 
-      const commitField = (text: string) => {
-        outlineCommands.commitSourceField(core, id, f.key, text);
-      };
+        const tkey = `source:${f.key}`;
 
-      const tkey = `source:${f.key}`;
+        const fc = textField({
+          multiline: f.multiline,
+          commit: commitField,
+          getState: () => {
+            const snap = core.item(id);
+            if (snap.mode.kind !== "source")
+              return { text: "", readOnly: true, isIssue: false };
+            const text =
+              fieldsFromSource(snap.mode.source).find((x) => x.key === f.key)
+                ?.text ?? "";
+            return { text, readOnly: false, isIssue: false };
+          },
+          onCommitEvents: ["blur"],
+          target: tkey,
+          textKeys: (inp) => {
+            inp.tabIndex = -1;
+            return bindTextControlKeys(inp, {
+              nav: { yieldUpDown: "always", yieldLeftRight: "always" },
+              onNav: (dir) => {
+                if (dir === "left" || dir === "right")
+                  dispatch({ type: "NAV", dir, mode: "step" });
+              },
+              onEnter: () => commitField((inp as any).value),
+              onEscape: () => toContent(),
+            });
+          },
+        });
 
-      const fc = textField({
-        multiline: f.multiline,
-        commit: commitField,
-        getState: () => {
-          const snap = core.item(id);
-          if (snap.mode.kind !== "source")
-            return { text: "", readOnly: true, isIssue: false };
-          const text =
-            fieldsFromSource(snap.mode.source).find((x) => x.key === f.key)
-              ?.text ?? "";
-          return { text, readOnly: false, isIssue: false };
-        },
-        onCommitEvents: ["blur"],
-        target: tkey,
-        textKeys: (inp) =>
-          bindTextControlKeys(inp, {
-            nav: { yieldUpDown: "always", yieldLeftRight: "always" },
-            onNav: (dir) => {
-              if (dir === "left" || dir === "right")
-                mountCtx.dispatch({ type: "NAV", dir, mode: "step" });
-            },
-            onEnter: () => commitField((inp as any).value),
-            onEscape: () => toContent(),
-          }),
-      });
+        (fc.focusEl as any).tabIndex = -1;
 
-      fieldValue.replaceChildren(fc.el);
-      componentCtx.use(fc);
+        valEl.replaceChildren(fc.el);
+        ctx.use(fc);
 
-      scope.elementFor(tkey, () => fc.focusEl);
-      scope.selectOn(fc.focusEl, { target: tkey, caret: "fromTarget" });
-    }
+        scope.elementFor(tkey, () => fc.focusEl);
+        scope.selectOn(fc.focusEl, { target: tkey, caret: "fromTarget" });
+      }
+    };
 
-    componentCtx.watch(
-      () => core.item(id).mode.kind === "source",
-      (isSource) => {
-        if (!isSource) {
-          for (const n of fieldEls) n.remove();
-          fieldEls.length = 0;
-          sourceWrap.replaceChildren();
-        }
+    ctx.watch(
+      () => {
+        const snap = core.item(id);
+        const label = (snap.label ?? "").trim();
+        const fields =
+          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
+        const sel = core.selection();
+        const labelFocused =
+          sel.kind === "focused" &&
+          sel.focus.item === focus.item &&
+          sel.focus.container === focus.container &&
+          sel.target === "label";
+        const needMeta = label !== "" || fields.length > 0 || labelFocused;
+        return { needMeta, fields };
+      },
+      ({ needMeta, fields }) => {
+        meta.classList.toggle("hidden", !needMeta);
+        if (needMeta) mountFields(fields);
+        else sourceWrap.replaceChildren();
       },
     );
 
     return meta;
   });
 }
-
-type ContentSurfaceRef = { current: HTMLElement | null };
 
 function mountOutlineItem(
   mountCtx: OutlineMountCtx,
@@ -613,57 +624,44 @@ function mountOutlineItem(
   const { core, dispatch } = mountCtx;
   const id = focus.item;
 
-  return createComponent((componentCtx) => {
+  return createComponent((ctx) => {
     const root = el("div", "ui-item");
-    const metaHost = el("div");
-    const bodyHost = el("div");
-    root.append(metaHost, bodyHost);
 
-    const metaSlot = componentCtx.slot(metaHost);
-    const bodySlot = componentCtx.slot(bodyHost);
+    let metaComp: Component | null = null;
+    let bodyComp: Component | null = null;
+    let bodyEl: HTMLElement | null = null;
+    let surfaceEl: HTMLElement | null = null;
 
-    const surface: ContentSurfaceRef = { current: bodyHost };
-
-    const scope = componentCtx.focus(core, focus, {
-      default: () => surface.current ?? bodyHost,
+    const scope = ctx.focus(core, focus, {
+      default: () => surfaceEl ?? root,
     });
 
-    scope.elementFor(DEFAULT_TARGET, () => surface.current);
-
+    scope.elementFor(DEFAULT_TARGET, () => surfaceEl ?? root);
     scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
 
-    const mountBody = (): Component => {
-      const snap = core.item(id);
+    const unmountMeta = () => {
+      metaComp?.dispose();
+      metaComp = null;
+      const n = root.querySelector(":scope > .ui-meta");
+      if (n) n.remove();
+    };
 
-      if (snap.content.kind === "group") {
-        return createComponent((ctx) => {
-          const wrap = el("div", "outline-children");
-          ensureTabbable(wrap);
+    const mountMetaIfNeeded = () => {
+      if (metaComp) return;
+      metaComp = mountMeta(mountCtx, focus, scope);
+      root.insertBefore(metaComp.el, root.firstChild);
+    };
 
-          surface.current = wrap;
-          scope.selectOn(wrap, { target: DEFAULT_TARGET, caret: "zero" });
+    const unmountBody = () => {
+      bodyComp?.dispose();
+      bodyComp = null;
+      if (bodyEl) bodyEl.remove();
+      bodyEl = null;
+      surfaceEl = null;
+    };
 
-          const mgr = ctx.list(wrap, (childId: string) => {
-            const childFocus: Focus = { container: id, item: childId };
-            return mountNode(mountCtx, childFocus, true);
-          });
-
-          ctx.watch(
-            () => {
-              const s = core.item(id);
-              const c = s.content;
-              return c.kind === "group" ? [...c.children] : [];
-            },
-            (ids) => mgr.update(ids),
-          );
-
-          ctx.onCleanup(() => {
-            surface.current = wrap;
-          });
-
-          return wrap;
-        });
-      }
+    const mountScalarBody = () => {
+      const wrap = el("div", "ui-outline-scalar");
 
       const sf = scalarField({
         core,
@@ -708,57 +706,92 @@ function mountOutlineItem(
         },
       });
 
-      surface.current = sf.focusEl;
+      wrap.append(sf.el);
+
+      bodyComp = {
+        el: wrap,
+        dispose() {
+          sf.dispose();
+          wrap.replaceChildren();
+        },
+      };
+      bodyEl = wrap;
+      surfaceEl = sf.focusEl as HTMLElement;
 
       scope.selectOn(sf.focusEl as HTMLElement, {
         target: DEFAULT_TARGET,
         caret: "fromTarget",
       });
 
-      componentCtx.use(sf);
-
-      return {
-        el: sf.el,
-        dispose() {
-          sf.dispose();
-        },
-      };
+      ctx.use(sf);
+      root.append(wrap);
     };
 
-    componentCtx.watch(
-      () => {
-        applyUiItemState(root, { core, focus, view: "outline" });
+    const mountGroupBody = () => {
+      const wrap = el("div", "ui-outline-group");
 
-        const snap = core.item(id);
-        const label = (snap.label ?? "").trim();
-        const fields =
-          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
+      const mgr = ctx.list(wrap, (childId: string) => {
+        const childFocus: Focus = { container: id, item: childId };
+        return mountNode(mountCtx, childFocus, true);
+      });
 
-        const sel = core.selection();
-        const labelFocused =
-          sel.kind === "focused" &&
-          sel.focus.item === focus.item &&
-          sel.focus.container === focus.container &&
-          sel.target === "label";
+      ctx.watch(
+        () => {
+          const s = core.item(id);
+          const c = s.content;
+          return c.kind === "group" ? [...c.children] : [];
+        },
+        (ids) => mgr.update(ids),
+      );
 
-        const needMeta =
-          showMeta && (label !== "" || fields.length > 0 || labelFocused);
+      bodyComp = { el: wrap, dispose: () => wrap.replaceChildren() };
+      bodyEl = wrap;
 
-        return { needMeta, fields };
-      },
-      ({ needMeta, fields }) => {
-        if (needMeta) {
-          metaSlot.set(mountMeta(mountCtx, focus, fields, scope));
-          if (!metaHost.classList.contains("ui-meta-host"))
-            metaHost.className = "ui-meta-host";
-        } else {
-          metaSlot.set(null);
-          metaHost.replaceChildren();
-          metaHost.className = "";
-        }
+      ensureTabbable(root);
+      surfaceEl = root;
 
-        bodySlot.set(mountBody());
-      },
+      root.append(wrap);
+    };
+
+    const remount = () => {
+      const snap = core.item(id);
+
+      applyUiItemState(root, { core, focus, view: "outline" });
+
+      const label = (snap.label ?? "").trim();
+      const fields =
+        snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
+
+      const sel = core.selection();
+      const labelFocused =
+        sel.kind === "focused" &&
+        sel.focus.item === focus.item &&
+        sel.focus.container === focus.container &&
+        sel.target === "label";
+
+      const needMeta =
+        showMeta && (label !== "" || fields.length > 0 || labelFocused);
+
+      if (needMeta) mountMetaIfNeeded();
+      else unmountMeta();
+
+      const wantBodyKind = snap.content.kind === "group" ? "group" : "scalar";
+      const haveBodyKind = bodyEl?.classList.contains("ui-outline-group")
+        ? "group"
+        : bodyEl?.classList.contains("ui-outline-scalar")
+          ? "scalar"
+          : null;
+
+      if (wantBodyKind !== haveBodyKind) {
+        unmountBody();
+        if (wantBodyKind === "group") mountGroupBody();
+        else mountScalarBody();
+      }
+    };
+
+    ctx.watch(
+      () => ({ snap: core.item(id), sel: core.selection() }),
+      () => remount(),
     );
 
     return root;
@@ -774,9 +807,7 @@ function mountNode(
   const id = focus.item;
 
   return createComponent((ctx) => {
-    const wrap = el("div", "ui-outline-wrap");
-    ensureTabbable(wrap);
-
+    const wrap = el("div", "ui-outline-node");
     const slot = ctx.slot(wrap);
 
     let cur: Component | null = null;
@@ -801,8 +832,9 @@ function mountNode(
     );
 
     ctx.on(wrap, "pointerdown", (e: PointerEvent) => {
-      if (e.target instanceof HTMLElement && e.target.closest(".ui-item"))
-        return;
+      const inItem =
+        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
+      if (inItem) return;
       core.focus(focus, defaultTargetFor(core, id), { caret: caret0() });
       e.stopPropagation();
     });
@@ -866,7 +898,7 @@ export function createOutlineView(args: {
     }
   };
 
-  const root = el("div", "ui-outline-root");
+  const root = el("div");
   ensureTabbable(root);
 
   const focus: Focus = args.focus ?? { container: rootId, item: rootId };
@@ -927,9 +959,7 @@ export function createOutlineView(args: {
       core.focus(
         { container: rootId, item: first },
         defaultTargetFor(core, first),
-        {
-          caret: caret0(),
-        },
+        { caret: caret0() },
       );
     }
   }

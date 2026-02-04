@@ -144,14 +144,9 @@ function asScalarValue(v: Value): true | number | string | null {
 }
 
 function queryTargetInput(root: HTMLElement, target: string) {
-  return (
-    (root.querySelector(
-      `[data-target="${target}"] textarea, [data-target="${target}"] input`,
-    ) as HTMLTextAreaElement | HTMLInputElement | null) ??
-    (root.querySelector(
-      `textarea[data-target="${target}"], input[data-target="${target}"]`,
-    ) as HTMLTextAreaElement | HTMLInputElement | null)
-  );
+  return root.querySelector(
+    `textarea[data-target="${target}"], input[data-target="${target}"]`,
+  ) as HTMLTextAreaElement | HTMLInputElement | null;
 }
 
 describe("model", () => {
@@ -806,19 +801,24 @@ describe("views", () => {
     await tick();
     let sel = core.selection();
     expectFocused(sel);
-    expect(sel.target).toBe("label");
+    expect(sel.target).toBe(DEFAULT_TARGET);
+    expect(sel.focus.container).toBe(tableId);
+    expect(sel.focus.item).toBe(rowA);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     await tick();
     sel = core.selection();
     expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
+    expect(sel.focus.container).toBe(rowA);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     await tick();
     sel = core.selection();
     expectFocused(sel);
-    expect(sel.target).toBe("label");
+    expect(sel.target).toBe(DEFAULT_TARGET);
+    expect(sel.focus.container).toBe(tableId);
+    expect(sel.focus.item).toBe(rowA);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
@@ -862,7 +862,7 @@ describe("views", () => {
     await tick();
 
     const nestedTableRoot = outline.root.querySelector(
-      `.ui-item[data-view="table"][data-part="table"]`,
+      `.ui-item[data-view="table"]`,
     );
     expect(nestedTableRoot).not.toBeNull();
 

@@ -7,8 +7,6 @@ import {
   type Focus,
   type Selection,
   type DomView,
-  type Source,
-  parseScalar,
   DEFAULT_TARGET,
 } from "../core";
 import {
@@ -20,30 +18,15 @@ import {
   bindTextControlKeys,
   createComponent,
   textField,
-  autosizeTextField,
-  scalarField,
   ensureTabbable,
   applyUiItemState,
   type FocusScope,
-  setData,
   on,
 } from "../dom";
 
-type NavResult = {
-  focus: Focus;
-  target: string;
-  caret?: Caret;
-};
-
-type SourceField = {
-  key: string;
-  label: string;
-  multiline: boolean;
-  text: string;
-};
+type NavResult = { focus: Focus; target: string; caret?: Caret };
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
-const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 
 function caretFromTarget(t: EventTarget | null): Caret {
   const el0 = t instanceof HTMLElement ? t : null;
@@ -82,25 +65,13 @@ function deriveColumns(core: Core, tableId: ItemId): string[] {
 }
 
 type FocusedSelection = Extract<Selection, { kind: "focused" }>;
-type RowLabelSelection = FocusedSelection & { target: "label" };
-type CellSelection = FocusedSelection & { target: typeof DEFAULT_TARGET };
+type RowSelection = FocusedSelection & { focus: { container: ItemId } };
 
 const isFocused = (sel: Selection): sel is FocusedSelection =>
   sel.kind === "focused";
 
-const isRowLabelSelection = (
-  sel: Selection,
-  tableId: ItemId,
-): sel is RowLabelSelection =>
-  isFocused(sel) && sel.target === "label" && sel.focus.container === tableId;
-
-const isCellSelection = (
-  sel: Selection,
-  tableId: ItemId,
-): sel is CellSelection =>
-  isFocused(sel) &&
-  sel.target === DEFAULT_TARGET &&
-  sel.focus.container !== tableId;
+const isRowSel = (sel: Selection, tableId: ItemId): sel is RowSelection =>
+  isFocused(sel) && sel.focus.container === tableId;
 
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
   ...childrenOf(core, tableId),
@@ -127,7 +98,7 @@ const focusRowLabel = (
   caret: Caret = caret0(),
 ): NavResult => ({
   focus: { container: tableId, item: rowId },
-  target: "label",
+  target: DEFAULT_TARGET,
   caret,
 });
 
@@ -154,7 +125,7 @@ function tableNavMove(
   const rows = rowIds(core, tableId);
   if (rows.length === 0) return null;
 
-  const moveRowLabel = (rowId: ItemId, delta: number) => {
+  const moveRow = (rowId: ItemId, delta: number) => {
     const r = rows.indexOf(rowId);
     if (r < 0) return null;
     const nextRow = rows[r + delta];
@@ -173,7 +144,9 @@ function tableNavMove(
     if (!nextCol) return null;
 
     const nextCell = findChildByLabel(core, rowId, nextCol);
-    return nextCell ? focusCell(rowId, nextCell) : null;
+    return nextCell
+      ? focusCell(rowId, nextCell)
+      : focusRowLabel(tableId, rowId);
   };
 
   const moveCellVert = (
@@ -193,24 +166,21 @@ function tableNavMove(
       : focusRowLabel(tableId, nextRow);
   };
 
-  if (isRowLabelSelection(sel, tableId)) {
+  if (sel.focus.container === tableId) {
     const rowId = sel.focus.item;
 
-    if (dir === "up") return moveRowLabel(rowId, -1);
-    if (dir === "down") return moveRowLabel(rowId, 1);
+    if (dir === "up") return moveRow(rowId, -1);
+    if (dir === "down") return moveRow(rowId, 1);
 
     if (dir === "right") {
       const firstCol = cols[0];
       if (!firstCol) return null;
-
       const cid = findChildByLabel(core, rowId, firstCol);
       return cid ? focusCell(rowId, cid) : null;
     }
 
     return null;
   }
-
-  if (!isCellSelection(sel, tableId)) return null;
 
   const rowId = sel.focus.container;
   const cellId = sel.focus.item;
@@ -229,51 +199,9 @@ function tableNavMove(
   return null;
 }
 
-function fieldsFromSource(source: Source): SourceField[] {
-  if (source.type === "derived") {
-    return [
-      { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
-    ];
-  }
-  return [
-    { key: "from", label: "~", multiline: false, text: source.from ?? "" },
-    {
-      key: "where",
-      label: "where:",
-      multiline: true,
-      text: source.where ?? "",
-    },
-    {
-      key: "orderBy",
-      label: "orderBy:",
-      multiline: true,
-      text: source.orderBy ?? "",
-    },
-  ];
-}
-
-function patchSource(source: Source, key: string, text: string): Source {
-  if (source.type === "derived") {
-    if (key === "expr") return { type: "derived", expr: text };
-    return source;
-  }
-  if (key === "from") return { ...source, from: text };
-  if (key === "where") return { ...source, where: text };
-  if (key === "orderBy") return { ...source, orderBy: text };
-  return source;
-}
-
 export const tableCommands = {
   setLabel(core: Core, rowId: ItemId, text: string): void {
     core.commit((t) => t.setLabel(rowId, text));
-  },
-
-  setText(core: Core, cellId: ItemId, raw: string): void {
-    core.commit((t) => t.setScalar(cellId, parseScalar(raw)));
-  },
-
-  setSource(core: Core, cellId: ItemId, next: Source): void {
-    core.commit((t) => t.setSource(cellId, next));
   },
 
   addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {
@@ -305,50 +233,10 @@ export const tableCommands = {
     }
   },
 
-  addColumn(core: Core, tableId: ItemId, label: string): void {
-    const name = label.trim();
-    if (!name) return;
-
-    const rows = rowIds(core, tableId);
-    if (!rows.length) return;
-
-    core.commit((t) => {
-      for (const rowId of rows) {
-        const row = core.item(rowId);
-        if (row.mode.kind !== "direct" || row.content.kind !== "group")
-          continue;
-        if (findChildByLabel(core, rowId, name)) continue;
-
-        const cellId = t.insertChild(rowId, { kind: "blank" });
-        t.setLabel(cellId, name);
-      }
-    });
-  },
-
-  removeColumn(core: Core, tableId: ItemId, label: string): void {
-    const name = label.trim();
-    if (!name) return;
-
-    const rows = rowIds(core, tableId);
-    if (!rows.length) return;
-
-    core.commit((t) => {
-      for (const rowId of rows) {
-        const row = core.item(rowId);
-        if (row.mode.kind !== "direct" || row.content.kind !== "group")
-          continue;
-
-        const cell = findChildByLabel(core, rowId, name);
-        if (!cell) continue;
-        t.remove(cell);
-      }
-    });
-  },
-
   confirm(core: Core, tableId: ItemId, sel: Selection): void {
     if (!isFocused(sel)) return;
 
-    if (sel.target === "label" && sel.focus.container === tableId) {
+    if (sel.focus.container === tableId) {
       tableCommands.addRowAfter(core, tableId, sel.focus.item);
       return;
     }
@@ -359,9 +247,7 @@ export const tableCommands = {
       return;
     }
 
-    if (sel.target === DEFAULT_TARGET) {
-      tableCommands.addRowAfter(core, tableId, sel.focus.container);
-    }
+    tableCommands.addRowAfter(core, tableId, sel.focus.container);
   },
 } as const;
 
@@ -377,248 +263,54 @@ type TableMountCtx = {
   dispatch: (intent: TableIntent) => void;
 };
 
-function mountCellMeta(args: {
+function mountRowMeta(args: {
   core: Core;
-  cellId: ItemId;
+  tableId: ItemId;
+  rowId: ItemId;
   focus: Focus;
   scope: FocusScope;
   dispatch: (intent: TableIntent) => void;
 }): Component {
-  const { core, cellId, focus, scope } = args;
+  const { core, tableId, rowId, focus, scope, dispatch } = args;
 
   return createComponent((ctx) => {
     const meta = el("div", "ui-meta");
     const labelWrap = el("div", "ui-label");
-    const sourceWrap = el("div", "ui-source");
-    meta.append(labelWrap, sourceWrap);
+    meta.append(labelWrap);
 
-    const toContent = () =>
-      core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
-
-    const canEditLabel = core.item(cellId).mode.kind !== "readonly";
-
-    const commitLabel = (text: string) => {
-      if (!canEditLabel) return;
-      const cur = core.item(cellId).label ?? "";
-      if (cur === text) return;
-      core.commit((t) => t.setLabel(cellId, text));
-    };
-
-    const labelComp = autosizeTextField({
-      commit: commitLabel,
+    const labelComp = textField({
+      multiline: false,
+      commit: (text) => tableCommands.setLabel(core, rowId, text),
       getState: () => {
-        const snap = core.item(cellId);
-        return {
-          text: snap.label ?? "",
-          readOnly: !canEditLabel,
-          isIssue: false,
-        };
+        const sel = core.selection();
+        const editing = isRowSel(sel, tableId) && sel.focus.item === rowId;
+        const row = core.item(rowId);
+        const canEdit = row.mode.kind !== "readonly";
+        const text = row.label ?? "";
+        const readOnly = !editing || !canEdit;
+        return { text, readOnly, isIssue: false };
       },
       onCommitEvents: ["blur"],
-      wrapClassName: "autosize",
-      target: "label",
-      textKeys: (inp) => {
-        const inputEl = inp as HTMLInputElement;
-        const handler = (e: KeyboardEvent) => {
-          if (e.key === " ") {
-            e.preventDefault();
-            return;
-          }
-          if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.key === "Enter") commitLabel(inputEl.value);
-            toContent();
-          }
-        };
-        return on(inputEl, "keydown", handler);
-      },
+      target: DEFAULT_TARGET,
+      textKeys: (inp) =>
+        bindTextControlKeys(inp, {
+          nav: defaultTextNav,
+          onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
+          onEnter: () => dispatch({ type: "NAV", dir: "right", mode: "step" }),
+          onEscape: () => dispatch({ type: "CANCEL" }),
+        }),
     });
 
     labelWrap.replaceChildren(labelComp.el);
     ctx.use(labelComp);
 
-    scope.elementFor("label", () => labelComp.focusEl);
-    scope.selectOn(labelComp.focusEl, { target: "label", caret: "fromTarget" });
-
-    const fieldEls: HTMLElement[] = [];
-
-    const mountFields = (fields: readonly SourceField[]) => {
-      sourceWrap.replaceChildren();
-      fieldEls.length = 0;
-
-      for (const f of fields) {
-        const row = el("div", "ui-source-field");
-        const fieldLabel = el("div", "ui-source-key", f.label);
-        const fieldValue = el("div", "ui-source-val");
-        row.append(fieldLabel, fieldValue);
-        sourceWrap.append(row);
-        fieldEls.push(row);
-
-        const commitField = (text: string) => {
-          const it = core.item(cellId);
-          if (it.mode.kind !== "source") return;
-          const next = patchSource(it.mode.source, f.key, text);
-          tableCommands.setSource(core, cellId, next);
-        };
-
-        const tkey = `source:${f.key}`;
-
-        const fc = textField({
-          multiline: f.multiline,
-          commit: commitField,
-          getState: () => {
-            const snap = core.item(cellId);
-            if (snap.mode.kind !== "source")
-              return { text: "", readOnly: true, isIssue: false };
-            const text =
-              fieldsFromSource(snap.mode.source).find((x) => x.key === f.key)
-                ?.text ?? "";
-            return { text, readOnly: false, isIssue: false };
-          },
-          onCommitEvents: ["blur"],
-          target: tkey,
-          textKeys: (inp) =>
-            bindTextControlKeys(inp, {
-              nav: { yieldUpDown: "always", yieldLeftRight: "always" },
-              onNav: (dir) => {
-                if (dir === "left" || dir === "right")
-                  args.dispatch({ type: "NAV", dir, mode: "step" });
-              },
-              onEnter: () => commitField((inp as any).value),
-              onEscape: () => toContent(),
-            }),
-        });
-
-        fieldValue.replaceChildren(fc.el);
-        ctx.use(fc);
-
-        scope.elementFor(tkey, () => fc.focusEl);
-        scope.selectOn(fc.focusEl, { target: tkey, caret: "fromTarget" });
-      }
-    };
-
-    ctx.watch(
-      () => {
-        const snap = core.item(cellId);
-        const label = (snap.label ?? "").trim();
-        const fields =
-          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
-        const sel = core.selection();
-        const labelFocused =
-          sel.kind === "focused" &&
-          sel.focus.item === focus.item &&
-          sel.focus.container === focus.container &&
-          sel.target === "label";
-
-        const needMeta = label !== "" || fields.length > 0 || labelFocused;
-
-        return { needMeta, fields };
-      },
-      ({ needMeta, fields }) => {
-        if (!needMeta) {
-          meta.replaceChildren();
-          meta.append(labelWrap, sourceWrap);
-          sourceWrap.replaceChildren();
-          return;
-        }
-        if (!meta.contains(labelWrap)) meta.append(labelWrap);
-        if (!meta.contains(sourceWrap)) meta.append(sourceWrap);
-        mountFields(fields);
-      },
-    );
-
-    return meta;
-  });
-}
-
-function mountTableCellItem(
-  mountCtx: TableMountCtx,
-  rowId: ItemId,
-  cellId: ItemId,
-): Component {
-  const { core, dispatch } = mountCtx;
-
-  return createComponent((ctx) => {
-    const focus: Focus = { container: rowId, item: cellId };
-
-    const root = el("div", "ui-item");
-    const metaHost = el("div");
-    const bodyHost = el("div");
-    root.append(metaHost, bodyHost);
-
-    const metaSlot = ctx.slot(metaHost);
-    const bodySlot = ctx.slot(bodyHost);
-
-    let surface: HTMLElement | null = bodyHost;
-
-    const scope = ctx.focus(core, focus, {
-      default: () => surface ?? bodyHost,
-    });
-    scope.elementFor(DEFAULT_TARGET, () => surface);
-    scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
-
-    const body = scalarField({
-      core,
-      id: cellId,
-      target: DEFAULT_TARGET,
-      multiline: true,
-      commitText: (text) => tableCommands.setText(core, cellId, text),
-      textKeys: (inp) =>
-        bindTextControlKeys(inp, {
-          nav: defaultTextNav,
-          onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-          onEnter: () => dispatch({ type: "CONFIRM" }),
-          onEscape: () => dispatch({ type: "CANCEL" }),
-        }),
-    });
-
-    surface = body.focusEl;
-
-    scope.selectOn(body.focusEl as HTMLElement, {
+    scope.elementFor(DEFAULT_TARGET, () => labelComp.focusEl);
+    scope.selectOn(labelComp.focusEl, {
       target: DEFAULT_TARGET,
       caret: "fromTarget",
     });
 
-    bodySlot.set(body);
-    ctx.use(body);
-
-    ctx.watch(
-      () => core.selection(),
-      () => {
-        applyUiItemState(root, { core, focus, view: "table", part: "cell" });
-      },
-    );
-
-    ctx.watch(
-      () => {
-        const snap = core.item(cellId);
-        const label = (snap.label ?? "").trim();
-        const fields =
-          snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
-        const sel = core.selection();
-        const labelFocused =
-          sel.kind === "focused" &&
-          sel.focus.item === focus.item &&
-          sel.focus.container === focus.container &&
-          sel.target === "label";
-
-        const needMeta = label !== "" || fields.length > 0 || labelFocused;
-        return { needMeta, fields };
-      },
-      ({ needMeta }) => {
-        if (!needMeta) {
-          metaSlot.set(null);
-          metaHost.replaceChildren();
-          metaHost.className = "";
-          return;
-        }
-        metaSlot.set(mountCellMeta({ core, cellId, focus, scope, dispatch }));
-        metaHost.className = "ui-meta-host";
-      },
-    );
-
-    return root;
+    return meta;
   });
 }
 
@@ -628,7 +320,7 @@ function mountCellHost(
   col: string,
 ): Component {
   return createComponent((ctx) => {
-    const host = el("div", "ui-td");
+    const host = el("div", "ui-table-cell");
     (host as HTMLElement).setAttribute("data-col", col);
 
     const slot = ctx.slot(host);
@@ -650,7 +342,7 @@ function mountCellHost(
       () => getCellId(),
       (id) => {
         if (!id) {
-          setCur({ el: el("div", "ui-missing", ""), dispose: () => {} }, null);
+          setCur({ el: el("div"), dispose: () => {} }, null);
           return;
         }
 
@@ -666,7 +358,7 @@ function mountCellHost(
           return;
         }
 
-        setCur(mountTableCellItem(mountCtx, rowId, id), id);
+        setCur({ el: el("div"), dispose: () => {} }, id);
       },
     );
 
@@ -688,67 +380,23 @@ function mountRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
   const focus: Focus = { container: tableId, item: rowId };
 
   return createComponent((ctx) => {
-    const rowWrap = el("div", "ui-tr");
-
     const rowItem = el("div", "ui-item");
-    rowWrap.append(rowItem);
 
-    const labelTd = el("div", "ui-td ui-td-label");
-    const cellsWrap = el("div", "ui-tr-cells");
-    rowItem.append(labelTd, cellsWrap);
+    const scope = ctx.focus(core, focus, { default: () => rowItem });
 
-    const labelComp = textField({
-      multiline: false,
-      commit: (text) => tableCommands.setLabel(core, rowId, text),
-      getState: () => {
-        const sel = core.selection();
-        const editing =
-          isRowLabelSelection(sel, tableId) && sel.focus.item === rowId;
-
-        const row = core.item(rowId);
-        const canEdit = row.mode.kind !== "readonly";
-
-        const text = row.label ?? "";
-        const readOnly = !editing || !canEdit;
-        return { text, readOnly, isIssue: false };
-      },
-      onCommitEvents: ["blur"],
-      target: "label",
-      textKeys: (inp) =>
-        bindTextControlKeys(inp, {
-          nav: defaultTextNav,
-          onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-          onEnter: () => {
-            const first = mountCtx.columnsSignal.value[0];
-            if (!first) return;
-
-            const cell = findChildByLabel(core, rowId, first);
-            if (!cell) return;
-
-            const res = focusCell(rowId, cell);
-            core.focus(res.focus, res.target, { caret: res.caret });
-          },
-          onEscape: () => dispatch({ type: "CANCEL" }),
-        }),
+    const metaComp = mountRowMeta({
+      core,
+      tableId,
+      rowId,
+      focus,
+      scope,
+      dispatch,
     });
+    rowItem.append(metaComp.el);
+    ctx.use(metaComp);
 
-    const scope = ctx.focus(core, focus, { default: () => labelComp.focusEl });
-    scope.elementFor("label", () => labelComp.focusEl);
-    scope.selectOn(labelComp.focusEl, { target: "label", caret: "fromTarget" });
-    scope.selectOn(rowItem, { target: "label", caret: "fromTarget" });
-
-    labelTd.replaceChildren(labelComp.el);
-    ctx.use(labelComp);
-
-    const cellList = ctx.list(cellsWrap, (colName: string) =>
+    const cellList = ctx.list(rowItem, (colName: string) =>
       mountCellHost(mountCtx, rowId, colName),
-    );
-
-    ctx.watch(
-      () => core.selection(),
-      () => {
-        applyUiItemState(rowItem, { core, focus, view: "table", part: "row" });
-      },
     );
 
     ctx.watch(
@@ -758,15 +406,24 @@ function mountRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       },
     );
 
+    ctx.watch(
+      () => core.selection(),
+      () => {
+        applyUiItemState(rowItem, { core, focus, view: "table", part: "row" });
+      },
+    );
+
     ctx.on(rowItem, "pointerdown", (e: PointerEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest(".ui-table-cell"))
+        return;
       const sel = core.selection();
-      if (isRowLabelSelection(sel, tableId) && sel.focus.item === rowId) return;
+      if (isRowSel(sel, tableId) && sel.focus.item === rowId) return;
       const next = focusRowLabel(tableId, rowId, caretFromTarget(e.target));
       core.focus(next.focus, next.target, { caret: next.caret });
       e.stopPropagation();
     });
 
-    return rowWrap;
+    return rowItem;
   });
 }
 
@@ -774,18 +431,19 @@ function mountHeader(mountCtx: TableMountCtx): Component {
   return createComponent((ctx) => {
     const header = el("div", "ui-table-header");
 
-    const labelTd = el("div", "ui-td ui-td-label");
-    header.append(labelTd);
+    const metaSpacer = el("div", "ui-table-col ui-table-col-meta");
+    header.append(metaSpacer);
 
     const columnEls = new Map<string, HTMLElement>();
 
     const reconcile = (cols: readonly string[]) => {
-      const desired: HTMLElement[] = [labelTd];
+      const desired: HTMLElement[] = [metaSpacer];
 
       for (const col of cols) {
         let cell = columnEls.get(col);
         if (!cell) {
-          cell = el("div", "ui-td ui-col", col);
+          cell = el("div", "ui-table-col", col);
+          cell.setAttribute("data-col", col);
           columnEls.set(col, cell);
         } else if (cell.textContent !== col) {
           cell.textContent = col;
@@ -844,12 +502,8 @@ export function createTableView(args: {
 }): DomView {
   const { core, id: tableId } = args;
 
-  const rootItem = el("div", "ui-item ui-table-root");
+  const rootItem = el("div", "ui-item");
   ensureTabbable(rootItem);
-
-  const headerHost = el("div");
-  const bodyHost = el("div");
-  rootItem.append(headerHost, bodyHost);
 
   const columnsSignal = computed(() => deriveColumns(core, tableId));
 
@@ -876,8 +530,7 @@ export function createTableView(args: {
   const header = mountHeader(mountCtx);
   const body = mountBody(mountCtx);
 
-  headerHost.replaceChildren(header.el);
-  bodyHost.replaceChildren(body.el);
+  rootItem.replaceChildren(header.el, body.el);
 
   const onKeyDown = (e: KeyboardEvent) => {
     const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
@@ -911,11 +564,15 @@ export function createTableView(args: {
 
   const tableFocus: Focus = args.focus ?? { container: tableId, item: tableId };
 
-  applyUiItemState(rootItem, {
-    core,
-    focus: tableFocus,
-    view: "table",
-    part: "table",
+  ctxApplyRootState();
+
+  function ctxApplyRootState() {
+    applyUiItemState(rootItem, { core, focus: tableFocus, view: "table" });
+  }
+
+  const rootUnsub = on(rootItem, "pointerdown", () => {
+    const sel = core.selection();
+    if (sel.kind !== "idle") return;
   });
 
   if (core.selection().kind === "idle") {
@@ -932,6 +589,7 @@ export function createTableView(args: {
     root: rootItem,
     onKeyDown,
     dispose() {
+      rootUnsub();
       header.dispose();
       body.dispose();
       rootItem.replaceChildren();
