@@ -22,9 +22,9 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
-  textField,
   autosizeTextField,
-  contentField,
+  textField,
+  scalarField,
   type FocusScope,
   setData,
   applyUiItemState,
@@ -345,7 +345,9 @@ export const outlineCommands = {
       core.focus(
         { container: containerId, item: chosen },
         defaultTargetFor(core, chosen),
-        { caret },
+        {
+          caret,
+        },
       );
     } else {
       core.blur();
@@ -473,7 +475,7 @@ type OutlineMountCtx = {
   dispatch: (intent: OutlineIntent) => void;
 };
 
-function mountOutlineMeta(
+function mountMeta(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   fields: readonly SourceField[],
@@ -601,177 +603,15 @@ function mountOutlineMeta(
   });
 }
 
-type ContentTargetRef = { current: HTMLElement | null };
+type ContentSurfaceRef = { current: HTMLElement | null };
 
-function mountOutlineChildren(
+function mountOutlineItem(
   mountCtx: OutlineMountCtx,
   focus: Focus,
-  scope: FocusScope,
-  contentTargetRef: ContentTargetRef,
-): Component {
-  const { core } = mountCtx;
-
-  return createComponent((componentCtx) => {
-    const container = el("div", "outline-children");
-    ensureTabbable(container);
-
-    contentTargetRef.current = container;
-
-    scope.selectOn(container, { caret: "zero" });
-
-    const mgr = componentCtx.list(container, (childId: string) => {
-      const childFocus: Focus = { container: focus.item, item: childId };
-      return mountOutlineNode(mountCtx, { focus: childFocus, showMeta: true });
-    });
-
-    componentCtx.watch(
-      () => {
-        const snap = core.item(focus.item);
-        const c = snap.content;
-        return c.kind === "group" ? [...c.children] : [];
-      },
-      (ids) => mgr.update(ids),
-    );
-
-    componentCtx.onCleanup(() => {
-      contentTargetRef.current = container;
-    });
-
-    return container;
-  });
-}
-
-function mountOutlineBody(
-  mountCtx: OutlineMountCtx,
-  focus: Focus,
-  scope: FocusScope,
-  contentTargetRef: ContentTargetRef,
+  showMeta: boolean,
 ): Component {
   const { core, dispatch } = mountCtx;
   const id = focus.item;
-
-  return createComponent((componentCtx) => {
-    const hostEl = el("div", "outline-body");
-
-    const nested = core.mountView({ id, focus, continueAs: "outline" });
-    if (nested) {
-      ensureTabbable(nested.el);
-      contentTargetRef.current = nested.el;
-
-      hostEl.replaceChildren(nested.el);
-      componentCtx.use(nested);
-
-      scope.selectOn(nested.el, { caret: "zero" });
-
-      componentCtx.onCleanup(() => {
-        contentTargetRef.current = hostEl;
-      });
-
-      return hostEl;
-    }
-
-    const snap = core.item(id);
-
-    if (snap.content.kind === "group") {
-      const childrenComp = mountOutlineChildren(
-        mountCtx,
-        focus,
-        scope,
-        contentTargetRef,
-      );
-      hostEl.replaceChildren(childrenComp.el);
-      componentCtx.use(childrenComp);
-      return hostEl;
-    }
-
-    const vf = contentField({
-      core,
-      id,
-      target: DEFAULT_TARGET,
-      commitText: (text) => outlineCommands.setText(core, id, text),
-      textKeys: (inp) => {
-        const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
-        const stops: Array<() => void> = [];
-
-        stops.push(
-          on(inputEl, "keydown", (e: KeyboardEvent) => {
-            if (e.key === "=" && !inputEl.value) {
-              const it = core.item(id);
-              if (it.mode.kind === "direct") {
-                stopEvent(e);
-                dispatch({ type: "SET_DERIVED" });
-              }
-            }
-          }),
-        );
-
-        stops.push(
-          bindTextControlKeys(inputEl, {
-            nav: defaultTextNav,
-            onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-            onEnter: (caret) => dispatch({ type: "SPLIT", caret }),
-            onTab: (shift) =>
-              dispatch({ type: "INDENT", dir: shift ? "out" : "in" }),
-            onBackspaceBoundary: () =>
-              dispatch({ type: "DELETE_BOUNDARY", dir: "backward" }),
-            onDeleteBoundary: () =>
-              dispatch({ type: "DELETE_BOUNDARY", dir: "forward" }),
-            onEscape: () => dispatch({ type: "CANCEL" }),
-          }),
-        );
-
-        return () => {
-          for (const fn of stops.toReversed()) fn();
-        };
-      },
-      renderGroupChild: (childId) =>
-        createComponent((cctx) => {
-          const d = el("div", "outline-inline");
-          ensureTabbable(d);
-          setData(d, "target", DEFAULT_TARGET);
-          cctx.watch(
-            () => core.item(childId),
-            (snap2) => {
-              const c = snap2.content;
-              const text =
-                c.kind === "issue"
-                  ? c.message
-                  : c.kind === "scalar"
-                    ? c.value == null
-                      ? ""
-                      : String(c.value)
-                    : "";
-              d.textContent = text;
-            },
-          );
-          return d;
-        }),
-    });
-
-    contentTargetRef.current = vf.focusEl;
-
-    hostEl.replaceChildren(vf.el);
-    componentCtx.use(vf);
-
-    scope.selectOn(vf.focusEl as HTMLElement, {
-      target: DEFAULT_TARGET,
-      caret: "fromTarget",
-    });
-
-    componentCtx.onCleanup(() => {
-      contentTargetRef.current = hostEl;
-    });
-
-    return hostEl;
-  });
-}
-
-function mountOutlineNode(
-  mountCtx: OutlineMountCtx,
-  spec: { focus: Focus; showMeta: boolean },
-): Component {
-  const { core } = mountCtx;
-  const focus = spec.focus;
 
   return createComponent((componentCtx) => {
     const root = el("div", "ui-item");
@@ -782,20 +622,114 @@ function mountOutlineNode(
     const metaSlot = componentCtx.slot(metaHost);
     const bodySlot = componentCtx.slot(bodyHost);
 
-    const contentTargetRef: ContentTargetRef = { current: bodyHost };
+    const surface: ContentSurfaceRef = { current: bodyHost };
 
     const scope = componentCtx.focus(core, focus, {
-      default: () => contentTargetRef.current ?? bodyHost,
+      default: () => surface.current ?? bodyHost,
     });
 
-    scope.elementFor(DEFAULT_TARGET, () => contentTargetRef.current);
+    scope.elementFor(DEFAULT_TARGET, () => surface.current);
+
     scope.selectOn(root, { target: DEFAULT_TARGET, caret: "zero" });
+
+    const mountBody = (): Component => {
+      const snap = core.item(id);
+
+      if (snap.content.kind === "group") {
+        return createComponent((ctx) => {
+          const wrap = el("div", "outline-children");
+          ensureTabbable(wrap);
+
+          surface.current = wrap;
+          scope.selectOn(wrap, { target: DEFAULT_TARGET, caret: "zero" });
+
+          const mgr = ctx.list(wrap, (childId: string) => {
+            const childFocus: Focus = { container: id, item: childId };
+            return mountNode(mountCtx, childFocus, true);
+          });
+
+          ctx.watch(
+            () => {
+              const s = core.item(id);
+              const c = s.content;
+              return c.kind === "group" ? [...c.children] : [];
+            },
+            (ids) => mgr.update(ids),
+          );
+
+          ctx.onCleanup(() => {
+            surface.current = wrap;
+          });
+
+          return wrap;
+        });
+      }
+
+      const sf = scalarField({
+        core,
+        id,
+        target: DEFAULT_TARGET,
+        multiline: true,
+        commitText: (text) => outlineCommands.setText(core, id, text),
+        textKeys: (inp) => {
+          const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
+          const stops: Array<() => void> = [];
+
+          stops.push(
+            on(inputEl, "keydown", (e: KeyboardEvent) => {
+              if (e.key === "=" && !inputEl.value) {
+                const it = core.item(id);
+                if (it.mode.kind === "direct") {
+                  stopEvent(e);
+                  dispatch({ type: "SET_DERIVED" });
+                }
+              }
+            }),
+          );
+
+          stops.push(
+            bindTextControlKeys(inputEl, {
+              nav: defaultTextNav,
+              onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
+              onEnter: (caret) => dispatch({ type: "SPLIT", caret }),
+              onTab: (shift) =>
+                dispatch({ type: "INDENT", dir: shift ? "out" : "in" }),
+              onBackspaceBoundary: () =>
+                dispatch({ type: "DELETE_BOUNDARY", dir: "backward" }),
+              onDeleteBoundary: () =>
+                dispatch({ type: "DELETE_BOUNDARY", dir: "forward" }),
+              onEscape: () => dispatch({ type: "CANCEL" }),
+            }),
+          );
+
+          return () => {
+            for (const fn of stops.toReversed()) fn();
+          };
+        },
+      });
+
+      surface.current = sf.focusEl;
+
+      scope.selectOn(sf.focusEl as HTMLElement, {
+        target: DEFAULT_TARGET,
+        caret: "fromTarget",
+      });
+
+      componentCtx.use(sf);
+
+      return {
+        el: sf.el,
+        dispose() {
+          sf.dispose();
+        },
+      };
+    };
 
     componentCtx.watch(
       () => {
         applyUiItemState(root, { core, focus, view: "outline" });
 
-        const snap = core.item(focus.item);
+        const snap = core.item(id);
         const label = (snap.label ?? "").trim();
         const fields =
           snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
@@ -808,13 +742,13 @@ function mountOutlineNode(
           sel.target === "label";
 
         const needMeta =
-          spec.showMeta && (label !== "" || fields.length > 0 || labelFocused);
+          showMeta && (label !== "" || fields.length > 0 || labelFocused);
 
         return { needMeta, fields };
       },
       ({ needMeta, fields }) => {
         if (needMeta) {
-          metaSlot.set(mountOutlineMeta(mountCtx, focus, fields, scope));
+          metaSlot.set(mountMeta(mountCtx, focus, fields, scope));
           if (!metaHost.classList.contains("ui-meta-host"))
             metaHost.className = "ui-meta-host";
         } else {
@@ -823,13 +757,57 @@ function mountOutlineNode(
           metaHost.className = "";
         }
 
-        bodySlot.set(
-          mountOutlineBody(mountCtx, focus, scope, contentTargetRef),
-        );
+        bodySlot.set(mountBody());
       },
     );
 
     return root;
+  });
+}
+
+function mountNode(
+  mountCtx: OutlineMountCtx,
+  focus: Focus,
+  showMeta: boolean,
+): Component {
+  const { core } = mountCtx;
+  const id = focus.item;
+
+  return createComponent((ctx) => {
+    const wrap = el("div", "ui-outline-wrap");
+    ensureTabbable(wrap);
+
+    const slot = ctx.slot(wrap);
+
+    let cur: Component | null = null;
+
+    const setCur = (next: Component | null) => {
+      if (cur === next) return;
+      cur?.dispose();
+      cur = next;
+      slot.set(next);
+    };
+
+    ctx.watch(
+      () => core.item(id),
+      () => {
+        const mounted = core.mountView({ id, focus, continueAs: "outline" });
+        if (mounted) {
+          setCur(mounted);
+          return;
+        }
+        setCur(mountOutlineItem(mountCtx, focus, showMeta));
+      },
+    );
+
+    ctx.on(wrap, "pointerdown", (e: PointerEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest(".ui-item"))
+        return;
+      core.focus(focus, defaultTargetFor(core, id), { caret: caret0() });
+      e.stopPropagation();
+    });
+
+    return wrap;
   });
 }
 
@@ -888,14 +866,12 @@ export function createOutlineView(args: {
     }
   };
 
-  const mountCtx: OutlineMountCtx = { core, rootId, navMove, dispatch };
+  const root = el("div", "ui-outline-root");
+  ensureTabbable(root);
 
-  const node = mountOutlineNode(mountCtx, {
-    focus: args.focus ?? { container: rootId, item: rootId },
-    showMeta: false,
-  });
-
-  ensureTabbable(node.el);
+  const focus: Focus = args.focus ?? { container: rootId, item: rootId };
+  const node = mountNode({ core, rootId, navMove, dispatch }, focus, false);
+  root.replaceChildren(node.el);
 
   const onKeyDown = (e: KeyboardEvent) => {
     const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
@@ -960,11 +936,11 @@ export function createOutlineView(args: {
 
   return {
     id: `outline:${String(rootId)}`,
-    root: node.el,
+    root,
     onKeyDown,
     dispose() {
       node.dispose();
-      node.el.replaceChildren();
+      root.replaceChildren();
     },
   };
 }

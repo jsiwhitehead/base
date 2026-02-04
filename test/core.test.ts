@@ -969,19 +969,17 @@ describe("smoke", () => {
     const view = viewFactories.outline({ core, id: rootId });
     const unmount = await mountView(view);
 
-    const findText = () => {
-      const nodes = Array.from(
-        view.root.querySelectorAll(`.ui-item[data-mode="readonly"]`),
-      );
-      return nodes.map((n) => n.textContent ?? "");
+    const readItemText = (id: ItemId) => {
+      const node = view.root.querySelector(`.ui-item[data-id="${id}"]`);
+      return node?.textContent ?? "";
     };
 
     await tick();
-    expect(findText().join("\n")).toContain("2");
+    expect(readItemText(d)).toContain("2");
 
     core.commit((t) => t.setScalar(x, 5));
     await tick();
-    expect(findText().join("\n")).toContain("6");
+    expect(readItemText(d)).toContain("6");
 
     unmount();
   });

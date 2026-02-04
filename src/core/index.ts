@@ -594,6 +594,11 @@ export function createCore(opts: {
       for (const rid of t.content.childIds) {
         if (!model.hasEntry(rid)) continue;
         const row = model.peekEntry(rid);
+
+        if (row.view != null) {
+          opsOut.push(model.ops.patch(rid, { view: null }));
+        }
+
         if (!isGroupContent(row.content)) {
           opsOut.push(
             model.ops.patch(rid, {

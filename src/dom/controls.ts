@@ -6,7 +6,6 @@ import {
   stopEvent,
   ensureTabbable,
   type FocusComponent,
-  focusElOf,
   setData,
 } from "./base";
 import { DEFAULT_TARGET } from "../core/runtime";
@@ -285,167 +284,112 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-function readonlyScalarText(core: Core, id: ItemId): Component {
-  return createComponent((ctx) => {
-    const d = el("div");
-    ensureTabbable(d);
-    setData(d, "target", DEFAULT_TARGET);
-
-    ctx.watch(
-      () => core.item(id),
-      (snap) => {
-        const c = snap.content;
-        const text =
-          c.kind === "issue"
-            ? c.message
-            : c.kind === "scalar"
-              ? c.value == null
-                ? ""
-                : String(c.value)
-              : "";
-        d.textContent = text;
-      },
-    );
-
-    return d;
-  });
-}
-
-export type ContentFieldOpts = {
-  core: Core;
-  id: ItemId;
-  className?: string;
-  textKeys?: (inp: TextInputElement) => (() => void) | void;
-  renderGroupChild?: (childId: ItemId) => Component;
-  commitText?: (text: string) => void;
-  target?: string;
+export type ScalarFieldState = {
+  text: string;
+  editable: boolean;
+  isIssue: boolean;
 };
 
-export function contentField(opts: ContentFieldOpts): FocusComponent {
+export type ScalarFieldOpts = {
+  core: Core;
+  id: ItemId;
+  multiline?: boolean;
+  className?: string;
+  target?: string;
+  commitText?: (text: string) => void;
+  onCommitEvents?: readonly ("input" | "blur")[];
+  textKeys?: (inp: TextInputElement) => (() => void) | void;
+  getState?: () => ScalarFieldState;
+};
+
+function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
+  const snap = core.item(id);
+  const c = snap.content;
+
+  if (c.kind === "issue") {
+    return { text: c.message, editable: false, isIssue: true };
+  }
+
+  if (c.kind === "scalar") {
+    const editable = snap.mode.kind === "direct";
+    const text = c.value == null ? "" : String(c.value);
+    return { text, editable, isIssue: false };
+  }
+
+  return { text: "", editable: false, isIssue: false };
+}
+
+export function scalarField(opts: ScalarFieldOpts): FocusComponent {
   let focusEl: HTMLElement | null = null;
+  const target = opts.target ?? DEFAULT_TARGET;
+  const multiline = opts.multiline ?? true;
 
   const c = createComponent((ctx) => {
-    const hostEl = el("div");
-    if (opts.className) hostEl.className = opts.className;
+    const host = el("div");
+    if (opts.className) host.className = opts.className;
 
-    const slot = ctx.slot(hostEl);
+    const slot = ctx.slot(host);
 
-    const setFocusEl = (comp: Component | null) => {
-      focusEl = comp ? focusElOf(comp) : hostEl;
-    };
-    setFocusEl(null);
-
-    const mountScalarEditor = (): FocusComponent<TextInputElement> => {
-      return textField({
-        multiline: true,
-        commit: (text) => opts.commitText?.(text),
-        getState: () => {
-          const snap = opts.core.item(opts.id);
-          const c0 = snap.content;
-
-          const canEdit = snap.mode.kind === "direct" && c0.kind === "scalar";
-
-          if (canEdit) {
-            return {
-              text: c0.value == null ? "" : String(c0.value),
-              readOnly: false,
-              isIssue: false,
-            };
-          }
-
-          const text =
-            c0.kind === "issue"
-              ? c0.message
-              : c0.kind === "scalar"
-                ? c0.value == null
-                  ? ""
-                  : String(c0.value)
-                : "";
-          return { text, readOnly: true, isIssue: c0.kind === "issue" };
-        },
-        textKeys: opts.textKeys,
-        target: opts.target ?? DEFAULT_TARGET,
-      });
-    };
-
-    const mountReadonly = (): Component => {
+    const mountReadonly = (): FocusComponent<HTMLElement> => {
       const d = el("div");
       ensureTabbable(d);
-      setData(d, "target", opts.target ?? DEFAULT_TARGET);
-
-      const inner = readonlyScalarText(opts.core, opts.id);
-      d.replaceChildren(inner.el);
-      ctx.use(inner);
-
-      return {
-        el: d,
-        dispose() {
-          inner.dispose();
-          d.replaceChildren();
-        },
-      };
-    };
-
-    const mountGroup = (): Component => {
-      const wrap = el("div");
-      ensureTabbable(wrap);
-      setData(wrap, "target", opts.target ?? DEFAULT_TARGET);
-
-      const children = ctx.list(wrap, (childId: string) => {
-        const c0 =
-          opts.renderGroupChild?.(childId) ??
-          readonlyScalarText(opts.core, childId);
-        return c0;
-      });
+      setData(d, "target", target);
 
       ctx.watch(
-        () => {
-          const snap = opts.core.item(opts.id);
-          const c0 = snap.content;
-          return c0.kind === "group" ? [...c0.children] : [];
-        },
-        (ids) => {
-          children.update(ids);
+        () =>
+          (
+            opts.getState ?? (() => deriveScalarFieldState(opts.core, opts.id))
+          )(),
+        (st) => {
+          d.textContent = st.text;
         },
       );
 
-      return { el: wrap, dispose: () => wrap.replaceChildren() };
+      return { el: d, focusEl: d, dispose: () => d.replaceChildren() };
     };
 
-    let currentKind: "group" | "scalar" | "readonly" | null = null;
+    const mountEditor = (): FocusComponent<TextInputElement> => {
+      return textField({
+        multiline,
+        className: "",
+        commit: (text) => opts.commitText?.(text),
+        getState: () => {
+          const st =
+            opts.getState?.() ?? deriveScalarFieldState(opts.core, opts.id);
+          return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
+        },
+        onCommitEvents: opts.onCommitEvents,
+        textKeys: opts.textKeys,
+        target,
+      });
+    };
+
+    let cur: Component | null = null;
+    let curEditable: boolean | null = null;
+
+    const setCur = (next: FocusComponent) => {
+      cur?.dispose();
+      cur = next;
+      slot.set(next);
+      focusEl = next.focusEl;
+    };
 
     ctx.watch(
-      () => opts.core.item(opts.id),
-      (snap) => {
-        const c0 = snap.content;
-
-        const nextKind =
-          c0.kind === "group"
-            ? "group"
-            : snap.mode.kind === "direct" && c0.kind === "scalar"
-              ? "scalar"
-              : "readonly";
-
-        if (nextKind === currentKind) return;
-        currentKind = nextKind;
-
-        const nextComp =
-          nextKind === "group"
-            ? mountGroup()
-            : nextKind === "scalar"
-              ? mountScalarEditor()
-              : mountReadonly();
-
-        slot.set(nextComp);
-        setFocusEl(nextComp);
+      () =>
+        (opts.getState ?? (() => deriveScalarFieldState(opts.core, opts.id)))(),
+      (st) => {
+        const nextEditable = !!st.editable;
+        if (curEditable === nextEditable && cur) return;
+        curEditable = nextEditable;
+        setCur(nextEditable ? mountEditor() : mountReadonly());
       },
     );
 
     ctx.onCleanup(() => {
-      focusEl = hostEl;
+      focusEl = host;
     });
 
-    return hostEl;
+    return host;
   });
 
   return {

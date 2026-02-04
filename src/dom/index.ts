@@ -15,4 +15,4 @@ export {
 export { createComponent } from "./base";
 
 export { defaultTextNav, bindTextControlKeys } from "./controls";
-export { textField, autosizeTextField, contentField } from "./controls";
+export { textField, autosizeTextField, scalarField } from "./controls";

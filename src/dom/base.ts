@@ -261,11 +261,8 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
 
       const memo = computed(() => {
         const next = sigs.map((s) => s.value);
-
-        if (prev && next.every((v, i) => shallowEqual(v, prev![i]))) {
+        if (prev && next.every((v, i) => shallowEqual(v, prev![i])))
           return prev;
-        }
-
         prev = next;
         return next;
       });

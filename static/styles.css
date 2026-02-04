@@ -34,6 +34,10 @@
   color: var(--ui-fg-issue);
 }
 
+.ui-item[data-focused="true"] {
+  outline: none;
+}
+
 .ui-meta {
   display: flex;
   align-items: center;
@@ -73,13 +77,14 @@
   flex: 1;
 }
 
-.ui-item[data-view="outline"] {
+.outline-node {
+  position: relative;
   padding-left: calc(var(--ui-rule-w) + var(--ui-rule-gap));
   padding-top: 1px;
   padding-bottom: 1px;
 }
 
-.ui-item[data-view="outline"]::before {
+.outline-node::before {
   content: "";
   position: absolute;
   left: 0;
@@ -90,16 +95,8 @@
   border-radius: var(--ui-radius);
 }
 
-.ui-item[data-view="outline"][data-focused="true"]::before {
+.outline-node[data-focused="true"]::before {
   background: var(--ui-blue-normal);
-}
-
-.ui-item[data-view="outline"] > .ui-meta-host {
-  margin-bottom: 2px;
-}
-
-.outline-body {
-  min-height: 20px;
 }
 
 .outline-children {
@@ -108,10 +105,6 @@
 
 .outline-inline {
   min-height: 20px;
-}
-
-.ui-item[data-view="table"][data-part="table"] {
-  display: block;
 }
 
 .ui-table-root {
@@ -133,6 +126,17 @@
 
 .ui-table-row {
   display: table-row;
+  position: relative;
+}
+
+.ui-table-row[data-focused="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--ui-blue-light);
 }
 
 .ui-cell {
@@ -153,6 +157,10 @@
   white-space: nowrap;
 }
 
+.ui-table-row[data-focused="true"] > .ui-row-label {
+  color: var(--ui-blue-dark);
+}
+
 .ui-cell-data {
   min-width: 60px;
 }
@@ -165,37 +173,13 @@
   min-height: 20px;
 }
 
-.ui-item[data-view="table"][data-part="row"] {
-  position: relative;
-}
-
-.ui-item[data-view="table"][data-part="row"]::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 2px;
-  background: transparent;
-}
-
-.ui-item[data-view="table"][data-part="row"][data-focused="true"]::before {
-  background: var(--ui-blue-light);
-}
-
-.ui-item[data-view="table"][data-part="row"][data-focused="true"]
-  > .ui-row-label {
-  color: var(--ui-blue-dark);
-}
-
-.ui-item[data-view="slider"] {
+.ui-slider {
   display: flex;
   align-items: center;
   gap: var(--ui-rule-gap);
-  padding-left: calc(var(--ui-rule-w) + var(--ui-rule-gap));
 }
 
-.ui-item[data-view="slider"]::before {
+.ui-slider::before {
   content: "";
   position: absolute;
   left: 0;

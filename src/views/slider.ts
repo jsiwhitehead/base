@@ -7,7 +7,13 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import { el, stopEvent, createComponent, applyUiItemState } from "../dom";
+import {
+  el,
+  stopEvent,
+  createComponent,
+  applyUiItemState,
+  ensureTabbable,
+} from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -198,7 +204,7 @@ function mountSlider({
       handleSliderKey(e, dispatch);
     });
 
-    root.tabIndex = 0;
+    ensureTabbable(root);
 
     return root;
   });
