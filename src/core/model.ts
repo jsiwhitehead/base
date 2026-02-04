@@ -565,13 +565,13 @@ export function createModel(): Model {
   const locateInOwner = (childId: EntryId): LocateInOwnerResult | null => {
     if (!entries.has(childId)) return null;
 
-    const child = peekEntry(childId);
+    const child = readEntry(childId);
     const ownerId = child.ownerId;
     if (ownerId == null) return null;
 
     if (!entries.has(ownerId)) return null;
 
-    const owner = peekEntry(ownerId);
+    const owner = readEntry(ownerId);
     if (!isGroupEntry(owner)) return null;
 
     const childIds = [...owner.content.childIds];
