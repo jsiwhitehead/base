@@ -6,11 +6,13 @@ export {
   on,
   stopEvent,
   ensureTabbable,
+  makeNotTabbable,
   reconcileChildren,
   setData,
   setDataBool,
   applyUiItemState,
   createComponent,
+  caretFromTarget,
 } from "./base";
 
 export { defaultTextNav, bindTextControlKeys } from "./controls";

@@ -26,6 +26,7 @@ import {
   type FocusScope,
   applyUiItemState,
   ensureTabbable,
+  makeNotTabbable,
   textField,
 } from "../dom";
 
@@ -517,8 +518,7 @@ function mountMeta(
       wrapClassName: "autosize",
       target: "label",
       textKeys: (inp) => {
-        inp.tabIndex = -1;
-        const inputEl = inp as HTMLInputElement;
+        makeNotTabbable(inp);
         const handler = (e: KeyboardEvent) => {
           if (e.key === " ") {
             e.preventDefault();
@@ -527,15 +527,15 @@ function mountMeta(
           if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
             e.preventDefault();
             e.stopPropagation();
-            if (e.key === "Enter") commitLabel(inputEl.value);
+            if (e.key === "Enter") commitLabel(inp.value);
             toContent();
           }
         };
-        return on(inputEl, "keydown", handler);
+        return on(inp, "keydown", handler);
       },
     });
 
-    labelComp.focusEl.tabIndex = -1;
+    makeNotTabbable(labelComp.focusEl);
     labelSlot.set(labelComp);
     ctx.cleanup(() => labelComp.dispose());
 
@@ -570,7 +570,7 @@ function mountMeta(
             onCommitEvents: ["blur"],
             target: tkey,
             textKeys: (inp) => {
-              inp.tabIndex = -1;
+              makeNotTabbable(inp);
               return bindTextControlKeys(inp, {
                 nav: { yieldUpDown: "always", yieldLeftRight: "always" },
                 onNav: (dir) => {
@@ -578,12 +578,7 @@ function mountMeta(
                     dispatch({ type: "NAV", dir, mode: "step" });
                 },
                 onEnter: () =>
-                  outlineCommands.commitSourceField(
-                    core,
-                    id,
-                    key,
-                    (inp as any).value,
-                  ),
+                  outlineCommands.commitSourceField(core, id, key, inp.value),
                 onEscape: () => toContent(),
               });
             },
@@ -601,7 +596,7 @@ function mountMeta(
 
           if (!fieldComp) {
             const fc = makeField(spec.multiline, tkey);
-            (fc.focusEl as any).tabIndex = -1;
+            makeNotTabbable(fc.focusEl);
             fieldComp = fc;
             valSlot.set(fc);
             ctx2.cleanup(() => fc.dispose());
@@ -652,8 +647,11 @@ function mountOutlineItem(
     const root = el("div", "ui-item");
 
     let metaComp: Component | null = null;
+    let metaEl: HTMLElement | null = null;
+
     let bodyComp: Component | null = null;
     let bodyEl: HTMLElement | null = null;
+
     let surfaceEl: HTMLElement | null = null;
 
     const scope = ctx.focus(core, focus, { default: () => surfaceEl ?? root });
@@ -664,20 +662,21 @@ function mountOutlineItem(
     const unmountMeta = () => {
       metaComp?.dispose();
       metaComp = null;
-      const n = root.querySelector(":scope > .ui-meta");
-      if (n) n.remove();
+      metaEl?.remove();
+      metaEl = null;
     };
 
     const mountMetaIfNeeded = () => {
       if (metaComp) return;
       metaComp = mountMeta(mountCtx, focus, scope);
-      root.insertBefore(metaComp.el, root.firstChild);
+      metaEl = metaComp.el;
+      root.insertBefore(metaEl, root.firstChild);
     };
 
     const unmountBody = () => {
       bodyComp?.dispose();
       bodyComp = null;
-      if (bodyEl) bodyEl.remove();
+      bodyEl?.remove();
       bodyEl = null;
       surfaceEl = null;
     };
@@ -728,6 +727,8 @@ function mountOutlineItem(
         },
       });
 
+      ensureTabbable(sf.focusEl);
+
       wrap.append(sf.el);
 
       bodyComp = {
@@ -738,9 +739,9 @@ function mountOutlineItem(
         },
       };
       bodyEl = wrap;
-      surfaceEl = sf.focusEl as HTMLElement;
+      surfaceEl = sf.focusEl;
 
-      scope.select(sf.focusEl as HTMLElement, {
+      scope.select(sf.focusEl, {
         target: DEFAULT_TARGET,
         caret: "fromTarget",
       });
@@ -751,7 +752,7 @@ function mountOutlineItem(
     const mountGroupBody = () => {
       const wrap = el("div", "ui-outline-group");
 
-      const mgr = ctx.list(wrap, (childId: string) => {
+      const mgr = ctx.list<ItemId>(wrap, (childId) => {
         const childFocus: Focus = { container: id, item: childId };
         return mountNode(mountCtx, childFocus, true);
       });
@@ -802,6 +803,7 @@ function mountOutlineItem(
 
       if (wantBodyKind !== haveBodyKind) {
         unmountBody();
+        makeNotTabbable(root);
         if (wantBodyKind === "group") mountGroupBody();
         else mountScalarBody();
       }
@@ -818,6 +820,7 @@ function mountOutlineItem(
       bodyComp?.dispose();
       metaComp = null;
       bodyComp = null;
+      metaEl = null;
       bodyEl = null;
       surfaceEl = null;
     });

@@ -21,21 +21,12 @@ import {
   ensureTabbable,
   applyUiItemState,
   type FocusScope,
+  caretFromTarget,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
-
-function caretFromTarget(t: EventTarget | null): Caret {
-  const el0 = t instanceof HTMLElement ? t : null;
-  if (el0 instanceof HTMLInputElement || el0 instanceof HTMLTextAreaElement) {
-    const start = el0.selectionStart ?? 0;
-    const end = el0.selectionEnd ?? start;
-    return { start, end };
-  }
-  return caret0();
-}
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -302,6 +293,7 @@ function mountRowMeta(args: {
         }),
     });
 
+    ensureTabbable(labelComp.focusEl);
     labelSlot.set(labelComp);
     ctx.cleanup(() => labelComp.dispose());
 
@@ -372,7 +364,7 @@ function mountRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
     rowItem.append(metaComp.el);
     ctx.cleanup(() => metaComp.dispose());
 
-    const cellList = ctx.list(rowItem, (colName: string) =>
+    const cellList = ctx.list<string>(rowItem, (colName) =>
       mountCellHost(mountCtx, rowId, colName),
     );
 
@@ -451,7 +443,7 @@ function mountBody(mountCtx: TableMountCtx): Component {
   return createComponent((ctx) => {
     const body = el("div", "ui-table-body");
 
-    const rows = ctx.list(body, (rid: string) => mountRow(mountCtx, rid));
+    const rows = ctx.list<ItemId>(body, (rid) => mountRow(mountCtx, rid));
 
     ctx.effect(() => {
       const snap = mountCtx.core.item(mountCtx.tableId);

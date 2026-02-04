@@ -165,6 +165,8 @@ function mountSlider({
     scope.select(root, { target: DEFAULT_TARGET, caret: "zero" });
     scope.select(input, { target: DEFAULT_TARGET, caret: "zero" });
 
+    ensureTabbable(input);
+
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
       sliderCommands.setScalarValue(core, focus, id, next);
@@ -196,8 +198,6 @@ function mountSlider({
     ctx.on(root, "keydown", (e: KeyboardEvent) => {
       handleSliderKey(e, dispatch);
     });
-
-    ensureTabbable(root);
 
     return root;
   });

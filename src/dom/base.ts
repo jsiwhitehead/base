@@ -49,6 +49,10 @@ export function ensureTabbable(elm: HTMLElement): void {
   if (elm.tabIndex == null || elm.tabIndex < 0) elm.tabIndex = 0;
 }
 
+export function makeNotTabbable(elm: HTMLElement): void {
+  elm.tabIndex = -1;
+}
+
 export function reconcileChildren(
   parent: HTMLElement,
   desired: readonly HTMLElement[],
@@ -158,7 +162,7 @@ export function focusElOf(c: Component): HTMLElement {
 
 type PointerCaretMode = "zero" | "fromTarget";
 
-function caretFromTarget(el0: EventTarget | null): Caret {
+export function caretFromTarget(el0: EventTarget | null): Caret {
   const el1 = el0 instanceof HTMLElement ? el0 : null;
   if (el1 instanceof HTMLInputElement || el1 instanceof HTMLTextAreaElement) {
     const start = el1.selectionStart ?? 0;

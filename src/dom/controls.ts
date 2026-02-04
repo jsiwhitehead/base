@@ -1,13 +1,5 @@
-import type { Core, ItemId, Caret, Component } from "../core";
-import {
-  createComponent,
-  el,
-  on,
-  stopEvent,
-  ensureTabbable,
-  type FocusComponent,
-  setData,
-} from "./base";
+import type { Core, ItemId } from "../core";
+import { createComponent, el, on, type FocusComponent, setData } from "./base";
 import { DEFAULT_TARGET } from "../core/runtime";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
@@ -29,7 +21,7 @@ export type TextControlKeyHandlers = {
     yieldLeftRight?: "boundary" | "always";
   };
   onNav?: (dir: NavDir, mode: NavMode) => void;
-  onEnter?: (caret: Caret) => void;
+  onEnter?: (caret: { start: number; end: number }) => void;
   onTab?: (shift: boolean) => void;
   onEscape?: () => void;
   onBackspaceBoundary?: () => void;
@@ -52,6 +44,11 @@ export function bindTextControlKeys(
   const nav = handlers.nav ?? {};
   const yieldUpDown = nav.yieldUpDown ?? defaultTextNav.yieldUpDown;
   const yieldLeftRight = nav.yieldLeftRight ?? defaultTextNav.yieldLeftRight;
+
+  const stopEvent = (e: Event) => {
+    e.preventDefault?.();
+    e.stopPropagation?.();
+  };
 
   const onKeyDown = (e: KeyboardEvent) => {
     const mod = e.metaKey || e.ctrlKey;
@@ -160,15 +157,8 @@ function registerCommitHandlers(
 ): void {
   const active = new Set(events ?? ["input", "blur"]);
 
-  if (active.has("input"))
-    ctx.on(target, "input", () => {
-      handler();
-    });
-
-  if (active.has("blur"))
-    ctx.on(target, "blur", () => {
-      handler();
-    });
+  if (active.has("input")) ctx.on(target, "input", handler);
+  if (active.has("blur")) ctx.on(target, "blur", handler);
 }
 
 export function syncValue(inp: TextInputElement, next: string) {
@@ -315,10 +305,13 @@ function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
   return { text: "", editable: false, isIssue: false };
 }
 
-export function scalarField(opts: ScalarFieldOpts): FocusComponent {
-  let focusEl: HTMLElement | null = null;
+export function scalarField(
+  opts: ScalarFieldOpts,
+): FocusComponent<HTMLElement> {
   const target = opts.target ?? DEFAULT_TARGET;
   const multiline = opts.multiline ?? true;
+
+  let focusEl: HTMLElement | null = null;
 
   const c = createComponent((ctx) => {
     const host = el("div");
@@ -331,7 +324,7 @@ export function scalarField(opts: ScalarFieldOpts): FocusComponent {
 
     const mountReadonly = (): FocusComponent<HTMLElement> => {
       const d = el("div");
-      ensureTabbable(d);
+      d.tabIndex = -1;
       setData(d, "target", target);
 
       ctx.effect(() => {
@@ -357,10 +350,10 @@ export function scalarField(opts: ScalarFieldOpts): FocusComponent {
       });
     };
 
-    let cur: Component | null = null;
+    let cur: FocusComponent<HTMLElement> | null = null;
     let curEditable: boolean | null = null;
 
-    const setCur = (next: FocusComponent) => {
+    const setCur = (next: FocusComponent<HTMLElement>) => {
       cur?.dispose();
       cur = next;
       slot.set(next);
@@ -376,16 +369,20 @@ export function scalarField(opts: ScalarFieldOpts): FocusComponent {
     });
 
     ctx.cleanup(() => {
+      cur?.dispose();
+      cur = null;
       focusEl = host;
     });
 
     return host;
   });
 
-  return {
+  const out: FocusComponent<HTMLElement> = {
     ...c,
     get focusEl() {
       return focusEl ?? c.el;
     },
-  } as FocusComponent;
+  };
+
+  return out;
 }
