@@ -90,7 +90,8 @@ function shouldBypassGlobalKeydown(): boolean {
   if (active.isContentEditable) return true;
   return (
     active instanceof HTMLTextAreaElement ||
-    (active instanceof HTMLInputElement && active.type === "text")
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLSelectElement
   );
 }
 

@@ -137,6 +137,7 @@ export function textInput(multiline: boolean): TextInputElement {
   n.setAttribute("autocorrect", "off");
   n.spellcheck = false;
   if (n instanceof HTMLTextAreaElement) n.rows = 1;
+  n.tabIndex = -1;
   return n;
 }
 

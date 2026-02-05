@@ -12,7 +12,7 @@ import {
   stopEvent,
   createComponent,
   applyUiItemState,
-  ensureTabbable,
+  caretFromTarget,
 } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
@@ -141,7 +141,7 @@ type SliderMountCtx = {
   dispatch: (intent: SliderIntent) => void;
 };
 
-function mountSlider({
+function mountSliderContent({
   core,
   id,
   focus,
@@ -156,15 +156,10 @@ function mountSlider({
     input.min = String(opts.min);
     input.max = String(opts.max);
     input.step = String(opts.step);
+    input.tabIndex = -1;
 
     const valueEl = el("div", "ui-slider-value");
     root.append(input, valueEl);
-
-    ctx.target(core, focus, DEFAULT_TARGET, () => input);
-    ctx.select(core, focus, root, { target: DEFAULT_TARGET, caret: "zero" });
-    ctx.select(core, focus, input, { target: DEFAULT_TARGET, caret: "zero" });
-
-    ensureTabbable(input);
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
@@ -177,6 +172,7 @@ function mountSlider({
 
     ctx.effect(() => {
       core.selection();
+      core.item(id);
       applyUiItemState(root, { core, focus, view: "slider" });
     });
 
@@ -239,21 +235,46 @@ export function createSliderView(args: {
     }
   };
 
-  const comp = mountSlider({
-    core,
-    id,
-    focus: safeFocus,
-    opts: resolved,
-    dispatch,
+  const comp = createComponent((ctx) => {
+    const root = el("div", "ui-slider-root");
+    root.tabIndex = 0;
+
+    const surface = el("div", "ui-slider-surface");
+    root.append(surface);
+
+    ctx.target(core, safeFocus, DEFAULT_TARGET, () => surface);
+
+    ctx.on(surface, "pointerdown", (e: PointerEvent) => {
+      const inItem =
+        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
+      if (inItem) return;
+      core.focus(safeFocus, DEFAULT_TARGET, {
+        caret: caretFromTarget(e.target),
+      });
+      e.stopPropagation();
+    });
+
+    const content = mountSliderContent({
+      core,
+      id,
+      focus: safeFocus,
+      opts: resolved,
+      dispatch,
+    });
+
+    surface.replaceChildren(content.el);
+    ctx.cleanup(() => content.dispose());
+
+    if (core.selection().kind === "idle") {
+      core.focus(safeFocus, DEFAULT_TARGET);
+    }
+
+    return root;
   });
 
   const onKeyDown = (e: KeyboardEvent) => {
     handleSliderKey(e, dispatch);
   };
-
-  if (core.selection().kind === "idle") {
-    core.focus(safeFocus, DEFAULT_TARGET);
-  }
 
   return {
     id: `slider:${String(id)}`,
@@ -261,7 +282,6 @@ export function createSliderView(args: {
     onKeyDown,
     dispose() {
       comp.dispose();
-      comp.el.replaceChildren();
     },
   };
 }

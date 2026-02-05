@@ -24,9 +24,10 @@ import {
   createComponent,
   autosizeTextField,
   scalarField,
-  ensureTabbable,
   makeNotTabbable,
   textField,
+  applyUiItemState,
+  caretFromTarget,
 } from "../dom";
 
 type SourceField = {
@@ -663,16 +664,11 @@ function mountOutlineItem(
   return createComponent((ctx) => {
     const root = el("div", "ui-item");
 
-    ctx.target(core, focus, DEFAULT_TARGET, () => root);
-    ctx.select(core, focus, root, { target: DEFAULT_TARGET, caret: "zero" });
-
     let metaComp: Component | null = null;
     let metaEl: HTMLElement | null = null;
 
     let bodyComp: Component | null = null;
     let bodyEl: HTMLElement | null = null;
-
-    let surfaceEl: HTMLElement | null = null;
 
     const unmountMeta = () => {
       metaComp?.dispose();
@@ -693,7 +689,6 @@ function mountOutlineItem(
       bodyComp = null;
       bodyEl?.remove();
       bodyEl = null;
-      surfaceEl = null;
     };
 
     const mountScalarBody = () => {
@@ -742,7 +737,7 @@ function mountOutlineItem(
         },
       });
 
-      ensureTabbable(sf.focusEl);
+      makeNotTabbable(sf.focusEl);
 
       wrap.append(sf.el);
 
@@ -754,7 +749,6 @@ function mountOutlineItem(
         },
       };
       bodyEl = wrap;
-      surfaceEl = sf.focusEl;
 
       ctx.select(core, focus, sf.focusEl, {
         target: VALUE_TARGET,
@@ -780,9 +774,6 @@ function mountOutlineItem(
 
       bodyComp = { el: wrap, dispose: () => wrap.replaceChildren() };
       bodyEl = wrap;
-
-      ensureTabbable(root);
-      surfaceEl = root;
 
       root.append(wrap);
     };
@@ -816,7 +807,6 @@ function mountOutlineItem(
 
       if (wantBodyKind !== haveBodyKind) {
         unmountBody();
-        makeNotTabbable(root);
         if (wantBodyKind === "group") mountGroupBody();
         else mountScalarBody();
       }
@@ -828,6 +818,12 @@ function mountOutlineItem(
       remount();
     });
 
+    ctx.effect(() => {
+      core.item(id);
+      core.selection();
+      applyUiItemState(root, { core, focus, view: "outline" });
+    });
+
     ctx.cleanup(() => {
       metaComp?.dispose();
       bodyComp?.dispose();
@@ -835,7 +831,6 @@ function mountOutlineItem(
       bodyComp = null;
       metaEl = null;
       bodyEl = null;
-      surfaceEl = null;
     });
 
     return root;
@@ -852,7 +847,15 @@ function mountNode(
 
   return createComponent((ctx) => {
     const wrap = el("div", "ui-outline-node");
-    const slot = ctx.slot(wrap);
+    const surface = el("div", "ui-outline-surface");
+    const slot = ctx.slot(surface);
+
+    ctx.target(core, focus, DEFAULT_TARGET, () => surface);
+
+    ctx.select(core, focus, surface, {
+      target: DEFAULT_TARGET,
+      caret: "fromTarget",
+    });
 
     ctx.effect(() => {
       core.item(id);
@@ -864,10 +867,11 @@ function mountNode(
       const inItem =
         e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
       if (inItem) return;
-      core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
+      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
       e.stopPropagation();
     });
 
+    wrap.append(surface);
     return wrap;
   });
 }
@@ -893,23 +897,18 @@ export function createOutlineView(args: {
         if (res) core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
-
       case "CONFIRM":
         outlineCommands.confirm(core, sel);
         return;
-
       case "CANCEL":
         core.blur();
         return;
-
       case "INDENT":
         outlineCommands.changeNesting(core, rootId, sel, intent.dir);
         return;
-
       case "DELETE_BOUNDARY":
         outlineCommands.deleteBoundary(core, sel, intent.dir);
         return;
-
       case "SPLIT":
         outlineCommands.splitAt(
           core,
@@ -918,7 +917,6 @@ export function createOutlineView(args: {
           intent.caret.end,
         );
         return;
-
       case "SET_DERIVED":
         if (sel.kind !== "focused") return;
         outlineCommands.setDerived(core, sel.focus.item);
@@ -928,7 +926,7 @@ export function createOutlineView(args: {
   };
 
   const root = el("div");
-  ensureTabbable(root);
+  root.tabIndex = 0;
 
   const focus: Focus = args.focus ?? { container: rootId, item: rootId };
   const node = mountNode({ core, rootId, navMove, dispatch }, focus, false);

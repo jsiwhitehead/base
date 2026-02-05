@@ -149,6 +149,21 @@ function queryTargetInput(root: HTMLElement, target: string) {
   ) as HTMLTextAreaElement | HTMLInputElement | null;
 }
 
+function findItemEl(root: HTMLElement, id: ItemId): HTMLElement | null {
+  return root.querySelector(`.ui-item[data-id="${id}"]`) as HTMLElement | null;
+}
+
+function findPresenterSurface(
+  fromItemEl: HTMLElement | null,
+): HTMLElement | null {
+  if (!fromItemEl) return null;
+  const host = fromItemEl.parentElement;
+  if (host instanceof HTMLElement && host !== fromItemEl) return host;
+  return fromItemEl.closest(
+    ".ui-outline-surface, .ui-table-surface, .ui-slider-surface",
+  ) as HTMLElement | null;
+}
+
 describe("model", () => {
   function addBlankChild(model: Model, ownerId: EntryId, label = "") {
     const id = model.createId();
@@ -684,7 +699,7 @@ describe("core", () => {
 });
 
 describe("views", () => {
-  test("outline: initial focus, arrow nav keeps focused, click focuses default input", async () => {
+  test("outline: initial focus, arrow nav keeps focused, click focuses presenter surface", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     core.commit((t) => {
@@ -714,23 +729,29 @@ describe("views", () => {
     await tick();
     expectFocused(core.selection());
 
-    const el = queryTargetInput(view.root, DEFAULT_TARGET);
-    expect(el).not.toBeNull();
-    if (el) {
-      el.dispatchEvent(
-        new Event("pointerdown", { bubbles: true, cancelable: true }),
-      );
-      await tick();
-      expect(document.activeElement === el).toBe(true);
-      const sel = core.selection();
-      expectFocused(sel);
-      expect(sel.target).toBe(DEFAULT_TARGET);
-    }
+    const sel = core.selection();
+    expectFocused(sel);
+
+    const itemEl = findItemEl(view.root, sel.focus.item);
+    expect(itemEl).not.toBeNull();
+
+    const surface = findPresenterSurface(itemEl);
+    expect(surface).not.toBeNull();
+
+    surface!.dispatchEvent(
+      new Event("pointerdown", { bubbles: true, cancelable: true }),
+    );
+    await tick();
+
+    expect(document.activeElement === surface).toBe(true);
+    const sel2 = core.selection();
+    expectFocused(sel2);
+    expect(sel2.target).toBe(DEFAULT_TARGET);
 
     unmount();
   });
 
-  test("outline: '=' on empty direct content sets derived and focuses expr field", async () => {
+  test("outline: '=' on empty direct value editor sets derived and focuses expr field", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let x: ItemId = "";
@@ -744,14 +765,18 @@ describe("views", () => {
 
     await tick();
 
-    const el = queryTargetInput(view.root, DEFAULT_TARGET);
-    expect(el).not.toBeNull();
-    el!.dispatchEvent(
+    const itemEl = findItemEl(view.root, x);
+    expect(itemEl).not.toBeNull();
+
+    const valueEl = queryTargetInput(itemEl as HTMLElement, "value");
+    expect(valueEl).not.toBeNull();
+
+    valueEl!.dispatchEvent(
       new Event("pointerdown", { bubbles: true, cancelable: true }),
     );
     await tick();
 
-    el!.dispatchEvent(
+    valueEl!.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "=",
         bubbles: true,
@@ -770,12 +795,14 @@ describe("views", () => {
     unmount();
   });
 
-  test("table: arrow navigation label -> right -> cell; left -> label; down -> next row", async () => {
+  test("table: arrow navigation row -> right -> cell; left -> row; down -> next row", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     let tableId: ItemId = "";
     let rowA: ItemId = "";
     let rowB: ItemId = "";
+    let aScoreId: ItemId = "";
+    let bScoreId: ItemId = "";
 
     core.commit((t) => {
       tableId = t.insertChild(rootId, { kind: "group" });
@@ -784,15 +811,15 @@ describe("views", () => {
 
       rowA = t.insertChild(tableId, { kind: "group" });
       t.setLabel(rowA, "rowA");
-      const aScore = t.insertChild(rowA, { kind: "blank" });
-      t.setLabel(aScore, "score");
-      t.setScalar(aScore, 5);
+      aScoreId = t.insertChild(rowA, { kind: "blank" });
+      t.setLabel(aScoreId, "score");
+      t.setScalar(aScoreId, 5);
 
       rowB = t.insertChild(tableId, { kind: "group" });
       t.setLabel(rowB, "rowB");
-      const bScore = t.insertChild(rowB, { kind: "blank" });
-      t.setLabel(bScore, "score");
-      t.setScalar(bScore, 6);
+      bScoreId = t.insertChild(rowB, { kind: "blank" });
+      t.setLabel(bScoreId, "score");
+      t.setScalar(bScoreId, 6);
     });
 
     const view = viewFactories.table({ core, id: tableId });
@@ -811,6 +838,7 @@ describe("views", () => {
     expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
     expect(sel.focus.container).toBe(rowA);
+    expect(sel.focus.item).toBe(aScoreId);
 
     view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     await tick();
@@ -827,6 +855,7 @@ describe("views", () => {
     expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
     expect(sel.focus.container).toBe(rowB);
+    expect(sel.focus.item).toBe(bScoreId);
 
     unmount();
   });
@@ -837,6 +866,8 @@ describe("views", () => {
     let tableId: ItemId = "";
     let rowA: ItemId = "";
     let rowB: ItemId = "";
+    let aScoreId: ItemId = "";
+    let bScoreId: ItemId = "";
 
     core.commit((t) => {
       tableId = t.insertChild(rootId, { kind: "group" });
@@ -845,15 +876,15 @@ describe("views", () => {
 
       rowA = t.insertChild(tableId, { kind: "group" });
       t.setLabel(rowA, "rowA");
-      const aScore = t.insertChild(rowA, { kind: "blank" });
-      t.setLabel(aScore, "score");
-      t.setScalar(aScore, 5);
+      aScoreId = t.insertChild(rowA, { kind: "blank" });
+      t.setLabel(aScoreId, "score");
+      t.setScalar(aScoreId, 5);
 
       rowB = t.insertChild(tableId, { kind: "group" });
       t.setLabel(rowB, "rowB");
-      const bScore = t.insertChild(rowB, { kind: "blank" });
-      t.setLabel(bScore, "score");
-      t.setScalar(bScore, 6);
+      bScoreId = t.insertChild(rowB, { kind: "blank" });
+      t.setLabel(bScoreId, "score");
+      t.setScalar(bScoreId, 6);
     });
 
     const outline = viewFactories.outline({ core, id: rootId });
@@ -861,17 +892,24 @@ describe("views", () => {
 
     await tick();
 
-    const nestedTableRoot = outline.root.querySelector(
+    const nestedTableItem = outline.root.querySelector(
       `.ui-item[data-view="table"]`,
-    );
-    expect(nestedTableRoot).not.toBeNull();
+    ) as HTMLElement | null;
+    expect(nestedTableItem).not.toBeNull();
 
-    const cellInput = nestedTableRoot
-      ? queryTargetInput(nestedTableRoot as HTMLElement, DEFAULT_TARGET)
+    const nestedTableSurface = nestedTableItem
+      ? (nestedTableItem.closest(".ui-table-surface") as HTMLElement | null)
       : null;
-    expect(cellInput).not.toBeNull();
+    expect(nestedTableSurface).not.toBeNull();
 
-    cellInput!.dispatchEvent(
+    const cellHost = nestedTableItem
+      ? (nestedTableItem.querySelector(
+          `.ui-table-cell[data-col="score"]`,
+        ) as HTMLElement | null)
+      : null;
+    expect(cellHost).not.toBeNull();
+
+    cellHost!.dispatchEvent(
       new Event("pointerdown", { bubbles: true, cancelable: true }),
     );
     await tick();
@@ -879,6 +917,8 @@ describe("views", () => {
     let sel = core.selection();
     expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
+    expect(sel.focus.container).toBe(rowA);
+    expect(sel.focus.item).toBe(aScoreId);
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
     await tick();
@@ -887,6 +927,7 @@ describe("views", () => {
     expectFocused(sel);
     expect(sel.target).toBe(DEFAULT_TARGET);
     expect(sel.focus.container).toBe(rowB);
+    expect(sel.focus.item).toBe(bScoreId);
 
     unmount();
   });
