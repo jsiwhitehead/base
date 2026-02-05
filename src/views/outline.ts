@@ -22,12 +22,15 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
+  createPresenter,
+  createContent,
   autosizeTextField,
   scalarField,
   makeNotTabbable,
   textField,
-  applyUiItemState,
   caretFromTarget,
+  keyNavMode,
+  keyToNavDir,
 } from "../dom";
 
 type SourceField = {
@@ -490,7 +493,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
   const { core, dispatch } = mountCtx;
   const id = focus.item;
 
-  return createComponent((ctx) => {
+  return createComponent(core, (ctx) => {
     const meta = el("div", "ui-meta");
 
     const labelWrap = el("div", "ui-label");
@@ -511,7 +514,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     const labelSlot = ctx.slot(labelWrap);
 
-    const labelComp = autosizeTextField({
+    const labelComp = autosizeTextField(core, {
       commit: commitLabel,
       getState: () => {
         const snap = core.item(id);
@@ -546,10 +549,10 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     labelSlot.set(labelComp);
     ctx.cleanup(() => labelComp.dispose());
 
-    ctx.target(core, focus, "label", () => labelComp.focusEl, {
+    ctx.target(focus, "label", () => labelComp.focusEl, {
       caret: defaultTextCaret(),
     });
-    ctx.select(core, focus, labelComp.focusEl, {
+    ctx.select(focus, labelComp.focusEl, {
       target: "label",
       caret: "fromTarget",
     });
@@ -557,7 +560,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     const fieldSpec = new Map<string, SourceField>();
 
     const rows = ctx.list(sourceWrap, (key: string) => {
-      return createComponent((ctx2) => {
+      return createComponent(core, (ctx2) => {
         const row = el("div", "ui-source-row");
         const keyEl = el("div", "ui-source-key");
         const valEl = el("div", "ui-source-val");
@@ -566,7 +569,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
         const valSlot = ctx2.slot(valEl);
 
         const makeField = (multiline: boolean, tkey: string) =>
-          textField({
+          textField(core, {
             multiline,
             commit: (text) =>
               outlineCommands.commitSourceField(core, id, key, text),
@@ -613,10 +616,10 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
             valSlot.set(fc);
             ctx2.cleanup(() => fc.dispose());
 
-            ctx2.target(core, focus, tkey, () => fc.focusEl, {
+            ctx2.target(focus, tkey, () => fc.focusEl, {
               caret: defaultTextCaret(),
             });
-            ctx2.select(core, focus, fc.focusEl, {
+            ctx2.select(focus, fc.focusEl, {
               target: tkey,
               caret: "fromTarget",
             });
@@ -661,8 +664,8 @@ function mountOutlineItem(
   const { core, dispatch } = mountCtx;
   const id = focus.item;
 
-  return createComponent((ctx) => {
-    const root = el("div", "ui-item");
+  return createContent({ core, focus, view: "outline" }, (ctx) => {
+    const root = el("div");
 
     let metaComp: Component | null = null;
     let metaEl: HTMLElement | null = null;
@@ -750,7 +753,7 @@ function mountOutlineItem(
       };
       bodyEl = wrap;
 
-      ctx.select(core, focus, sf.focusEl, {
+      ctx.select(focus, sf.focusEl, {
         target: VALUE_TARGET,
         caret: "fromTarget",
       });
@@ -818,12 +821,6 @@ function mountOutlineItem(
       remount();
     });
 
-    ctx.effect(() => {
-      core.item(id);
-      core.selection();
-      applyUiItemState(root, { core, focus, view: "outline" });
-    });
-
     ctx.cleanup(() => {
       metaComp?.dispose();
       bodyComp?.dispose();
@@ -845,14 +842,14 @@ function mountNode(
   const { core } = mountCtx;
   const id = focus.item;
 
-  return createComponent((ctx) => {
+  return createPresenter(core, (ctx) => {
     const wrap = el("div", "ui-outline-node");
     const surface = el("div", "ui-outline-surface");
     const slot = ctx.slot(surface);
 
-    ctx.target(core, focus, DEFAULT_TARGET, () => surface);
+    ctx.target(focus, DEFAULT_TARGET, () => surface);
 
-    ctx.select(core, focus, surface, {
+    ctx.select(focus, surface, {
       target: DEFAULT_TARGET,
       caret: "fromTarget",
     });
@@ -926,26 +923,16 @@ export function createOutlineView(args: {
   };
 
   const root = el("div");
-  root.tabIndex = 0;
 
   const focus: Focus = args.focus ?? { container: rootId, item: rootId };
   const node = mountNode({ core, rootId, navMove, dispatch }, focus, false);
   root.replaceChildren(node.el);
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
-
-    const arrowDir: Record<string, NavDir> = {
-      ArrowUp: "up",
-      ArrowDown: "down",
-      ArrowLeft: "left",
-      ArrowRight: "right",
-    };
-
-    const dir = arrowDir[e.key];
+    const dir = keyToNavDir(e.key);
     if (dir) {
       stopEvent(e);
-      dispatch({ type: "NAV", dir, mode });
+      dispatch({ type: "NAV", dir, mode: keyNavMode(e) });
       return;
     }
 

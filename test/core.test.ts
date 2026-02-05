@@ -164,6 +164,12 @@ function findPresenterSurface(
   ) as HTMLElement | null;
 }
 
+function pointerDown(el: HTMLElement) {
+  el.dispatchEvent(
+    new Event("pointerdown", { bubbles: true, cancelable: true }),
+  );
+}
+
 describe("model", () => {
   function addBlankChild(model: Model, ownerId: EntryId, label = "") {
     const id = model.createId();
@@ -738,9 +744,7 @@ describe("views", () => {
     const surface = findPresenterSurface(itemEl);
     expect(surface).not.toBeNull();
 
-    surface!.dispatchEvent(
-      new Event("pointerdown", { bubbles: true, cancelable: true }),
-    );
+    pointerDown(surface!);
     await tick();
 
     expect(document.activeElement === surface).toBe(true);
@@ -771,9 +775,7 @@ describe("views", () => {
     const valueEl = queryTargetInput(itemEl as HTMLElement, "value");
     expect(valueEl).not.toBeNull();
 
-    valueEl!.dispatchEvent(
-      new Event("pointerdown", { bubbles: true, cancelable: true }),
-    );
+    pointerDown(valueEl!);
     await tick();
 
     valueEl!.dispatchEvent(
@@ -897,11 +899,6 @@ describe("views", () => {
     ) as HTMLElement | null;
     expect(nestedTableItem).not.toBeNull();
 
-    const nestedTableSurface = nestedTableItem
-      ? (nestedTableItem.closest(".ui-table-surface") as HTMLElement | null)
-      : null;
-    expect(nestedTableSurface).not.toBeNull();
-
     const cellHost = nestedTableItem
       ? (nestedTableItem.querySelector(
           `.ui-table-cell[data-col="score"]`,
@@ -909,9 +906,7 @@ describe("views", () => {
       : null;
     expect(cellHost).not.toBeNull();
 
-    cellHost!.dispatchEvent(
-      new Event("pointerdown", { bubbles: true, cancelable: true }),
-    );
+    pointerDown(cellHost!);
     await tick();
 
     let sel = core.selection();

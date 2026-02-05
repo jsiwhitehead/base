@@ -10,8 +10,8 @@ import { DEFAULT_TARGET, clamp } from "../core/runtime";
 import {
   el,
   stopEvent,
-  createComponent,
-  applyUiItemState,
+  createPresenter,
+  createContent,
   caretFromTarget,
 } from "../dom";
 
@@ -148,8 +148,8 @@ function mountSliderContent({
   opts,
   dispatch,
 }: SliderMountCtx): Component {
-  return createComponent((ctx) => {
-    const root = el("div", "ui-item");
+  return createContent({ core, focus, view: "slider" }, (ctx) => {
+    const root = el("div");
 
     const input = document.createElement("input");
     input.type = "range";
@@ -168,12 +168,6 @@ function mountSliderContent({
 
     ctx.on(input, "input", () => {
       commitValue(Number(input.value));
-    });
-
-    ctx.effect(() => {
-      core.selection();
-      core.item(id);
-      applyUiItemState(root, { core, focus, view: "slider" });
     });
 
     ctx.effect(() => {
@@ -235,14 +229,13 @@ export function createSliderView(args: {
     }
   };
 
-  const comp = createComponent((ctx) => {
+  const comp = createPresenter(core, (ctx) => {
     const root = el("div", "ui-slider-root");
-    root.tabIndex = 0;
 
     const surface = el("div", "ui-slider-surface");
     root.append(surface);
 
-    ctx.target(core, safeFocus, DEFAULT_TARGET, () => surface);
+    ctx.target(safeFocus, DEFAULT_TARGET, () => surface);
 
     ctx.on(surface, "pointerdown", (e: PointerEvent) => {
       const inItem =

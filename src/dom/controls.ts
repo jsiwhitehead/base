@@ -1,6 +1,6 @@
-import type { Core, ItemId } from "../core";
-import { createComponent, el, on, type FocusComponent, setData } from "./base";
+import type { Core, ItemId, Focus } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
+import { createComponent, el, on, type FocusComponent, setData } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -11,9 +11,6 @@ export const defaultTextNav = {
 
 export type NavDir = "left" | "right" | "up" | "down";
 export type NavMode = "step" | "jump";
-
-export type TextNavDir = NavDir;
-export type TextNavMode = NavMode;
 
 export type TextControlKeyHandlers = {
   nav?: {
@@ -27,6 +24,87 @@ export type TextControlKeyHandlers = {
   onBackspaceBoundary?: () => void;
   onDeleteBoundary?: () => void;
 };
+
+export function keyNavMode(e: KeyboardEvent): NavMode {
+  return e.metaKey || e.ctrlKey ? "jump" : "step";
+}
+
+export function keyToNavDir(key: string): NavDir | null {
+  switch (key) {
+    case "ArrowLeft":
+      return "left";
+    case "ArrowRight":
+      return "right";
+    case "ArrowUp":
+      return "up";
+    case "ArrowDown":
+      return "down";
+    default:
+      return null;
+  }
+}
+
+export type ContainerKeyHandlers = {
+  onNav?: (dir: NavDir, mode: NavMode) => void;
+  onConfirm?: () => void;
+  onCancel?: () => void;
+  onTab?: (shift: boolean) => void;
+  onBackspace?: () => void;
+  onDelete?: () => void;
+};
+
+export function bindContainerKeys(
+  host: HTMLElement,
+  handlers: ContainerKeyHandlers,
+): () => void {
+  const { onNav, onConfirm, onCancel, onTab, onBackspace, onDelete } = handlers;
+
+  const stop = (e: Event) => {
+    e.preventDefault?.();
+    e.stopPropagation?.();
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const dir = keyToNavDir(e.key);
+    if (dir && onNav) {
+      stop(e);
+      onNav(dir, keyNavMode(e));
+      return;
+    }
+
+    if (e.key === "Enter" && onConfirm) {
+      stop(e);
+      onConfirm();
+      return;
+    }
+
+    if (e.key === "Escape" && onCancel) {
+      stop(e);
+      onCancel();
+      return;
+    }
+
+    if (e.key === "Tab" && onTab) {
+      stop(e);
+      onTab(!!e.shiftKey);
+      return;
+    }
+
+    if (e.key === "Backspace" && onBackspace) {
+      stop(e);
+      onBackspace();
+      return;
+    }
+
+    if (e.key === "Delete" && onDelete) {
+      stop(e);
+      onDelete();
+      return;
+    }
+  };
+
+  return on(host, "keydown", onKeyDown);
+}
 
 export function bindTextControlKeys(
   inp: TextInputElement,
@@ -45,32 +123,23 @@ export function bindTextControlKeys(
   const yieldUpDown = nav.yieldUpDown ?? defaultTextNav.yieldUpDown;
   const yieldLeftRight = nav.yieldLeftRight ?? defaultTextNav.yieldLeftRight;
 
-  const stopEvent = (e: Event) => {
+  const stop = (e: Event) => {
     e.preventDefault?.();
     e.stopPropagation?.();
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const mod = e.metaKey || e.ctrlKey;
-    const mode: NavMode = mod ? "jump" : "step";
+    const mode = keyNavMode(e);
 
     const start = inp.selectionStart ?? 0;
     const end = inp.selectionEnd ?? start;
     const hasSel = start !== end;
     const len = inp.value.length;
 
-    const dir: NavDir | null =
-      e.key === "ArrowLeft"
-        ? "left"
-        : e.key === "ArrowRight"
-          ? "right"
-          : e.key === "ArrowUp"
-            ? "up"
-            : e.key === "ArrowDown"
-              ? "down"
-              : null;
+    const dir = keyToNavDir(e.key);
 
     if (dir && onNav) {
+      const mod = e.metaKey || e.ctrlKey;
       const atStart = !hasSel && start === 0;
       const atEnd = !hasSel && end === len;
 
@@ -81,26 +150,26 @@ export function bindTextControlKeys(
         ((dir === "up" || dir === "down") && yieldUpDown === "always");
 
       if (boundary) {
-        stopEvent(e);
+        stop(e);
         onNav(dir, mode);
         return;
       }
     }
 
     if (e.key === "Enter" && !e.shiftKey && onEnter) {
-      stopEvent(e);
+      stop(e);
       onEnter({ start, end });
       return;
     }
 
     if (e.key === "Tab" && onTab) {
-      stopEvent(e);
+      stop(e);
       onTab(!!e.shiftKey);
       return;
     }
 
     if (e.key === "Escape" && onEscape) {
-      stopEvent(e);
+      stop(e);
       onEscape();
       return;
     }
@@ -111,13 +180,13 @@ export function bindTextControlKeys(
       !hasSel &&
       start === 0
     ) {
-      stopEvent(e);
+      stop(e);
       onBackspaceBoundary();
       return;
     }
 
     if (e.key === "Delete" && onDeleteBoundary && !hasSel && end === len) {
-      stopEvent(e);
+      stop(e);
       onDeleteBoundary();
       return;
     }
@@ -157,7 +226,6 @@ function registerCommitHandlers(
   handler: () => void,
 ): void {
   const active = new Set(events ?? ["input", "blur"]);
-
   if (active.has("input")) ctx.on(target, "input", handler);
   if (active.has("blur")) ctx.on(target, "blur", handler);
 }
@@ -196,9 +264,10 @@ export type TextFieldOpts = {
 };
 
 export function textField(
+  core: Core,
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
-  const c = createComponent((ctx) => {
+  const c = createComponent(core, (ctx) => {
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
 
@@ -233,11 +302,12 @@ export type AutosizeTextFieldOpts = Omit<
 };
 
 export function autosizeTextField(
+  core: Core,
   opts: AutosizeTextFieldOpts,
 ): FocusComponent<HTMLInputElement> {
   let focusEl!: HTMLInputElement;
 
-  const c = createComponent((ctx) => {
+  const c = createComponent(core, (ctx) => {
     const wrap = el("div", opts.wrapClassName ?? "autosize");
     if (opts.className) wrap.classList.add(opts.className);
 
@@ -279,7 +349,7 @@ export type ScalarFieldState = {
 
 export type ScalarFieldOpts = {
   core: Core;
-  focus: { container: ItemId; item: ItemId };
+  focus: Focus;
   target?: string;
   multiline?: boolean;
   className?: string;
@@ -306,58 +376,84 @@ function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
   return { text: "", editable: false, isIssue: false };
 }
 
+export function readonlyScalarView(args: {
+  core: Core;
+  target: string;
+  getState: () => ScalarFieldState;
+  className?: string;
+}): FocusComponent<HTMLElement> {
+  const c = createComponent(args.core, (ctx) => {
+    const d = el("div", args.className);
+    d.tabIndex = -1;
+    setData(d, "target", args.target);
+
+    ctx.effect(() => {
+      d.textContent = args.getState().text;
+    });
+
+    return d;
+  });
+
+  return { ...c, focusEl: c.el };
+}
+
+export function editableScalarEditor(args: {
+  core: Core;
+  focus: Focus;
+  target: string;
+  multiline: boolean;
+  commitText?: (text: string) => void;
+  onCommitEvents?: readonly ("input" | "blur")[];
+  textKeys?: (inp: TextInputElement) => (() => void) | void;
+  getState: () => ScalarFieldState;
+  className?: string;
+}): FocusComponent<TextInputElement> {
+  const fc = textField(args.core, {
+    multiline: args.multiline,
+    className: args.className ?? "",
+    commit: (text) => args.commitText?.(text),
+    getState: () => {
+      const st = args.getState();
+      return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
+    },
+    onCommitEvents: args.onCommitEvents,
+    textKeys: args.textKeys,
+    target: args.target,
+  });
+
+  const c = createComponent(args.core, (ctx) => {
+    const host = el("div");
+    host.append(fc.el);
+
+    ctx.target(args.focus, args.target, () => fc.focusEl, {
+      caret: defaultTextCaret(),
+    });
+
+    ctx.cleanup(() => fc.dispose());
+
+    return host;
+  });
+
+  return { ...c, focusEl: fc.focusEl };
+}
+
 export function scalarField(
   opts: ScalarFieldOpts,
 ): FocusComponent<HTMLElement> {
+  const core = opts.core;
   const target = opts.target ?? DEFAULT_TARGET;
   const multiline = opts.multiline ?? true;
 
-  let focusEl: HTMLElement | null = null;
+  let focusEl: HTMLElement = null as any;
 
-  const c = createComponent((ctx) => {
+  const c = createComponent(core, (ctx) => {
     const host = el("div");
     if (opts.className) host.className = opts.className;
 
     const slot = ctx.slot(host);
-
     const id = opts.focus.item;
 
-    const getState = () =>
-      (opts.getState ?? (() => deriveScalarFieldState(opts.core, id)))();
-
-    const mountReadonly = (): FocusComponent<HTMLElement> => {
-      const d = el("div");
-      d.tabIndex = -1;
-      setData(d, "target", target);
-
-      ctx.effect(() => {
-        const st = getState();
-        d.textContent = st.text;
-      });
-
-      return { el: d, focusEl: d, dispose: () => d.replaceChildren() };
-    };
-
-    const mountEditor = (): FocusComponent<TextInputElement> => {
-      const fc = textField({
-        multiline,
-        className: "",
-        commit: (text) => opts.commitText?.(text),
-        getState: () => {
-          const st = getState();
-          return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
-        },
-        onCommitEvents: opts.onCommitEvents,
-        textKeys: opts.textKeys,
-        target,
-      });
-
-      ctx.target(opts.core, opts.focus, target, () => fc.focusEl, {
-        caret: defaultTextCaret(),
-      });
-
-      return fc;
-    };
+    const getState = opts.getState ?? (() => deriveScalarFieldState(core, id));
 
     let cur: FocusComponent<HTMLElement> | null = null;
     let curEditable: boolean | null = null;
@@ -372,9 +468,32 @@ export function scalarField(
     ctx.effect(() => {
       const st = getState();
       const nextEditable = !!st.editable;
-      if (curEditable === nextEditable && cur) return;
+
+      if (cur && curEditable === nextEditable) return;
       curEditable = nextEditable;
-      setCur(nextEditable ? (mountEditor() as any) : mountReadonly());
+
+      if (nextEditable) {
+        const ed = editableScalarEditor({
+          core,
+          focus: opts.focus,
+          target,
+          multiline,
+          commitText: opts.commitText,
+          onCommitEvents: opts.onCommitEvents,
+          textKeys: opts.textKeys,
+          getState,
+        }) as unknown as FocusComponent<HTMLElement>;
+        setCur(ed);
+        return;
+      }
+
+      setCur(
+        readonlyScalarView({
+          core,
+          target,
+          getState,
+        }),
+      );
     });
 
     ctx.cleanup(() => {
@@ -383,15 +502,15 @@ export function scalarField(
       focusEl = host;
     });
 
+    focusEl = host;
     return host;
   });
 
-  const out: FocusComponent<HTMLElement> = {
-    ...c,
+  return {
+    el: c.el,
+    dispose: c.dispose,
     get focusEl() {
       return focusEl ?? c.el;
     },
   };
-
-  return out;
 }

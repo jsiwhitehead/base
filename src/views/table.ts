@@ -18,10 +18,13 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
+  createPresenter,
+  createContent,
   textField,
-  applyUiItemState,
   caretFromTarget,
   makeNotTabbable,
+  keyNavMode,
+  keyToNavDir,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
@@ -273,14 +276,14 @@ function mountRowMeta(args: {
 }): Component {
   const { core, tableId, rowId, focus, dispatch } = args;
 
-  return createComponent((ctx) => {
+  return createComponent(core, (ctx) => {
     const meta = el("div", "ui-meta");
     const labelWrap = el("div", "ui-label");
     meta.append(labelWrap);
 
     const labelSlot = ctx.slot(labelWrap);
 
-    const labelComp = textField({
+    const labelComp = textField(core, {
       multiline: false,
       commit: (text) => tableCommands.setLabel(core, rowId, text),
       getState: () => {
@@ -312,11 +315,11 @@ function mountRowMeta(args: {
     labelSlot.set(labelComp);
     ctx.cleanup(() => labelComp.dispose());
 
-    ctx.target(core, focus, ROW_LABEL_TARGET, () => labelComp.focusEl, {
+    ctx.target(focus, ROW_LABEL_TARGET, () => labelComp.focusEl, {
       caret: defaultTextCaret(),
     });
 
-    ctx.select(core, focus, labelComp.focusEl, {
+    ctx.select(focus, labelComp.focusEl, {
       target: ROW_LABEL_TARGET,
       caret: "fromTarget",
     });
@@ -330,7 +333,7 @@ function mountCellHost(
   rowId: ItemId,
   col: string,
 ): Component {
-  return createComponent((ctx) => {
+  return createPresenter(mountCtx.core, (ctx) => {
     const host = el("div", "ui-table-cell");
     host.setAttribute("data-col", col);
 
@@ -353,7 +356,7 @@ function mountCellHost(
       const id = getCellId();
       if (!id) return;
       const focus: Focus = { container: rowId, item: id };
-      ctx.target(mountCtx.core, focus, DEFAULT_TARGET, () => host);
+      ctx.target(focus, DEFAULT_TARGET, () => host);
     });
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
@@ -373,8 +376,8 @@ function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
   const { core, tableId, dispatch } = mountCtx;
   const focus: Focus = { container: tableId, item: rowId };
 
-  return createComponent((ctx) => {
-    const rowItem = el("div", "ui-item");
+  return createContent({ core, focus, view: "table", part: "row" }, (ctx) => {
+    const rowItem = el("div");
 
     const metaComp = mountRowMeta({
       core,
@@ -394,12 +397,6 @@ function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
       cellList.update(mountCtx.columnsSignal.value);
     });
 
-    ctx.effect(() => {
-      core.selection();
-      core.item(rowId);
-      applyUiItemState(rowItem, { core, focus, view: "table", part: "row" });
-    });
-
     return rowItem;
   });
 }
@@ -408,10 +405,10 @@ function mountRowPresenter(mountCtx: TableMountCtx, rowId: ItemId): Component {
   const { core, tableId } = mountCtx;
   const focus: Focus = { container: tableId, item: rowId };
 
-  return createComponent((ctx) => {
+  return createPresenter(core, (ctx) => {
     const host = el("div", "ui-table-row");
 
-    ctx.target(core, focus, DEFAULT_TARGET, () => host);
+    ctx.target(focus, DEFAULT_TARGET, () => host);
 
     const slot = ctx.slot(host);
     const content = mountRowContent(mountCtx, rowId);
@@ -446,7 +443,7 @@ function mountRowPresenter(mountCtx: TableMountCtx, rowId: ItemId): Component {
 }
 
 function mountHeader(mountCtx: TableMountCtx): Component {
-  return createComponent((ctx) => {
+  return createPresenter(mountCtx.core, (ctx) => {
     const header = el("div", "ui-table-header");
 
     const metaSpacer = el("div", "ui-table-col ui-table-col-meta");
@@ -494,7 +491,7 @@ function mountHeader(mountCtx: TableMountCtx): Component {
 }
 
 function mountBody(mountCtx: TableMountCtx): Component {
-  return createComponent((ctx) => {
+  return createPresenter(mountCtx.core, (ctx) => {
     const body = el("div", "ui-table-body");
 
     const rows = ctx.list<ItemId>(body, (rid) =>
@@ -519,8 +516,8 @@ function mountTableContent(args: {
 }): Component {
   const { core, tableId, focus, dispatch } = args;
 
-  return createComponent((ctx) => {
-    const content = el("div", "ui-item");
+  return createContent({ core, focus, view: "table" }, (ctx) => {
+    const content = el("div");
 
     const columnsSignal = computed(() => deriveColumns(core, tableId));
     const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
@@ -532,12 +529,6 @@ function mountTableContent(args: {
 
     ctx.cleanup(() => header.dispose());
     ctx.cleanup(() => body.dispose());
-
-    ctx.effect(() => {
-      core.selection();
-      core.item(tableId);
-      applyUiItemState(content, { core, focus, view: "table" });
-    });
 
     return content;
   });
@@ -570,14 +561,13 @@ export function createTableView(args: {
     }
   };
 
-  const comp = createComponent((ctx) => {
+  const comp = createPresenter(core, (ctx) => {
     const root = el("div", "ui-table-root");
-    root.tabIndex = 0;
 
     const surface = el("div", "ui-table-surface");
     root.append(surface);
 
-    ctx.target(core, tableFocus, DEFAULT_TARGET, () => surface);
+    ctx.target(tableFocus, DEFAULT_TARGET, () => surface);
 
     ctx.on(surface, "pointerdown", (e: PointerEvent) => {
       const inItem =
@@ -612,20 +602,11 @@ export function createTableView(args: {
   });
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const mode: NavMode = e.metaKey || e.ctrlKey ? "jump" : "step";
-
-    const arrowDir: Record<string, NavDir | undefined> = {
-      ArrowUp: "up",
-      ArrowDown: "down",
-      ArrowLeft: "left",
-      ArrowRight: "right",
-    };
-
-    const dir = arrowDir[e.key];
+    const dir = keyToNavDir(e.key);
     if (dir) {
       stopEvent(e);
       const sel = core.selection();
-      const res = tableNavMove(core, tableId, sel, dir, mode);
+      const res = tableNavMove(core, tableId, sel, dir, keyNavMode(e));
       if (res) core.focus(res.focus, res.target, { caret: res.caret });
       return;
     }

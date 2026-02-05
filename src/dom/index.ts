@@ -11,8 +11,23 @@ export {
   setDataBool,
   applyUiItemState,
   createComponent,
+  createPresenter,
+  createContent,
   caretFromTarget,
 } from "./base";
 
-export { defaultTextNav, bindTextControlKeys } from "./controls";
-export { textField, autosizeTextField, scalarField } from "./controls";
+export {
+  defaultTextNav,
+  keyNavMode,
+  keyToNavDir,
+  bindContainerKeys,
+  bindTextControlKeys,
+} from "./controls";
+
+export {
+  textField,
+  autosizeTextField,
+  readonlyScalarView,
+  editableScalarEditor,
+  scalarField,
+} from "./controls";

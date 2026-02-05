@@ -1,6 +1,6 @@
 import { effect } from "@preact/signals-core";
 import type { Core, Focus, Component, Caret, ViewName } from "../core";
-import { DEFAULT_TARGET, defaultTextCaret } from "../core/runtime";
+import { DEFAULT_TARGET } from "../core/runtime";
 
 export class Disposer {
   private fns: (() => void)[] = [];
@@ -192,7 +192,6 @@ export type Ctx = {
   ): { update(ids: readonly Id[]): void };
 
   target(
-    core: Core,
     focus: Focus,
     target: string,
     getEl: () => HTMLElement | null,
@@ -200,7 +199,6 @@ export type Ctx = {
   ): void;
 
   select(
-    core: Core,
     focus: Focus,
     el0: HTMLElement,
     opts?: {
@@ -211,7 +209,10 @@ export type Ctx = {
   ): void;
 };
 
-export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
+export function createComponent(
+  core: Core,
+  build: (ctx: Ctx) => HTMLElement,
+): Component {
   const bag = new Disposer();
 
   const ctx: Ctx = {
@@ -274,8 +275,7 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       return { update: (ids: readonly Id[]) => mgr.update(ids) };
     },
 
-    target(core, focus, target, getEl, opts) {
-      const caret = opts?.caret ?? defaultTextCaret();
+    target(focus, target, getEl, opts) {
       const unbind = core.attachTarget({
         focus,
         target,
@@ -283,10 +283,9 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
         ...(opts?.caret ? { caret: opts.caret } : {}),
       });
       bag.add(unbind);
-      void caret;
     },
 
-    select(core, focus, el0, opts = {}) {
+    select(focus, el0, opts = {}) {
       const target = opts.target ?? DEFAULT_TARGET;
       const caretMode = opts.caret ?? "zero";
       const stop = opts.stopPropagation ?? true;
@@ -314,4 +313,41 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       el0.replaceChildren();
     },
   };
+}
+
+export type ContentSpec = {
+  core: Core;
+  focus: Focus;
+  view: ViewName;
+  part?: string;
+};
+
+export function createPresenter(
+  core: Core,
+  build: (ctx: Ctx) => HTMLElement,
+): Component {
+  return createComponent(core, build);
+}
+
+export function createContent(
+  spec: ContentSpec,
+  build: (ctx: Ctx) => HTMLElement,
+): Component {
+  return createComponent(spec.core, (ctx) => {
+    const root = build(ctx);
+    root.classList.add("ui-item");
+
+    ctx.effect(() => {
+      spec.core.item(spec.focus.item);
+      spec.core.selection();
+      applyUiItemState(root, {
+        core: spec.core,
+        focus: spec.focus,
+        view: spec.view,
+        part: spec.part,
+      });
+    });
+
+    return root;
+  });
 }
