@@ -11,7 +11,7 @@ Core provides:
 - Undo/redo.
 - View mounting.
 
-## Creating Core
+## Creating core
 
 ```ts
 createCore(opts): { core: Core, rootId: ItemId }
@@ -25,7 +25,7 @@ Creates a new Core instance.
 - `createCore` accepts an optional collaboration adapter that receives committed transactions and can apply remote transactions.
 - A Core instance owns all state and must be explicitly disposed.
 
-## Reactivity Model
+## Reactivity model
 
 Core is reactive.
 
@@ -73,7 +73,7 @@ If the ID does not exist or cannot be resolved, Core returns an item with:
 
 This ensures `core.item` always succeeds.
 
-## Item Content
+## Item content
 
 ```ts
 type Content =
@@ -96,7 +96,7 @@ type Content =
 
 - Represents an error state.
 
-## Item Modes and Editability
+## Item modes and editability
 
 ```ts
 type Mode =
@@ -169,7 +169,7 @@ All operations inside a commit:
 
 If a commit produces no ops, undo history is not extended.
 
-### Transaction Operations
+### Transaction operations
 
 ```ts
 tx.setLabel(id, label)
@@ -241,7 +241,7 @@ Returned by:
 
 This information may be used to coordinate follow-up behavior such as selection changes or animations.
 
-## Location and Structure
+## Location and structure
 
 ```ts
 core.locate(id): {
@@ -288,7 +288,7 @@ core.blur()
 
 If edits invalidate the current selection, Core automatically repairs selection to a valid state.
 
-## Focus Binding
+## Focus binding
 
 ```ts
 core.attachTarget({
@@ -306,7 +306,7 @@ Registers a binding for a specific `(focus, target)` pair.
 - Returns a cleanup function that must be called when the binding is no longer valid.
 - One active binding per `(focus, target)`; new registrations replace the old.
 
-### Selection Application (DOM Focus)
+### Selection application (DOM focus)
 
 When selection is updated via `core.focus(...)`, Core applies it by:
 
@@ -339,11 +339,11 @@ If a component is returned, it has the form:
 
 Calling `dispose` must release all resources associated with the view.
 
-### View Semantics
+### View semantics
 
 Some views have built-in meaning and behavior that Core enforces automatically.
 
-### Active View and Keyboard Routing
+### Active view and keyboard routing
 
 When `core.focus(...)` updates selection, Core sets the active view from the focused DOM element.
 
@@ -392,7 +392,7 @@ Disposes all internal state.
 - All focus bindings are detached.
 - No further calls are valid after disposal.
 
-## Public Core API Surface
+## Public Core API surface
 
 The following exports constitute the supported Core API.
 

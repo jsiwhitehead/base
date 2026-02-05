@@ -351,3 +351,52 @@ export function createContent(
     return root;
   });
 }
+
+export type PresentItemOpts = {
+  core: Core;
+  focus: Focus;
+  wrapClassName?: string;
+  surfaceClassName?: string;
+  continueAs?: ViewName;
+  pointerFilter?: (target: EventTarget | null) => boolean;
+  mount: (
+    ctx: Ctx,
+    surface: HTMLElement,
+    slot: { set(next: Component | null): void },
+  ) => void;
+};
+
+export function presentItem(opts: PresentItemOpts): Component {
+  const { core, focus } = opts;
+
+  return createPresenter(core, (ctx) => {
+    const wrap = el("div", opts.wrapClassName);
+    const surface = el("div", opts.surfaceClassName);
+    wrap.append(surface);
+
+    const slot = ctx.slot(surface);
+
+    ctx.target(focus, DEFAULT_TARGET, () => surface);
+
+    ctx.select(focus, surface, {
+      target: DEFAULT_TARGET,
+      caret: "fromTarget",
+      stopPropagation: true,
+    });
+
+    ctx.on(surface, "pointerdown", (e: PointerEvent) => {
+      if (opts.pointerFilter?.(e.target)) return;
+
+      const inItem =
+        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
+      if (inItem) return;
+
+      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
+      e.stopPropagation();
+    });
+
+    opts.mount(ctx, surface, slot);
+
+    return wrap;
+  });
+}

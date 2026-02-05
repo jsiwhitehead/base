@@ -14,6 +14,7 @@ export {
   createPresenter,
   createContent,
   caretFromTarget,
+  presentItem,
 } from "./base";
 
 export {

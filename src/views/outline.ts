@@ -31,6 +31,7 @@ import {
   caretFromTarget,
   keyNavMode,
   keyToNavDir,
+  presentItem,
 } from "../dom";
 
 type SourceField = {
@@ -43,7 +44,40 @@ type SourceField = {
 const caret0 = (): Caret => ({ start: 0, end: 0 });
 const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 
+const SELECT_ALL: Caret = { start: 0, end: 1_000_000 };
+
 const VALUE_TARGET = "value";
+
+function isPrintableKeydown(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  return e.key.length === 1;
+}
+
+function insertTextIntoActiveEditor(text: string): void {
+  const a = document.activeElement;
+  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
+    return;
+  if (a.readOnly || a.disabled) return;
+
+  const start = a.selectionStart ?? 0;
+  const end = a.selectionEnd ?? start;
+
+  a.setRangeText(text, start, end, "end");
+  a.dispatchEvent(new InputEvent("input", { bubbles: true }));
+}
+
+function escapeLadder(core: Core): void {
+  const sel = core.selection();
+  if (sel.kind !== "focused") {
+    core.blur();
+    return;
+  }
+  if (sel.target !== DEFAULT_TARGET) {
+    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+    return;
+  }
+  core.blur();
+}
 
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
@@ -83,9 +117,23 @@ function patchSource(source: Source, key: string, text: string): Source {
   return source;
 }
 
+function getEditStopsForItem(core: Core, id: ItemId): string[] {
+  const it = core.item(id);
+
+  if (it.mode.kind === "source") {
+    return fieldsFromSource(it.mode.source).map((f) => `source:${f.key}`);
+  }
+
+  if (it.mode.kind === "direct" && it.content.kind === "scalar") {
+    return [VALUE_TARGET];
+  }
+
+  return [];
+}
+
 const defaultTargetFor = (core: Core, id: ItemId): string => {
   const it = core.item(id);
-  return it.mode.kind === "source" ? "label" : DEFAULT_TARGET;
+  return it.mode.kind === "source" ? "source:expr" : DEFAULT_TARGET;
 };
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
@@ -424,7 +472,7 @@ export const outlineCommands = {
 
     const id = sel.focus.item;
 
-    if (sel.target.startsWith("source:") || sel.target === "label") {
+    if (sel.target.startsWith("source:")) {
       core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
       return;
     }
@@ -476,7 +524,7 @@ export const outlineCommands = {
 type OutlineIntent =
   | { type: "NAV"; dir: NavDir; mode: NavMode }
   | { type: "CONFIRM" }
-  | { type: "CANCEL" }
+  | { type: "ESCAPE" }
   | { type: "INDENT"; dir: "in" | "out" }
   | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" }
   | { type: "SPLIT"; caret: Caret }
@@ -594,7 +642,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
                 },
                 onEnter: () =>
                   outlineCommands.commitSourceField(core, id, key, inp.value),
-                onEscape: () => toContent(),
+                onEscape: () => dispatch({ type: "ESCAPE" }),
               });
             },
           });
@@ -730,7 +778,7 @@ function mountOutlineItem(
                 dispatch({ type: "DELETE_BOUNDARY", dir: "backward" }),
               onDeleteBoundary: () =>
                 dispatch({ type: "DELETE_BOUNDARY", dir: "forward" }),
-              onEscape: () => dispatch({ type: "CANCEL" }),
+              onEscape: () => dispatch({ type: "ESCAPE" }),
             }),
           );
 
@@ -842,34 +890,19 @@ function mountNode(
   const { core } = mountCtx;
   const id = focus.item;
 
-  return createPresenter(core, (ctx) => {
-    const wrap = el("div", "ui-outline-node");
-    const surface = el("div", "ui-outline-surface");
-    const slot = ctx.slot(surface);
-
-    ctx.target(focus, DEFAULT_TARGET, () => surface);
-
-    ctx.select(focus, surface, {
-      target: DEFAULT_TARGET,
-      caret: "fromTarget",
-    });
-
-    ctx.effect(() => {
-      core.item(id);
-      const mounted = core.mountView({ id, focus, continueAs: "outline" });
-      slot.set(mounted ?? mountOutlineItem(mountCtx, focus, showMeta));
-    });
-
-    ctx.on(wrap, "pointerdown", (e: PointerEvent) => {
-      const inItem =
-        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
-      if (inItem) return;
-      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
-      e.stopPropagation();
-    });
-
-    wrap.append(surface);
-    return wrap;
+  return presentItem({
+    core,
+    focus,
+    wrapClassName: "ui-outline-node",
+    surfaceClassName: "ui-outline-surface",
+    continueAs: "outline",
+    mount(ctx, _surface, slot) {
+      ctx.effect(() => {
+        core.item(id);
+        const mounted = core.mountView({ id, focus, continueAs: "outline" });
+        slot.set(mounted ?? mountOutlineItem(mountCtx, focus, showMeta));
+      });
+    },
   });
 }
 
@@ -897,8 +930,8 @@ export function createOutlineView(args: {
       case "CONFIRM":
         outlineCommands.confirm(core, sel);
         return;
-      case "CANCEL":
-        core.blur();
+      case "ESCAPE":
+        escapeLadder(core);
         return;
       case "INDENT":
         outlineCommands.changeNesting(core, rootId, sel, intent.dir);
@@ -929,6 +962,22 @@ export function createOutlineView(args: {
   root.replaceChildren(node.el);
 
   const onKeyDown = (e: KeyboardEvent) => {
+    const sel = core.selection();
+
+    if (
+      isPrintableKeydown(e) &&
+      sel.kind === "focused" &&
+      sel.target === DEFAULT_TARGET
+    ) {
+      const stops = getEditStopsForItem(core, sel.focus.item);
+      const target = stops[0] ?? null;
+      if (!target) return;
+      stopEvent(e);
+      core.focus(sel.focus, target, { caret: SELECT_ALL });
+      insertTextIntoActiveEditor(e.key);
+      return;
+    }
+
     const dir = keyToNavDir(e.key);
     if (dir) {
       stopEvent(e);
@@ -962,7 +1011,7 @@ export function createOutlineView(args: {
 
     if (e.key === "Escape") {
       stopEvent(e);
-      dispatch({ type: "CANCEL" });
+      dispatch({ type: "ESCAPE" });
       return;
     }
   };

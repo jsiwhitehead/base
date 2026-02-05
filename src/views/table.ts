@@ -25,6 +25,7 @@ import {
   makeNotTabbable,
   keyNavMode,
   keyToNavDir,
+  presentItem,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
@@ -32,8 +33,41 @@ type NavResult = { focus: Focus; target: string; caret?: Caret };
 const caret0 = (): Caret => ({ start: 0, end: 0 });
 const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 
+const SELECT_ALL: Caret = { start: 0, end: 1_000_000 };
+
 const ROW_LABEL_TARGET = "row:label";
 const VALUE_TARGET = "value";
+
+function isPrintableKeydown(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  return e.key.length === 1;
+}
+
+function insertTextIntoActiveEditor(text: string): void {
+  const a = document.activeElement;
+  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
+    return;
+  if (a.readOnly || a.disabled) return;
+
+  const start = a.selectionStart ?? 0;
+  const end = a.selectionEnd ?? start;
+
+  a.setRangeText(text, start, end, "end");
+  a.dispatchEvent(new InputEvent("input", { bubbles: true }));
+}
+
+function escapeLadder(core: Core): void {
+  const sel = core.selection();
+  if (sel.kind !== "focused") {
+    core.blur();
+    return;
+  }
+  if (sel.target !== DEFAULT_TARGET) {
+    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+    return;
+  }
+  core.blur();
+}
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -108,6 +142,23 @@ const focusCellContainer = (
   target: DEFAULT_TARGET,
   caret,
 });
+
+function focusFirstCellValue(
+  core: Core,
+  tableId: ItemId,
+  rowId: ItemId,
+  cols: readonly string[],
+): { focus: Focus; target: string; caret: Caret } | null {
+  const firstCol = cols[0];
+  if (!firstCol) return null;
+  const cellId = findChildByLabel(core, rowId, firstCol);
+  if (!cellId) return null;
+  return {
+    focus: { container: rowId, item: cellId },
+    target: VALUE_TARGET,
+    caret: SELECT_ALL,
+  };
+}
 
 function tableNavMove(
   core: Core,
@@ -258,7 +309,7 @@ export const tableCommands = {
 type TableIntent =
   | { type: "NAV"; dir: NavDir; mode: NavMode }
   | { type: "CONFIRM" }
-  | { type: "CANCEL" };
+  | { type: "ESCAPE" };
 
 type TableMountCtx = {
   core: Core;
@@ -305,8 +356,7 @@ function mountRowMeta(args: {
           nav: defaultTextNav,
           onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
           onEnter: () => dispatch({ type: "NAV", dir: "right", mode: "step" }),
-          onEscape: () =>
-            core.focus(focus, DEFAULT_TARGET, { caret: caret0() }),
+          onEscape: () => dispatch({ type: "ESCAPE" }),
         }),
     });
 
@@ -542,6 +592,7 @@ export function createTableView(args: {
   const { core, id: tableId } = args;
 
   const tableFocus: Focus = args.focus ?? { container: tableId, item: tableId };
+  const columnsSignal = computed(() => deriveColumns(core, tableId));
 
   const dispatch = (intent: TableIntent): void => {
     const sel = core.selection();
@@ -555,57 +606,71 @@ export function createTableView(args: {
       case "CONFIRM":
         tableCommands.confirm(core, tableId, sel);
         return;
-      case "CANCEL":
-        core.blur();
+      case "ESCAPE":
+        escapeLadder(core);
         return;
     }
   };
 
-  const comp = createPresenter(core, (ctx) => {
-    const root = el("div", "ui-table-root");
-
-    const surface = el("div", "ui-table-surface");
-    root.append(surface);
-
-    ctx.target(tableFocus, DEFAULT_TARGET, () => surface);
-
-    ctx.on(surface, "pointerdown", (e: PointerEvent) => {
-      const inItem =
-        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
-      if (inItem) return;
-      core.focus(tableFocus, DEFAULT_TARGET, {
-        caret: caretFromTarget(e.target),
+  const comp = presentItem({
+    core,
+    focus: tableFocus,
+    wrapClassName: "ui-table-root",
+    surfaceClassName: "ui-table-surface",
+    mount(ctx, surface) {
+      const content = mountTableContent({
+        core,
+        tableId,
+        focus: tableFocus,
+        dispatch,
       });
-      e.stopPropagation();
-    });
 
-    const content = mountTableContent({
-      core,
-      tableId,
-      focus: tableFocus,
-      dispatch,
-    });
+      surface.replaceChildren(content.el);
+      ctx.cleanup(() => content.dispose());
 
-    surface.replaceChildren(content.el);
-    ctx.cleanup(() => content.dispose());
-
-    if (core.selection().kind === "idle") {
-      const rows0 = childrenOf(core, tableId);
-      if (rows0.length) {
-        const firstRow = rows0[0]!;
-        const res = focusRowContainer(tableId, firstRow);
-        core.focus(res.focus, res.target, { caret: res.caret });
+      if (core.selection().kind === "idle") {
+        const rows0 = childrenOf(core, tableId);
+        if (rows0.length) {
+          const firstRow = rows0[0]!;
+          const res = focusRowContainer(tableId, firstRow);
+          core.focus(res.focus, res.target, { caret: res.caret });
+        }
       }
-    }
-
-    return root;
+    },
   });
 
   const onKeyDown = (e: KeyboardEvent) => {
+    const sel = core.selection();
+
+    if (
+      isPrintableKeydown(e) &&
+      sel.kind === "focused" &&
+      sel.target === DEFAULT_TARGET
+    ) {
+      stopEvent(e);
+
+      if (sel.focus.container === tableId) {
+        const rowId = sel.focus.item;
+        const next = focusFirstCellValue(
+          core,
+          tableId,
+          rowId,
+          columnsSignal.value,
+        );
+        if (!next) return;
+        core.focus(next.focus, next.target, { caret: next.caret });
+        insertTextIntoActiveEditor(e.key);
+        return;
+      }
+
+      core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
+      insertTextIntoActiveEditor(e.key);
+      return;
+    }
+
     const dir = keyToNavDir(e.key);
     if (dir) {
       stopEvent(e);
-      const sel = core.selection();
       const res = tableNavMove(core, tableId, sel, dir, keyNavMode(e));
       if (res) core.focus(res.focus, res.target, { caret: res.caret });
       return;
@@ -613,13 +678,13 @@ export function createTableView(args: {
 
     if (e.key === "Enter") {
       stopEvent(e);
-      tableCommands.confirm(core, tableId, core.selection());
+      tableCommands.confirm(core, tableId, sel);
       return;
     }
 
     if (e.key === "Escape") {
       stopEvent(e);
-      core.blur();
+      dispatch({ type: "ESCAPE" });
       return;
     }
   };

@@ -7,13 +7,7 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import {
-  el,
-  stopEvent,
-  createPresenter,
-  createContent,
-  caretFromTarget,
-} from "../dom";
+import { el, stopEvent, createContent, presentItem } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -28,7 +22,20 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
 type SliderIntent =
   | { type: "NUDGE"; dir: -1 | 1; mul: number }
   | { type: "SET"; kind: "min" | "max" }
-  | { type: "CANCEL" };
+  | { type: "ESCAPE" };
+
+function escapeLadder(core: Core): void {
+  const sel = core.selection();
+  if (sel.kind !== "focused") {
+    core.blur();
+    return;
+  }
+  if (sel.target !== DEFAULT_TARGET) {
+    core.focus(sel.focus, DEFAULT_TARGET, { caret: { start: 0, end: 0 } });
+    return;
+  }
+  core.blur();
+}
 
 function handleSliderKey(
   e: KeyboardEvent,
@@ -64,7 +71,7 @@ function handleSliderKey(
 
     case "Escape":
       stopEvent(e);
-      dispatch({ type: "CANCEL" });
+      dispatch({ type: "ESCAPE" });
       return true;
 
     default:
@@ -223,46 +230,33 @@ export function createSliderView(args: {
         );
         return;
 
-      case "CANCEL":
-        core.blur();
+      case "ESCAPE":
+        escapeLadder(core);
         return;
     }
   };
 
-  const comp = createPresenter(core, (ctx) => {
-    const root = el("div", "ui-slider-root");
-
-    const surface = el("div", "ui-slider-surface");
-    root.append(surface);
-
-    ctx.target(safeFocus, DEFAULT_TARGET, () => surface);
-
-    ctx.on(surface, "pointerdown", (e: PointerEvent) => {
-      const inItem =
-        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
-      if (inItem) return;
-      core.focus(safeFocus, DEFAULT_TARGET, {
-        caret: caretFromTarget(e.target),
+  const comp = presentItem({
+    core,
+    focus: safeFocus,
+    wrapClassName: "ui-slider-root",
+    surfaceClassName: "ui-slider-surface",
+    mount(ctx, surface) {
+      const content = mountSliderContent({
+        core,
+        id,
+        focus: safeFocus,
+        opts: resolved,
+        dispatch,
       });
-      e.stopPropagation();
-    });
 
-    const content = mountSliderContent({
-      core,
-      id,
-      focus: safeFocus,
-      opts: resolved,
-      dispatch,
-    });
+      surface.replaceChildren(content.el);
+      ctx.cleanup(() => content.dispose());
 
-    surface.replaceChildren(content.el);
-    ctx.cleanup(() => content.dispose());
-
-    if (core.selection().kind === "idle") {
-      core.focus(safeFocus, DEFAULT_TARGET);
-    }
-
-    return root;
+      if (core.selection().kind === "idle") {
+        core.focus(safeFocus, DEFAULT_TARGET);
+      }
+    },
   });
 
   const onKeyDown = (e: KeyboardEvent) => {

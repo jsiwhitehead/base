@@ -65,6 +65,12 @@ export function bindContainerKeys(
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Tab") {
+      stop(e);
+      onTab?.(!!e.shiftKey);
+      return;
+    }
+
     const dir = keyToNavDir(e.key);
     if (dir && onNav) {
       stop(e);
@@ -81,12 +87,6 @@ export function bindContainerKeys(
     if (e.key === "Escape" && onCancel) {
       stop(e);
       onCancel();
-      return;
-    }
-
-    if (e.key === "Tab" && onTab) {
-      stop(e);
-      onTab(!!e.shiftKey);
       return;
     }
 
@@ -129,6 +129,12 @@ export function bindTextControlKeys(
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Tab") {
+      stop(e);
+      onTab?.(!!e.shiftKey);
+      return;
+    }
+
     const mode = keyNavMode(e);
 
     const start = inp.selectionStart ?? 0;
@@ -162,12 +168,6 @@ export function bindTextControlKeys(
       return;
     }
 
-    if (e.key === "Tab" && onTab) {
-      stop(e);
-      onTab(!!e.shiftKey);
-      return;
-    }
-
     if (e.key === "Escape" && onEscape) {
       stop(e);
       onEscape();
@@ -196,9 +196,9 @@ export function bindTextControlKeys(
 }
 
 export function textInput(multiline: boolean): TextInputElement {
-  const n = document.createElement(
-    multiline ? "textarea" : "input",
-  ) as TextInputElement;
+  const n = document.createElement(multiline ? "textarea" : "input") as
+    | HTMLInputElement
+    | HTMLTextAreaElement;
 
   if (n instanceof HTMLInputElement) n.type = "text";
   n.autocapitalize = "off";
