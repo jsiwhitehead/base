@@ -355,6 +355,7 @@ function mountCellHost(
   return createComponent(mountCtx.core, (ctx) => {
     const host = el("div", "ui-table-cell");
     host.setAttribute("data-col", col);
+    const rowItemRoot = host.closest(".ui-item");
 
     const slot = ctx.slot(host);
 
@@ -379,8 +380,12 @@ function mountCellHost(
     });
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      if (e.target instanceof HTMLElement && e.target.closest(".ui-item"))
-        return;
+      if (e.target instanceof HTMLElement) {
+        const hitItem = e.target.closest(".ui-item");
+        const isNestedItemHit =
+          !!hitItem && !!rowItemRoot && hitItem !== rowItemRoot;
+        if (isNestedItemHit) return;
+      }
 
       const nextCell = getCellId();
       const res = nextCell

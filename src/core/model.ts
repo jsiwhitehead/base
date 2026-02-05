@@ -91,13 +91,13 @@ export type SnapshotEntry = {
   content: SnapshotContent;
 };
 
-export type ReparentSpec = {
+export type MoveSpec = {
   childId: EntryId;
   toOwnerId: EntryId | null;
   toIndex?: number;
 };
 
-export type ReparentResult = {
+export type MoveResult = {
   fromOwnerId: EntryId | null;
   toOwnerId: EntryId | null;
   fromIndex: number | null;
@@ -113,7 +113,7 @@ export type EntryPatch = {
 export type Op =
   | { kind: "create"; entry: Entry }
   | { kind: "patch"; id: EntryId; next: EntryPatch }
-  | { kind: "reparent"; spec: ReparentSpec }
+  | { kind: "move"; spec: MoveSpec }
   | { kind: "remove"; id: EntryId };
 
 export type TransactionMeta = {
@@ -131,7 +131,7 @@ export type Transaction = {
 export type ApplyResult = {
   readonly created: readonly EntryId[];
   readonly touched: readonly EntryId[];
-  readonly reparented: readonly ReparentResult[];
+  readonly moved: readonly MoveResult[];
 };
 
 export type LocateInOwnerResult = {
@@ -150,7 +150,7 @@ export type Model = {
   ops: {
     create(entry: Entry): Op;
     patch(id: EntryId, next: EntryPatch): Op;
-    reparent(spec: ReparentSpec): Op;
+    move(spec: MoveSpec): Op;
     remove(id: EntryId): Op;
     transaction(ops: readonly Op[], meta?: Transaction["meta"]): Transaction;
   };
@@ -303,7 +303,7 @@ export function createModel(): Model {
       id,
       next,
     }),
-    reparent: (spec: ReparentSpec): Op => ({ kind: "reparent", spec }),
+    move: (spec: MoveSpec): Op => ({ kind: "move", spec }),
     remove: (id: EntryId): Op => ({ kind: "remove", id }),
     transaction: (
       ops2: readonly Op[],
@@ -324,7 +324,7 @@ export function createModel(): Model {
     return isGroupEntry(o) ? o : null;
   };
 
-  function reparent(spec: ReparentSpec): ReparentResult {
+  function move(spec: MoveSpec): MoveResult {
     const { childId, toOwnerId } = spec;
 
     if (!entries.has(childId)) throw new Error("Unknown child");
@@ -426,8 +426,17 @@ export function createModel(): Model {
     }
 
     if (next.content !== undefined) {
-      if (isGroupContent(next.content)) {
-        throw new Error("Group membership must be modified via reparent");
+      const curC = cur.content;
+      const nextC = next.content;
+
+      if (isGroupContent(nextC)) {
+        if (isGroupContent(curC))
+          throw new Error("Group membership must be modified via move");
+        if (nextC.childIds.length !== 0)
+          throw new Error("Group membership must be modified via move");
+      } else {
+        if (isGroupContent(curC) && curC.childIds.length !== 0)
+          throw new Error("Cannot convert non-empty group to non-group");
       }
     }
 
@@ -495,7 +504,7 @@ export function createModel(): Model {
   const apply = (txn: Transaction): ApplyResult => {
     const created: EntryId[] = [];
     const touched = new Set<EntryId>();
-    const reparented: ReparentResult[] = [];
+    const moved: MoveResult[] = [];
 
     batch(() => {
       for (const op0 of txn.ops) {
@@ -511,9 +520,9 @@ export function createModel(): Model {
             touched.add(op0.id);
             break;
 
-          case "reparent": {
-            const res = reparent(op0.spec);
-            reparented.push(res);
+          case "move": {
+            const res = move(op0.spec);
+            moved.push(res);
             touched.add(op0.spec.childId);
             if (res.fromOwnerId != null) touched.add(res.fromOwnerId);
             if (res.toOwnerId != null) touched.add(res.toOwnerId);
@@ -537,7 +546,7 @@ export function createModel(): Model {
     });
 
     if (DEV) assertValidInternal();
-    return { created, touched: [...touched], reparented };
+    return { created, touched: [...touched], moved };
   };
 
   const contentKindOf = (id: EntryId): EntryContent["kind"] =>

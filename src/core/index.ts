@@ -138,7 +138,7 @@ function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
 export type ApplyResult = {
   readonly created: readonly ItemId[];
   readonly touched: readonly ItemId[];
-  readonly reparented: readonly {
+  readonly moved: readonly {
     readonly fromOwnerId: ItemId | null;
     readonly toOwnerId: ItemId | null;
     readonly fromIndex: number | null;
@@ -244,7 +244,7 @@ export function createCore(opts: {
   const emptyModelApply: ModelApplyResult = {
     created: [],
     touched: [],
-    reparented: [],
+    moved: [],
   };
 
   const mergeModelApply = (
@@ -253,7 +253,7 @@ export function createCore(opts: {
   ): ModelApplyResult => ({
     created: [...a.created, ...b.created],
     touched: Array.from(new Set([...a.touched, ...b.touched])),
-    reparented: [...a.reparented, ...b.reparented],
+    moved: [...a.moved, ...b.moved],
   });
 
   const toApplyResult = (r: ModelApplyResult): ApplyResult => {
@@ -261,7 +261,7 @@ export function createCore(opts: {
     return {
       created: r.created.map(toItem),
       touched: r.touched.map(toItem),
-      reparented: r.reparented.map((x) => ({
+      moved: r.moved.map((x) => ({
         fromOwnerId: x.fromOwnerId == null ? null : toItem(x.fromOwnerId),
         toOwnerId: x.toOwnerId == null ? null : toItem(x.toOwnerId),
         fromIndex: x.fromIndex,
@@ -384,14 +384,14 @@ export function createCore(opts: {
         continue;
       }
 
-      if (op.kind === "reparent") {
+      if (op.kind === "move") {
         const childId = op.spec.childId;
         if (!model.hasEntry(childId)) continue;
         const child = model.peekEntry(childId);
         const ownerId = child.ownerId ?? null;
         const loc = model.locateInOwner(childId);
         inverses.push(
-          model.ops.reparent({
+          model.ops.move({
             childId,
             toOwnerId: ownerId,
             ...(loc ? { toIndex: loc.index } : {}),
@@ -418,7 +418,7 @@ export function createCore(opts: {
 
           for (let i = 0; i < childIds.length; i++) {
             inverses.push(
-              model.ops.reparent({
+              model.ops.move({
                 childId: childIds[i]!,
                 toOwnerId: id,
                 toIndex: i,
@@ -427,7 +427,7 @@ export function createCore(opts: {
           }
 
           inverses.push(
-            model.ops.reparent({
+            model.ops.move({
               childId: id,
               toOwnerId: ownerId,
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
@@ -436,7 +436,7 @@ export function createCore(opts: {
         } else {
           inverses.push(model.ops.create(cur));
           inverses.push(
-            model.ops.reparent({
+            model.ops.move({
               childId: id,
               toOwnerId: ownerId,
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
@@ -777,7 +777,7 @@ export function createCore(opts: {
 
         ops.push(model.ops.create(entry));
         ops.push(
-          model.ops.reparent({
+          model.ops.move({
             childId: id,
             toOwnerId: ownerEid,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
@@ -795,7 +795,7 @@ export function createCore(opts: {
         if (toOwnerId != null && toOwnerEid == null) return;
 
         ops.push(
-          model.ops.reparent({
+          model.ops.move({
             childId: childEid,
             toOwnerId: toOwnerEid,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),

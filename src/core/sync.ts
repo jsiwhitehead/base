@@ -43,7 +43,7 @@ export function createShapeSyncGroup(opts: {
     const candidatesFrom = new Set<EntryId>();
     const candidatesTouched = new Set<EntryId>();
 
-    for (const r of input.reparented) {
+    for (const r of input.moved) {
       if (r.toOwnerId != null && groups.has(r.toOwnerId))
         candidatesTo.add(r.toOwnerId);
       if (r.fromOwnerId != null && groups.has(r.fromOwnerId))
@@ -100,7 +100,7 @@ export function createShapeSyncGroup(opts: {
           const curIdx = indexOf.get(existing);
           if (curIdx != null && curIdx !== i) {
             ops.push(
-              m.ops.reparent({ childId: existing, toOwnerId: gid, toIndex: i }),
+              m.ops.move({ childId: existing, toOwnerId: gid, toIndex: i }),
             );
           }
           continue;
@@ -109,7 +109,7 @@ export function createShapeSyncGroup(opts: {
         const id = m.createId();
         const entry: Entry = { ...makeBlankEntry(id), label };
         ops.push(m.ops.create(entry));
-        ops.push(m.ops.reparent({ childId: id, toOwnerId: gid, toIndex: i }));
+        ops.push(m.ops.move({ childId: id, toOwnerId: gid, toIndex: i }));
       }
 
       for (const cid of childIds) {
@@ -117,7 +117,7 @@ export function createShapeSyncGroup(opts: {
         const nm = normalizeLabel(m.readEntry(cid).label);
         if (!nm) continue;
         if (!desiredSet.has(nm)) {
-          ops.push(m.ops.reparent({ childId: cid, toOwnerId: null }));
+          ops.push(m.ops.move({ childId: cid, toOwnerId: null }));
         }
       }
     }

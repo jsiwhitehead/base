@@ -113,7 +113,7 @@ An item is editable if and only if:
 item.mode.kind !== "readonly"
 ```
 
-Core enforces this rule. Edits targeting items in readonly mode are ignored. Items that are editable may be freely modified via transactions.
+Core does not currently enforce this rule. Edits targeting readonly items are attempted and may be rejected by the model or throw. Editable items may be freely modified via transactions.
 
 ### Meaning of modes
 
@@ -129,12 +129,14 @@ Modes describe what kind of content an item currently has and what editing UI sh
 - Item currently stores content directly.
 - UI may present direct editing controls.
 - Any edit may replace the item’s content.
+- Converting to or from a group is allowed only if the group is empty.
 
 ### Source
 
 - Item’s content is currently generated from a source.
 - Source fields are editable.
 - Any edit may replace the item’s content, including replacing the source with direct content.
+- Converting to or from a group is allowed only if the group is empty.
 
 ## Sources
 
@@ -185,7 +187,7 @@ tx.remove(id)
 
 - Sets or replaces the item’s label.
 - Within a single parent group, non-blank labels must be unique after trimming whitespace.
-- If a label change would create a duplicate, the operation is rejected and the commit fails.
+- If a label change would create a duplicate, the commit throws.
 
 `setView`:
 
@@ -212,7 +214,8 @@ tx.remove(id)
 
 - Moves an item to a new parent and/or index.
 - If `toOwnerId` is `null`, the item is removed from its parent.
-- If `at` is omitted, the item is appended.
+- `at` is the destination index; omitted means append.
+- If a move would violate label uniqueness, the commit throws.
 
 `remove`:
 
@@ -224,7 +227,7 @@ tx.remove(id)
 type ApplyResult = {
   created: readonly ItemId[]
   touched: readonly ItemId[]
-  reparented: readonly {
+  moved: readonly {
     fromOwnerId: ItemId | null
     toOwnerId: ItemId | null
     fromIndex: number | null
@@ -357,6 +360,7 @@ When an item’s view is `"table"`, Core treats it as a table:
 
 - The table item is always a group.
 - Each direct child is a row and is always a group.
+- If the table item or a row is not already a group, Core coerces it into an empty group.
 - Children of each row are columns, identified by their normalized, non-empty labels.
 
 Core keeps all rows in the table structurally consistent:
