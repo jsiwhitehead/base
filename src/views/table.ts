@@ -21,53 +21,24 @@ import {
   createPresenter,
   createContent,
   textField,
+  SELECT_ALL,
+  caret0,
+  caretAt,
+  isPrintableKeydown,
+  insertTextIntoActiveEditor,
+  escapeLadder,
   caretFromTarget,
   makeNotTabbable,
   keyNavMode,
   keyToNavDir,
+  reconcileChildren,
   presentItem,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
 
-const caret0 = (): Caret => ({ start: 0, end: 0 });
-const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
-
-const SELECT_ALL: Caret = { start: 0, end: 1_000_000 };
-
-const ROW_LABEL_TARGET = "row:label";
+const ROW_LABEL_TARGET = "label";
 const VALUE_TARGET = "value";
-
-function isPrintableKeydown(e: KeyboardEvent): boolean {
-  if (e.ctrlKey || e.metaKey || e.altKey) return false;
-  return e.key.length === 1;
-}
-
-function insertTextIntoActiveEditor(text: string): void {
-  const a = document.activeElement;
-  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
-    return;
-  if (a.readOnly || a.disabled) return;
-
-  const start = a.selectionStart ?? 0;
-  const end = a.selectionEnd ?? start;
-
-  a.setRangeText(text, start, end, "end");
-  a.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
-function escapeLadder(core: Core): void {
-  const sel = core.selection();
-  if (sel.kind !== "focused") {
-    core.blur();
-    return;
-  }
-  if (sel.target !== DEFAULT_TARGET) {
-    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
-    return;
-  }
-  core.blur();
-}
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -516,13 +487,7 @@ function mountHeader(mountCtx: TableMountCtx): Component {
         desired.push(cell);
       }
 
-      for (let i = 0; i < desired.length; i++) {
-        const next = desired[i]!;
-        const cur = header.children.item(i);
-        if (cur !== next) header.insertBefore(next, cur);
-      }
-      while (header.children.length > desired.length)
-        header.lastElementChild?.remove();
+      reconcileChildren(header, desired);
 
       const keep = new Set(cols);
       for (const [name, cell] of columnEls) {

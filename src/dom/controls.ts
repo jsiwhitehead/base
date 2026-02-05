@@ -1,4 +1,4 @@
-import type { Core, ItemId, Focus } from "../core";
+import type { Core, ItemId, Focus, Caret } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import { createComponent, el, on, type FocusComponent, setData } from "./base";
 
@@ -11,6 +11,41 @@ export const defaultTextNav = {
 
 export type NavDir = "left" | "right" | "up" | "down";
 export type NavMode = "step" | "jump";
+
+export const SELECT_ALL: Caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
+export const caret0 = (): Caret => ({ start: 0, end: 0 });
+export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+export function isPrintableKeydown(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  return e.key.length === 1;
+}
+
+export function insertTextIntoActiveEditor(text: string): void {
+  const a = document.activeElement;
+  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
+    return;
+  if (a.readOnly || a.disabled) return;
+
+  const start = a.selectionStart ?? 0;
+  const end = a.selectionEnd ?? start;
+
+  a.setRangeText(text, start, end, "end");
+  a.dispatchEvent(new InputEvent("input", { bubbles: true }));
+}
+
+export function escapeLadder(core: Core): void {
+  const sel = core.selection();
+  if (sel.kind !== "focused") {
+    core.blur();
+    return;
+  }
+  if (sel.target !== DEFAULT_TARGET) {
+    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+    return;
+  }
+  core.blur();
+}
 
 export type TextControlKeyHandlers = {
   nav?: {

@@ -357,7 +357,6 @@ export type PresentItemOpts = {
   focus: Focus;
   wrapClassName?: string;
   surfaceClassName?: string;
-  continueAs?: ViewName;
   pointerFilter?: (target: EventTarget | null) => boolean;
   mount: (
     ctx: Ctx,
@@ -377,12 +376,6 @@ export function presentItem(opts: PresentItemOpts): Component {
     const slot = ctx.slot(surface);
 
     ctx.target(focus, DEFAULT_TARGET, () => surface);
-
-    ctx.select(focus, surface, {
-      target: DEFAULT_TARGET,
-      caret: "fromTarget",
-      stopPropagation: true,
-    });
 
     ctx.on(surface, "pointerdown", (e: PointerEvent) => {
       if (opts.pointerFilter?.(e.target)) return;

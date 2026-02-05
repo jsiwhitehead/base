@@ -28,6 +28,12 @@ import {
   scalarField,
   makeNotTabbable,
   textField,
+  SELECT_ALL,
+  caret0,
+  caretAt,
+  isPrintableKeydown,
+  insertTextIntoActiveEditor,
+  escapeLadder,
   caretFromTarget,
   keyNavMode,
   keyToNavDir,
@@ -41,43 +47,7 @@ type SourceField = {
   text: string;
 };
 
-const caret0 = (): Caret => ({ start: 0, end: 0 });
-const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
-
-const SELECT_ALL: Caret = { start: 0, end: 1_000_000 };
-
 const VALUE_TARGET = "value";
-
-function isPrintableKeydown(e: KeyboardEvent): boolean {
-  if (e.ctrlKey || e.metaKey || e.altKey) return false;
-  return e.key.length === 1;
-}
-
-function insertTextIntoActiveEditor(text: string): void {
-  const a = document.activeElement;
-  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
-    return;
-  if (a.readOnly || a.disabled) return;
-
-  const start = a.selectionStart ?? 0;
-  const end = a.selectionEnd ?? start;
-
-  a.setRangeText(text, start, end, "end");
-  a.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
-function escapeLadder(core: Core): void {
-  const sel = core.selection();
-  if (sel.kind !== "focused") {
-    core.blur();
-    return;
-  }
-  if (sel.target !== DEFAULT_TARGET) {
-    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
-    return;
-  }
-  core.blur();
-}
 
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
@@ -895,7 +865,6 @@ function mountNode(
     focus,
     wrapClassName: "ui-outline-node",
     surfaceClassName: "ui-outline-surface",
-    continueAs: "outline",
     mount(ctx, _surface, slot) {
       ctx.effect(() => {
         core.item(id);

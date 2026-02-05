@@ -21,6 +21,12 @@ export {
   defaultTextNav,
   keyNavMode,
   keyToNavDir,
+  SELECT_ALL,
+  caret0,
+  caretAt,
+  isPrintableKeydown,
+  insertTextIntoActiveEditor,
+  escapeLadder,
   bindContainerKeys,
   bindTextControlKeys,
 } from "./controls";
