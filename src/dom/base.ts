@@ -355,12 +355,11 @@ export function createContent(
 export type PresentItemOpts = {
   core: Core;
   focus: Focus;
-  wrapClassName?: string;
-  surfaceClassName?: string;
+  className?: string;
   pointerFilter?: (target: EventTarget | null) => boolean;
   mount: (
     ctx: Ctx,
-    surface: HTMLElement,
+    host: HTMLElement,
     slot: { set(next: Component | null): void },
   ) => void;
 };
@@ -369,15 +368,12 @@ export function presentItem(opts: PresentItemOpts): Component {
   const { core, focus } = opts;
 
   return createPresenter(core, (ctx) => {
-    const wrap = el("div", opts.wrapClassName);
-    const surface = el("div", opts.surfaceClassName);
-    wrap.append(surface);
+    const host = el("div", opts.className);
+    const slot = ctx.slot(host);
 
-    const slot = ctx.slot(surface);
+    ctx.target(focus, DEFAULT_TARGET, () => host);
 
-    ctx.target(focus, DEFAULT_TARGET, () => surface);
-
-    ctx.on(surface, "pointerdown", (e: PointerEvent) => {
+    ctx.on(host, "pointerdown", (e: PointerEvent) => {
       if (opts.pointerFilter?.(e.target)) return;
 
       const inItem =
@@ -388,8 +384,8 @@ export function presentItem(opts: PresentItemOpts): Component {
       e.stopPropagation();
     });
 
-    opts.mount(ctx, surface, slot);
+    opts.mount(ctx, host, slot);
 
-    return wrap;
+    return host;
   });
 }

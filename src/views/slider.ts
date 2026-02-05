@@ -7,7 +7,7 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import { el, stopEvent, createContent, presentItem } from "../dom";
+import { el, stopEvent, createContent, escapeLadder } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -23,19 +23,6 @@ type SliderIntent =
   | { type: "NUDGE"; dir: -1 | 1; mul: number }
   | { type: "SET"; kind: "min" | "max" }
   | { type: "ESCAPE" };
-
-function escapeLadder(core: Core): void {
-  const sel = core.selection();
-  if (sel.kind !== "focused") {
-    core.blur();
-    return;
-  }
-  if (sel.target !== DEFAULT_TARGET) {
-    core.focus(sel.focus, DEFAULT_TARGET, { caret: { start: 0, end: 0 } });
-    return;
-  }
-  core.blur();
-}
 
 function handleSliderKey(
   e: KeyboardEvent,
@@ -236,28 +223,17 @@ export function createSliderView(args: {
     }
   };
 
-  const comp = presentItem({
+  const content = mountSliderContent({
     core,
+    id,
     focus: safeFocus,
-    wrapClassName: "ui-slider-root",
-    surfaceClassName: "ui-slider-surface",
-    mount(ctx, surface) {
-      const content = mountSliderContent({
-        core,
-        id,
-        focus: safeFocus,
-        opts: resolved,
-        dispatch,
-      });
-
-      surface.replaceChildren(content.el);
-      ctx.cleanup(() => content.dispose());
-
-      if (core.selection().kind === "idle") {
-        core.focus(safeFocus, DEFAULT_TARGET);
-      }
-    },
+    opts: resolved,
+    dispatch,
   });
+
+  if (core.selection().kind === "idle") {
+    core.focus(safeFocus, DEFAULT_TARGET);
+  }
 
   const onKeyDown = (e: KeyboardEvent) => {
     handleSliderKey(e, dispatch);
@@ -265,10 +241,10 @@ export function createSliderView(args: {
 
   return {
     id: `slider:${String(id)}`,
-    root: comp.el,
+    root: content.el,
     onKeyDown,
     dispose() {
-      comp.dispose();
+      content.dispose();
     },
   };
 }

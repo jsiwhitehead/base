@@ -2,6 +2,8 @@ import { DEV, devAssert, devWarn } from "./dev";
 import type { Core, ItemId, ViewKind, ViewName, Scalar } from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
+import { presentItem } from "./dom";
+import { DEFAULT_TARGET } from "./core/runtime";
 
 export type App = {
   core: Core;
@@ -33,14 +35,28 @@ export function createApp(opts: CreateAppOpts = {}): App {
     t.setView(rootId, rootView as ViewKind);
   });
 
-  const rootComp = core.mountView({ id: rootId });
-  hostEl.replaceChildren(rootComp.el);
+  const focus = { container: rootId, item: rootId };
+
+  const appPresenter = presentItem({
+    core,
+    focus,
+    className: "ui-app",
+    mount(ctx, _host, slot) {
+      ctx.effect(() => {
+        core.item(rootId);
+        const mounted = core.mountView({ id: rootId, focus });
+        slot.set(mounted);
+      });
+    },
+  });
+
+  hostEl.replaceChildren(appPresenter.el);
 
   const app: App = {
     core,
     rootId,
     dispose() {
-      rootComp.dispose();
+      appPresenter.dispose();
       hostEl.replaceChildren();
       core.dispose();
     },

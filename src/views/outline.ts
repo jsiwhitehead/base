@@ -34,7 +34,6 @@ import {
   isPrintableKeydown,
   insertTextIntoActiveEditor,
   escapeLadder,
-  caretFromTarget,
   keyNavMode,
   keyToNavDir,
   presentItem,
@@ -713,11 +712,10 @@ function mountOutlineItem(
     };
 
     const mountScalarBody = () => {
-      const wrap = el("div", "ui-outline-scalar");
-
       const sf = scalarField({
         core,
         focus,
+        className: "ui-outline-scalar",
         target: VALUE_TARGET,
         multiline: true,
         commitText: (text) => outlineCommands.setText(core, id, text),
@@ -760,23 +758,15 @@ function mountOutlineItem(
 
       makeNotTabbable(sf.focusEl);
 
-      wrap.append(sf.el);
-
-      bodyComp = {
-        el: wrap,
-        dispose() {
-          sf.dispose();
-          wrap.replaceChildren();
-        },
-      };
-      bodyEl = wrap;
+      bodyComp = { el: sf.el, dispose: () => sf.dispose() };
+      bodyEl = sf.el;
 
       ctx.select(focus, sf.focusEl, {
         target: VALUE_TARGET,
         caret: "fromTarget",
       });
 
-      root.append(wrap);
+      root.append(sf.el);
     };
 
     const mountGroupBody = () => {
@@ -863,9 +853,8 @@ function mountNode(
   return presentItem({
     core,
     focus,
-    wrapClassName: "ui-outline-node",
-    surfaceClassName: "ui-outline-surface",
-    mount(ctx, _surface, slot) {
+    className: "ui-outline-node",
+    mount(ctx, _host, slot) {
       ctx.effect(() => {
         core.item(id);
         const mounted = core.mountView({ id, focus, continueAs: "outline" });
@@ -924,11 +913,12 @@ export function createOutlineView(args: {
     }
   };
 
-  const root = el("div");
-
   const focus: Focus = args.focus ?? { container: rootId, item: rootId };
-  const node = mountNode({ core, rootId, navMove, dispatch }, focus, false);
-  root.replaceChildren(node.el);
+  const content = mountOutlineItem(
+    { core, rootId, navMove, dispatch },
+    focus,
+    false,
+  );
 
   const onKeyDown = (e: KeyboardEvent) => {
     const sel = core.selection();
@@ -991,20 +981,17 @@ export function createOutlineView(args: {
       core.focus(
         { container: rootId, item: first },
         defaultTargetFor(core, first),
-        {
-          caret: caret0(),
-        },
+        { caret: caret0() },
       );
     }
   }
 
   return {
     id: `outline:${String(rootId)}`,
-    root,
+    root: content.el,
     onKeyDown,
     dispose() {
-      node.dispose();
-      root.replaceChildren();
+      content.dispose();
     },
   };
 }

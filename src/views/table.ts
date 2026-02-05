@@ -32,7 +32,6 @@ import {
   keyNavMode,
   keyToNavDir,
   reconcileChildren,
-  presentItem,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
@@ -381,6 +380,9 @@ function mountCellHost(
     });
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest(".ui-item"))
+        return;
+
       const nextCell = getCellId();
       const res = nextCell
         ? focusCellContainer(rowId, nextCell, caretFromTarget(e.target))
@@ -398,7 +400,31 @@ function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
   const focus: Focus = { container: tableId, item: rowId };
 
   return createContent({ core, focus, view: "table", part: "row" }, (ctx) => {
-    const rowItem = el("div");
+    const rowItem = el("div", "ui-table-row");
+
+    ctx.target(focus, DEFAULT_TARGET, () => rowItem);
+
+    ctx.on(rowItem, "pointerdown", (e: PointerEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest(".ui-table-cell"))
+        return;
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.closest("input,textarea,[contenteditable='true']") ||
+          e.target.closest("[data-target]"))
+      )
+        return;
+
+      const sel = core.selection();
+      if (
+        isRowSel(sel, tableId) &&
+        sel.focus.item === rowId &&
+        sel.target === DEFAULT_TARGET
+      )
+        return;
+
+      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
+      e.stopPropagation();
+    });
 
     const metaComp = mountRowMeta({
       core,
@@ -419,47 +445,6 @@ function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
     });
 
     return rowItem;
-  });
-}
-
-function mountRowPresenter(mountCtx: TableMountCtx, rowId: ItemId): Component {
-  const { core, tableId } = mountCtx;
-  const focus: Focus = { container: tableId, item: rowId };
-
-  return createPresenter(core, (ctx) => {
-    const host = el("div", "ui-table-row");
-
-    ctx.target(focus, DEFAULT_TARGET, () => host);
-
-    const slot = ctx.slot(host);
-    const content = mountRowContent(mountCtx, rowId);
-    slot.set(content);
-    ctx.cleanup(() => content.dispose());
-
-    ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      if (e.target instanceof HTMLElement && e.target.closest(".ui-table-cell"))
-        return;
-      if (
-        e.target instanceof HTMLElement &&
-        (e.target.closest("input,textarea,[contenteditable='true']") ||
-          e.target.closest("[data-target]"))
-      )
-        return;
-
-      const sel = core.selection();
-      if (
-        isRowSel(sel, tableId) &&
-        sel.focus.item === rowId &&
-        sel.target === DEFAULT_TARGET
-      )
-        return;
-
-      const next = focusRowContainer(tableId, rowId, caretFromTarget(e.target));
-      core.focus(next.focus, next.target, { caret: next.caret });
-      e.stopPropagation();
-    });
-
-    return host;
   });
 }
 
@@ -510,7 +495,7 @@ function mountBody(mountCtx: TableMountCtx): Component {
     const body = el("div", "ui-table-body");
 
     const rows = ctx.list<ItemId>(body, (rid) =>
-      mountRowPresenter(mountCtx, rid),
+      mountRowContent(mountCtx, rid),
     );
 
     ctx.effect(() => {
@@ -532,20 +517,19 @@ function mountTableContent(args: {
   const { core, tableId, focus, dispatch } = args;
 
   return createContent({ core, focus, view: "table" }, (ctx) => {
-    const content = el("div");
-
     const columnsSignal = computed(() => deriveColumns(core, tableId));
     const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
 
     const header = mountHeader(mountCtx);
     const body = mountBody(mountCtx);
 
-    content.replaceChildren(header.el, body.el);
+    const root = el("div");
+    root.append(header.el, body.el);
 
     ctx.cleanup(() => header.dispose());
     ctx.cleanup(() => body.dispose());
 
-    return content;
+    return root;
   });
 }
 
@@ -577,32 +561,21 @@ export function createTableView(args: {
     }
   };
 
-  const comp = presentItem({
+  const content = mountTableContent({
     core,
+    tableId,
     focus: tableFocus,
-    wrapClassName: "ui-table-root",
-    surfaceClassName: "ui-table-surface",
-    mount(ctx, surface) {
-      const content = mountTableContent({
-        core,
-        tableId,
-        focus: tableFocus,
-        dispatch,
-      });
-
-      surface.replaceChildren(content.el);
-      ctx.cleanup(() => content.dispose());
-
-      if (core.selection().kind === "idle") {
-        const rows0 = childrenOf(core, tableId);
-        if (rows0.length) {
-          const firstRow = rows0[0]!;
-          const res = focusRowContainer(tableId, firstRow);
-          core.focus(res.focus, res.target, { caret: res.caret });
-        }
-      }
-    },
+    dispatch,
   });
+
+  if (core.selection().kind === "idle") {
+    const rows0 = childrenOf(core, tableId);
+    if (rows0.length) {
+      const firstRow = rows0[0]!;
+      const res = focusRowContainer(tableId, firstRow);
+      core.focus(res.focus, res.target, { caret: res.caret });
+    }
+  }
 
   const onKeyDown = (e: KeyboardEvent) => {
     const sel = core.selection();
@@ -656,10 +629,10 @@ export function createTableView(args: {
 
   return {
     id: `table:${String(tableId)}`,
-    root: comp.el,
+    root: content.el,
     onKeyDown,
     dispose() {
-      comp.dispose();
+      content.dispose();
     },
   };
 }
