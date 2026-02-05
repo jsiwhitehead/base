@@ -189,9 +189,10 @@ export type Core = {
 
   locate(id: ItemId): LocateResult | null;
 
-  attachFocus(opts: {
+  attachTarget(opts: {
     focus: Focus;
-    elementFor: (target: string) => HTMLElement | null;
+    target: string;
+    getEl: () => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
@@ -859,7 +860,8 @@ export function createCore(opts: {
 
   const selection = (): Selection => runtime.selection();
 
-  const attachFocus: Core["attachFocus"] = (args) => runtime.attachFocus(args);
+  const attachTarget: Core["attachTarget"] = (args) =>
+    runtime.attachTarget(args);
 
   const mountView: Core["mountView"] = (args: any) => {
     const id: ItemId = args.id;
@@ -918,7 +920,7 @@ export function createCore(opts: {
 
     locate,
 
-    attachFocus,
+    attachTarget,
     mountView,
   };
 

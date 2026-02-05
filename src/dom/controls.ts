@@ -1,6 +1,6 @@
 import type { Core, ItemId } from "../core";
 import { createComponent, el, on, type FocusComponent, setData } from "./base";
-import { DEFAULT_TARGET } from "../core/runtime";
+import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -278,10 +278,10 @@ export type ScalarFieldState = {
 
 export type ScalarFieldOpts = {
   core: Core;
-  id: ItemId;
+  focus: { container: ItemId; item: ItemId };
+  target?: string;
   multiline?: boolean;
   className?: string;
-  target?: string;
   commitText?: (text: string) => void;
   onCommitEvents?: readonly ("input" | "blur")[];
   textKeys?: (inp: TextInputElement) => (() => void) | void;
@@ -319,8 +319,10 @@ export function scalarField(
 
     const slot = ctx.slot(host);
 
+    const id = opts.focus.item;
+
     const getState = () =>
-      (opts.getState ?? (() => deriveScalarFieldState(opts.core, opts.id)))();
+      (opts.getState ?? (() => deriveScalarFieldState(opts.core, id)))();
 
     const mountReadonly = (): FocusComponent<HTMLElement> => {
       const d = el("div");
@@ -336,7 +338,7 @@ export function scalarField(
     };
 
     const mountEditor = (): FocusComponent<TextInputElement> => {
-      return textField({
+      const fc = textField({
         multiline,
         className: "",
         commit: (text) => opts.commitText?.(text),
@@ -348,6 +350,12 @@ export function scalarField(
         textKeys: opts.textKeys,
         target,
       });
+
+      ctx.target(opts.core, opts.focus, target, () => fc.focusEl, {
+        caret: defaultTextCaret(),
+      });
+
+      return fc;
     };
 
     let cur: FocusComponent<HTMLElement> | null = null;
@@ -365,7 +373,7 @@ export function scalarField(
       const nextEditable = !!st.editable;
       if (curEditable === nextEditable && cur) return;
       curEditable = nextEditable;
-      setCur(nextEditable ? mountEditor() : mountReadonly());
+      setCur(nextEditable ? (mountEditor() as any) : mountReadonly());
     });
 
     ctx.cleanup(() => {

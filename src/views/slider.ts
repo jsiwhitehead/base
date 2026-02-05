@@ -160,10 +160,9 @@ function mountSlider({
     const valueEl = el("div", "ui-slider-value");
     root.append(input, valueEl);
 
-    const scope = ctx.focus(core, focus, { default: () => input });
-    scope.target(DEFAULT_TARGET, () => input);
-    scope.select(root, { target: DEFAULT_TARGET, caret: "zero" });
-    scope.select(input, { target: DEFAULT_TARGET, caret: "zero" });
+    ctx.target(core, focus, DEFAULT_TARGET, () => input);
+    ctx.select(core, focus, root, { target: DEFAULT_TARGET, caret: "zero" });
+    ctx.select(core, focus, input, { target: DEFAULT_TARGET, caret: "zero" });
 
     ensureTabbable(input);
 

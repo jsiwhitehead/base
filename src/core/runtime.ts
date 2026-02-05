@@ -23,12 +23,6 @@ export type ViewHandle = {
   onKeyDown?: (e: KeyboardEvent) => void;
 };
 
-export type FocusBinding = {
-  focus: Focus;
-  elementFor(target: string): HTMLElement | null;
-  caret?: { set(pos: number): void; getLength(): number };
-};
-
 export type Component = { el: HTMLElement; dispose(): void };
 
 export type DomView = {
@@ -152,6 +146,16 @@ export const entryIdFromItemId = (id: ItemId): EntryId | null => {
   return Number.isFinite(n) ? (n as EntryId) : null;
 };
 
+type TargetBinding = {
+  getEl: () => HTMLElement | null;
+  caret?: { set(pos: number): void; getLength(): number };
+};
+
+type TargetBindingRec = {
+  binding: TargetBinding;
+  token: number;
+};
+
 export type Runtime<C> = {
   selectionSignal: Signal<Selection>;
 
@@ -159,9 +163,10 @@ export type Runtime<C> = {
 
   setSelection(next: Selection, effects?: RuntimeEffect[]): void;
 
-  attachFocus(opts: {
+  attachTarget(opts: {
     focus: Focus;
-    elementFor: (target: string) => HTMLElement | null;
+    target: string;
+    getEl: () => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
@@ -190,7 +195,7 @@ export function createRuntime<C>(opts: {
     opts.initialSelection ?? { kind: "idle" },
   );
 
-  const bindings = new Map<string, FocusBinding>();
+  const bindings = new Map<string, Map<string, TargetBindingRec>>();
 
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
   const viewsSet = new Set<ViewHandle>();
@@ -205,8 +210,24 @@ export function createRuntime<C>(opts: {
     activeView = v;
   };
 
-  const getBinding = (focus: Focus): FocusBinding | null =>
-    bindings.get(keyOf(focus)) ?? null;
+  const focusMapFor = (focus: Focus): Map<string, TargetBindingRec> => {
+    const k = keyOf(focus);
+    let m = bindings.get(k);
+    if (!m) {
+      m = new Map();
+      bindings.set(k, m);
+    }
+    return m;
+  };
+
+  const resolveBinding = (
+    focus: Focus,
+    target: string,
+  ): TargetBinding | null => {
+    const m = bindings.get(keyOf(focus));
+    if (!m) return null;
+    return m.get(target)?.binding ?? m.get(DEFAULT_TARGET)?.binding ?? null;
+  };
 
   const applyDomFocus = (
     sel: Selection,
@@ -214,9 +235,9 @@ export function createRuntime<C>(opts: {
   ): void => {
     if (sel.kind !== "focused") return;
 
-    const binding = getBinding(sel.focus);
-    const el0 = (binding?.elementFor(sel.target) as HTMLElement | null) ?? null;
-    if (!binding || !el0) return;
+    const b = resolveBinding(sel.focus, sel.target);
+    const el0 = (b?.getEl() as HTMLElement | null) ?? null;
+    if (!b || !el0) return;
 
     const wasFocused = document.activeElement === el0;
     if (!wasFocused) el0.focus({ preventScroll: true });
@@ -225,12 +246,12 @@ export function createRuntime<C>(opts: {
     if (hitView) setActiveView(hitView);
 
     const caret = sel.caret;
-    const canCaret = !!caret && !!binding.caret;
+    const canCaret = !!caret && !!b.caret;
     const shouldUpdateCaret = canCaret && (!wasFocused || !!focusEff.anchor);
 
     if (shouldUpdateCaret) {
-      const len = binding.caret!.getLength();
-      binding.caret!.set(clamp(caret!.end, 0, len));
+      const len = b.caret!.getLength();
+      b.caret!.set(clamp(caret!.end, 0, len));
       return;
     }
 
@@ -329,43 +350,46 @@ export function createRuntime<C>(opts: {
     viewRoots.set(handle.root, handle);
     viewsSet.add(handle);
 
-    const onPointerDown = (e: PointerEvent) => {
-      const hit = viewAtTarget(viewRoots, e.target);
-      if (hit) setActiveView(hit);
-    };
-
-    handle.root.addEventListener("pointerdown", onPointerDown, {
-      capture: true,
-    });
-
     return () => {
-      handle.root.removeEventListener("pointerdown", onPointerDown, {
-        capture: true,
-      } as any);
       viewsSet.delete(handle);
       if (getActiveView() === handle) setActiveView(null);
     };
   };
 
-  const attachFocus = (b: {
+  const attachTarget = (b: {
     focus: Focus;
-    elementFor: (target: string) => HTMLElement | null;
+    target: string;
+    getEl: () => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): (() => void) => {
-    const binding: FocusBinding = {
-      focus: b.focus,
-      elementFor: (t) => b.elementFor(t),
-      ...(b.caret ? { caret: b.caret } : {}),
-    };
+    const m = focusMapFor(b.focus);
+    const prev = m.get(b.target);
+    const nextToken = (prev?.token ?? 0) + 1;
 
-    const k = keyOf(binding.focus);
-    bindings.set(k, binding);
+    m.set(b.target, {
+      binding: { getEl: b.getEl, ...(b.caret ? { caret: b.caret } : {}) },
+      token: nextToken,
+    });
+
+    const focusKey = keyOf(b.focus);
+    const targetKey = b.target;
+    const tokenAtAttach = nextToken;
 
     return () => {
-      bindings.delete(k);
+      const mm = bindings.get(focusKey);
+      const cur = mm?.get(targetKey);
+      if (!mm || !cur) return;
+      if (cur.token !== tokenAtAttach) return;
+
+      mm.delete(targetKey);
+      if (mm.size === 0) bindings.delete(focusKey);
 
       const sel = selectionSignal.peek();
-      if (sel.kind === "focused" && keyOf(sel.focus) === k) {
+      if (
+        sel.kind === "focused" &&
+        keyOf(sel.focus) === focusKey &&
+        (sel.target === targetKey || targetKey === DEFAULT_TARGET)
+      ) {
         scheduleEffects(sel, [{ type: "CLEAR_FOCUS" }]);
       }
     };
@@ -457,7 +481,7 @@ export function createRuntime<C>(opts: {
     selectionSignal,
     selection,
     setSelection,
-    attachFocus,
+    attachTarget,
     mountView,
     installGlobalListeners,
     dispose,

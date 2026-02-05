@@ -8,6 +8,7 @@ import {
   type Selection,
   type DomView,
   DEFAULT_TARGET,
+  defaultTextCaret,
 } from "../core";
 import {
   type NavDir,
@@ -20,13 +21,16 @@ import {
   textField,
   ensureTabbable,
   applyUiItemState,
-  type FocusScope,
   caretFromTarget,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
+const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+const ROW_LABEL_TARGET = "row:label";
+const VALUE_TARGET = "value";
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -82,7 +86,7 @@ function findChildByLabel(
   return null;
 }
 
-const focusRowLabel = (
+const focusRowContainer = (
   tableId: ItemId,
   rowId: ItemId,
   caret: Caret = caret0(),
@@ -92,7 +96,7 @@ const focusRowLabel = (
   caret,
 });
 
-const focusCell = (
+const focusCellContainer = (
   rowId: ItemId,
   cellId: ItemId,
   caret: Caret = caret0(),
@@ -119,7 +123,7 @@ function tableNavMove(
     const r = rows.indexOf(rowId);
     if (r < 0) return null;
     const nextRow = rows[r + delta];
-    return nextRow ? focusRowLabel(tableId, nextRow) : null;
+    return nextRow ? focusRowContainer(tableId, nextRow) : null;
   };
 
   const moveCellHoriz = (
@@ -128,15 +132,15 @@ function tableNavMove(
     delta: number,
   ): NavResult | null => {
     const nc = colIdx + delta;
-    if (nc < 0) return focusRowLabel(tableId, rowId);
+    if (nc < 0) return focusRowContainer(tableId, rowId);
 
     const nextCol = cols[nc];
     if (!nextCol) return null;
 
     const nextCell = findChildByLabel(core, rowId, nextCol);
     return nextCell
-      ? focusCell(rowId, nextCell)
-      : focusRowLabel(tableId, rowId);
+      ? focusCellContainer(rowId, nextCell)
+      : focusRowContainer(tableId, rowId);
   };
 
   const moveCellVert = (
@@ -152,8 +156,8 @@ function tableNavMove(
 
     const nextCell = findChildByLabel(core, nextRow, col);
     return nextCell
-      ? focusCell(nextRow, nextCell)
-      : focusRowLabel(tableId, nextRow);
+      ? focusCellContainer(nextRow, nextCell)
+      : focusRowContainer(tableId, nextRow);
   };
 
   if (sel.focus.container === tableId) {
@@ -166,8 +170,10 @@ function tableNavMove(
       const firstCol = cols[0];
       if (!firstCol) return null;
       const cid = findChildByLabel(core, rowId, firstCol);
-      return cid ? focusCell(rowId, cid) : null;
+      return cid ? focusCellContainer(rowId, cid) : null;
     }
+
+    if (dir === "left") return null;
 
     return null;
   }
@@ -204,7 +210,7 @@ export const tableCommands = {
       id = t.insertChild(tableId, { at, kind: "group" });
     });
 
-    const next = focusRowLabel(tableId, id);
+    const next = focusRowContainer(tableId, id);
     core.focus(next.focus, next.target, { caret: next.caret });
   },
 
@@ -216,7 +222,7 @@ export const tableCommands = {
     core.commit((t) => t.remove(rowId));
 
     if (nextRow) {
-      const next = focusRowLabel(tableId, nextRow);
+      const next = focusRowContainer(tableId, nextRow);
       core.focus(next.focus, next.target, { caret: next.caret });
     } else {
       core.blur();
@@ -228,6 +234,11 @@ export const tableCommands = {
 
     if (sel.focus.container === tableId) {
       tableCommands.addRowAfter(core, tableId, sel.focus.item);
+      return;
+    }
+
+    if (sel.target === DEFAULT_TARGET) {
+      core.focus(sel.focus, VALUE_TARGET, { caret: caretAt(1_000_000) });
       return;
     }
 
@@ -258,10 +269,9 @@ function mountRowMeta(args: {
   tableId: ItemId;
   rowId: ItemId;
   focus: Focus;
-  scope: FocusScope;
   dispatch: (intent: TableIntent) => void;
 }): Component {
-  const { core, tableId, rowId, focus, scope, dispatch } = args;
+  const { core, tableId, rowId, focus, dispatch } = args;
 
   return createComponent((ctx) => {
     const meta = el("div", "ui-meta");
@@ -275,7 +285,10 @@ function mountRowMeta(args: {
       commit: (text) => tableCommands.setLabel(core, rowId, text),
       getState: () => {
         const sel = core.selection();
-        const editing = isRowSel(sel, tableId) && sel.focus.item === rowId;
+        const editing =
+          isRowSel(sel, tableId) &&
+          sel.focus.item === rowId &&
+          sel.target === ROW_LABEL_TARGET;
         const row = core.item(rowId);
         const canEdit = row.mode.kind !== "readonly";
         const text = row.label ?? "";
@@ -283,23 +296,28 @@ function mountRowMeta(args: {
         return { text, readOnly, isIssue: false };
       },
       onCommitEvents: ["blur"],
-      target: DEFAULT_TARGET,
+      target: ROW_LABEL_TARGET,
       textKeys: (inp) =>
         bindTextControlKeys(inp, {
           nav: defaultTextNav,
           onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
           onEnter: () => dispatch({ type: "NAV", dir: "right", mode: "step" }),
-          onEscape: () => dispatch({ type: "CANCEL" }),
+          onEscape: () =>
+            core.focus(focus, DEFAULT_TARGET, { caret: caret0() }),
         }),
     });
 
     ensureTabbable(labelComp.focusEl);
+
     labelSlot.set(labelComp);
     ctx.cleanup(() => labelComp.dispose());
 
-    scope.target(DEFAULT_TARGET, () => labelComp.focusEl);
-    scope.select(labelComp.focusEl, {
-      target: DEFAULT_TARGET,
+    ctx.target(core, focus, ROW_LABEL_TARGET, () => labelComp.focusEl, {
+      caret: defaultTextCaret(),
+    });
+
+    ctx.select(core, focus, labelComp.focusEl, {
+      target: ROW_LABEL_TARGET,
       caret: "fromTarget",
     });
 
@@ -331,11 +349,18 @@ function mountCellHost(
       slot.set(mounted);
     });
 
+    ctx.effect(() => {
+      const id = getCellId();
+      if (!id) return;
+      const focus: Focus = { container: rowId, item: id };
+      ctx.target(mountCtx.core, focus, DEFAULT_TARGET, () => host);
+    });
+
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
       const nextCell = getCellId();
       const res = nextCell
-        ? focusCell(rowId, nextCell, caretFromTarget(e.target))
-        : focusRowLabel(mountCtx.tableId, rowId, caretFromTarget(e.target));
+        ? focusCellContainer(rowId, nextCell, caretFromTarget(e.target))
+        : focusRowContainer(mountCtx.tableId, rowId, caretFromTarget(e.target));
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
@@ -351,14 +376,13 @@ function mountRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
   return createComponent((ctx) => {
     const rowItem = el("div", "ui-item");
 
-    const scope = ctx.focus(core, focus, { default: () => rowItem });
+    ctx.target(core, focus, DEFAULT_TARGET, () => rowItem);
 
     const metaComp = mountRowMeta({
       core,
       tableId,
       rowId,
       focus,
-      scope,
       dispatch,
     });
     rowItem.append(metaComp.el);
@@ -381,8 +405,13 @@ function mountRow(mountCtx: TableMountCtx, rowId: ItemId): Component {
       if (e.target instanceof HTMLElement && e.target.closest(".ui-table-cell"))
         return;
       const sel = core.selection();
-      if (isRowSel(sel, tableId) && sel.focus.item === rowId) return;
-      const next = focusRowLabel(tableId, rowId, caretFromTarget(e.target));
+      if (
+        isRowSel(sel, tableId) &&
+        sel.focus.item === rowId &&
+        sel.target === DEFAULT_TARGET
+      )
+        return;
+      const next = focusRowContainer(tableId, rowId, caretFromTarget(e.target));
       core.focus(next.focus, next.target, { caret: next.caret });
       e.stopPropagation();
     });
@@ -501,6 +530,8 @@ export function createTableView(args: {
       item: tableId,
     };
 
+    ctx.target(core, tableFocus, DEFAULT_TARGET, () => rootItem);
+
     ctx.effect(() => {
       core.selection();
       applyUiItemState(rootItem, { core, focus: tableFocus, view: "table" });
@@ -510,7 +541,7 @@ export function createTableView(args: {
       const rows0 = childrenOf(core, tableId);
       if (rows0.length) {
         const firstRow = rows0[0]!;
-        const res = focusRowLabel(tableId, firstRow);
+        const res = focusRowContainer(tableId, firstRow);
         core.focus(res.focus, res.target, { caret: res.caret });
       }
     }

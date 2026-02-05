@@ -11,6 +11,7 @@ import {
   type Source,
   parseScalar,
   DEFAULT_TARGET,
+  defaultTextCaret,
 } from "../core";
 import {
   type NavDir,
@@ -23,8 +24,6 @@ import {
   createComponent,
   autosizeTextField,
   scalarField,
-  type FocusScope,
-  applyUiItemState,
   ensureTabbable,
   makeNotTabbable,
   textField,
@@ -39,6 +38,8 @@ type SourceField = {
 
 const caret0 = (): Caret => ({ start: 0, end: 0 });
 const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+const VALUE_TARGET = "value";
 
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
@@ -182,6 +183,7 @@ function outlineNavMove(
             caret = caretAt((last.text ?? "").length);
           }
         } else if (it.mode.kind === "direct" && it.content.kind === "scalar") {
+          targetOverride = VALUE_TARGET;
           caret = caretAt(scalarToText(it.content.value).length);
         }
       }
@@ -190,7 +192,7 @@ function outlineNavMove(
 
   if (!next) return null;
 
-  const target = targetOverride ?? defaultTargetFor(core, next);
+  const target = targetOverride ?? DEFAULT_TARGET;
   const outCaret = caret ?? caret0();
   return {
     focus: { container: sel.focus.container, item: next },
@@ -233,7 +235,7 @@ export const outlineCommands = {
       id = t.insertChild(containerId, { at, kind: "blank" });
     });
 
-    core.focus({ container: containerId, item: id }, DEFAULT_TARGET, {
+    core.focus({ container: containerId, item: id }, VALUE_TARGET, {
       caret: caret0(),
     });
   },
@@ -276,7 +278,7 @@ export const outlineCommands = {
       t.setScalar(rightId, parseScalar(right));
     });
 
-    core.focus({ container: containerId, item: rightId }, DEFAULT_TARGET, {
+    core.focus({ container: containerId, item: rightId }, VALUE_TARGET, {
       caret: caret0(),
     });
   },
@@ -312,7 +314,7 @@ export const outlineCommands = {
       t.remove(rightId);
     });
 
-    core.focus({ container: containerId, item: leftId }, DEFAULT_TARGET, {
+    core.focus({ container: containerId, item: leftId }, VALUE_TARGET, {
       caret: caretAt(leftText.length),
     });
   },
@@ -334,24 +336,25 @@ export const outlineCommands = {
     core.commit((t) => t.remove(sel.focus.item));
 
     if (chosen) {
-      const it = core.item(chosen);
-      const caret =
-        prefer === "prev" &&
-        it.mode.kind === "direct" &&
-        it.content.kind === "scalar"
-          ? caretAt(scalarToText(it.content.value).length)
-          : caret0();
-
       core.focus(
         { container: containerId, item: chosen },
-        defaultTargetFor(core, chosen),
-        {
-          caret,
-        },
+        DEFAULT_TARGET,
+        prefer === "prev"
+          ? {
+              caret: caretAt(
+                scalarToText(
+                  core.item(chosen).content.kind === "scalar"
+                    ? (core.item(chosen).content as any).value
+                    : null,
+                ).length,
+              ),
+            }
+          : { caret: caret0() },
       );
-    } else {
-      core.blur();
+      return;
     }
+
+    core.blur();
   },
 
   changeNesting(
@@ -380,13 +383,9 @@ export const outlineCommands = {
         t.move(id, wrapperId, { at: 0 });
       });
 
-      core.focus(
-        { container: wrapperId, item: id },
-        defaultTargetFor(core, id),
-        {
-          caret: caret0(),
-        },
-      );
+      core.focus({ container: wrapperId, item: id }, DEFAULT_TARGET, {
+        caret: caret0(),
+      });
       return;
     }
 
@@ -411,7 +410,7 @@ export const outlineCommands = {
       t.setLabel(id, wrapperLabel);
     });
 
-    core.focus({ container: parentId, item: id }, defaultTargetFor(core, id), {
+    core.focus({ container: parentId, item: id }, DEFAULT_TARGET, {
       caret: caret0(),
     });
   },
@@ -427,8 +426,19 @@ export const outlineCommands = {
     }
 
     const it = core.item(id);
-    if (it.mode.kind === "direct" && it.content.kind === "scalar") {
-      outlineCommands.splitAt(core, sel, 0, 0);
+
+    if (sel.target === DEFAULT_TARGET) {
+      if (it.mode.kind === "direct" && it.content.kind === "scalar") {
+        core.focus(sel.focus, VALUE_TARGET, {
+          caret: caretAt(scalarToText(it.content.value).length),
+        });
+        return;
+      }
+      if (it.mode.kind === "source") {
+        core.focus(sel.focus, "source:expr", { caret: caret0() });
+        return;
+      }
+      outlineCommands.insertSibling(core, sel, "after");
       return;
     }
 
@@ -475,11 +485,7 @@ type OutlineMountCtx = {
   dispatch: (intent: OutlineIntent) => void;
 };
 
-function mountMeta(
-  mountCtx: OutlineMountCtx,
-  focus: Focus,
-  scope: FocusScope,
-): Component {
+function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
   const { core, dispatch } = mountCtx;
   const id = focus.item;
 
@@ -539,8 +545,13 @@ function mountMeta(
     labelSlot.set(labelComp);
     ctx.cleanup(() => labelComp.dispose());
 
-    scope.target("label", () => labelComp.focusEl);
-    scope.select(labelComp.focusEl, { target: "label", caret: "fromTarget" });
+    ctx.target(core, focus, "label", () => labelComp.focusEl, {
+      caret: defaultTextCaret(),
+    });
+    ctx.select(core, focus, labelComp.focusEl, {
+      target: "label",
+      caret: "fromTarget",
+    });
 
     const fieldSpec = new Map<string, SourceField>();
 
@@ -600,8 +611,14 @@ function mountMeta(
             fieldComp = fc;
             valSlot.set(fc);
             ctx2.cleanup(() => fc.dispose());
-            scope.target(tkey, () => fc.focusEl);
-            scope.select(fc.focusEl, { target: tkey, caret: "fromTarget" });
+
+            ctx2.target(core, focus, tkey, () => fc.focusEl, {
+              caret: defaultTextCaret(),
+            });
+            ctx2.select(core, focus, fc.focusEl, {
+              target: tkey,
+              caret: "fromTarget",
+            });
           }
         });
 
@@ -646,6 +663,9 @@ function mountOutlineItem(
   return createComponent((ctx) => {
     const root = el("div", "ui-item");
 
+    ctx.target(core, focus, DEFAULT_TARGET, () => root);
+    ctx.select(core, focus, root, { target: DEFAULT_TARGET, caret: "zero" });
+
     let metaComp: Component | null = null;
     let metaEl: HTMLElement | null = null;
 
@@ -653,11 +673,6 @@ function mountOutlineItem(
     let bodyEl: HTMLElement | null = null;
 
     let surfaceEl: HTMLElement | null = null;
-
-    const scope = ctx.focus(core, focus, { default: () => surfaceEl ?? root });
-
-    scope.target(DEFAULT_TARGET, () => surfaceEl ?? root);
-    scope.select(root, { target: DEFAULT_TARGET, caret: "zero" });
 
     const unmountMeta = () => {
       metaComp?.dispose();
@@ -668,7 +683,7 @@ function mountOutlineItem(
 
     const mountMetaIfNeeded = () => {
       if (metaComp) return;
-      metaComp = mountMeta(mountCtx, focus, scope);
+      metaComp = mountMeta(mountCtx, focus);
       metaEl = metaComp.el;
       root.insertBefore(metaEl, root.firstChild);
     };
@@ -686,8 +701,8 @@ function mountOutlineItem(
 
       const sf = scalarField({
         core,
-        id,
-        target: DEFAULT_TARGET,
+        focus,
+        target: VALUE_TARGET,
         multiline: true,
         commitText: (text) => outlineCommands.setText(core, id, text),
         textKeys: (inp) => {
@@ -741,8 +756,8 @@ function mountOutlineItem(
       bodyEl = wrap;
       surfaceEl = sf.focusEl;
 
-      scope.select(sf.focusEl, {
-        target: DEFAULT_TARGET,
+      ctx.select(core, focus, sf.focusEl, {
+        target: VALUE_TARGET,
         caret: "fromTarget",
       });
 
@@ -774,8 +789,6 @@ function mountOutlineItem(
 
     const remount = () => {
       const snap = core.item(id);
-
-      applyUiItemState(root, { core, focus, view: "outline" });
 
       const label = (snap.label ?? "").trim();
       const fields =
@@ -851,7 +864,7 @@ function mountNode(
       const inItem =
         e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
       if (inItem) return;
-      core.focus(focus, defaultTargetFor(core, id), { caret: caret0() });
+      core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
       e.stopPropagation();
     });
 

@@ -172,19 +172,6 @@ export function caretFromTarget(el0: EventTarget | null): Caret {
   return { start: 0, end: 0 };
 }
 
-export type FocusScope = {
-  target(name: string, getEl: () => HTMLElement | null): void;
-
-  select(
-    el0: HTMLElement,
-    opts?: {
-      target?: string;
-      caret?: PointerCaretMode;
-      stopPropagation?: boolean;
-    },
-  ): void;
-};
-
 export type Ctx = {
   cleanup(fn: (() => void) | null | undefined): void;
 
@@ -204,14 +191,24 @@ export type Ctx = {
     create: (id: Id) => Component,
   ): { update(ids: readonly Id[]): void };
 
-  focus(
+  target(
     core: Core,
     focus: Focus,
-    spec: {
-      default: () => HTMLElement | null;
-      caret?: { set(pos: number): void; getLength(): number };
+    target: string,
+    getEl: () => HTMLElement | null,
+    opts?: { caret?: { set(pos: number): void; getLength(): number } },
+  ): void;
+
+  select(
+    core: Core,
+    focus: Focus,
+    el0: HTMLElement,
+    opts?: {
+      target?: string;
+      caret?: PointerCaretMode;
+      stopPropagation?: boolean;
     },
-  ): FocusScope;
+  ): void;
 };
 
 export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
@@ -277,46 +274,34 @@ export function createComponent(build: (ctx: Ctx) => HTMLElement): Component {
       return { update: (ids: readonly Id[]) => mgr.update(ids) };
     },
 
-    focus(core, focus, spec) {
-      const targets = new Map<string, () => HTMLElement | null>();
-      targets.set(DEFAULT_TARGET, spec.default);
-
-      const caret = spec.caret ?? defaultTextCaret();
-
-      const unbind = core.attachFocus({
+    target(core, focus, target, getEl, opts) {
+      const caret = opts?.caret ?? defaultTextCaret();
+      const unbind = core.attachTarget({
         focus,
-        elementFor: (target: string) =>
-          (targets.get(target) ?? targets.get(DEFAULT_TARGET))?.() ?? null,
-        caret,
+        target,
+        getEl,
+        ...(opts?.caret ? { caret: opts.caret } : {}),
       });
-
       bag.add(unbind);
+      void caret;
+    },
 
-      const scope: FocusScope = {
-        target(name, getEl) {
-          targets.set(name, getEl);
-        },
+    select(core, focus, el0, opts = {}) {
+      const target = opts.target ?? DEFAULT_TARGET;
+      const caretMode = opts.caret ?? "zero";
+      const stop = opts.stopPropagation ?? true;
 
-        select(el0, opts = {}) {
-          const target = opts.target ?? DEFAULT_TARGET;
-          const caretMode = opts.caret ?? "zero";
-          const stop = opts.stopPropagation ?? true;
+      bag.add(
+        on(el0, "pointerdown", (e: Event) => {
+          const pe = e as PointerEvent;
+          const caret0 =
+            caretMode === "fromTarget" ? caretFromTarget(pe.target) : null;
 
-          bag.add(
-            on(el0, "pointerdown", (e: Event) => {
-              const pe = e as PointerEvent;
-              const caret0 =
-                caretMode === "fromTarget" ? caretFromTarget(pe.target) : null;
+          core.focus(focus, target, caret0 ? { caret: caret0 } : undefined);
 
-              core.focus(focus, target, caret0 ? { caret: caret0 } : undefined);
-
-              if (stop) pe.stopPropagation();
-            }),
-          );
-        },
-      };
-
-      return scope;
+          if (stop) pe.stopPropagation();
+        }),
+      );
     },
   };
 
