@@ -22,7 +22,6 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
-  createPresenter,
   createContent,
   autosizeTextField,
   scalarField,

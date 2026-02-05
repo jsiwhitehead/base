@@ -11,7 +11,6 @@ export {
   setDataBool,
   applyUiItemState,
   createComponent,
-  createPresenter,
   createContent,
   caretFromTarget,
   presentItem,

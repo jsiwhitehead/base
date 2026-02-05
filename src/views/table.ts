@@ -18,7 +18,6 @@ import {
   stopEvent,
   bindTextControlKeys,
   createComponent,
-  createPresenter,
   createContent,
   textField,
   SELECT_ALL,
@@ -353,7 +352,7 @@ function mountCellHost(
   rowId: ItemId,
   col: string,
 ): Component {
-  return createPresenter(mountCtx.core, (ctx) => {
+  return createComponent(mountCtx.core, (ctx) => {
     const host = el("div", "ui-table-cell");
     host.setAttribute("data-col", col);
 
@@ -449,7 +448,7 @@ function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
 }
 
 function mountHeader(mountCtx: TableMountCtx): Component {
-  return createPresenter(mountCtx.core, (ctx) => {
+  return createComponent(mountCtx.core, (ctx) => {
     const header = el("div", "ui-table-header");
 
     const metaSpacer = el("div", "ui-table-col ui-table-col-meta");
@@ -491,7 +490,7 @@ function mountHeader(mountCtx: TableMountCtx): Component {
 }
 
 function mountBody(mountCtx: TableMountCtx): Component {
-  return createPresenter(mountCtx.core, (ctx) => {
+  return createComponent(mountCtx.core, (ctx) => {
     const body = el("div", "ui-table-body");
 
     const rows = ctx.list<ItemId>(body, (rid) =>
@@ -512,12 +511,12 @@ function mountTableContent(args: {
   core: Core;
   tableId: ItemId;
   focus: Focus;
+  columnsSignal: { value: string[] };
   dispatch: (intent: TableIntent) => void;
 }): Component {
-  const { core, tableId, focus, dispatch } = args;
+  const { core, tableId, focus, dispatch, columnsSignal } = args;
 
   return createContent({ core, focus, view: "table" }, (ctx) => {
-    const columnsSignal = computed(() => deriveColumns(core, tableId));
     const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
 
     const header = mountHeader(mountCtx);
@@ -565,6 +564,7 @@ export function createTableView(args: {
     core,
     tableId,
     focus: tableFocus,
+    columnsSignal,
     dispatch,
   });
 

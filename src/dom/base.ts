@@ -322,13 +322,6 @@ export type ContentSpec = {
   part?: string;
 };
 
-export function createPresenter(
-  core: Core,
-  build: (ctx: Ctx) => HTMLElement,
-): Component {
-  return createComponent(core, build);
-}
-
 export function createContent(
   spec: ContentSpec,
   build: (ctx: Ctx) => HTMLElement,
@@ -367,7 +360,7 @@ export type PresentItemOpts = {
 export function presentItem(opts: PresentItemOpts): Component {
   const { core, focus } = opts;
 
-  return createPresenter(core, (ctx) => {
+  return createComponent(core, (ctx) => {
     const host = el("div", opts.className);
     const slot = ctx.slot(host);
 
