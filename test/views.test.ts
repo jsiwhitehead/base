@@ -3,17 +3,20 @@ import { DEFAULT_TARGET } from "../src/core";
 import { viewFactories } from "../src/views";
 import {
   makeCoreRuntime,
-  tick,
   mountDomView,
   mkBlank,
   mkGroup,
   setView,
-  scalarOf,
-  expectFocused,
-  findItemEl,
-  findPresenterSurface,
-  queryTargetInput,
+  scalarOfId,
   pointerDown,
+  fireViewKey,
+  fireWindowKey,
+  flushDomEffects,
+  expectSel,
+  requireItemEl,
+  requirePresenterSurface,
+  requireTargetInput,
+  requireEl,
 } from "./test-utils";
 
 describe("views", () => {
@@ -34,60 +37,67 @@ describe("views", () => {
     });
 
     const view = viewFactories.outline({ core, id: rootId });
-    const unmount = await mountDomView(view);
+    mountDomView(view);
 
-    await tick();
-    expectFocused(core.selection());
+    expect(core.selection().kind).toBe("focused");
 
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-    await tick();
-    expectFocused(core.selection());
+    fireViewKey(view, "ArrowDown");
+    expect(core.selection().kind).toBe("focused");
 
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
-    await tick();
-    expectFocused(core.selection());
+    fireViewKey(view, "ArrowRight");
+    expect(core.selection().kind).toBe("focused");
 
     const sel = core.selection();
-    expectFocused(sel);
+    expect(sel.kind).toBe("focused");
+    if (sel.kind !== "focused") throw new Error("Expected focused selection");
 
-    const itemEl = findItemEl(view.root, sel.focus.item);
-    expect(itemEl).not.toBeNull();
+    const itemEl = requireItemEl(view.root, sel.focus.item);
+    const surface = requirePresenterSurface(itemEl);
 
-    const surface = findPresenterSurface(itemEl);
-    expect(surface).not.toBeNull();
-
-    pointerDown(surface!);
-    await tick();
-
+    pointerDown(surface);
+    await flushDomEffects();
     expect(document.activeElement === surface).toBe(true);
 
-    const sel2 = core.selection();
-    expectFocused(sel2);
-    expect(sel2.target).toBe(DEFAULT_TARGET);
-
-    unmount();
+    expectSel(core, {
+      container: sel.focus.container,
+      item: sel.focus.item,
+      target: DEFAULT_TARGET,
+    });
   });
 
-  test("outline: '=' on empty value editor switches to derived and focuses expr", async () => {
+  test("outline: printable key at DEFAULT_TARGET enters value editor and inserts", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x" });
 
     const view = viewFactories.outline({ core, id: rootId });
-    const unmount = await mountDomView(view);
+    mountDomView(view);
 
-    await tick();
+    expectSel(core, { container: rootId, item: x, target: DEFAULT_TARGET });
 
-    const itemEl = findItemEl(view.root, x);
-    expect(itemEl).not.toBeNull();
-    if (!itemEl) throw new Error("Missing item element");
+    fireViewKey(view, "A");
+    await flushDomEffects();
 
-    const valueEl = queryTargetInput(itemEl, "value");
-    expect(valueEl).not.toBeNull();
-    if (!valueEl) throw new Error("Missing value input");
+    expectSel(core, { container: rootId, item: x, target: "value" });
+
+    const itemEl = requireItemEl(view.root, x);
+    const valueEl = requireTargetInput(itemEl, "value");
+    const text = (valueEl as HTMLInputElement | HTMLTextAreaElement).value;
+    expect(text.includes("A")).toBe(true);
+  });
+
+  test("outline: '=' on empty value editor switches to derived and focuses expr", () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const x = mkBlank(core, rootId, { label: "x" });
+
+    const view = viewFactories.outline({ core, id: rootId });
+    mountDomView(view);
+
+    const itemEl = requireItemEl(view.root, x);
+    const valueEl = requireTargetInput(itemEl, "value");
 
     pointerDown(valueEl);
-    await tick();
 
     valueEl.dispatchEvent(
       new KeyboardEvent("keydown", {
@@ -96,18 +106,12 @@ describe("views", () => {
         cancelable: true,
       }),
     );
-    await tick();
 
     expect(core.item(x).mode.kind).toBe("source");
-
-    const sel = core.selection();
-    expectFocused(sel);
-    expect(sel.target).toBe("source:expr");
-
-    unmount();
+    expectSel(core, { container: rootId, item: x, target: "source:expr" });
   });
 
-  test("table: arrow navigation row -> right -> cell; left -> row; down -> next row", async () => {
+  test("table: arrow navigation row -> right -> cell; left -> row; down -> next row", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -120,78 +124,119 @@ describe("views", () => {
     const bScoreId = mkBlank(core, rowB, { label: "score", value: 6 });
 
     const view = viewFactories.table({ core, id: tableId });
-    const unmount = await mountDomView(view);
+    mountDomView(view);
 
-    await tick();
+    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
 
-    let sel = core.selection();
-    expectFocused(sel);
-    expect(sel.target).toBe(DEFAULT_TARGET);
-    expect(sel.focus.container).toBe(tableId);
-    expect(sel.focus.item).toBe(rowA);
+    fireViewKey(view, "ArrowRight");
+    expectSel(core, {
+      container: rowA,
+      item: aScoreId,
+      target: DEFAULT_TARGET,
+    });
 
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
-    await tick();
+    fireViewKey(view, "ArrowLeft");
+    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
 
-    sel = core.selection();
-    expectFocused(sel);
-    expect(sel.target).toBe(DEFAULT_TARGET);
-    expect(sel.focus.container).toBe(rowA);
-    expect(sel.focus.item).toBe(aScoreId);
-
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
-    await tick();
-
-    sel = core.selection();
-    expectFocused(sel);
-    expect(sel.target).toBe(DEFAULT_TARGET);
-    expect(sel.focus.container).toBe(tableId);
-    expect(sel.focus.item).toBe(rowA);
-
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-    await tick();
-
-    sel = core.selection();
-    expectFocused(sel);
-    expect(sel.target).toBe(DEFAULT_TARGET);
-    expect(sel.focus.container).toBe(rowB);
-    expect(sel.focus.item).toBe(bScoreId);
-
-    unmount();
+    fireViewKey(view, "ArrowRight");
+    fireViewKey(view, "ArrowDown");
+    expectSel(core, {
+      container: rowB,
+      item: bScoreId,
+      target: DEFAULT_TARGET,
+    });
   });
 
-  test("slider: input updates scalar; arrow nudge clamps; Home sets min", async () => {
+  test("table: printable key from row selection focuses first cell value and inserts", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const aScoreId = mkBlank(core, rowA, { label: "score" });
+
+    const view = viewFactories.table({ core, id: tableId });
+    mountDomView(view);
+
+    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
+
+    fireViewKey(view, "7");
+    await flushDomEffects();
+
+    expectSel(core, { container: rowA, item: aScoreId, target: "value" });
+
+    const cellItemEl = requireItemEl(view.root, aScoreId);
+    const valueEl = requireTargetInput(cellItemEl, "value");
+    const text = (valueEl as HTMLInputElement | HTMLTextAreaElement).value;
+    expect(text.includes("7")).toBe(true);
+  });
+
+  test("table: global keydown routes to active nested view (outline hosting a table)", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const aScore = mkBlank(core, rowA, { label: "score", value: 5 });
+
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+    const bScore = mkBlank(core, rowB, { label: "score", value: 6 });
+
+    const outline = viewFactories.outline({ core, id: rootId });
+    mountDomView(outline);
+
+    const nestedCellHost = requireEl(
+      outline.root.querySelector(
+        `.ui-item[data-view="table"] .ui-table-cell[data-col="score"]`,
+      ) as HTMLElement | null,
+      "Missing nested cell host",
+    );
+
+    pointerDown(nestedCellHost);
+    await flushDomEffects();
+
+    expectSel(core, { container: rowA, item: aScore, target: DEFAULT_TARGET });
+
+    fireWindowKey("ArrowDown");
+    expectSel(core, { container: rowB, item: bScore, target: DEFAULT_TARGET });
+  });
+
+  test("slider: input updates scalar; arrow nudge clamps; Home sets min; End sets max; modifiers scale nudge", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const sliderId = mkBlank(core, rootId, { label: "slider", value: 10 });
     setView(core, sliderId, "slider");
 
     const view = viewFactories.slider({ core, id: sliderId });
-    const unmount = await mountDomView(view);
+    mountDomView(view);
 
-    const input = view.root.querySelector(
-      `input[type="range"]`,
-    ) as HTMLInputElement | null;
-
-    expect(input).not.toBeNull();
-    if (!input) throw new Error("Missing slider input");
+    const input = requireEl(
+      view.root.querySelector(`input[type="range"]`) as HTMLInputElement | null,
+      "Missing slider input",
+    );
 
     input.value = "42";
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(scalarOf(core.item(sliderId).content)).toBe(42);
+    expect(scalarOfId(core, sliderId)).toBe(42);
 
     core.commit((t) => t.setScalar(sliderId, 100));
-    await tick();
+    fireViewKey(view, "ArrowRight");
+    expect(scalarOfId(core, sliderId)).toBe(100);
 
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "ArrowRight" }));
-    await tick();
-    expect(scalarOf(core.item(sliderId).content)).toBe(100);
+    fireViewKey(view, "Home");
+    expect(scalarOfId(core, sliderId)).toBe(0);
 
-    view.onKeyDown?.(new KeyboardEvent("keydown", { key: "Home" }));
-    await tick();
-    expect(scalarOf(core.item(sliderId).content)).toBe(0);
+    fireViewKey(view, "End");
+    expect(scalarOfId(core, sliderId)).toBe(100);
 
-    unmount();
+    core.commit((t) => t.setScalar(sliderId, 50));
+    fireViewKey(view, "ArrowRight", { shiftKey: true });
+    expect(scalarOfId(core, sliderId)).toBe(60);
+
+    core.commit((t) => t.setScalar(sliderId, 0));
+    fireViewKey(view, "ArrowRight", { altKey: true });
+    expect(scalarOfId(core, sliderId)).toBe(0.1);
   });
 });

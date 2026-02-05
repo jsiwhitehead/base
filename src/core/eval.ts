@@ -275,7 +275,6 @@ export function createEvaluator(opts: {
         const rowId = entryIds[i]!;
         const rowCtx = forkCtx(ctx);
         const key = evalRowExpr(orderBy, rowId, i, rowCtx);
-        if (isIssueValue(key)) return key;
         rows.push({ rowId, i, key });
       }
       rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);

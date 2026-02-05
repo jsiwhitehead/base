@@ -602,12 +602,12 @@ export function createTableView(args: {
         );
         if (!next) return;
         core.focus(next.focus, next.target, { caret: next.caret });
-        insertTextIntoActiveEditor(e.key);
+        queueMicrotask(() => insertTextIntoActiveEditor(e.key));
         return;
       }
 
       core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
-      insertTextIntoActiveEditor(e.key);
+      queueMicrotask(() => insertTextIntoActiveEditor(e.key));
       return;
     }
 

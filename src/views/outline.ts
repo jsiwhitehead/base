@@ -932,7 +932,7 @@ export function createOutlineView(args: {
       if (!target) return;
       stopEvent(e);
       core.focus(sel.focus, target, { caret: SELECT_ALL });
-      insertTextIntoActiveEditor(e.key);
+      queueMicrotask(() => insertTextIntoActiveEditor(e.key));
       return;
     }
 

@@ -414,9 +414,9 @@ export function createCore(opts: {
             model.hasEntry(cid),
           );
 
-          inverses.push(model.ops.create(cur));
-
-          for (let i = 0; i < childIds.length; i++) {
+          // Inverses are globally reversed when pushed to undo history.
+          // Capture remove inverses in reverse execution order.
+          for (let i = childIds.length - 1; i >= 0; i--) {
             inverses.push(
               model.ops.move({
                 childId: childIds[i]!,
@@ -433,8 +433,15 @@ export function createCore(opts: {
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
             }),
           );
+
+          inverses.push(
+            model.ops.create({
+              ...cur,
+              ownerId: null,
+              content: { kind: "group", childIds: [] },
+            }),
+          );
         } else {
-          inverses.push(model.ops.create(cur));
           inverses.push(
             model.ops.move({
               childId: id,
@@ -442,6 +449,7 @@ export function createCore(opts: {
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
             }),
           );
+          inverses.push(model.ops.create({ ...cur, ownerId: null }));
         }
 
         continue;
@@ -831,9 +839,7 @@ export function createCore(opts: {
 
     const replay = model.ops.transaction(last.user.ops, { source: "redo" });
     const res = applyLocal(replay);
-
-    const newUndoTop = history.undo.at(-1) ?? null;
-    if (newUndoTop) history.redo = [...history.redo, newUndoTop];
+    history.undo.push(last);
 
     return res;
   };
@@ -929,6 +935,6 @@ export function createCore(opts: {
 
 export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
 export type { TextCaret };
-export type { ViewName, ViewKind };
+export type { Transaction, ViewName, ViewKind };
 export { DEFAULT_TARGET };
 export { parseScalar, clamp, isTextInput, defaultTextCaret };

@@ -7,12 +7,13 @@ import {
   type Selection,
   type DomView,
   type Content,
+  type ViewKind,
   createCore,
   DEFAULT_TARGET,
 } from "../src/core";
 import { viewFactories } from "../src/views";
 
-const cleanups = new Set<() => void>();
+const cleanups: Array<() => void> = [];
 
 beforeAll(() => {
   GlobalRegistrator.register();
@@ -20,17 +21,13 @@ beforeAll(() => {
 
 afterEach(() => {
   document.body.replaceChildren();
-  for (const fn of cleanups) fn();
-  cleanups.clear();
+  for (const fn of cleanups.toReversed()) fn();
+  cleanups.length = 0;
 });
 
-export async function tick(): Promise<void> {
-  await new Promise<void>((r) => setTimeout(r, 0));
-}
-
 export function makeCoreRuntime(): { core: Core; rootId: ItemId } {
-  const { core, rootId } = createCore({ views: viewFactories as any });
-  cleanups.add(() => core.dispose());
+  const { core, rootId } = createCore({ views: viewFactories });
+  cleanups.push(() => core.dispose());
   return { core, rootId };
 }
 
@@ -40,9 +37,51 @@ export function scalarOf(content: Content): true | number | string | null {
   return content.value;
 }
 
+export function scalarOfId(
+  core: Core,
+  id: ItemId,
+): true | number | string | null {
+  return scalarOf(core.item(id).content);
+}
+
 export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {
   const c = core.item(id).content;
   return c.kind === "group" ? c.children : [];
+}
+
+export function groupLabels(core: Core, id: ItemId): string[] {
+  const it = core.item(id);
+  if (it.content.kind !== "group") return [];
+  return it.content.children.map((cid) => core.item(cid).label ?? "");
+}
+
+type TreeShape =
+  | {
+      label: string;
+      mode: string;
+      kind: "scalar";
+      value: true | number | string | null;
+    }
+  | { label: string; mode: string; kind: "issue"; message: string }
+  | { label: string; mode: string; kind: "group"; children: TreeShape[] };
+
+export function tree(core: Core, id: ItemId): TreeShape {
+  const it = core.item(id);
+  const label = it.label ?? "";
+  const mode = it.mode.kind;
+  const c = it.content;
+
+  if (c.kind === "scalar")
+    return { label, mode, kind: "scalar", value: c.value };
+  if (c.kind === "issue")
+    return { label, mode, kind: "issue", message: c.message };
+
+  return {
+    label,
+    mode,
+    kind: "group",
+    children: c.children.map((x) => tree(core, x)),
+  };
 }
 
 export function expectFocused(
@@ -50,6 +89,23 @@ export function expectFocused(
 ): asserts sel is Extract<Selection, { kind: "focused" }> {
   expect(sel.kind).toBe("focused");
   if (sel.kind !== "focused") throw new Error("Expected focused selection");
+}
+
+export function expectSel(
+  core: Core,
+  want: { container: ItemId; item: ItemId; target?: string },
+): void {
+  const sel = core.selection();
+  expectFocused(sel);
+  expect(sel.focus.container).toBe(want.container);
+  expect(sel.focus.item).toBe(want.item);
+  expect(sel.target).toBe(want.target ?? DEFAULT_TARGET);
+}
+
+export function focusOf(core: Core): Focus {
+  const sel = core.selection();
+  expectFocused(sel);
+  return sel.focus;
 }
 
 export function mkBlank(
@@ -62,10 +118,9 @@ export function mkBlank(
     id = t.insertChild(ownerId, {
       kind: "blank",
       ...(args?.at != null ? { at: args.at } : {}),
-    } as any);
+    });
     if (args?.label != null) t.setLabel(id, args.label);
-    if (args?.value !== undefined && args.value !== null)
-      t.setScalar(id, args.value);
+    if (args?.value !== undefined) t.setScalar(id, args.value);
   });
   return id;
 }
@@ -73,23 +128,23 @@ export function mkBlank(
 export function mkGroup(
   core: Core,
   ownerId: ItemId,
-  args?: { at?: number; label?: string; view?: string },
+  args?: { at?: number; label?: string; view?: ViewKind },
 ): ItemId {
   let id: ItemId = "";
   core.commit((t) => {
     id = t.insertChild(ownerId, {
       kind: "group",
       ...(args?.at != null ? { at: args.at } : {}),
-    } as any);
+    });
     if (args?.label != null) t.setLabel(id, args.label);
-    if (args?.view != null) t.setView(id, args.view as any);
+    if (args?.view != null) t.setView(id, args.view);
   });
   return id;
 }
 
 export function setDerived(core: Core, id: ItemId, expr: string): void {
   core.commit((t) => {
-    t.setSource(id, { type: "derived", expr } as any);
+    t.setSource(id, { type: "derived", expr });
   });
 }
 
@@ -99,23 +154,62 @@ export function setLens(
   args: { from: string; where?: string; orderBy?: string },
 ): void {
   core.commit((t) => {
-    t.setSource(id, { type: "lens", ...args } as any);
+    t.setSource(id, {
+      type: "lens",
+      from: args.from,
+      where: args.where ?? "",
+      orderBy: args.orderBy ?? "",
+    });
   });
 }
 
-export function setView(core: Core, id: ItemId, view: string): void {
-  core.commit((t) => t.setView(id, view as any));
+export function setView(core: Core, id: ItemId, view: ViewKind): void {
+  core.commit((t) => t.setView(id, view));
 }
 
-export async function mountDomView(view: DomView): Promise<() => void> {
+export function mountDomView(view: DomView): () => void {
   document.body.replaceChildren(view.root);
-  await tick();
+
   const unmount = () => {
     view.dispose();
     document.body.replaceChildren();
   };
-  cleanups.add(unmount);
+
+  cleanups.push(unmount);
   return unmount;
+}
+
+export function keyEvent(
+  key: string,
+  opts: Partial<KeyboardEventInit> = {},
+): KeyboardEvent {
+  return new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...opts,
+  });
+}
+
+export function fireViewKey(
+  view: DomView,
+  key: string,
+  opts?: Partial<KeyboardEventInit>,
+): void {
+  view.onKeyDown?.(keyEvent(key, opts));
+}
+
+export function fireWindowKey(
+  key: string,
+  opts?: Partial<KeyboardEventInit>,
+): void {
+  window.dispatchEvent(keyEvent(key, opts));
+}
+
+export async function flushDomEffects(turns = 2): Promise<void> {
+  for (let i = 0; i < turns; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 export function queryTargetInput(
@@ -129,8 +223,23 @@ export function queryTargetInput(
     | null;
 }
 
+export function requireTargetInput(
+  root: ParentNode,
+  target: string,
+): HTMLTextAreaElement | HTMLInputElement {
+  const el = queryTargetInput(root, target);
+  if (!el) throw new Error(`Missing input for target=${target}`);
+  return el;
+}
+
 export function findItemEl(root: ParentNode, id: ItemId): HTMLElement | null {
   return root.querySelector(`.ui-item[data-id="${id}"]`) as HTMLElement | null;
+}
+
+export function requireItemEl(root: ParentNode, id: ItemId): HTMLElement {
+  const el = findItemEl(root, id);
+  if (!el) throw new Error(`Missing item element for id=${String(id)}`);
+  return el;
 }
 
 export function pointerDown(el: HTMLElement): void {
@@ -165,12 +274,24 @@ export function findPresenterSurface(
   return fromItemEl;
 }
 
+export function requirePresenterSurface(
+  fromItemEl: HTMLElement | null,
+): HTMLElement {
+  const s = findPresenterSurface(fromItemEl);
+  if (!s) throw new Error("Missing presenter surface");
+  return s;
+}
+
+export function requireEl<T extends Element>(
+  el: T | null,
+  msg = "Missing element",
+): T {
+  if (!el) throw new Error(msg);
+  return el;
+}
+
 export const targets = {
   DEFAULT: DEFAULT_TARGET,
 };
 
-export function focusOf(core: Core): Focus {
-  const sel = core.selection();
-  expectFocused(sel);
-  return sel.focus;
-}
+export { viewFactories };
