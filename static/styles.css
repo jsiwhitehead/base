@@ -26,6 +26,21 @@
   color: var(--ui-fg);
 }
 
+.ui-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 10px;
+  align-items: start;
+}
+
+.ui-shell-main {
+  min-width: 0;
+}
+
+.ui-shell-side {
+  min-width: 0;
+}
+
 .ui-app {
   outline: none;
 }
@@ -191,6 +206,58 @@
   font-size: 12px;
   font-weight: bold;
   color: var(--ui-fg-muted);
+}
+
+.ui-debug {
+  position: sticky;
+  top: 10px;
+  max-height: calc(100vh - 20px);
+  overflow: auto;
+  background: var(--ui-grey-faint);
+  border: 1px solid var(--ui-grey-light);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.ui-debug-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.ui-debug-last {
+  font-weight: bold;
+  color: var(--ui-fg-muted);
+}
+
+.ui-debug-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ui-debug-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--ui-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ui-debug-pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--ui-grey-light);
+  overflow: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .autosize {

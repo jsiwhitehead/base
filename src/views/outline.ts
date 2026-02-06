@@ -718,6 +718,7 @@ function mountOutlineItem(
         target: VALUE_TARGET,
         multiline: true,
         commitText: (text) => outlineCommands.setText(core, id, text),
+        onCommitEvents: ["input"],
         textKeys: (inp) => {
           const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
           const stops: Array<() => void> = [];

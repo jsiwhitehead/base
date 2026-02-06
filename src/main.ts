@@ -2,8 +2,8 @@ import { DEV, devAssert, devWarn } from "./dev";
 import type { Core, ItemId, ViewKind, ViewName, Scalar } from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
-import { presentItem } from "./dom";
-import { DEFAULT_TARGET } from "./core/runtime";
+import { presentItem, el } from "./dom";
+import { createDebugPanel, createDebugState, instrumentCore } from "./debug";
 
 export type App = {
   core: Core;
@@ -29,7 +29,10 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   devAssert(hostEl, "Missing app root element (#root)");
 
-  const { core, rootId } = createCore({ views: viewFactories });
+  const { core: rawCore, rootId } = createCore({ views: viewFactories });
+
+  const debug = createDebugState();
+  const core = instrumentCore(rawCore, debug);
 
   core.commit((t) => {
     t.setView(rootId, rootView as ViewKind);
@@ -50,12 +53,32 @@ export function createApp(opts: CreateAppOpts = {}): App {
     },
   });
 
-  hostEl.replaceChildren(appPresenter.el);
+  const shell = el("div", "ui-shell");
+  const main = el("div", "ui-shell-main");
+  const side = el("div", "ui-shell-side");
+
+  main.append(appPresenter.el);
+
+  let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
+
+  if (DEV) {
+    debugPanel = createDebugPanel({
+      core,
+      debug,
+      probeRoot: main,
+      className: "ui-debug",
+    });
+    side.append(debugPanel.el);
+  }
+
+  shell.append(main, side);
+  hostEl.replaceChildren(shell);
 
   const app: App = {
     core,
     rootId,
     dispose() {
+      debugPanel?.dispose();
       appPresenter.dispose();
       hostEl.replaceChildren();
       core.dispose();
@@ -150,23 +173,23 @@ export function seedDemo(app: App) {
 
   mkScalar(demo, "x", 10);
   mkScalar(demo, "y", 2);
-  mkDerived(demo, "x_plus_y", "x + y");
-  mkDerived(demo, "x_times_y", "x * y");
+  // mkDerived(demo, "x_plus_y", "x + y");
+  // mkDerived(demo, "x_times_y", "x * y");
 
-  const rows = mkGroup(demo, "rows", "table");
+  // const rows = mkGroup(demo, "rows", "table");
 
-  const mkRow = (label: string, score: number, note: string) => {
-    const row = mkGroup(rows, label);
-    mkScalar(row, "score", score);
-    mkScalar(row, "note", note);
-    return row;
-  };
+  // const mkRow = (label: string, score: number, note: string) => {
+  //   const row = mkGroup(rows, label);
+  //   mkScalar(row, "score", score);
+  //   mkScalar(row, "note", note);
+  //   return row;
+  // };
 
-  mkRow("a", 2, "ok");
-  mkRow("b", 1, "low");
-  mkRow("c", 3, "high");
+  // mkRow("a", 2, "ok");
+  // mkRow("b", 1, "low");
+  // mkRow("c", 3, "high");
 
-  mkLens(demo, "Table", { from: "rows", where: "", orderBy: "" });
+  // mkLens(demo, "Table", { from: "rows", where: "", orderBy: "" });
 }
 
 function autoMount(): void {
