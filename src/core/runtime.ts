@@ -1,5 +1,5 @@
 import { signal, type Signal } from "@preact/signals-core";
-import type { EntryId, Model, ViewKind, ViewName } from "./model";
+import type { EntryId, Model, ViewName } from "./model";
 
 export const DEFAULT_TARGET = "default" as const;
 
@@ -171,11 +171,10 @@ export type Runtime<C> = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: { id: ItemId; focus?: Focus }): Component;
   mountView(opts: {
     id: ItemId;
     focus?: Focus;
-    continueAs: ViewName;
+    view: ViewName;
   }): Component | null;
 
   installGlobalListeners(win?: Window): () => void;
@@ -413,45 +412,18 @@ export function createRuntime<C>(opts: {
     return () => win.removeEventListener("keydown", onKeyDown);
   };
 
-  const resolveWanted = (id: ItemId): ViewName => {
-    const entryId = entryIdFromItemId(id);
-    if (entryId == null) return "outline";
-
-    let v: ViewKind = null;
-    try {
-      v = model.readEntry(entryId).view;
-    } catch {
-      v = null;
-    }
-
-    const wanted = (v ?? "outline") as ViewName;
-    return (wanted in views ? wanted : "outline") as ViewName;
-  };
-
-  function mountView(opts2: { id: ItemId; focus?: Focus }): Component;
-  function mountView(opts2: {
+  const mountView = (opts2: {
     id: ItemId;
     focus?: Focus;
-    continueAs: ViewName;
-  }): Component | null;
-  function mountView(opts2: {
-    id: ItemId;
-    focus?: Focus;
-    continueAs?: ViewName;
-  }): Component | null {
+    view: ViewName;
+  }): Component | null => {
     const id = opts2.id;
     const focus: Focus = opts2.focus ?? { container: id, item: id };
 
     const entryId = entryIdFromItemId(id);
-    if (entryId == null)
-      return opts2.continueAs
-        ? null
-        : { el: document.createElement("div"), dispose() {} };
+    if (entryId == null) return null;
 
-    const wanted = resolveWanted(id);
-    if (opts2.continueAs && wanted === opts2.continueAs) return null;
-
-    const factory = views[wanted];
+    const factory = views[opts2.view];
     if (!factory) return null;
 
     const view = factory({ core: opts.getCore(), id, focus });
@@ -468,7 +440,7 @@ export function createRuntime<C>(opts: {
         view.dispose();
       },
     };
-  }
+  };
 
   const dispose = (): void => {
     bindings.clear();

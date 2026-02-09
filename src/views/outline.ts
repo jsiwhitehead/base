@@ -9,6 +9,7 @@ import {
   type DomView,
   type ScalarOrBlank,
   type Source,
+  type ViewName,
   parseScalar,
   DEFAULT_TARGET,
   defaultTextCaret,
@@ -528,8 +529,6 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
       outlineCommands.setLabel(core, id, text);
     };
 
-    const labelSlot = ctx.slot(labelWrap);
-
     const labelComp = autosizeTextField(core, {
       commit: commitLabel,
       getState: () => {
@@ -562,7 +561,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     });
 
     makeNotTabbable(labelComp.focusEl);
-    labelSlot.set(labelComp);
+    labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
     ctx.target(focus, "label", () => labelComp.focusEl, {
@@ -646,26 +645,38 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
       });
     });
 
-    ctx.effect(() => {
-      const snap = core.item(id);
-      const label = (snap.label ?? "").trim();
-      const fields =
-        snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
+    const labelFocused = computed(() => {
       const sel = core.selection();
-      const labelFocused =
+      return (
         sel.kind === "focused" &&
         sel.focus.item === focus.item &&
         sel.focus.container === focus.container &&
-        sel.target === "label";
+        sel.target === "label"
+      );
+    });
 
-      const needMeta = label !== "" || fields.length > 0 || labelFocused;
+    const hasLabel = computed(() => (core.item(id).label ?? "").trim() !== "");
+    const fieldsSignal = computed(() => {
+      const snap = core.item(id);
+      return snap.mode.kind === "source"
+        ? fieldsFromSource(snap.mode.source)
+        : [];
+    });
 
-      meta.classList.toggle("hidden", !needMeta);
+    const hasFields = computed(() => fieldsSignal.value.length > 0);
+    const needMeta = computed(
+      () => hasLabel.value || hasFields.value || labelFocused.value,
+    );
 
+    ctx.effect(() => {
+      const fields = fieldsSignal.value;
       fieldSpec.clear();
       for (const f of fields) fieldSpec.set(f.key, f);
+      rows.update(fields.map((f) => f.key));
+    });
 
-      rows.update(needMeta ? fields.map((f) => f.key) : []);
+    ctx.effect(() => {
+      meta.classList.toggle("hidden", !needMeta.value);
     });
 
     return meta;
@@ -684,24 +695,15 @@ function mountOutlineItem(
     const root = el("div");
 
     let metaComp: Component | null = null;
-    let metaEl: HTMLElement | null = null;
+
+    if (showMeta) {
+      metaComp = mountMeta(mountCtx, focus);
+      root.append(metaComp.el);
+      ctx.cleanup(() => metaComp?.dispose());
+    }
 
     let bodyComp: Component | null = null;
     let bodyEl: HTMLElement | null = null;
-
-    const unmountMeta = () => {
-      metaComp?.dispose();
-      metaComp = null;
-      metaEl?.remove();
-      metaEl = null;
-    };
-
-    const mountMetaIfNeeded = () => {
-      if (metaComp) return;
-      metaComp = mountMeta(mountCtx, focus);
-      metaEl = metaComp.el;
-      root.insertBefore(metaEl, root.firstChild);
-    };
 
     const unmountBody = () => {
       bodyComp?.dispose();
@@ -789,26 +791,8 @@ function mountOutlineItem(
       root.append(wrap);
     };
 
-    const remount = () => {
+    ctx.effect(() => {
       const snap = core.item(id);
-
-      const label = (snap.label ?? "").trim();
-      const fields =
-        snap.mode.kind === "source" ? fieldsFromSource(snap.mode.source) : [];
-
-      const sel = core.selection();
-      const labelFocused =
-        sel.kind === "focused" &&
-        sel.focus.item === focus.item &&
-        sel.focus.container === focus.container &&
-        sel.target === "label";
-
-      const needMeta =
-        showMeta && (label !== "" || fields.length > 0 || labelFocused);
-
-      if (needMeta) mountMetaIfNeeded();
-      else unmountMeta();
-
       const wantBodyKind = snap.content.kind === "group" ? "group" : "scalar";
       const haveBodyKind = bodyEl?.classList.contains("ui-outline-group")
         ? "group"
@@ -821,12 +805,6 @@ function mountOutlineItem(
         if (wantBodyKind === "group") mountGroupBody();
         else mountScalarBody();
       }
-    };
-
-    ctx.effect(() => {
-      core.item(id);
-      core.selection();
-      remount();
     });
 
     ctx.cleanup(() => {
@@ -834,7 +812,6 @@ function mountOutlineItem(
       bodyComp?.dispose();
       metaComp = null;
       bodyComp = null;
-      metaEl = null;
       bodyEl = null;
     });
 
@@ -855,10 +832,18 @@ function mountNode(
     focus,
     className: "ui-outline-node",
     mount(ctx, _host, slot) {
+      let fallback: Component | null = null;
+
       ctx.effect(() => {
-        core.item(id);
-        const mounted = core.mountView({ id, focus, continueAs: "outline" });
-        slot.set(mounted ?? mountOutlineItem(mountCtx, focus, showMeta));
+        const wanted = core.view(id);
+
+        if (wanted === "outline") {
+          fallback ??= mountOutlineItem(mountCtx, focus, showMeta);
+          slot.set(fallback);
+          return;
+        }
+
+        slot.set(core.mountView({ id, focus, view: wanted }));
       });
     },
   });
@@ -974,17 +959,6 @@ export function createOutlineView(args: {
       return;
     }
   };
-
-  if (core.selection().kind === "idle") {
-    const first = navStopsSignal.value[0];
-    if (first) {
-      core.focus(
-        { container: rootId, item: first },
-        defaultTargetFor(core, first),
-        { caret: caret0() },
-      );
-    }
-  }
 
   return {
     id: `outline:${String(rootId)}`,

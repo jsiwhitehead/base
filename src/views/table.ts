@@ -1,15 +1,15 @@
 import { computed } from "@preact/signals-core";
-import {
-  type Core,
-  type ItemId,
-  type Component,
-  type Caret,
-  type Focus,
-  type Selection,
-  type DomView,
-  DEFAULT_TARGET,
-  defaultTextCaret,
+import type {
+  Core,
+  ItemId,
+  Component,
+  Caret,
+  Focus,
+  Selection,
+  DomView,
+  ViewName,
 } from "../core";
+import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import {
   type NavDir,
   type NavMode,
@@ -204,16 +204,16 @@ function tableNavMove(
   const rowId = sel.focus.container;
   const cellId = sel.focus.item;
 
-  const rowIdx = rows.indexOf(rowId);
-  if (rowIdx < 0) return null;
+  const rowsIdx = rows.indexOf(rowId);
+  if (rowsIdx < 0) return null;
 
   const colLabel = (labelOf(core, cellId) ?? "").trim();
   const colIdx = Math.max(0, cols.indexOf(colLabel));
 
   if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
   if (dir === "right") return moveCellHoriz(rowId, colIdx, 1);
-  if (dir === "up") return moveCellVert(rowIdx, colIdx, -1);
-  if (dir === "down") return moveCellVert(rowIdx, colIdx, 1);
+  if (dir === "up") return moveCellVert(rowsIdx, colIdx, -1);
+  if (dir === "down") return moveCellVert(rowsIdx, colIdx, 1);
 
   return null;
 }
@@ -301,21 +301,23 @@ function mountRowMeta(args: {
     const labelWrap = el("div", "ui-label");
     meta.append(labelWrap);
 
-    const labelSlot = ctx.slot(labelWrap);
+    const isEditing = computed(() => {
+      const sel = core.selection();
+      return (
+        isRowSel(sel, tableId) &&
+        sel.focus.item === rowId &&
+        sel.target === ROW_LABEL_TARGET
+      );
+    });
 
     const labelComp = textField(core, {
       multiline: false,
       commit: (text) => tableCommands.setLabel(core, rowId, text),
       getState: () => {
-        const sel = core.selection();
-        const editing =
-          isRowSel(sel, tableId) &&
-          sel.focus.item === rowId &&
-          sel.target === ROW_LABEL_TARGET;
         const row = core.item(rowId);
         const canEdit = row.mode.kind !== "readonly";
         const text = row.label ?? "";
-        const readOnly = !editing || !canEdit;
+        const readOnly = !isEditing.value || !canEdit;
         return { text, readOnly, isIssue: false };
       },
       onCommitEvents: ["blur"],
@@ -331,7 +333,7 @@ function mountRowMeta(args: {
 
     makeNotTabbable(labelComp.focusEl);
 
-    labelSlot.set(labelComp);
+    labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
     ctx.target(focus, ROW_LABEL_TARGET, () => labelComp.focusEl, {
@@ -355,42 +357,43 @@ function mountCellHost(
   return createComponent(mountCtx.core, (ctx) => {
     const host = el("div", "ui-table-cell");
     host.setAttribute("data-col", col);
-    const rowItemRoot = host.closest(".ui-item");
 
     const slot = ctx.slot(host);
 
     const getCellId = () => findChildByLabel(mountCtx.core, rowId, col);
 
     ctx.effect(() => {
-      const id = getCellId();
-      if (!id) {
+      const cellItemId = getCellId();
+
+      if (!cellItemId) {
         slot.set({ el: el("div"), dispose: () => {} });
         return;
       }
-      const focus: Focus = { container: rowId, item: id };
-      const mounted = mountCtx.core.mountView({ id, focus });
-      slot.set(mounted);
+
+      const focus: Focus = { container: rowId, item: cellItemId };
+      const wanted = mountCtx.core.view(cellItemId);
+      const mounted = mountCtx.core.mountView({
+        id: cellItemId,
+        focus,
+        view: wanted,
+      });
+
+      slot.set(mounted ?? { el: el("div"), dispose: () => {} });
     });
 
     ctx.effect(() => {
-      const id = getCellId();
-      if (!id) return;
-      const focus: Focus = { container: rowId, item: id };
+      const cellItemId = getCellId();
+      if (!cellItemId) return;
+      const focus: Focus = { container: rowId, item: cellItemId };
       ctx.target(focus, DEFAULT_TARGET, () => host);
     });
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      if (e.target instanceof HTMLElement) {
-        const hitItem = e.target.closest(".ui-item");
-        const isNestedItemHit =
-          !!hitItem && !!rowItemRoot && hitItem !== rowItemRoot;
-        if (isNestedItemHit) return;
-      }
-
       const nextCell = getCellId();
       const res = nextCell
         ? focusCellContainer(rowId, nextCell, caretFromTarget(e.target))
         : focusRowContainer(mountCtx.tableId, rowId, caretFromTarget(e.target));
+
       mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
       e.stopPropagation();
     });
@@ -409,15 +412,6 @@ function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
     ctx.target(focus, DEFAULT_TARGET, () => rowItem);
 
     ctx.on(rowItem, "pointerdown", (e: PointerEvent) => {
-      if (e.target instanceof HTMLElement && e.target.closest(".ui-table-cell"))
-        return;
-      if (
-        e.target instanceof HTMLElement &&
-        (e.target.closest("input,textarea,[contenteditable='true']") ||
-          e.target.closest("[data-target]"))
-      )
-        return;
-
       const sel = core.selection();
       if (
         isRowSel(sel, tableId) &&
@@ -522,7 +516,12 @@ function mountTableContent(args: {
   const { core, tableId, focus, dispatch, columnsSignal } = args;
 
   return createContent({ core, focus, view: "table" }, (ctx) => {
-    const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
+    const mountCtx: TableMountCtx = {
+      core,
+      tableId,
+      columnsSignal,
+      dispatch,
+    };
 
     const header = mountHeader(mountCtx);
     const body = mountBody(mountCtx);
@@ -572,15 +571,6 @@ export function createTableView(args: {
     columnsSignal,
     dispatch,
   });
-
-  if (core.selection().kind === "idle") {
-    const rows0 = childrenOf(core, tableId);
-    if (rows0.length) {
-      const firstRow = rows0[0]!;
-      const res = focusRowContainer(tableId, firstRow);
-      core.focus(res.focus, res.target, { caret: res.caret });
-    }
-  }
 
   const onKeyDown = (e: KeyboardEvent) => {
     const sel = core.selection();

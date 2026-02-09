@@ -227,9 +227,9 @@ export function requireTargetInput(
   root: ParentNode,
   target: string,
 ): HTMLTextAreaElement | HTMLInputElement {
-  const el = queryTargetInput(root, target);
-  if (!el) throw new Error(`Missing input for target=${target}`);
-  return el;
+  const el0 = queryTargetInput(root, target);
+  if (!el0) throw new Error(`Missing input for target=${target}`);
+  return el0;
 }
 
 export function findItemEl(root: ParentNode, id: ItemId): HTMLElement | null {
@@ -237,13 +237,13 @@ export function findItemEl(root: ParentNode, id: ItemId): HTMLElement | null {
 }
 
 export function requireItemEl(root: ParentNode, id: ItemId): HTMLElement {
-  const el = findItemEl(root, id);
-  if (!el) throw new Error(`Missing item element for id=${String(id)}`);
-  return el;
+  const el0 = findItemEl(root, id);
+  if (!el0) throw new Error(`Missing item element for id=${String(id)}`);
+  return el0;
 }
 
-export function pointerDown(el: HTMLElement): void {
-  el.dispatchEvent(
+export function pointerDown(el0: HTMLElement): void {
+  el0.dispatchEvent(
     new Event("pointerdown", { bubbles: true, cancelable: true }),
   );
 }
@@ -283,11 +283,85 @@ export function requirePresenterSurface(
 }
 
 export function requireEl<T extends Element>(
-  el: T | null,
+  el0: T | null,
   msg = "Missing element",
 ): T {
-  if (!el) throw new Error(msg);
-  return el;
+  if (!el0) throw new Error(msg);
+  return el0;
+}
+
+export function nodeOrderByDataId(
+  root: ParentNode,
+  selector: string,
+): string[] {
+  const els = [...root.querySelectorAll(selector)] as HTMLElement[];
+  return els.map((e) => e.dataset.id ?? "");
+}
+
+export function requireFocusedItemEl(root: ParentNode): HTMLElement {
+  const el0 = root.querySelector(
+    `.ui-item[data-focused="true"]`,
+  ) as HTMLElement | null;
+  if (!el0) throw new Error("Missing focused item element");
+  return el0;
+}
+
+export function requireNotSameEl(a: Element | null, b: Element | null): void {
+  if (!a || !b) throw new Error("Missing element");
+  expect(a === b).toBe(false);
+}
+
+export function requireSameEl(a: Element | null, b: Element | null): void {
+  if (!a || !b) throw new Error("Missing element");
+  expect(a === b).toBe(true);
+}
+
+export type ElSnapshot = {
+  el: Element;
+  keyEls: Element[];
+};
+
+export function snapshotEl(
+  el0: Element,
+  keySelectors: string[] = [],
+): ElSnapshot {
+  const keyEls: Element[] = [];
+  for (const sel of keySelectors) {
+    const hit = (el0 as ParentNode).querySelector(sel);
+    if (!hit) throw new Error(`Missing key element selector=${sel}`);
+    keyEls.push(hit);
+  }
+  return { el: el0, keyEls };
+}
+
+export function expectSnapshotSame(
+  snap: ElSnapshot,
+  el0: Element,
+  keySelectors: string[] = [],
+): void {
+  expect(snap.el === el0).toBe(true);
+
+  if (keySelectors.length !== snap.keyEls.length)
+    throw new Error("Key selector count mismatch");
+
+  for (let i = 0; i < keySelectors.length; i++) {
+    const sel = keySelectors[i]!;
+    const hit = (el0 as ParentNode).querySelector(sel);
+    if (!hit) throw new Error(`Missing key element selector=${sel}`);
+    expect(snap.keyEls[i] === hit).toBe(true);
+  }
+}
+
+export function expectSnapshotKeyChanged(
+  snap: ElSnapshot,
+  el0: Element,
+  keySelector: string,
+): void {
+  expect(snap.el === el0).toBe(true);
+  const hit = (el0 as ParentNode).querySelector(keySelector);
+  if (!hit) throw new Error(`Missing key element selector=${keySelector}`);
+  const anySame = snap.keyEls.some((x) => x === hit);
+  expect(anySame).toBe(false);
 }
 
 export const targets = {

@@ -160,7 +160,12 @@ function mountSliderContent({
       sliderCommands.setScalarValue(core, focus, id, next);
     };
 
-    ctx.on(input, "input", () => {
+    ctx.on(input, "pointerdown", (e: PointerEvent) => {
+      e.stopPropagation();
+    });
+
+    ctx.on(input, "input", (e: Event) => {
+      e.stopPropagation();
       commitValue(Number(input.value));
     });
 
@@ -230,10 +235,6 @@ export function createSliderView(args: {
     opts: resolved,
     dispatch,
   });
-
-  if (core.selection().kind === "idle") {
-    core.focus(safeFocus, DEFAULT_TARGET);
-  }
 
   const onKeyDown = (e: KeyboardEvent) => {
     handleSliderKey(e, dispatch);

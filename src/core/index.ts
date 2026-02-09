@@ -1,4 +1,4 @@
-import { batch } from "@preact/signals-core";
+import { batch, computed, type ReadonlySignal } from "@preact/signals-core";
 import {
   createModel,
   type ApplyResult as ModelApplyResult,
@@ -178,6 +178,8 @@ export type Core = {
 
   item(id: ItemId): Item;
 
+  view(id: ItemId): ViewName;
+
   commit(run: (t: Tx) => void): ApplyResult;
 
   undo(): ApplyResult;
@@ -196,11 +198,10 @@ export type Core = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: { id: ItemId; focus?: Focus }): Component;
   mountView(opts: {
     id: ItemId;
     focus?: Focus;
-    continueAs: ViewName;
+    view: ViewName;
   }): Component | null;
 };
 
@@ -226,11 +227,17 @@ export function createCore(opts: {
 
   let core!: Core;
 
+  const rootId = itemIdOf(rootEntryId);
+
   const runtime = createRuntime<Core>({
     model,
     getCore: () => core,
     views: opts.views,
-    initialSelection: { kind: "idle" },
+    initialSelection: {
+      kind: "focused",
+      focus: { container: rootId, item: rootId },
+      target: DEFAULT_TARGET,
+    },
   });
 
   const rules: { id: string; run: SyncRule }[] = [];
@@ -358,6 +365,27 @@ export function createCore(opts: {
     }
   };
 
+  const viewSignalCache = new Map<EntryId, ReadonlySignal<ViewName>>();
+
+  const view = (id: ItemId): ViewName => {
+    const eid = entryIdFromItemId(id);
+    if (eid == null) return "outline";
+
+    let sig = viewSignalCache.get(eid);
+    if (!sig) {
+      sig = computed(() => {
+        if (!model.hasEntry(eid)) return "outline";
+        const vk = model.entrySignal(eid).value.view;
+        const wanted = (vk ?? "outline") as ViewName;
+        const hasFactory = !!opts.views[wanted];
+        return hasFactory ? wanted : "outline";
+      });
+      viewSignalCache.set(eid, sig);
+    }
+
+    return sig.value;
+  };
+
   const ensureEntryId = (id: ItemId): EntryId | null => {
     const r = parseItemId(id);
     if (!r || r.path.length) return null;
@@ -401,12 +429,12 @@ export function createCore(opts: {
       }
 
       if (op.kind === "remove") {
-        const id = op.id;
-        if (!model.hasEntry(id)) continue;
+        const id0 = op.id;
+        if (!model.hasEntry(id0)) continue;
 
-        const cur = model.peekEntry(id);
+        const cur = model.peekEntry(id0);
         const ownerId = cur.ownerId ?? null;
-        const loc = model.locateInOwner(id);
+        const loc = model.locateInOwner(id0);
         const prevIndex = loc?.index ?? undefined;
 
         if (isGroupContent(cur.content)) {
@@ -414,13 +442,11 @@ export function createCore(opts: {
             model.hasEntry(cid),
           );
 
-          // Inverses are globally reversed when pushed to undo history.
-          // Capture remove inverses in reverse execution order.
           for (let i = childIds.length - 1; i >= 0; i--) {
             inverses.push(
               model.ops.move({
                 childId: childIds[i]!,
-                toOwnerId: id,
+                toOwnerId: id0,
                 toIndex: i,
               }),
             );
@@ -428,7 +454,7 @@ export function createCore(opts: {
 
           inverses.push(
             model.ops.move({
-              childId: id,
+              childId: id0,
               toOwnerId: ownerId,
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
             }),
@@ -444,7 +470,7 @@ export function createCore(opts: {
         } else {
           inverses.push(
             model.ops.move({
-              childId: id,
+              childId: id0,
               toOwnerId: ownerId,
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
             }),
@@ -498,11 +524,11 @@ export function createCore(opts: {
   };
 
   const addRuleInternal = (
-    rule: SyncRule,
+    ruleFn: SyncRule,
     opts2: { id?: string } = {},
   ): (() => void) => {
     const id = opts2.id ?? `rule:${nextRuleId++}`;
-    const rec = { id, run: rule };
+    const rec = { id, run: ruleFn };
     rules.push(rec);
     let active = true;
     return () => {
@@ -737,10 +763,10 @@ export function createCore(opts: {
         ops.push(model.ops.patch(eid, { label }));
       },
 
-      setView: (id, view) => {
+      setView: (id, view0) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patch(eid, { view }));
+        ops.push(model.ops.patch(eid, { view: view0 }));
       },
 
       setScalar: (id, value) => {
@@ -869,14 +895,7 @@ export function createCore(opts: {
   const attachTarget: Core["attachTarget"] = (args) =>
     runtime.attachTarget(args);
 
-  const mountView: Core["mountView"] = (args: any) => {
-    const id: ItemId = args.id;
-    if (!isEntryItemId(id)) {
-      if ("continueAs" in args) return null;
-      return { el: document.createElement("div"), dispose() {} };
-    }
-    return (runtime.mountView as any)(args);
-  };
+  const mountView: Core["mountView"] = (args) => runtime.mountView(args);
 
   const locate = (id: ItemId): LocateResult | null => {
     const r = parseItemId(id);
@@ -894,8 +913,6 @@ export function createCore(opts: {
 
   const uninstallGlobal = runtime.installGlobalListeners(window);
 
-  const rootId = itemIdOf(rootEntryId);
-
   const unsubscribeCollab = opts.collab
     ? opts.collab.subscribe((txn) => {
         applyRemote(txn);
@@ -911,9 +928,12 @@ export function createCore(opts: {
       evaluator.prune(removedIds);
       evaluator.dispose();
       runtime.dispose();
+      viewSignalCache.clear();
     },
 
     item,
+
+    view,
 
     commit,
 

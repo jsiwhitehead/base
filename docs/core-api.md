@@ -34,6 +34,7 @@ The following methods are reactive when called inside a reactive context:
 - `core.item(id)`
 - `core.selection()`
 - `core.locate(id)`
+- `core.view(id)`
 
 When the underlying state they depend on changes, the reactive context re-runs. Each call returns the current snapshot at the time of evaluation. All other Core methods are non-reactive commands.
 
@@ -113,7 +114,7 @@ An item is editable if and only if:
 item.mode.kind !== "readonly"
 ```
 
-Core does not currently enforce this rule. Edits targeting readonly items are attempted and may be rejected by the model or throw. Editable items may be freely modified via transactions.
+Core does not pre-filter edits by mode. Transactions may still fail (throw) if the model rejects them.
 
 ### Meaning of modes
 
@@ -288,6 +289,8 @@ core.blur()
 - `focus` selects an item within a container.
 - `target` selects a specific sub-target.
 - `caret` sets the text cursor position.
+- If `target` is omitted, Core uses `DEFAULT_TARGET`.
+- If `opts` is omitted (or `opts.caret` is omitted), selection is focused without a caret.
 
 If edits invalidate the current selection, Core automatically repairs selection to a valid state.
 
@@ -308,36 +311,33 @@ Registers a binding for a specific `(focus, target)` pair.
 - `caret` (if provided) allows Core to position the text cursor when this target is focused.
 - Returns a cleanup function that must be called when the binding is no longer valid.
 - One active binding per `(focus, target)`; new registrations replace the old.
+- Replacement is per `(focus, target)` pair (independent of view nesting); the most recently attached binding wins until disposed.
 
 ### Selection application (DOM focus)
 
 When selection is updated via `core.focus(...)`, Core applies it by:
 
-- Resolving the registered `(focus, target)` binding.
+- Resolving the registered `(focus, target)` binding (falling back to `(focus, DEFAULT_TARGET)` when needed).
 - Focusing the returned DOM element.
 - Applying caret state when supported.
+- If no binding exists (or `getEl()` returns `null`), selection state still updates, but DOM focus may not move.
+- Caret application is best-effort and only runs when the focused element supports it.
 
-## Views
+## Views and mounting
 
 ```ts
-core.mountView({ id, focus? })
-core.mountView({ id, focus?, continueAs })
+core.view(id): ViewName
+core.mountView({ id, focus?, view: ViewName }): Component
 ```
 
-Mounts a view for an item.
+`core.view(id)` returns the current view name for an item.
 
-- Core resolves the desired view from the item’s stored view.
-- If no view is set or the view is unavailable, a default is used.
+If the ID does not exist or the stored view cannot be resolved, Core returns the default view name.
 
-When `continueAs` is provided:
-
-- If the desired view equals `continueAs`, `null` is returned, indicating that the currently mounted view should continue.
-- Otherwise, a new view component is returned.
-
-If a component is returned, it has the form:
+`core.mountView(...)` mounts the requested view for an item and returns:
 
 ```ts
-{ el: HTMLElement, dispose(): void }
+type Component = { el: HTMLElement, dispose(): void }
 ```
 
 Calling `dispose` must release all resources associated with the view.
@@ -350,7 +350,9 @@ Some views have built-in meaning and behavior that Core enforces automatically.
 
 When `core.focus(...)` updates selection, Core sets the active view from the focused DOM element.
 
+- Active view is derived from the element focused via the `(focus, target)` binding (`getEl()`), not from pointer event targets.
 - The active view is the closest mounted view root that contains the focused element.
+- View routing therefore depends on bindings targeting an element inside the intended mounted view root.
 - Global keyboard input is routed to `activeView.onKeyDown(...)` when the focused element is not a native text editor.
 - Native text editors (`input`, `textarea`, `contenteditable`) handle text editing locally and may explicitly yield navigation intents to the view.
 
@@ -361,6 +363,7 @@ When an item’s view is `"table"`, Core treats it as a table:
 - The table item is always a group.
 - Each direct child is a row and is always a group.
 - If the table item or a row is not already a group, Core coerces it into an empty group.
+- Coercion occurs while applying edits and invariant repair (including commit/undo/redo), not as a read-time projection.
 - Children of each row are columns, identified by their normalized, non-empty labels.
 
 Core keeps all rows in the table structurally consistent:
@@ -406,6 +409,7 @@ Core:
 - `core.item`
 - `core.selection`
 - `core.locate`
+- `core.view`
 - `core.commit`
 - `core.undo`
 - `core.redo`
@@ -425,6 +429,7 @@ Types:
 - `Selection`
 - `Focus`
 - `Caret`
+- `Component`
 - `ViewName`
 - `ViewKind`
 

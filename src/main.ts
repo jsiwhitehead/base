@@ -46,8 +46,8 @@ export function createApp(opts: CreateAppOpts = {}): App {
     className: "ui-app",
     mount(ctx, _host, slot) {
       ctx.effect(() => {
-        core.item(rootId);
-        const mounted = core.mountView({ id: rootId, focus });
+        const wanted = core.view(rootId);
+        const mounted = core.mountView({ id: rootId, focus, view: wanted });
         slot.set(mounted);
       });
     },

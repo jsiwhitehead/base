@@ -2,7 +2,7 @@
 
 This guide describes the UI system layered on Core. The goals are:
 
-- Predictable (selection drives everything).
+- Predictable (selection drives focus and interaction).
 - Composable (nested views work without coupling).
 - Minimal (small DOM + small set of conventions).
 - Consistent across views.
@@ -20,6 +20,14 @@ All navigation and editing is expressed as updates to selection via:
 
 - `core.focus(...)`
 - `core.blur()`
+
+### Reactivity and DOM stability
+
+Selection changes are frequent and must be cheap.
+
+- Selection-driven updates must be styling-only (e.g. `data-focused`) and must not rebuild structure.
+- Structural DOM updates must depend on item state (`core.item(id)`), not selection.
+- Any code that needs selection inside a component should depend on a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
 
 ### Views do not track focus manually
 
@@ -40,7 +48,7 @@ Presenter responsibilities:
 - Attach `DEFAULT_TARGET` to that wrapper:
 
 ```ts
-ctx.target(core, focus, DEFAULT_TARGET, () => presenterEl)
+ctx.target(focus, DEFAULT_TARGET, () => presenterEl)
 ```
 
 - Place the child `.ui-item` directly inside the wrapper.
@@ -51,6 +59,7 @@ core.focus(focus, DEFAULT_TARGET, { caret? })
 ```
 
 - Style via `:has(> .ui-item[...])` (Presenter reads state from its child `.ui-item`).
+- Presenter must not mount/unmount child content based on selection.
 
 Presenter constraints:
 
@@ -65,7 +74,8 @@ Content is the item view implementation.
 Content responsibilities:
 
 - Render exactly one root element: `.ui-item`.
-- Call `applyUiItemState(.ui-item, { core, focus, view, part? })`.
+- Call `applyUiItemState(.ui-item, { id, view, kind, mode, part? })` based on `core.item(id)`.
+- Set `data-focused` separately from a local `isFocused` computed.
 - Attach only non-default targets.
 - Render the item’s internal structure, controls, and editors.
 
@@ -79,6 +89,7 @@ Content constraints:
 
 - `.ui-item` never attaches `DEFAULT_TARGET`.
 - Content may still call `core.focus(...)` to move to Presenter/`DEFAULT_TARGET` when appropriate.
+- Content must not mount/unmount structural subtrees based on selection; selection may only affect styling or editor state.
 
 ## Item ownership and view composition
 
@@ -87,16 +98,19 @@ Content constraints:
 - Each Core item is rendered by exactly one view as Content at a time.
 - That view owns the `.ui-item` subtree.
 
-### Nesting uses `core.mountView(...)`
+### Nesting uses `core.view(...)` + `core.mountView(...)`
 
 When a view wants to render a child item:
 
 ```ts
-core.mountView({ id, focus?, continueAs? })
+const view = core.view(id)
+const comp = core.mountView({ id, focus, view })
 ```
 
-- If a component is returned, its `.el` is Content (a `.ui-item` root).
-- If `null`, the current view continues rendering the item as Content.
+- `core.view(id)` decides the desired view name (reactive when read in a reactive context).
+- `core.mountView(...)` mounts exactly the requested view.
+- Continue/fallback behavior is handled by the hosting view, not by Core.
+- The returned component’s `.el` is Content (a `.ui-item` root).
 
 ### Parent supplies Presenter around child Content
 
@@ -118,6 +132,8 @@ If an item is rendered in a role that is guaranteed to only ever appear inside o
 
 Why: The normal rule exists to prevent conflicts when an item can be presented in multiple contexts. Embedded-only roles have no ambiguity, so skipping Presenter reduces DOM without risk.
 
+This is an exception. The default pattern is always Presenter + Content.
+
 ## `.ui-item` contract
 
 ### `.ui-item` semantics
@@ -129,17 +145,22 @@ Why: The normal rule exists to prevent conflicts when an item can be presented i
 
 ### Required state on `.ui-item`
 
-Every `.ui-item` must have state attributes via `applyUiItemState`:
+`applyUiItemState` sets:
 
 - `data-id`
 - `data-view` (owning view)
 - `data-kind`
 - `data-mode`
-- `data-focused`
 
 Optional:
 
 - `data-part` (only when a view renders multiple meaningful item roles)
+
+Focus styling sets:
+
+- `data-focused`
+
+Focus (`data-focused`) is derived from selection and must not force structural work.
 
 No other element represents an item.
 
@@ -150,7 +171,8 @@ No other element represents an item.
 From Core’s perspective:
 
 - An item is editable iff `item.mode.kind !== "readonly"`.
-- Core enforces readonly.
+- Core exposes mode state; UI must respect readonly.
+- Core does not pre-filter edits by mode, and invalid transactions may still throw.
 
 ### UI default behavior
 
@@ -185,7 +207,7 @@ Edit targets include:
 
 Views should not invent additional target patterns unless unavoidable.
 
-The label target is not an edit stop.
+The `label` target is a valid target, but it is not part of the normal Enter/typing-from-`DEFAULT_TARGET` edit flow.
 
 ### Target attachment rules
 
@@ -246,8 +268,7 @@ This allows view-specific rules to be implemented cleanly.
 
 ### Pointer (click) behavior
 
-- Click inside an editor → focus that edit target (caret from pointer).
-- Click on Presenter wrapper → focus `DEFAULT_TARGET`.
+- Presenters should handle `pointerdown` by focusing `DEFAULT_TARGET`.
 
 ### Enter and typing from `DEFAULT_TARGET`
 
@@ -320,13 +341,7 @@ Edit navigation (cell editor focused):
 
 ### Data-driven styling
 
-Styling is driven primarily by data attributes on `.ui-item`:
-
-- `data-view`
-- `data-kind`
-- `data-mode`
-- `data-focused`
-- `data-part`
+Styling is driven primarily by `.ui-item` data attributes (state from `applyUiItemState`, plus `data-focused` and optional `data-part`).
 
 ### Layout + chrome live on Presenter
 
@@ -363,5 +378,7 @@ Styling is driven primarily by data attributes on `.ui-item`:
 - One tabbable element total (app root).
 - No browser tab-order navigation.
 - Tab / Shift+Tab are always app commands.
-- Nested views compose via `core.mountView(...)`.
+- Nested view composition is driven by `core.view(id)` + `core.mountView(...)`.
 - Focus is item-based and routed by Core.
+- Selection changes must not replace `.ui-item` roots or presenter surfaces; tests assert DOM node identity stability across navigation.
+- `pointerdown` should only change selection/focus state; it should not trigger mount/unmount.

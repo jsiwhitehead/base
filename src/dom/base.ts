@@ -1,6 +1,6 @@
-import { effect } from "@preact/signals-core";
+import { computed, effect } from "@preact/signals-core";
 import type { Core, Focus, Component, Caret, ViewName } from "../core";
-import { DEFAULT_TARGET } from "../core/runtime";
+import { DEFAULT_TARGET } from "../core";
 
 export class Disposer {
   private fns: (() => void)[] = [];
@@ -82,26 +82,20 @@ export function setDataBool(el0: HTMLElement, key: string, on0: boolean): void {
   (el0.dataset as any)[key] = on0 ? "true" : "false";
 }
 
-export function applyUiItemState(
-  root: HTMLElement,
-  args: { core: Core; focus: Focus; view: ViewName; part?: string },
-): void {
-  const { core, focus, view } = args;
+export type UiItemState = {
+  id: string;
+  view: ViewName;
+  kind: string;
+  mode: string;
+  part?: string | null;
+};
 
-  const snap = core.item(focus.item);
-  const sel = core.selection();
-
-  const focused =
-    sel.kind === "focused" &&
-    sel.focus.item === focus.item &&
-    sel.focus.container === focus.container;
-
-  setData(root, "id", focus.item);
-  setData(root, "view", view);
-  setData(root, "kind", snap.content.kind);
-  setData(root, "mode", snap.mode.kind);
-  setDataBool(root, "focused", focused);
-  setData(root, "part", args.part ?? null);
+export function applyUiItemState(root: HTMLElement, st: UiItemState): void {
+  setData(root, "id", st.id);
+  setData(root, "view", st.view);
+  setData(root, "kind", st.kind);
+  setData(root, "mode", st.mode);
+  setData(root, "part", st.part ?? null);
 }
 
 type ChildRec = { element: HTMLElement; dispose: () => void };
@@ -330,15 +324,28 @@ export function createContent(
     const root = build(ctx);
     root.classList.add("ui-item");
 
+    const isFocused = computed(() => {
+      const sel = spec.core.selection();
+      return (
+        sel.kind === "focused" &&
+        sel.focus.item === spec.focus.item &&
+        sel.focus.container === spec.focus.container
+      );
+    });
+
     ctx.effect(() => {
-      spec.core.item(spec.focus.item);
-      spec.core.selection();
+      const snap = spec.core.item(spec.focus.item);
       applyUiItemState(root, {
-        core: spec.core,
-        focus: spec.focus,
+        id: spec.focus.item,
         view: spec.view,
-        part: spec.part,
+        kind: snap.content.kind,
+        mode: snap.mode.kind,
+        part: spec.part ?? null,
       });
+    });
+
+    ctx.effect(() => {
+      setDataBool(root, "focused", isFocused.value);
     });
 
     return root;
@@ -362,17 +369,12 @@ export function presentItem(opts: PresentItemOpts): Component {
 
   return createComponent(core, (ctx) => {
     const host = el("div", opts.className);
+    host.tabIndex = -1;
     const slot = ctx.slot(host);
 
     ctx.target(focus, DEFAULT_TARGET, () => host);
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      if (opts.pointerFilter?.(e.target)) return;
-
-      const inItem =
-        e.target instanceof HTMLElement && !!e.target.closest(".ui-item");
-      if (inItem) return;
-
       core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
       e.stopPropagation();
     });
