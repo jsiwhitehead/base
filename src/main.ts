@@ -57,6 +57,19 @@ export function createApp(opts: CreateAppOpts = {}): App {
   const main = el("div", "ui-shell-main");
   const side = el("div", "ui-shell-side");
 
+  main.tabIndex = 0;
+
+  main.addEventListener(
+    "pointerdown",
+    (e) => {
+      const t = e.target;
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement)
+        return;
+      main.focus();
+    },
+    { capture: true },
+  );
+
   main.append(appPresenter.el);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
@@ -73,6 +86,8 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   shell.append(main, side);
   hostEl.replaceChildren(shell);
+
+  main.focus();
 
   const app: App = {
     core,
@@ -173,23 +188,9 @@ export function seedDemo(app: App) {
 
   mkScalar(demo, "x", 10);
   mkScalar(demo, "y", 2);
-  // mkDerived(demo, "x_plus_y", "x + y");
-  // mkDerived(demo, "x_times_y", "x * y");
 
-  // const rows = mkGroup(demo, "rows", "table");
-
-  // const mkRow = (label: string, score: number, note: string) => {
-  //   const row = mkGroup(rows, label);
-  //   mkScalar(row, "score", score);
-  //   mkScalar(row, "note", note);
-  //   return row;
-  // };
-
-  // mkRow("a", 2, "ok");
-  // mkRow("b", 1, "low");
-  // mkRow("c", 3, "high");
-
-  // mkLens(demo, "Table", { from: "rows", where: "", orderBy: "" });
+  void mkDerived;
+  void mkLens;
 }
 
 function autoMount(): void {

@@ -7,7 +7,7 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import { el, stopEvent, createContent, escapeLadder } from "../dom";
+import { el, createContent, escapeLadder, caret0 } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -24,6 +24,11 @@ type SliderIntent =
   | { type: "SET"; kind: "min" | "max" }
   | { type: "ESCAPE" };
 
+function consume(e: Event): void {
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
+
 function handleSliderKey(
   e: KeyboardEvent,
   dispatch: (intent: SliderIntent) => void,
@@ -36,28 +41,28 @@ function handleSliderKey(
   switch (e.key) {
     case "ArrowLeft":
     case "ArrowDown":
-      stopEvent(e);
+      consume(e);
       nudge(-1);
       return true;
 
     case "ArrowRight":
     case "ArrowUp":
-      stopEvent(e);
+      consume(e);
       nudge(1);
       return true;
 
     case "Home":
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "SET", kind: "min" });
       return true;
 
     case "End":
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "SET", kind: "max" });
       return true;
 
     case "Escape":
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "ESCAPE" });
       return true;
 
@@ -110,7 +115,7 @@ export const sliderCommands = {
   setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetScalar(core, id)) return;
     core.commit((t) => t.setScalar(id, value));
-    core.focus(focus, DEFAULT_TARGET);
+    core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
   },
 
   nudgeScalarValue(

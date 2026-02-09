@@ -9,25 +9,20 @@ import {
   type DomView,
   type ScalarOrBlank,
   type Source,
-  type ViewName,
   parseScalar,
   DEFAULT_TARGET,
-  defaultTextCaret,
 } from "../core";
 import {
   type NavDir,
   type NavMode,
-  defaultTextNav,
   el,
   on,
-  stopEvent,
-  bindTextControlKeys,
   createComponent,
   createContent,
   autosizeTextField,
-  scalarField,
-  makeNotTabbable,
   textField,
+  scalarField,
+  bindTextEditorYield,
   SELECT_ALL,
   caret0,
   caretAt,
@@ -47,6 +42,11 @@ type SourceField = {
 };
 
 const VALUE_TARGET = "value";
+
+function consume(e: Event): void {
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
 
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
@@ -99,11 +99,6 @@ function getEditStopsForItem(core: Core, id: ItemId): string[] {
 
   return [];
 }
-
-const defaultTargetFor = (core: Core, id: ItemId): string => {
-  const it = core.item(id);
-  return it.mode.kind === "source" ? "source:expr" : DEFAULT_TARGET;
-};
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -530,6 +525,8 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     };
 
     const labelComp = autosizeTextField(core, {
+      focus,
+      target: "label",
       commit: commitLabel,
       getState: () => {
         const snap = core.item(id);
@@ -541,38 +538,33 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
       },
       onCommitEvents: ["blur"],
       wrapClassName: "autosize",
-      target: "label",
-      textKeys: (inp) => {
-        makeNotTabbable(inp);
-        const handler = (e: KeyboardEvent) => {
-          if (e.key === " ") {
-            e.preventDefault();
-            return;
-          }
-          if (e.key === "Enter" || e.key === "Escape" || e.key === "Tab") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.key === "Enter") commitLabel(inp.value);
-            toContent();
-          }
-        };
-        return on(inp, "keydown", handler);
-      },
     });
 
-    makeNotTabbable(labelComp.focusEl);
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    ctx.target(focus, "label", () => labelComp.focusEl, {
-      caret: defaultTextCaret(),
-    });
-    ctx.select(focus, labelComp.focusEl, {
-      target: "label",
-      caret: "fromTarget",
-    });
-
-    const fieldSpec = new Map<string, SourceField>();
+    ctx.cleanup(
+      bindTextEditorYield(labelComp.focusEl, (y) => {
+        switch (y.type) {
+          case "NAV":
+            dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
+            return;
+          case "ENTER":
+            commitLabel(labelComp.focusEl.value);
+            toContent();
+            return;
+          case "TAB":
+            toContent();
+            return;
+          case "ESCAPE":
+            toContent();
+            return;
+          case "DELETE_BOUNDARY":
+            dispatch({ type: "DELETE_BOUNDARY", dir: y.dir });
+            return;
+        }
+      }),
+    );
 
     const rows = ctx.list(sourceWrap, (key: string) => {
       return createComponent(core, (ctx2) => {
@@ -582,62 +574,80 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
         row.append(keyEl, valEl);
 
         const valSlot = ctx2.slot(valEl);
+        const tkey = `source:${key}`;
 
-        const makeField = (multiline: boolean, tkey: string) =>
-          textField(core, {
-            multiline,
-            commit: (text) =>
-              outlineCommands.commitSourceField(core, id, key, text),
-            getState: () => {
-              const snap = core.item(id);
-              if (snap.mode.kind !== "source")
-                return { text: "", readOnly: true, isIssue: false };
-              const txt =
-                fieldsFromSource(snap.mode.source).find((x) => x.key === key)
-                  ?.text ?? "";
-              return { text: txt, readOnly: false, isIssue: false };
-            },
-            onCommitEvents: ["blur"],
-            target: tkey,
-            textKeys: (inp) => {
-              makeNotTabbable(inp);
-              return bindTextControlKeys(inp, {
-                nav: { yieldUpDown: "always", yieldLeftRight: "always" },
-                onNav: (dir) => {
-                  if (dir === "left" || dir === "right")
-                    dispatch({ type: "NAV", dir, mode: "step" });
-                },
-                onEnter: () =>
-                  outlineCommands.commitSourceField(core, id, key, inp.value),
-                onEscape: () => dispatch({ type: "ESCAPE" }),
-              });
-            },
-          });
+        const specForKey = (): SourceField | null => {
+          const snap = core.item(id);
+          if (snap.mode.kind !== "source") return null;
+          return (
+            fieldsFromSource(snap.mode.source).find((f) => f.key === key) ??
+            null
+          );
+        };
 
-        let fieldComp: Component | null = null;
+        const multilineForKey = (): boolean => specForKey()?.multiline ?? true;
+        const labelForKey = (): string => specForKey()?.label ?? "";
+
+        const fc = textField(core, {
+          focus,
+          target: tkey,
+          multiline: multilineForKey(),
+          commit: (text) =>
+            outlineCommands.commitSourceField(core, id, key, text),
+          getState: () => {
+            const snap = core.item(id);
+            if (snap.mode.kind !== "source")
+              return { text: "", readOnly: true, isIssue: false };
+            const txt =
+              fieldsFromSource(snap.mode.source).find((x) => x.key === key)
+                ?.text ?? "";
+            return { text: txt, readOnly: false, isIssue: false };
+          },
+          onCommitEvents: ["blur"],
+        });
+
+        valSlot.set(fc);
+        ctx2.cleanup(() => fc.dispose());
+
+        ctx2.cleanup(
+          bindTextEditorYield(fc.focusEl, (y) => {
+            switch (y.type) {
+              case "NAV":
+                dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
+                return;
+              case "TAB":
+                dispatch({ type: "INDENT", dir: y.shift ? "out" : "in" });
+                return;
+              case "ESCAPE":
+                dispatch({ type: "ESCAPE" });
+                return;
+              case "ENTER":
+                outlineCommands.commitSourceField(
+                  core,
+                  id,
+                  key,
+                  fc.focusEl.value,
+                );
+                dispatch({ type: "NAV", dir: "down", mode: "step" });
+                return;
+              case "DELETE_BOUNDARY":
+                dispatch({ type: "DELETE_BOUNDARY", dir: y.dir });
+                return;
+            }
+          }),
+        );
 
         ctx2.effect(() => {
-          const spec = fieldSpec.get(key);
-          if (!spec) return;
+          const lbl = labelForKey();
+          if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
 
-          if (keyEl.textContent !== spec.label) keyEl.textContent = spec.label;
+          const snap = core.item(id);
+          if (snap.mode.kind !== "source") return;
 
-          const tkey = `source:${key}`;
-
-          if (!fieldComp) {
-            const fc = makeField(spec.multiline, tkey);
-            makeNotTabbable(fc.focusEl);
-            fieldComp = fc;
-            valSlot.set(fc);
-            ctx2.cleanup(() => fc.dispose());
-
-            ctx2.target(focus, tkey, () => fc.focusEl, {
-              caret: defaultTextCaret(),
-            });
-            ctx2.select(focus, fc.focusEl, {
-              target: tkey,
-              caret: "fromTarget",
-            });
+          const nextMultiline = multilineForKey();
+          if (nextMultiline !== fc.focusEl.matches("textarea")) {
+            // multiline changes should not happen without a remount;
+            // derive from the initial source shape and keep stable per row.
           }
         });
 
@@ -669,10 +679,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     );
 
     ctx.effect(() => {
-      const fields = fieldsSignal.value;
-      fieldSpec.clear();
-      for (const f of fields) fieldSpec.set(f.key, f);
-      rows.update(fields.map((f) => f.key));
+      rows.update(fieldsSignal.value.map((f) => f.key));
     });
 
     ctx.effect(() => {
@@ -721,54 +728,52 @@ function mountOutlineItem(
         multiline: true,
         commitText: (text) => outlineCommands.setText(core, id, text),
         onCommitEvents: ["input"],
-        textKeys: (inp) => {
-          const inputEl = inp as HTMLInputElement | HTMLTextAreaElement;
-          const stops: Array<() => void> = [];
-
-          stops.push(
-            on(inputEl, "keydown", (e: KeyboardEvent) => {
-              if (e.key === "=" && !inputEl.value) {
-                const it = core.item(id);
-                if (it.mode.kind === "direct") {
-                  stopEvent(e);
-                  dispatch({ type: "SET_DERIVED" });
-                }
-              }
-            }),
-          );
-
-          stops.push(
-            bindTextControlKeys(inputEl, {
-              nav: defaultTextNav,
-              onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-              onEnter: (caret) => dispatch({ type: "SPLIT", caret }),
-              onTab: (shift) =>
-                dispatch({ type: "INDENT", dir: shift ? "out" : "in" }),
-              onBackspaceBoundary: () =>
-                dispatch({ type: "DELETE_BOUNDARY", dir: "backward" }),
-              onDeleteBoundary: () =>
-                dispatch({ type: "DELETE_BOUNDARY", dir: "forward" }),
-              onEscape: () => dispatch({ type: "ESCAPE" }),
-            }),
-          );
-
-          return () => {
-            for (const fn of stops.toReversed()) fn();
-          };
-        },
       });
-
-      makeNotTabbable(sf.focusEl);
 
       bodyComp = { el: sf.el, dispose: () => sf.dispose() };
       bodyEl = sf.el;
 
-      ctx.select(focus, sf.focusEl, {
-        target: VALUE_TARGET,
-        caret: "fromTarget",
-      });
+      ctx.cleanup(
+        on(sf.focusEl, "keydown", (e: KeyboardEvent) => {
+          const el0 = sf.focusEl;
+          const isText =
+            el0 instanceof HTMLInputElement ||
+            el0 instanceof HTMLTextAreaElement;
+          if (!isText) return;
+          if (e.key === "=" && !el0.value) {
+            const it = core.item(id);
+            if (it.mode.kind === "direct") {
+              consume(e);
+              dispatch({ type: "SET_DERIVED" });
+            }
+          }
+        }),
+      );
+
+      ctx.cleanup(
+        bindTextEditorYield(sf.focusEl as any, (y) => {
+          switch (y.type) {
+            case "NAV":
+              dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
+              return;
+            case "ENTER":
+              dispatch({ type: "SPLIT", caret: y.caret });
+              return;
+            case "TAB":
+              dispatch({ type: "INDENT", dir: y.shift ? "out" : "in" });
+              return;
+            case "DELETE_BOUNDARY":
+              dispatch({ type: "DELETE_BOUNDARY", dir: y.dir });
+              return;
+            case "ESCAPE":
+              dispatch({ type: "ESCAPE" });
+              return;
+          }
+        }),
+      );
 
       root.append(sf.el);
+      ctx.cleanup(() => sf.dispose());
     };
 
     const mountGroupBody = () => {
@@ -916,7 +921,7 @@ export function createOutlineView(args: {
       const stops = getEditStopsForItem(core, sel.focus.item);
       const target = stops[0] ?? null;
       if (!target) return;
-      stopEvent(e);
+      consume(e);
       core.focus(sel.focus, target, { caret: SELECT_ALL });
       queueMicrotask(() => insertTextIntoActiveEditor(e.key));
       return;
@@ -924,37 +929,37 @@ export function createOutlineView(args: {
 
     const dir = keyToNavDir(e.key);
     if (dir) {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "NAV", dir, mode: keyNavMode(e) });
       return;
     }
 
     if (e.key === "Enter") {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "CONFIRM" });
       return;
     }
 
     if (e.key === "Backspace") {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "DELETE_BOUNDARY", dir: "backward" });
       return;
     }
 
     if (e.key === "Delete") {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "DELETE_BOUNDARY", dir: "forward" });
       return;
     }
 
     if (e.key === "Tab") {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "INDENT", dir: e.shiftKey ? "out" : "in" });
       return;
     }
 
     if (e.key === "Escape") {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "ESCAPE" });
       return;
     }

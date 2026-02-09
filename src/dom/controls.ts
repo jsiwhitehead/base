@@ -1,13 +1,12 @@
-import type { Core, ItemId, Focus, Caret } from "../core";
+import type { Core, ItemId, Focus, Caret, Component } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
-import { createComponent, el, on, type FocusComponent, setData } from "./base";
+import { createComponent, el, on, caretFromTarget, setData } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
-export const defaultTextNav = {
-  yieldUpDown: "always",
-  yieldLeftRight: "boundary",
-} as const;
+export type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
+  focusEl: E;
+};
 
 export type NavDir = "left" | "right" | "up" | "down";
 export type NavMode = "step" | "jump";
@@ -19,6 +18,25 @@ export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 export function isPrintableKeydown(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   return e.key.length === 1;
+}
+
+export function keyNavMode(e: KeyboardEvent): NavMode {
+  return e.metaKey || e.ctrlKey ? "jump" : "step";
+}
+
+export function keyToNavDir(key: string): NavDir | null {
+  switch (key) {
+    case "ArrowLeft":
+      return "left";
+    case "ArrowRight":
+      return "right";
+    case "ArrowUp":
+      return "up";
+    case "ArrowDown":
+      return "down";
+    default:
+      return null;
+  }
 }
 
 export function insertTextIntoActiveEditor(text: string): void {
@@ -45,189 +63,6 @@ export function escapeLadder(core: Core): void {
     return;
   }
   core.blur();
-}
-
-export type TextControlKeyHandlers = {
-  nav?: {
-    yieldUpDown?: "always" | "boundary";
-    yieldLeftRight?: "boundary" | "always";
-  };
-  onNav?: (dir: NavDir, mode: NavMode) => void;
-  onEnter?: (caret: { start: number; end: number }) => void;
-  onTab?: (shift: boolean) => void;
-  onEscape?: () => void;
-  onBackspaceBoundary?: () => void;
-  onDeleteBoundary?: () => void;
-};
-
-export function keyNavMode(e: KeyboardEvent): NavMode {
-  return e.metaKey || e.ctrlKey ? "jump" : "step";
-}
-
-export function keyToNavDir(key: string): NavDir | null {
-  switch (key) {
-    case "ArrowLeft":
-      return "left";
-    case "ArrowRight":
-      return "right";
-    case "ArrowUp":
-      return "up";
-    case "ArrowDown":
-      return "down";
-    default:
-      return null;
-  }
-}
-
-export type ContainerKeyHandlers = {
-  onNav?: (dir: NavDir, mode: NavMode) => void;
-  onConfirm?: () => void;
-  onCancel?: () => void;
-  onTab?: (shift: boolean) => void;
-  onBackspace?: () => void;
-  onDelete?: () => void;
-};
-
-export function bindContainerKeys(
-  host: HTMLElement,
-  handlers: ContainerKeyHandlers,
-): () => void {
-  const { onNav, onConfirm, onCancel, onTab, onBackspace, onDelete } = handlers;
-
-  const stop = (e: Event) => {
-    e.preventDefault?.();
-    e.stopPropagation?.();
-  };
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Tab") {
-      stop(e);
-      onTab?.(!!e.shiftKey);
-      return;
-    }
-
-    const dir = keyToNavDir(e.key);
-    if (dir && onNav) {
-      stop(e);
-      onNav(dir, keyNavMode(e));
-      return;
-    }
-
-    if (e.key === "Enter" && onConfirm) {
-      stop(e);
-      onConfirm();
-      return;
-    }
-
-    if (e.key === "Escape" && onCancel) {
-      stop(e);
-      onCancel();
-      return;
-    }
-
-    if (e.key === "Backspace" && onBackspace) {
-      stop(e);
-      onBackspace();
-      return;
-    }
-
-    if (e.key === "Delete" && onDelete) {
-      stop(e);
-      onDelete();
-      return;
-    }
-  };
-
-  return on(host, "keydown", onKeyDown);
-}
-
-export function bindTextControlKeys(
-  inp: TextInputElement,
-  handlers: TextControlKeyHandlers,
-): () => void {
-  const {
-    onNav,
-    onEnter,
-    onTab,
-    onEscape,
-    onBackspaceBoundary,
-    onDeleteBoundary,
-  } = handlers;
-
-  const nav = handlers.nav ?? {};
-  const yieldUpDown = nav.yieldUpDown ?? defaultTextNav.yieldUpDown;
-  const yieldLeftRight = nav.yieldLeftRight ?? defaultTextNav.yieldLeftRight;
-
-  const stop = (e: Event) => {
-    e.preventDefault?.();
-    e.stopPropagation?.();
-  };
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Tab") {
-      stop(e);
-      onTab?.(!!e.shiftKey);
-      return;
-    }
-
-    const mode = keyNavMode(e);
-
-    const start = inp.selectionStart ?? 0;
-    const end = inp.selectionEnd ?? start;
-    const hasSel = start !== end;
-    const len = inp.value.length;
-
-    const dir = keyToNavDir(e.key);
-
-    if (dir && onNav) {
-      const mod = e.metaKey || e.ctrlKey;
-      const atStart = !hasSel && start === 0;
-      const atEnd = !hasSel && end === len;
-
-      const boundary =
-        mod ||
-        (dir === "left" && (yieldLeftRight === "always" || atStart)) ||
-        (dir === "right" && (yieldLeftRight === "always" || atEnd)) ||
-        ((dir === "up" || dir === "down") && yieldUpDown === "always");
-
-      if (boundary) {
-        stop(e);
-        onNav(dir, mode);
-        return;
-      }
-    }
-
-    if (e.key === "Enter" && !e.shiftKey && onEnter) {
-      stop(e);
-      onEnter({ start, end });
-      return;
-    }
-
-    if (e.key === "Escape" && onEscape) {
-      stop(e);
-      onEscape();
-      return;
-    }
-
-    if (
-      e.key === "Backspace" &&
-      onBackspaceBoundary &&
-      !hasSel &&
-      start === 0
-    ) {
-      stop(e);
-      onBackspaceBoundary();
-      return;
-    }
-
-    if (e.key === "Delete" && onDeleteBoundary && !hasSel && end === len) {
-      stop(e);
-      onDeleteBoundary();
-      return;
-    }
-  };
-
-  return on(inp, "keydown", onKeyDown);
 }
 
 export function textInput(multiline: boolean): TextInputElement {
@@ -282,6 +117,106 @@ export function syncValue(inp: TextInputElement, next: string) {
   inp.setSelectionRange(Math.min(start, len), Math.min(end, len));
 }
 
+function consume(e: Event): void {
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
+
+function isFirstLine(inp: HTMLTextAreaElement): boolean {
+  const pos = inp.selectionStart ?? 0;
+  return inp.value.lastIndexOf("\n", Math.max(0, pos - 1)) < 0;
+}
+
+function isLastLine(inp: HTMLTextAreaElement): boolean {
+  const pos = inp.selectionEnd ?? inp.selectionStart ?? 0;
+  return inp.value.indexOf("\n", pos) < 0;
+}
+
+export type EditorYield =
+  | { type: "NAV"; dir: NavDir; mode: NavMode }
+  | { type: "ENTER"; caret: Caret }
+  | { type: "TAB"; shift: boolean }
+  | { type: "ESCAPE" }
+  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
+
+export function bindTextEditorYield(
+  inp: TextInputElement,
+  onYield: (y: EditorYield) => void,
+): () => void {
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Tab") {
+      consume(e);
+      onYield({ type: "TAB", shift: !!e.shiftKey });
+      return;
+    }
+
+    if (e.key === "Escape") {
+      consume(e);
+      onYield({ type: "ESCAPE" });
+      return;
+    }
+
+    const mode = keyNavMode(e);
+
+    const start = inp.selectionStart ?? 0;
+    const end = inp.selectionEnd ?? start;
+    const hasSel = start !== end;
+    const len = inp.value.length;
+
+    const dir = keyToNavDir(e.key);
+    if (dir) {
+      const atStart = !hasSel && start === 0;
+      const atEnd = !hasSel && end === len;
+
+      const shouldYield =
+        (dir === "left" && atStart) ||
+        (dir === "right" && atEnd) ||
+        (dir === "up" &&
+          (inp instanceof HTMLTextAreaElement ? isFirstLine(inp) : true)) ||
+        (dir === "down" &&
+          (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
+
+      if (shouldYield) {
+        consume(e);
+        onYield({ type: "NAV", dir, mode });
+        return;
+      }
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      consume(e);
+      onYield({ type: "ENTER", caret: { start, end } });
+      return;
+    }
+
+    if (e.key === "Backspace" && !hasSel && start === 0) {
+      consume(e);
+      onYield({ type: "DELETE_BOUNDARY", dir: "backward" });
+      return;
+    }
+
+    if (e.key === "Delete" && !hasSel && end === len) {
+      consume(e);
+      onYield({ type: "DELETE_BOUNDARY", dir: "forward" });
+      return;
+    }
+  };
+
+  return on(inp, "keydown", onKeyDown);
+}
+
+function bindEditorPointerSelect(
+  core: Core,
+  focus: Focus,
+  target: string,
+  focusEl: HTMLElement,
+): () => void {
+  return on(focusEl, "pointerdown", (e: PointerEvent) => {
+    core.focus(focus, target, { caret: caretFromTarget(e.target) });
+    e.stopPropagation();
+  });
+}
+
 export type TextFieldState = {
   text: string;
   readOnly: boolean;
@@ -289,13 +224,13 @@ export type TextFieldState = {
 };
 
 export type TextFieldOpts = {
+  focus: Focus;
+  target: string;
   multiline: boolean;
   className?: string;
   commit: (text: string) => void;
   getState: () => TextFieldState;
   onCommitEvents?: readonly ("input" | "blur")[];
-  textKeys?: (inp: TextInputElement) => (() => void) | void;
-  target?: string;
 };
 
 export function textField(
@@ -306,13 +241,17 @@ export function textField(
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
 
-    setData(inp, "target", opts.target ?? DEFAULT_TARGET);
+    setData(inp, "target", opts.target);
 
     registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
       opts.commit(inp.value),
     );
 
-    if (opts.textKeys) ctx.cleanup(opts.textKeys(inp) ?? null);
+    ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
+
+    ctx.target(opts.focus, opts.target, () => inp, {
+      caret: defaultTextCaret(),
+    });
 
     ctx.effect(() => {
       const st = opts.getState();
@@ -353,7 +292,7 @@ export function autosizeTextField(
     focusEl = inp;
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
-    setData(inp, "target", opts.target ?? DEFAULT_TARGET);
+    setData(inp, "target", opts.target);
 
     wrap.append(mirror, inp);
 
@@ -361,7 +300,11 @@ export function autosizeTextField(
       opts.commit(inp.value),
     );
 
-    if (opts.textKeys) ctx.cleanup(opts.textKeys(inp) ?? null);
+    ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
+
+    ctx.target(opts.focus, opts.target, () => inp, {
+      caret: defaultTextCaret(),
+    });
 
     ctx.effect(() => {
       const st = opts.getState();
@@ -385,12 +328,11 @@ export type ScalarFieldState = {
 export type ScalarFieldOpts = {
   core: Core;
   focus: Focus;
-  target?: string;
-  multiline?: boolean;
+  target: string;
+  multiline: boolean;
   className?: string;
   commitText?: (text: string) => void;
   onCommitEvents?: readonly ("input" | "blur")[];
-  textKeys?: (inp: TextInputElement) => (() => void) | void;
   getState?: () => ScalarFieldState;
 };
 
@@ -413,6 +355,7 @@ function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
 
 export function readonlyScalarView(args: {
   core: Core;
+  focus: Focus;
   target: string;
   getState: () => ScalarFieldState;
   className?: string;
@@ -421,6 +364,9 @@ export function readonlyScalarView(args: {
     const d = el("div", args.className);
     d.tabIndex = -1;
     setData(d, "target", args.target);
+
+    ctx.cleanup(bindEditorPointerSelect(args.core, args.focus, args.target, d));
+    ctx.target(args.focus, args.target, () => d);
 
     ctx.effect(() => {
       d.textContent = args.getState().text;
@@ -439,11 +385,13 @@ export function editableScalarEditor(args: {
   multiline: boolean;
   commitText?: (text: string) => void;
   onCommitEvents?: readonly ("input" | "blur")[];
-  textKeys?: (inp: TextInputElement) => (() => void) | void;
   getState: () => ScalarFieldState;
   className?: string;
+  onYield?: (y: EditorYield) => void;
 }): FocusComponent<TextInputElement> {
   const fc = textField(args.core, {
+    focus: args.focus,
+    target: args.target,
     multiline: args.multiline,
     className: args.className ?? "",
     commit: (text) => args.commitText?.(text),
@@ -452,17 +400,14 @@ export function editableScalarEditor(args: {
       return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
     },
     onCommitEvents: args.onCommitEvents,
-    textKeys: args.textKeys,
-    target: args.target,
   });
 
   const c = createComponent(args.core, (ctx) => {
     const host = el("div");
     host.append(fc.el);
 
-    ctx.target(args.focus, args.target, () => fc.focusEl, {
-      caret: defaultTextCaret(),
-    });
+    if (args.onYield)
+      ctx.cleanup(bindTextEditorYield(fc.focusEl, args.onYield));
 
     ctx.cleanup(() => fc.dispose());
 
@@ -476,8 +421,6 @@ export function scalarField(
   opts: ScalarFieldOpts,
 ): FocusComponent<HTMLElement> {
   const core = opts.core;
-  const target = opts.target ?? DEFAULT_TARGET;
-  const multiline = opts.multiline ?? true;
 
   let focusEl: HTMLElement = null as any;
 
@@ -511,11 +454,10 @@ export function scalarField(
         const ed = editableScalarEditor({
           core,
           focus: opts.focus,
-          target,
-          multiline,
+          target: opts.target,
+          multiline: opts.multiline,
           commitText: opts.commitText,
           onCommitEvents: opts.onCommitEvents,
-          textKeys: opts.textKeys,
           getState,
         }) as unknown as FocusComponent<HTMLElement>;
         setCur(ed);
@@ -525,7 +467,8 @@ export function scalarField(
       setCur(
         readonlyScalarView({
           core,
-          target,
+          focus: opts.focus,
+          target: opts.target,
           getState,
         }),
       );

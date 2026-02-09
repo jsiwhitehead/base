@@ -1,11 +1,8 @@
-export type { NavDir, NavMode } from "./controls";
+export type { NavDir, NavMode, EditorYield, FocusComponent } from "./controls";
 
 export {
   el,
   on,
-  stopEvent,
-  ensureTabbable,
-  makeNotTabbable,
   reconcileChildren,
   setData,
   setDataBool,
@@ -14,23 +11,24 @@ export {
   createContent,
   caretFromTarget,
   presentItem,
+  type Ctx,
+  type ContentSpec,
+  type PresentItemOpts,
+  type UiItemState,
 } from "./base";
 
 export {
-  defaultTextNav,
-  keyNavMode,
-  keyToNavDir,
   SELECT_ALL,
   caret0,
   caretAt,
   isPrintableKeydown,
   insertTextIntoActiveEditor,
   escapeLadder,
-  bindContainerKeys,
-  bindTextControlKeys,
-} from "./controls";
-
-export {
+  keyNavMode,
+  keyToNavDir,
+  bindTextEditorYield,
+  textInput,
+  syncValue,
   textField,
   autosizeTextField,
   readonlyScalarView,

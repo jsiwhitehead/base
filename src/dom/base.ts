@@ -40,19 +40,6 @@ export function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
   return () => el0.removeEventListener(type, listener as EventListener, opts);
 }
 
-export function stopEvent(e: Event): void {
-  e.preventDefault?.();
-  e.stopPropagation?.();
-}
-
-export function ensureTabbable(elm: HTMLElement): void {
-  if (elm.tabIndex == null || elm.tabIndex < 0) elm.tabIndex = 0;
-}
-
-export function makeNotTabbable(elm: HTMLElement): void {
-  elm.tabIndex = -1;
-}
-
 export function reconcileChildren(
   parent: HTMLElement,
   desired: readonly HTMLElement[],
@@ -142,20 +129,6 @@ class ChildManager<Id extends string | number> {
   }
 }
 
-export type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
-  focusEl: E;
-};
-
-export function isFocusComponent(c: Component): c is FocusComponent {
-  return "focusEl" in (c as any) && (c as any).focusEl instanceof HTMLElement;
-}
-
-export function focusElOf(c: Component): HTMLElement {
-  return isFocusComponent(c) ? c.focusEl : c.el;
-}
-
-type PointerCaretMode = "zero" | "fromTarget";
-
 export function caretFromTarget(el0: EventTarget | null): Caret {
   const el1 = el0 instanceof HTMLElement ? el0 : null;
   if (el1 instanceof HTMLInputElement || el1 instanceof HTMLTextAreaElement) {
@@ -190,16 +163,6 @@ export type Ctx = {
     target: string,
     getEl: () => HTMLElement | null,
     opts?: { caret?: { set(pos: number): void; getLength(): number } },
-  ): void;
-
-  select(
-    focus: Focus,
-    el0: HTMLElement,
-    opts?: {
-      target?: string;
-      caret?: PointerCaretMode;
-      stopPropagation?: boolean;
-    },
   ): void;
 };
 
@@ -278,24 +241,6 @@ export function createComponent(
       });
       bag.add(unbind);
     },
-
-    select(focus, el0, opts = {}) {
-      const target = opts.target ?? DEFAULT_TARGET;
-      const caretMode = opts.caret ?? "zero";
-      const stop = opts.stopPropagation ?? true;
-
-      bag.add(
-        on(el0, "pointerdown", (e: Event) => {
-          const pe = e as PointerEvent;
-          const caret0 =
-            caretMode === "fromTarget" ? caretFromTarget(pe.target) : null;
-
-          core.focus(focus, target, caret0 ? { caret: caret0 } : undefined);
-
-          if (stop) pe.stopPropagation();
-        }),
-      );
-    },
   };
 
   const el0 = build(ctx);
@@ -356,7 +301,6 @@ export type PresentItemOpts = {
   core: Core;
   focus: Focus;
   className?: string;
-  pointerFilter?: (target: EventTarget | null) => boolean;
   mount: (
     ctx: Ctx,
     host: HTMLElement,
@@ -370,6 +314,7 @@ export function presentItem(opts: PresentItemOpts): Component {
   return createComponent(core, (ctx) => {
     const host = el("div", opts.className);
     host.tabIndex = -1;
+
     const slot = ctx.slot(host);
 
     ctx.target(focus, DEFAULT_TARGET, () => host);

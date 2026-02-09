@@ -7,16 +7,12 @@ import type {
   Focus,
   Selection,
   DomView,
-  ViewName,
 } from "../core";
-import { DEFAULT_TARGET, defaultTextCaret } from "../core";
+import { DEFAULT_TARGET } from "../core";
 import {
   type NavDir,
   type NavMode,
-  defaultTextNav,
   el,
-  stopEvent,
-  bindTextControlKeys,
   createComponent,
   createContent,
   textField,
@@ -27,16 +23,21 @@ import {
   insertTextIntoActiveEditor,
   escapeLadder,
   caretFromTarget,
-  makeNotTabbable,
   keyNavMode,
   keyToNavDir,
   reconcileChildren,
+  bindTextEditorYield,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
 
 const ROW_LABEL_TARGET = "label";
 const VALUE_TARGET = "value";
+
+function consume(e: Event): void {
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -311,6 +312,8 @@ function mountRowMeta(args: {
     });
 
     const labelComp = textField(core, {
+      focus,
+      target: ROW_LABEL_TARGET,
       multiline: false,
       commit: (text) => tableCommands.setLabel(core, rowId, text),
       getState: () => {
@@ -321,29 +324,35 @@ function mountRowMeta(args: {
         return { text, readOnly, isIssue: false };
       },
       onCommitEvents: ["blur"],
-      target: ROW_LABEL_TARGET,
-      textKeys: (inp) =>
-        bindTextControlKeys(inp, {
-          nav: defaultTextNav,
-          onNav: (dir, mode) => dispatch({ type: "NAV", dir, mode }),
-          onEnter: () => dispatch({ type: "NAV", dir: "right", mode: "step" }),
-          onEscape: () => dispatch({ type: "ESCAPE" }),
-        }),
     });
-
-    makeNotTabbable(labelComp.focusEl);
 
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    ctx.target(focus, ROW_LABEL_TARGET, () => labelComp.focusEl, {
-      caret: defaultTextCaret(),
-    });
-
-    ctx.select(focus, labelComp.focusEl, {
-      target: ROW_LABEL_TARGET,
-      caret: "fromTarget",
-    });
+    ctx.cleanup(
+      bindTextEditorYield(labelComp.focusEl, (y) => {
+        if (y.type === "NAV") {
+          dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
+          return;
+        }
+        if (y.type === "ENTER") {
+          dispatch({ type: "NAV", dir: "right", mode: "step" });
+          return;
+        }
+        if (y.type === "TAB") {
+          dispatch({
+            type: "NAV",
+            dir: y.shift ? "left" : "right",
+            mode: "step",
+          });
+          return;
+        }
+        if (y.type === "ESCAPE") {
+          dispatch({ type: "ESCAPE" });
+          return;
+        }
+      }),
+    );
 
     return meta;
   });
@@ -580,7 +589,7 @@ export function createTableView(args: {
       sel.kind === "focused" &&
       sel.target === DEFAULT_TARGET
     ) {
-      stopEvent(e);
+      consume(e);
 
       if (sel.focus.container === tableId) {
         const rowId = sel.focus.item;
@@ -603,20 +612,20 @@ export function createTableView(args: {
 
     const dir = keyToNavDir(e.key);
     if (dir) {
-      stopEvent(e);
+      consume(e);
       const res = tableNavMove(core, tableId, sel, dir, keyNavMode(e));
       if (res) core.focus(res.focus, res.target, { caret: res.caret });
       return;
     }
 
     if (e.key === "Enter") {
-      stopEvent(e);
+      consume(e);
       tableCommands.confirm(core, tableId, sel);
       return;
     }
 
     if (e.key === "Escape") {
-      stopEvent(e);
+      consume(e);
       dispatch({ type: "ESCAPE" });
       return;
     }
