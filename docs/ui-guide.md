@@ -28,6 +28,7 @@ Selection changes are frequent and must be cheap.
 - Selection-driven updates must be styling-only (e.g. `data-focused`) and must not rebuild structure.
 - Structural DOM updates must depend on item state (`core.item(id)`), not selection.
 - Any code that needs selection inside a component should depend on a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
+- When swapping child components via `slot.set(...)`, gate swaps with a stable discriminator (e.g. `view`, `kind`) so reactive reruns do not remount unchanged structure.
 
 ### Views do not track focus manually
 
@@ -36,6 +37,7 @@ Selection changes are frequent and must be cheap.
 - Active view is derived from the focused DOM element (closest view root).
 - Global keydown routes to the closest mounted view root containing the focused element (or last focused presenter surface).
 - No pointer-based “active view tracking” exists.
+- Views must not store module-level “active view” state.
 
 ## Two roles everywhere: Presenter vs Content
 
@@ -62,6 +64,7 @@ core.focus(focus, DEFAULT_TARGET, { caret? })
 - Style via `:has(> .ui-item[...])` (Presenter reads state from its child `.ui-item`).
 - Presenter must not mount/unmount child content based on selection.
 - Presenter wrapper is programmatically focusable (`tabIndex=-1`) and is typically `document.activeElement` when selected.
+- Presenter keeps one stable wrapper element instance for that presented item.
 
 Presenter constraints:
 
@@ -134,7 +137,7 @@ If an item is rendered in a role that is guaranteed to only ever appear inside o
 
 Why: The normal rule exists to prevent conflicts when an item can be presented in multiple contexts. Embedded-only roles have no ambiguity, so skipping Presenter reduces DOM without risk.
 
-Constraint: only use this when the item cannot ever be rendered in multiple contexts and is not mountable as an independent view root.
+Constraint: only use this when the item cannot ever be rendered in multiple contexts and cannot be mounted as a `DomView` root via `core.mountView(...)`.
 
 This is an exception. The default pattern is always Presenter + Content.
 
@@ -185,6 +188,8 @@ UI behavior should generally follow `item.mode.kind`:
 - `direct`: render direct content editors.
 - `source`: render source-related editors; derived output is not directly edited by default.
 - `readonly`: render read-only views only.
+
+`readonly` is the hard stop. `direct` vs `source` determines which editor targets exist.
 
 ### Mode conversion
 
@@ -385,4 +390,5 @@ Styling is driven primarily by `.ui-item` data attributes (state from `applyUiIt
 - Nested view composition is driven by `core.view(id)` + `core.mountView(...)`.
 - Focus is item-based and routed by Core.
 - Selection changes must not replace `.ui-item` roots or presenter surfaces; tests assert DOM node identity stability across navigation.
+- Item-driven structure changes may replace descendants below `.ui-item`, but `.ui-item` root identity remains stable unless the mounted view changes.
 - `pointerdown` should only change selection/focus state; it should not trigger mount/unmount.

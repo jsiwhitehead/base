@@ -95,12 +95,6 @@ class ChildManager<Id extends string | number> {
     private create: (id: Id) => { element: HTMLElement; dispose(): void },
   ) {}
 
-  setContainer(next: HTMLElement) {
-    if (this.container === next) return;
-    for (const { element } of this.cache.values()) next.append(element);
-    this.container = next;
-  }
-
   update(ids: readonly Id[]) {
     const keep = new Set(ids);
 
@@ -123,9 +117,14 @@ class ChildManager<Id extends string | number> {
     reconcileChildren(this.container, desired);
   }
 
-  dispose() {
+  clear() {
     for (const rec of this.cache.values()) rec.dispose();
     this.cache.clear();
+    this.container.replaceChildren();
+  }
+
+  dispose() {
+    this.clear();
   }
 }
 
@@ -151,12 +150,12 @@ export type Ctx = {
 
   effect(run: () => void | (() => void)): void;
 
-  slot(host: HTMLElement): { set(next: Component | null): void };
+  slot(host: HTMLElement): { set(next: Component | null): void; clear(): void };
 
   list<Id extends string | number>(
     host: HTMLElement,
     create: (id: Id) => Component,
-  ): { update(ids: readonly Id[]): void };
+  ): { update(ids: readonly Id[]): void; clear(): void };
 
   target(
     focus: Focus,
@@ -210,12 +209,14 @@ export function createComponent(
         else host.replaceChildren();
       };
 
+      const clear = () => set(null);
+
       bag.add(() => {
         cur?.dispose();
         cur = null;
       });
 
-      return { set };
+      return { set, clear };
     },
 
     list<Id extends string | number>(
@@ -229,7 +230,10 @@ export function createComponent(
 
       bag.add(() => mgr.dispose());
 
-      return { update: (ids: readonly Id[]) => mgr.update(ids) };
+      return {
+        update: (ids: readonly Id[]) => mgr.update(ids),
+        clear: () => mgr.clear(),
+      };
     },
 
     target(focus, target, getEl, opts) {
@@ -304,7 +308,7 @@ export type PresentItemOpts = {
   mount: (
     ctx: Ctx,
     host: HTMLElement,
-    slot: { set(next: Component | null): void },
+    slot: { set(next: Component | null): void; clear(): void },
   ) => void;
 };
 

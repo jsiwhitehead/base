@@ -493,7 +493,6 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
-
     ctx.cleanup(bindTextEditorYield(labelComp.focusEl, dispatch));
 
     const rows = ctx.list(sourceWrap, (key: string) => {
@@ -503,7 +502,6 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
         const valEl = el("div", "ui-source-val");
         row.append(keyEl, valEl);
 
-        const valSlot = ctx2.slot(valEl);
         const tkey = `source:${key}`;
 
         const specForKey = (): SourceField | null => {
@@ -536,9 +534,8 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
           onCommitEvents: ["blur"],
         });
 
-        valSlot.set(fc);
+        valEl.replaceChildren(fc.el);
         ctx2.cleanup(() => fc.dispose());
-
         ctx2.cleanup(bindTextEditorYield(fc.focusEl, dispatch));
 
         ctx2.effect(() => {
@@ -585,97 +582,92 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
   });
 }
 
+function mountScalarBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
+  const { core, dispatch } = mountCtx;
+  const id = focus.item;
+
+  return createComponent(core, (ctx) => {
+    const sf = scalarField({
+      core,
+      focus,
+      className: "ui-outline-scalar",
+      target: VALUE_TARGET,
+      multiline: true,
+      commitText: (text) => outlineCommands.setText(core, id, text),
+      onCommitEvents: ["input"],
+    });
+
+    ctx.cleanup(bindTextEditorYield(sf.focusEl as any, dispatch));
+    ctx.cleanup(() => sf.dispose());
+
+    return sf.el;
+  });
+}
+
+function mountGroupBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
+  const { core } = mountCtx;
+  const id = focus.item;
+
+  return createComponent(core, (ctx) => {
+    const wrap = el("div", "ui-outline-group");
+
+    const mgr = ctx.list<ItemId>(wrap, (childId) => {
+      const childFocus: Focus = { container: id, item: childId };
+      return mountNode(mountCtx, childFocus, true);
+    });
+
+    ctx.effect(() => {
+      const s = core.item(id);
+      const c = s.content;
+      mgr.update(c.kind === "group" ? [...c.children] : []);
+    });
+
+    return wrap;
+  });
+}
+
 function mountOutlineItem(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   showMeta: boolean,
 ): Component {
-  const { core, dispatch } = mountCtx;
+  const { core } = mountCtx;
   const id = focus.item;
 
   return createContent({ core, focus, view: "outline" }, (ctx) => {
     const root = el("div");
 
-    let metaComp: Component | null = null;
-
     if (showMeta) {
-      metaComp = mountMeta(mountCtx, focus);
+      const metaComp = mountMeta(mountCtx, focus);
       root.append(metaComp.el);
-      ctx.cleanup(() => metaComp?.dispose());
+      ctx.cleanup(() => metaComp.dispose());
     }
 
-    let bodyComp: Component | null = null;
-    let bodyEl: HTMLElement | null = null;
+    const bodyHost = el("div");
+    root.append(bodyHost);
 
-    const unmountBody = () => {
-      bodyComp?.dispose();
-      bodyComp = null;
-      bodyEl?.remove();
-      bodyEl = null;
-    };
+    const bodySlot = ctx.slot(bodyHost);
 
-    const mountScalarBody = () => {
-      const sf = scalarField({
-        core,
-        focus,
-        className: "ui-outline-scalar",
-        target: VALUE_TARGET,
-        multiline: true,
-        commitText: (text) => outlineCommands.setText(core, id, text),
-        onCommitEvents: ["input"],
-      });
-
-      bodyComp = { el: sf.el, dispose: () => sf.dispose() };
-      bodyEl = sf.el;
-
-      ctx.cleanup(bindTextEditorYield(sf.focusEl as any, dispatch));
-
-      root.append(sf.el);
-      ctx.cleanup(() => sf.dispose());
-    };
-
-    const mountGroupBody = () => {
-      const wrap = el("div", "ui-outline-group");
-
-      const mgr = ctx.list<ItemId>(wrap, (childId) => {
-        const childFocus: Focus = { container: id, item: childId };
-        return mountNode(mountCtx, childFocus, true);
-      });
-
-      ctx.effect(() => {
-        const s = core.item(id);
-        const c = s.content;
-        mgr.update(c.kind === "group" ? [...c.children] : []);
-      });
-
-      bodyComp = { el: wrap, dispose: () => wrap.replaceChildren() };
-      bodyEl = wrap;
-
-      root.append(wrap);
-    };
+    let curKind: "group" | "scalar" | null = null;
+    let cur: Component | null = null;
 
     ctx.effect(() => {
       const snap = core.item(id);
-      const wantBodyKind = snap.content.kind === "group" ? "group" : "scalar";
-      const haveBodyKind = bodyEl?.classList.contains("ui-outline-group")
-        ? "group"
-        : bodyEl?.classList.contains("ui-outline-scalar")
-          ? "scalar"
-          : null;
+      const nextKind = snap.content.kind === "group" ? "group" : "scalar";
+      if (cur && curKind === nextKind) return;
 
-      if (wantBodyKind !== haveBodyKind) {
-        unmountBody();
-        if (wantBodyKind === "group") mountGroupBody();
-        else mountScalarBody();
-      }
+      curKind = nextKind;
+      cur =
+        nextKind === "group"
+          ? mountGroupBody(mountCtx, focus)
+          : mountScalarBody(mountCtx, focus);
+
+      bodySlot.set(cur);
     });
 
     ctx.cleanup(() => {
-      metaComp?.dispose();
-      bodyComp?.dispose();
-      metaComp = null;
-      bodyComp = null;
-      bodyEl = null;
+      curKind = null;
+      cur = null;
     });
 
     return root;
@@ -695,18 +687,18 @@ function mountNode(
     focus,
     className: "ui-outline-node",
     mount(ctx, _host, slot) {
-      let fallback: Component | null = null;
+      let curView: string | null = null;
 
       ctx.effect(() => {
         const wanted = core.view(id);
+        if (wanted === curView) return;
+        curView = wanted;
 
-        if (wanted === "outline") {
-          fallback ??= mountOutlineItem(mountCtx, focus, showMeta);
-          slot.set(fallback);
-          return;
-        }
-
-        slot.set(core.mountView({ id, focus, view: wanted }));
+        slot.set(
+          wanted === "outline"
+            ? mountOutlineItem(mountCtx, focus, showMeta)
+            : core.mountView({ id, focus, view: wanted }),
+        );
       });
     },
   });

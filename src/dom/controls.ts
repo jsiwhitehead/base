@@ -371,7 +371,7 @@ function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
   return { text: "", editable: false, isIssue: false };
 }
 
-export function readonlyScalarView(args: {
+function readonlyScalarView(args: {
   core: Core;
   focus: Focus;
   target: string;
@@ -396,7 +396,7 @@ export function readonlyScalarView(args: {
   return { ...c, focusEl: c.el };
 }
 
-export function editableScalarEditor(args: {
+function editableScalarEditor(args: {
   core: Core;
   focus: Focus;
   target: string;
@@ -438,67 +438,60 @@ export function editableScalarEditor(args: {
 export function scalarField(
   opts: ScalarFieldOpts,
 ): FocusComponent<HTMLElement> {
-  const core = opts.core;
+  const { core, focus, target } = opts;
+  const id = focus.item;
 
-  let focusEl: HTMLElement = null as any;
+  const getState = opts.getState ?? (() => deriveScalarFieldState(core, id));
+
+  let focusEl: HTMLElement;
 
   const c = createComponent(core, (ctx) => {
     const host = el("div");
     if (opts.className) host.className = opts.className;
 
     const slot = ctx.slot(host);
-    const id = opts.focus.item;
 
-    const getState = opts.getState ?? (() => deriveScalarFieldState(core, id));
-
-    let cur: FocusComponent<HTMLElement> | null = null;
-    let curEditable: boolean | null = null;
-
-    const setCur = (next: FocusComponent<HTMLElement>) => {
-      cur?.dispose();
-      cur = next;
-      slot.set(next);
-      focusEl = next.focusEl;
-    };
+    focusEl = host;
+    let currentEditable: boolean | null = null;
+    let current: FocusComponent<HTMLElement> | null = null;
 
     ctx.effect(() => {
       const st = getState();
       const nextEditable = !!st.editable;
-
-      if (cur && curEditable === nextEditable) return;
-      curEditable = nextEditable;
+      if (current && currentEditable === nextEditable) return;
+      currentEditable = nextEditable;
 
       if (nextEditable) {
-        const ed = editableScalarEditor({
+        current = editableScalarEditor({
           core,
-          focus: opts.focus,
-          target: opts.target,
+          focus,
+          target,
           multiline: opts.multiline,
           commitText: opts.commitText,
           onCommitEvents: opts.onCommitEvents,
           getState,
         }) as unknown as FocusComponent<HTMLElement>;
-        setCur(ed);
+        slot.set(current);
+        focusEl = current.focusEl;
         return;
       }
 
-      setCur(
-        readonlyScalarView({
-          core,
-          focus: opts.focus,
-          target: opts.target,
-          getState,
-        }),
-      );
+      current = readonlyScalarView({
+        core,
+        focus,
+        target,
+        getState,
+      });
+      slot.set(current);
+      focusEl = current.focusEl;
     });
 
     ctx.cleanup(() => {
-      cur?.dispose();
-      cur = null;
+      current = null;
+      currentEditable = null;
       focusEl = host;
     });
 
-    focusEl = host;
     return host;
   });
 

@@ -33,7 +33,5 @@ export {
   syncValue,
   textField,
   autosizeTextField,
-  readonlyScalarView,
-  editableScalarEditor,
   scalarField,
 } from "./controls";

@@ -316,7 +316,6 @@ function mountRowMeta(args: {
 
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
-
     ctx.cleanup(bindTextEditorYield(labelComp.focusEl, dispatch));
 
     return meta;
@@ -338,28 +337,19 @@ function mountCellHost(
 
     ctx.effect(() => {
       const cellItemId = getCellId();
-
       if (!cellItemId) {
-        slot.set({ el: el("div"), dispose: () => {} });
+        slot.clear();
         return;
       }
 
       const focus: Focus = { container: rowId, item: cellItemId };
-      const wanted = mountCtx.core.view(cellItemId);
-      const mounted = mountCtx.core.mountView({
-        id: cellItemId,
-        focus,
-        view: wanted,
-      });
 
-      slot.set(mounted ?? { el: el("div"), dispose: () => {} });
-    });
-
-    ctx.effect(() => {
-      const cellItemId = getCellId();
-      if (!cellItemId) return;
-      const focus: Focus = { container: rowId, item: cellItemId };
       ctx.target(focus, DEFAULT_TARGET, () => host);
+
+      const wanted = mountCtx.core.view(cellItemId);
+      slot.set(
+        mountCtx.core.mountView({ id: cellItemId, focus, view: wanted }),
+      );
     });
 
     ctx.on(host, "pointerdown", (e: PointerEvent) => {
