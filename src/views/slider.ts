@@ -7,7 +7,15 @@ import type {
   DomView,
 } from "../core";
 import { DEFAULT_TARGET, clamp } from "../core/runtime";
-import { el, createContent, escapeLadder, caret0 } from "../dom";
+import {
+  el,
+  createContent,
+  escapeLadder,
+  caret0,
+  consume,
+  parseKeydownIntent,
+  type Intent,
+} from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -18,58 +26,6 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
   max: 100,
   step: 1,
 };
-
-type SliderIntent =
-  | { type: "NUDGE"; dir: -1 | 1; mul: number }
-  | { type: "SET"; kind: "min" | "max" }
-  | { type: "ESCAPE" };
-
-function consume(e: Event): void {
-  e.preventDefault?.();
-  e.stopPropagation?.();
-}
-
-function handleSliderKey(
-  e: KeyboardEvent,
-  dispatch: (intent: SliderIntent) => void,
-): boolean {
-  if (e.metaKey || e.ctrlKey) return false;
-
-  const mul = (e.shiftKey ? 10 : 1) * (e.altKey ? 0.1 : 1);
-  const nudge = (dir: -1 | 1) => dispatch({ type: "NUDGE", dir, mul });
-
-  switch (e.key) {
-    case "ArrowLeft":
-    case "ArrowDown":
-      consume(e);
-      nudge(-1);
-      return true;
-
-    case "ArrowRight":
-    case "ArrowUp":
-      consume(e);
-      nudge(1);
-      return true;
-
-    case "Home":
-      consume(e);
-      dispatch({ type: "SET", kind: "min" });
-      return true;
-
-    case "End":
-      consume(e);
-      dispatch({ type: "SET", kind: "max" });
-      return true;
-
-    case "Escape":
-      consume(e);
-      dispatch({ type: "ESCAPE" });
-      return true;
-
-    default:
-      return false;
-  }
-}
 
 function toNumberOr(v: ScalarOrBlank, fallback: number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
@@ -137,7 +93,6 @@ type SliderMountCtx = {
   id: ItemId;
   focus: Focus;
   opts: SliderResolvedOpts;
-  dispatch: (intent: SliderIntent) => void;
 };
 
 function mountSliderContent({
@@ -145,7 +100,6 @@ function mountSliderContent({
   id,
   focus,
   opts,
-  dispatch,
 }: SliderMountCtx): Component {
   return createContent({ core, focus, view: "slider" }, (ctx) => {
     const root = el("div");
@@ -188,10 +142,6 @@ function mountSliderContent({
       if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
     });
 
-    ctx.on(root, "keydown", (e: KeyboardEvent) => {
-      handleSliderKey(e, dispatch);
-    });
-
     return root;
   });
 }
@@ -206,43 +156,46 @@ export function createSliderView(args: {
   const safeFocus: Focus = args.focus ?? { container: id, item: id };
   const resolved = DEFAULT_SLIDER_OPTS;
 
-  const dispatch = (intent: SliderIntent): void => {
-    switch (intent.type) {
-      case "NUDGE":
-        sliderCommands.nudgeScalarValue(
-          core,
-          safeFocus,
-          id,
-          intent.dir * intent.mul,
-          resolved,
-        );
-        return;
-
-      case "SET":
-        sliderCommands.setScalarValue(
-          core,
-          safeFocus,
-          id,
-          intent.kind === "min" ? resolved.min : resolved.max,
-        );
-        return;
-
-      case "ESCAPE":
-        escapeLadder(core);
-        return;
-    }
-  };
-
   const content = mountSliderContent({
     core,
     id,
     focus: safeFocus,
     opts: resolved,
-    dispatch,
   });
 
+  const dispatch = (intent: Intent) => {
+    switch (intent.type) {
+      case "CANCEL":
+        escapeLadder(core);
+        return;
+
+      case "NAV": {
+        const mul = intent.mode === "jump" ? 10 : 1;
+        const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
+        sliderCommands.nudgeScalarValue(
+          core,
+          safeFocus,
+          id,
+          dir * mul,
+          resolved,
+        );
+        return;
+      }
+
+      case "CONFIRM":
+      case "TAB":
+      case "TYPE":
+      case "DELETE":
+      case "DELETE_BOUNDARY":
+        return;
+    }
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
-    handleSliderKey(e, dispatch);
+    const intent = parseKeydownIntent(e);
+    if (!intent) return;
+    consume(e);
+    dispatch(intent);
   };
 
   return {

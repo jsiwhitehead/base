@@ -1,4 +1,4 @@
-export type { NavDir, NavMode, EditorYield, FocusComponent } from "./controls";
+export type { NavDir, NavMode, Intent, FocusComponent } from "./controls";
 
 export {
   el,
@@ -21,11 +21,13 @@ export {
   SELECT_ALL,
   caret0,
   caretAt,
+  consume,
   isPrintableKeydown,
-  insertTextIntoActiveEditor,
-  escapeLadder,
   keyNavMode,
   keyToNavDir,
+  parseKeydownIntent,
+  insertTextIntoActiveEditor,
+  escapeLadder,
   bindTextEditorYield,
   textInput,
   syncValue,

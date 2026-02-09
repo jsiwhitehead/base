@@ -34,6 +34,7 @@ Selection changes are frequent and must be cheap.
 - Views attach logical targets to DOM elements via `core.attachTarget(...)`.
 - Runtime focuses the correct DOM element when selection changes.
 - Active view is derived from the focused DOM element (closest view root).
+- Global keydown routes to the closest mounted view root containing the focused element (or last focused presenter surface).
 - No pointer-based “active view tracking” exists.
 
 ## Two roles everywhere: Presenter vs Content
@@ -60,6 +61,7 @@ core.focus(focus, DEFAULT_TARGET, { caret? })
 
 - Style via `:has(> .ui-item[...])` (Presenter reads state from its child `.ui-item`).
 - Presenter must not mount/unmount child content based on selection.
+- Presenter wrapper is programmatically focusable (`tabIndex=-1`) and is typically `document.activeElement` when selected.
 
 Presenter constraints:
 
@@ -89,7 +91,7 @@ Content constraints:
 
 - `.ui-item` never attaches `DEFAULT_TARGET`.
 - Content may still call `core.focus(...)` to move to Presenter/`DEFAULT_TARGET` when appropriate.
-- Content must not mount/unmount structural subtrees based on selection; selection may only affect styling or editor state.
+- Content must not mount/unmount structural subtrees based on selection; selection may affect styling, caret/selection ranges, and editor state.
 
 ## Item ownership and view composition
 
@@ -131,6 +133,8 @@ If an item is rendered in a role that is guaranteed to only ever appear inside o
 - No Presenter wrapper is required.
 
 Why: The normal rule exists to prevent conflicts when an item can be presented in multiple contexts. Embedded-only roles have no ambiguity, so skipping Presenter reduces DOM without risk.
+
+Constraint: only use this when the item cannot ever be rendered in multiple contexts and is not mountable as an independent view root.
 
 This is an exception. The default pattern is always Presenter + Content.
 
@@ -228,7 +232,7 @@ The `label` target is a valid target, but it is not part of the normal Enter/typ
 ### Tab / Shift+Tab are always app commands
 
 - Tab is never used for browser focus traversal.
-- Even when editing text, Tab is defined by the view (e.g. outline indent).
+- Even when editing text, Tab is defined by the view.
 
 ### Programmatic focus only
 
@@ -252,10 +256,12 @@ Controls:
 When an editor wants to yield to navigation/commands, it does not “bubble key events”. Instead it emits semantic intents like:
 
 - `NAV`
-- `ENTER`
-- `TAB(shift)`
-- `ESCAPE`
-- `DELETE_AT_BOUNDARY`
+- `TAB`
+- `CONFIRM`
+- `CANCEL`
+- `DELETE`
+- `DELETE_BOUNDARY`
+- `TYPE`
 
 This allows view-specific rules to be implemented cleanly.
 
@@ -263,8 +269,8 @@ This allows view-specific rules to be implemented cleanly.
 
 ### Escape ladder
 
-- If focused on an edit target → Escape moves to `DEFAULT_TARGET`.
-- If focused on `DEFAULT_TARGET` → Escape blurs to idle (`core.blur()`).
+- If `sel.kind === "focused"` and `sel.target !== DEFAULT_TARGET` → Escape moves to `DEFAULT_TARGET`.
+- Otherwise Escape blurs to idle (`core.blur()`).
 
 ### Pointer (click) behavior
 
@@ -274,8 +280,9 @@ This allows view-specific rules to be implemented cleanly.
 
 When focused on `DEFAULT_TARGET`:
 
-- Enter enters edit using the first editable target (if any), caret at end.
-- Typing enters edit using the first editable target and replaces existing text (select-all then type).
+- Enter (`CONFIRM`) enters edit using the first editable target (if any), usually caret at end.
+- Typing (`TYPE`) enters edit using the first editable target and replaces existing text (select-all then type).
+- These are distinct entry modes: Enter is not select-all.
 
 ### Navigation does not implicitly enter edit
 
@@ -306,10 +313,7 @@ Entering edit:
 
 Edit-flow traversal (outline only):
 
-When focused on an edit target, boundary-arrow moves may:
-
-- Move to a different item.
-- Remain in an edit target on the destination item (next edit stop).
+Current behavior: navigation commands that move to another item land on destination `DEFAULT_TARGET` (they do not stay in edit on destination).
 
 Edit stops:
 

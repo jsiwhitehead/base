@@ -12,6 +12,7 @@ import { DEFAULT_TARGET } from "../core";
 import {
   type NavDir,
   type NavMode,
+  type Intent,
   el,
   createComponent,
   createContent,
@@ -19,25 +20,19 @@ import {
   SELECT_ALL,
   caret0,
   caretAt,
-  isPrintableKeydown,
   insertTextIntoActiveEditor,
   escapeLadder,
   caretFromTarget,
-  keyNavMode,
-  keyToNavDir,
   reconcileChildren,
   bindTextEditorYield,
+  consume,
+  parseKeydownIntent,
 } from "../dom";
 
 type NavResult = { focus: Focus; target: string; caret?: Caret };
 
 const ROW_LABEL_TARGET = "label";
 const VALUE_TARGET = "value";
-
-function consume(e: Event): void {
-  e.preventDefault?.();
-  e.stopPropagation?.();
-}
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
@@ -253,9 +248,7 @@ export const tableCommands = {
     }
   },
 
-  confirm(core: Core, tableId: ItemId, sel: Selection): void {
-    if (!isFocused(sel)) return;
-
+  confirm(core: Core, tableId: ItemId, sel: FocusedSelection): void {
     if (sel.focus.container === tableId) {
       tableCommands.addRowAfter(core, tableId, sel.focus.item);
       return;
@@ -276,16 +269,11 @@ export const tableCommands = {
   },
 } as const;
 
-type TableIntent =
-  | { type: "NAV"; dir: NavDir; mode: NavMode }
-  | { type: "CONFIRM" }
-  | { type: "ESCAPE" };
-
 type TableMountCtx = {
   core: Core;
   tableId: ItemId;
   columnsSignal: { value: string[] };
-  dispatch: (intent: TableIntent) => void;
+  dispatch: (intent: Intent) => void;
 };
 
 function mountRowMeta(args: {
@@ -293,7 +281,7 @@ function mountRowMeta(args: {
   tableId: ItemId;
   rowId: ItemId;
   focus: Focus;
-  dispatch: (intent: TableIntent) => void;
+  dispatch: (intent: Intent) => void;
 }): Component {
   const { core, tableId, rowId, focus, dispatch } = args;
 
@@ -329,30 +317,7 @@ function mountRowMeta(args: {
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    ctx.cleanup(
-      bindTextEditorYield(labelComp.focusEl, (y) => {
-        if (y.type === "NAV") {
-          dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
-          return;
-        }
-        if (y.type === "ENTER") {
-          dispatch({ type: "NAV", dir: "right", mode: "step" });
-          return;
-        }
-        if (y.type === "TAB") {
-          dispatch({
-            type: "NAV",
-            dir: y.shift ? "left" : "right",
-            mode: "step",
-          });
-          return;
-        }
-        if (y.type === "ESCAPE") {
-          dispatch({ type: "ESCAPE" });
-          return;
-        }
-      }),
-    );
+    ctx.cleanup(bindTextEditorYield(labelComp.focusEl, dispatch));
 
     return meta;
   });
@@ -520,7 +485,7 @@ function mountTableContent(args: {
   tableId: ItemId;
   focus: Focus;
   columnsSignal: { value: string[] };
-  dispatch: (intent: TableIntent) => void;
+  dispatch: (intent: Intent) => void;
 }): Component {
   const { core, tableId, focus, dispatch, columnsSignal } = args;
 
@@ -555,7 +520,7 @@ export function createTableView(args: {
   const tableFocus: Focus = args.focus ?? { container: tableId, item: tableId };
   const columnsSignal = computed(() => deriveColumns(core, tableId));
 
-  const dispatch = (intent: TableIntent): void => {
+  const dispatch = (intent: Intent): void => {
     const sel = core.selection();
 
     switch (intent.type) {
@@ -564,12 +529,66 @@ export function createTableView(args: {
         if (res) core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
-      case "CONFIRM":
+
+      case "TAB": {
+        const res = tableNavMove(
+          core,
+          tableId,
+          sel,
+          intent.shift ? "left" : "right",
+          "step",
+        );
+        if (res) core.focus(res.focus, res.target, { caret: res.caret });
+        return;
+      }
+
+      case "CONFIRM": {
+        if (isFocused(sel) && sel.target !== DEFAULT_TARGET) {
+          core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+        if (!isFocused(sel)) return;
         tableCommands.confirm(core, tableId, sel);
         return;
-      case "ESCAPE":
+      }
+
+      case "CANCEL": {
         escapeLadder(core);
         return;
+      }
+
+      case "TYPE": {
+        if (!isFocused(sel)) return;
+        if (sel.target !== DEFAULT_TARGET) return;
+
+        if (sel.focus.container === tableId) {
+          const rowId = sel.focus.item;
+          const next = focusFirstCellValue(
+            core,
+            tableId,
+            rowId,
+            columnsSignal.value,
+          );
+          if (!next) return;
+          core.focus(next.focus, next.target, { caret: next.caret });
+          queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
+          return;
+        }
+
+        core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
+        queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
+        return;
+      }
+
+      case "DELETE_BOUNDARY": {
+        return;
+      }
+
+      case "DELETE": {
+        if (!isFocused(sel)) return;
+        if (sel.target !== DEFAULT_TARGET) return;
+        return;
+      }
     }
   };
 
@@ -582,53 +601,10 @@ export function createTableView(args: {
   });
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const sel = core.selection();
-
-    if (
-      isPrintableKeydown(e) &&
-      sel.kind === "focused" &&
-      sel.target === DEFAULT_TARGET
-    ) {
-      consume(e);
-
-      if (sel.focus.container === tableId) {
-        const rowId = sel.focus.item;
-        const next = focusFirstCellValue(
-          core,
-          tableId,
-          rowId,
-          columnsSignal.value,
-        );
-        if (!next) return;
-        core.focus(next.focus, next.target, { caret: next.caret });
-        queueMicrotask(() => insertTextIntoActiveEditor(e.key));
-        return;
-      }
-
-      core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
-      queueMicrotask(() => insertTextIntoActiveEditor(e.key));
-      return;
-    }
-
-    const dir = keyToNavDir(e.key);
-    if (dir) {
-      consume(e);
-      const res = tableNavMove(core, tableId, sel, dir, keyNavMode(e));
-      if (res) core.focus(res.focus, res.target, { caret: res.caret });
-      return;
-    }
-
-    if (e.key === "Enter") {
-      consume(e);
-      tableCommands.confirm(core, tableId, sel);
-      return;
-    }
-
-    if (e.key === "Escape") {
-      consume(e);
-      dispatch({ type: "ESCAPE" });
-      return;
-    }
+    const intent = parseKeydownIntent(e);
+    if (!intent) return;
+    consume(e);
+    dispatch(intent);
   };
 
   return {

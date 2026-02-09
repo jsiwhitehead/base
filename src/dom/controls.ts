@@ -11,9 +11,23 @@ export type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
 export type NavDir = "left" | "right" | "up" | "down";
 export type NavMode = "step" | "jump";
 
+export type Intent =
+  | { type: "NAV"; dir: NavDir; mode: NavMode }
+  | { type: "CONFIRM"; caret?: Caret }
+  | { type: "CANCEL" }
+  | { type: "TAB"; shift: boolean }
+  | { type: "TYPE"; char: string }
+  | { type: "DELETE"; dir: "backward" | "forward" }
+  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
+
 export const SELECT_ALL: Caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
 export const caret0 = (): Caret => ({ start: 0, end: 0 });
 export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+export function consume(e: Event): void {
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
 
 export function isPrintableKeydown(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -37,6 +51,22 @@ export function keyToNavDir(key: string): NavDir | null {
     default:
       return null;
   }
+}
+
+export function parseKeydownIntent(e: KeyboardEvent): Intent | null {
+  if (e.key === "Escape") return { type: "CANCEL" };
+  if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
+  if (e.key === "Enter") return { type: "CONFIRM" };
+
+  if (e.key === "Backspace") return { type: "DELETE", dir: "backward" };
+  if (e.key === "Delete") return { type: "DELETE", dir: "forward" };
+
+  const dir = keyToNavDir(e.key);
+  if (dir) return { type: "NAV", dir, mode: keyNavMode(e) };
+
+  if (isPrintableKeydown(e)) return { type: "TYPE", char: e.key };
+
+  return null;
 }
 
 export function insertTextIntoActiveEditor(text: string): void {
@@ -117,11 +147,6 @@ export function syncValue(inp: TextInputElement, next: string) {
   inp.setSelectionRange(Math.min(start, len), Math.min(end, len));
 }
 
-function consume(e: Event): void {
-  e.preventDefault?.();
-  e.stopPropagation?.();
-}
-
 function isFirstLine(inp: HTMLTextAreaElement): boolean {
   const pos = inp.selectionStart ?? 0;
   return inp.value.lastIndexOf("\n", Math.max(0, pos - 1)) < 0;
@@ -132,27 +157,20 @@ function isLastLine(inp: HTMLTextAreaElement): boolean {
   return inp.value.indexOf("\n", pos) < 0;
 }
 
-export type EditorYield =
-  | { type: "NAV"; dir: NavDir; mode: NavMode }
-  | { type: "ENTER"; caret: Caret }
-  | { type: "TAB"; shift: boolean }
-  | { type: "ESCAPE" }
-  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
-
 export function bindTextEditorYield(
   inp: TextInputElement,
-  onYield: (y: EditorYield) => void,
+  onIntent: (i: Intent) => void,
 ): () => void {
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Tab") {
       consume(e);
-      onYield({ type: "TAB", shift: !!e.shiftKey });
+      onIntent({ type: "TAB", shift: !!e.shiftKey });
       return;
     }
 
     if (e.key === "Escape") {
       consume(e);
-      onYield({ type: "ESCAPE" });
+      onIntent({ type: "CANCEL" });
       return;
     }
 
@@ -178,26 +196,26 @@ export function bindTextEditorYield(
 
       if (shouldYield) {
         consume(e);
-        onYield({ type: "NAV", dir, mode });
+        onIntent({ type: "NAV", dir, mode });
         return;
       }
     }
 
     if (e.key === "Enter" && !e.shiftKey) {
       consume(e);
-      onYield({ type: "ENTER", caret: { start, end } });
+      onIntent({ type: "CONFIRM", caret: { start, end } });
       return;
     }
 
     if (e.key === "Backspace" && !hasSel && start === 0) {
       consume(e);
-      onYield({ type: "DELETE_BOUNDARY", dir: "backward" });
+      onIntent({ type: "DELETE_BOUNDARY", dir: "backward" });
       return;
     }
 
     if (e.key === "Delete" && !hasSel && end === len) {
       consume(e);
-      onYield({ type: "DELETE_BOUNDARY", dir: "forward" });
+      onIntent({ type: "DELETE_BOUNDARY", dir: "forward" });
       return;
     }
   };
@@ -387,7 +405,7 @@ export function editableScalarEditor(args: {
   onCommitEvents?: readonly ("input" | "blur")[];
   getState: () => ScalarFieldState;
   className?: string;
-  onYield?: (y: EditorYield) => void;
+  onIntent?: (i: Intent) => void;
 }): FocusComponent<TextInputElement> {
   const fc = textField(args.core, {
     focus: args.focus,
@@ -406,8 +424,8 @@ export function editableScalarEditor(args: {
     const host = el("div");
     host.append(fc.el);
 
-    if (args.onYield)
-      ctx.cleanup(bindTextEditorYield(fc.focusEl, args.onYield));
+    if (args.onIntent)
+      ctx.cleanup(bindTextEditorYield(fc.focusEl, args.onIntent));
 
     ctx.cleanup(() => fc.dispose());
 

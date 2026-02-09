@@ -111,7 +111,7 @@ describe("views", () => {
     expect(text.includes("A")).toBe(true);
   });
 
-  test("outline: switching to derived shows expr input without replacing item root", async () => {
+  test("outline: '=' in empty value editor switches to derived and focuses expr without replacing item root", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x" });
@@ -128,15 +128,9 @@ describe("views", () => {
 
     const valueEl = requireTargetInput(itemEl0, "value");
     pointerDown(valueEl);
+    await flushDomEffects();
 
-    valueEl.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "=",
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-
+    fireViewKey(view, "=");
     await flushDomEffects();
 
     expect(core.item(x).mode.kind).toBe("source");
@@ -310,7 +304,7 @@ describe("views", () => {
     expectSel(core, { container: rowB, item: bScore, target: DEFAULT_TARGET });
   });
 
-  test("slider: input updates scalar; arrow nudge clamps; Home sets min; End sets max; modifiers scale nudge", async () => {
+  test("slider: input updates scalar; arrow nudge clamps; ctrl/meta jump scales nudge", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const sliderId = mkBlank(core, rootId, { label: "slider", value: 10 });
@@ -333,19 +327,13 @@ describe("views", () => {
     fireViewKey(view, "ArrowRight");
     expect(scalarOfId(core, sliderId)).toBe(100);
 
-    fireViewKey(view, "Home");
-    expect(scalarOfId(core, sliderId)).toBe(0);
-
-    fireViewKey(view, "End");
-    expect(scalarOfId(core, sliderId)).toBe(100);
-
     core.commit((t) => t.setScalar(sliderId, 50));
-    fireViewKey(view, "ArrowRight", { shiftKey: true });
+    fireViewKey(view, "ArrowRight", { ctrlKey: true });
     expect(scalarOfId(core, sliderId)).toBe(60);
 
-    core.commit((t) => t.setScalar(sliderId, 0));
-    fireViewKey(view, "ArrowRight", { altKey: true });
-    expect(scalarOfId(core, sliderId)).toBe(0.1);
+    core.commit((t) => t.setScalar(sliderId, 50));
+    fireViewKey(view, "ArrowLeft", { metaKey: true });
+    expect(scalarOfId(core, sliderId)).toBe(40);
   });
 
   test("slider: does not replace input element on selection changes", async () => {

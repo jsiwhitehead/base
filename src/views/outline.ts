@@ -15,8 +15,8 @@ import {
 import {
   type NavDir,
   type NavMode,
+  type Intent,
   el,
-  on,
   createComponent,
   createContent,
   autosizeTextField,
@@ -26,11 +26,10 @@ import {
   SELECT_ALL,
   caret0,
   caretAt,
-  isPrintableKeydown,
+  consume,
+  parseKeydownIntent,
   insertTextIntoActiveEditor,
   escapeLadder,
-  keyNavMode,
-  keyToNavDir,
   presentItem,
 } from "../dom";
 
@@ -42,11 +41,7 @@ type SourceField = {
 };
 
 const VALUE_TARGET = "value";
-
-function consume(e: Event): void {
-  e.preventDefault?.();
-  e.stopPropagation?.();
-}
+const LABEL_TARGET = "label";
 
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
@@ -174,8 +169,6 @@ function outlineNavMove(
   };
 
   let next: ItemId | null = null;
-  let caret: Caret | null = null;
-  let targetOverride: string | null = null;
 
   if (dir === "up") next = neighbor(-1);
   else if (dir === "down") next = neighbor(1);
@@ -187,33 +180,14 @@ function outlineNavMove(
     const parent = findPresentedParent(rootId, core, from);
     next = prev ?? parent;
     if (mode === "jump") next = parent ?? prev ?? null;
-
-    if (prev && next && prev === next) {
-      if (sel.target === DEFAULT_TARGET) {
-        const it = core.item(prev);
-        if (it.mode.kind === "source") {
-          const fields = fieldsFromSource(it.mode.source);
-          const last = fields[fields.length - 1];
-          if (last) {
-            targetOverride = `source:${last.key}`;
-            caret = caretAt((last.text ?? "").length);
-          }
-        } else if (it.mode.kind === "direct" && it.content.kind === "scalar") {
-          targetOverride = VALUE_TARGET;
-          caret = caretAt(scalarToText(it.content.value).length);
-        }
-      }
-    }
   }
 
   if (!next) return null;
 
-  const target = targetOverride ?? DEFAULT_TARGET;
-  const outCaret = caret ?? caret0();
   return {
     focus: { container: sel.focus.container, item: next },
-    target,
-    caret: outCaret,
+    target: DEFAULT_TARGET,
+    caret: caret0(),
   };
 }
 
@@ -237,9 +211,11 @@ export const outlineCommands = {
     core.commit((t) => t.setSource(id, next));
   },
 
-  insertSibling(core: Core, sel: Selection, side: "before" | "after"): void {
-    if (sel.kind !== "focused") return;
-
+  insertSibling(
+    core: Core,
+    sel: Extract<Selection, { kind: "focused" }>,
+    side: "before" | "after",
+  ): void {
     const loc = core.locate(sel.focus.item);
     if (!loc) return;
 
@@ -258,12 +234,10 @@ export const outlineCommands = {
 
   splitAt(
     core: Core,
-    sel: Selection,
+    sel: Extract<Selection, { kind: "focused" }>,
     caretStart: number,
     caretEnd = caretStart,
   ): void {
-    if (sel.kind !== "focused") return;
-
     const id = sel.focus.item;
     const snap = core.item(id);
 
@@ -299,9 +273,11 @@ export const outlineCommands = {
     });
   },
 
-  joinBoundary(core: Core, sel: Selection, dir: "backward" | "forward"): void {
-    if (sel.kind !== "focused") return;
-
+  joinBoundary(
+    core: Core,
+    sel: Extract<Selection, { kind: "focused" }>,
+    dir: "backward" | "forward",
+  ): void {
     const loc = core.locate(sel.focus.item);
     if (!loc) return;
 
@@ -335,9 +311,11 @@ export const outlineCommands = {
     });
   },
 
-  removeItem(core: Core, sel: Selection, prefer: "prev" | "next"): void {
-    if (sel.kind !== "focused") return;
-
+  removeItem(
+    core: Core,
+    sel: Extract<Selection, { kind: "focused" }>,
+    prefer: "prev" | "next",
+  ): void {
     const loc = core.locate(sel.focus.item);
     if (!loc) return;
 
@@ -376,11 +354,9 @@ export const outlineCommands = {
   changeNesting(
     core: Core,
     rootId: ItemId,
-    sel: Selection,
+    sel: Extract<Selection, { kind: "focused" }>,
     dir: "in" | "out",
   ): void {
-    if (sel.kind !== "focused") return;
-
     const id = sel.focus.item;
 
     if (dir === "in") {
@@ -431,30 +407,19 @@ export const outlineCommands = {
     });
   },
 
-  confirm(core: Core, sel: Selection): void {
-    if (sel.kind !== "focused") return;
-
+  confirm(core: Core, sel: Extract<Selection, { kind: "focused" }>): void {
     const id = sel.focus.item;
+    const it = core.item(id);
 
-    if (sel.target.startsWith("source:")) {
-      core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+    if (it.mode.kind === "direct" && it.content.kind === "scalar") {
+      core.focus(sel.focus, VALUE_TARGET, {
+        caret: caretAt(scalarToText(it.content.value).length),
+      });
       return;
     }
 
-    const it = core.item(id);
-
-    if (sel.target === DEFAULT_TARGET) {
-      if (it.mode.kind === "direct" && it.content.kind === "scalar") {
-        core.focus(sel.focus, VALUE_TARGET, {
-          caret: caretAt(scalarToText(it.content.value).length),
-        });
-        return;
-      }
-      if (it.mode.kind === "source") {
-        core.focus(sel.focus, "source:expr", { caret: caret0() });
-        return;
-      }
-      outlineCommands.insertSibling(core, sel, "after");
+    if (it.mode.kind === "source") {
+      core.focus(sel.focus, "source:expr", { caret: caret0() });
       return;
     }
 
@@ -463,11 +428,9 @@ export const outlineCommands = {
 
   deleteBoundary(
     core: Core,
-    sel: Selection,
+    sel: Extract<Selection, { kind: "focused" }>,
     dir: "backward" | "forward",
   ): void {
-    if (sel.kind !== "focused") return;
-
     const prefer = dir === "backward" ? "prev" : "next";
     const it = core.item(sel.focus.item);
 
@@ -485,20 +448,11 @@ export const outlineCommands = {
   },
 } as const;
 
-type OutlineIntent =
-  | { type: "NAV"; dir: NavDir; mode: NavMode }
-  | { type: "CONFIRM" }
-  | { type: "ESCAPE" }
-  | { type: "INDENT"; dir: "in" | "out" }
-  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" }
-  | { type: "SPLIT"; caret: Caret }
-  | { type: "SET_DERIVED" };
-
 type OutlineMountCtx = {
   core: Core;
   rootId: ItemId;
   navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
-  dispatch: (intent: OutlineIntent) => void;
+  dispatch: (intent: Intent) => void;
 };
 
 function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
@@ -512,9 +466,6 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     const sourceWrap = el("div", "ui-source");
     meta.append(labelWrap, sourceWrap);
 
-    const toContent = () =>
-      core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
-
     const canEditLabel = () => core.item(id).mode.kind !== "readonly";
 
     const commitLabel = (text: string) => {
@@ -526,7 +477,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     const labelComp = autosizeTextField(core, {
       focus,
-      target: "label",
+      target: LABEL_TARGET,
       commit: commitLabel,
       getState: () => {
         const snap = core.item(id);
@@ -543,28 +494,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    ctx.cleanup(
-      bindTextEditorYield(labelComp.focusEl, (y) => {
-        switch (y.type) {
-          case "NAV":
-            dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
-            return;
-          case "ENTER":
-            commitLabel(labelComp.focusEl.value);
-            toContent();
-            return;
-          case "TAB":
-            toContent();
-            return;
-          case "ESCAPE":
-            toContent();
-            return;
-          case "DELETE_BOUNDARY":
-            dispatch({ type: "DELETE_BOUNDARY", dir: y.dir });
-            return;
-        }
-      }),
-    );
+    ctx.cleanup(bindTextEditorYield(labelComp.focusEl, dispatch));
 
     const rows = ctx.list(sourceWrap, (key: string) => {
       return createComponent(core, (ctx2) => {
@@ -609,46 +539,11 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
         valSlot.set(fc);
         ctx2.cleanup(() => fc.dispose());
 
-        ctx2.cleanup(
-          bindTextEditorYield(fc.focusEl, (y) => {
-            switch (y.type) {
-              case "NAV":
-                dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
-                return;
-              case "TAB":
-                dispatch({ type: "INDENT", dir: y.shift ? "out" : "in" });
-                return;
-              case "ESCAPE":
-                dispatch({ type: "ESCAPE" });
-                return;
-              case "ENTER":
-                outlineCommands.commitSourceField(
-                  core,
-                  id,
-                  key,
-                  fc.focusEl.value,
-                );
-                dispatch({ type: "NAV", dir: "down", mode: "step" });
-                return;
-              case "DELETE_BOUNDARY":
-                dispatch({ type: "DELETE_BOUNDARY", dir: y.dir });
-                return;
-            }
-          }),
-        );
+        ctx2.cleanup(bindTextEditorYield(fc.focusEl, dispatch));
 
         ctx2.effect(() => {
           const lbl = labelForKey();
           if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
-
-          const snap = core.item(id);
-          if (snap.mode.kind !== "source") return;
-
-          const nextMultiline = multilineForKey();
-          if (nextMultiline !== fc.focusEl.matches("textarea")) {
-            // multiline changes should not happen without a remount;
-            // derive from the initial source shape and keep stable per row.
-          }
         });
 
         return row;
@@ -661,7 +556,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
         sel.kind === "focused" &&
         sel.focus.item === focus.item &&
         sel.focus.container === focus.container &&
-        sel.target === "label"
+        sel.target === LABEL_TARGET
       );
     });
 
@@ -733,44 +628,7 @@ function mountOutlineItem(
       bodyComp = { el: sf.el, dispose: () => sf.dispose() };
       bodyEl = sf.el;
 
-      ctx.cleanup(
-        on(sf.focusEl, "keydown", (e: KeyboardEvent) => {
-          const el0 = sf.focusEl;
-          const isText =
-            el0 instanceof HTMLInputElement ||
-            el0 instanceof HTMLTextAreaElement;
-          if (!isText) return;
-          if (e.key === "=" && !el0.value) {
-            const it = core.item(id);
-            if (it.mode.kind === "direct") {
-              consume(e);
-              dispatch({ type: "SET_DERIVED" });
-            }
-          }
-        }),
-      );
-
-      ctx.cleanup(
-        bindTextEditorYield(sf.focusEl as any, (y) => {
-          switch (y.type) {
-            case "NAV":
-              dispatch({ type: "NAV", dir: y.dir, mode: y.mode });
-              return;
-            case "ENTER":
-              dispatch({ type: "SPLIT", caret: y.caret });
-              return;
-            case "TAB":
-              dispatch({ type: "INDENT", dir: y.shift ? "out" : "in" });
-              return;
-            case "DELETE_BOUNDARY":
-              dispatch({ type: "DELETE_BOUNDARY", dir: y.dir });
-              return;
-            case "ESCAPE":
-              dispatch({ type: "ESCAPE" });
-              return;
-          }
-        }),
-      );
+      ctx.cleanup(bindTextEditorYield(sf.focusEl as any, dispatch));
 
       root.append(sf.el);
       ctx.cleanup(() => sf.dispose());
@@ -866,7 +724,7 @@ export function createOutlineView(args: {
   const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
     outlineNavMove(core, rootId, navStopsSignal.value, sel, dir, mode);
 
-  const dispatch = (intent: OutlineIntent): void => {
+  const dispatch = (intent: Intent): void => {
     const sel = core.selection();
 
     switch (intent.type) {
@@ -875,31 +733,86 @@ export function createOutlineView(args: {
         if (res) core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
-      case "CONFIRM":
+
+      case "TYPE": {
+        if (sel.kind !== "focused") return;
+
+        if (sel.target === VALUE_TARGET) {
+          const id = sel.focus.item;
+          const it = core.item(id);
+          if (
+            intent.char === "=" &&
+            it.mode.kind === "direct" &&
+            it.content.kind === "scalar" &&
+            scalarToText(it.content.value).trim() === ""
+          ) {
+            outlineCommands.setDerived(core, id);
+            core.focus(sel.focus, "source:expr", { caret: caret0() });
+            return;
+          }
+          return;
+        }
+
+        if (sel.target !== DEFAULT_TARGET) return;
+
+        const stops = getEditStopsForItem(core, sel.focus.item);
+        const target = stops[0] ?? null;
+        if (!target) return;
+
+        core.focus(sel.focus, target, { caret: SELECT_ALL });
+        queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
+        return;
+      }
+
+      case "CONFIRM": {
+        if (sel.kind !== "focused") return;
+
+        if (sel.target !== DEFAULT_TARGET) {
+          if (sel.target === VALUE_TARGET && intent.caret) {
+            outlineCommands.splitAt(
+              core,
+              sel,
+              intent.caret.start,
+              intent.caret.end,
+            );
+            return;
+          }
+          core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
         outlineCommands.confirm(core, sel);
         return;
-      case "ESCAPE":
-        escapeLadder(core);
-        return;
-      case "INDENT":
-        outlineCommands.changeNesting(core, rootId, sel, intent.dir);
-        return;
-      case "DELETE_BOUNDARY":
-        outlineCommands.deleteBoundary(core, sel, intent.dir);
-        return;
-      case "SPLIT":
-        outlineCommands.splitAt(
+      }
+
+      case "TAB": {
+        if (sel.kind !== "focused") return;
+        outlineCommands.changeNesting(
           core,
+          rootId,
           sel,
-          intent.caret.start,
-          intent.caret.end,
+          intent.shift ? "out" : "in",
         );
         return;
-      case "SET_DERIVED":
+      }
+
+      case "DELETE_BOUNDARY": {
         if (sel.kind !== "focused") return;
-        outlineCommands.setDerived(core, sel.focus.item);
-        core.focus(sel.focus, "source:expr", { caret: caret0() });
+        outlineCommands.deleteBoundary(core, sel, intent.dir);
         return;
+      }
+
+      case "DELETE": {
+        if (sel.kind !== "focused") return;
+        if (sel.target !== DEFAULT_TARGET) return;
+        outlineCommands.deleteBoundary(core, sel, intent.dir);
+        return;
+      }
+
+      case "CANCEL": {
+        escapeLadder(core);
+        return;
+      }
     }
   };
 
@@ -911,58 +824,10 @@ export function createOutlineView(args: {
   );
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const sel = core.selection();
-
-    if (
-      isPrintableKeydown(e) &&
-      sel.kind === "focused" &&
-      sel.target === DEFAULT_TARGET
-    ) {
-      const stops = getEditStopsForItem(core, sel.focus.item);
-      const target = stops[0] ?? null;
-      if (!target) return;
-      consume(e);
-      core.focus(sel.focus, target, { caret: SELECT_ALL });
-      queueMicrotask(() => insertTextIntoActiveEditor(e.key));
-      return;
-    }
-
-    const dir = keyToNavDir(e.key);
-    if (dir) {
-      consume(e);
-      dispatch({ type: "NAV", dir, mode: keyNavMode(e) });
-      return;
-    }
-
-    if (e.key === "Enter") {
-      consume(e);
-      dispatch({ type: "CONFIRM" });
-      return;
-    }
-
-    if (e.key === "Backspace") {
-      consume(e);
-      dispatch({ type: "DELETE_BOUNDARY", dir: "backward" });
-      return;
-    }
-
-    if (e.key === "Delete") {
-      consume(e);
-      dispatch({ type: "DELETE_BOUNDARY", dir: "forward" });
-      return;
-    }
-
-    if (e.key === "Tab") {
-      consume(e);
-      dispatch({ type: "INDENT", dir: e.shiftKey ? "out" : "in" });
-      return;
-    }
-
-    if (e.key === "Escape") {
-      consume(e);
-      dispatch({ type: "ESCAPE" });
-      return;
-    }
+    const intent = parseKeydownIntent(e);
+    if (!intent) return;
+    consume(e);
+    dispatch(intent);
   };
 
   return {
