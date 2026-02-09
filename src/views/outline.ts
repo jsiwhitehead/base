@@ -22,7 +22,6 @@ import {
   autosizeTextField,
   textField,
   scalarField,
-  bindTextEditorYield,
   SELECT_ALL,
   caret0,
   caretAt,
@@ -487,13 +486,12 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
           isIssue: false,
         };
       },
-      onCommitEvents: ["blur"],
       wrapClassName: "autosize",
+      onIntent: dispatch,
     });
 
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
-    ctx.cleanup(bindTextEditorYield(labelComp.focusEl, dispatch));
 
     const rows = ctx.list(sourceWrap, (key: string) => {
       return createComponent(core, (ctx2) => {
@@ -531,12 +529,11 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
                 ?.text ?? "";
             return { text: txt, readOnly: false, isIssue: false };
           },
-          onCommitEvents: ["blur"],
+          onIntent: dispatch,
         });
 
         valEl.replaceChildren(fc.el);
         ctx2.cleanup(() => fc.dispose());
-        ctx2.cleanup(bindTextEditorYield(fc.focusEl, dispatch));
 
         ctx2.effect(() => {
           const lbl = labelForKey();
@@ -594,10 +591,9 @@ function mountScalarBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
       target: VALUE_TARGET,
       multiline: true,
       commitText: (text) => outlineCommands.setText(core, id, text),
-      onCommitEvents: ["input"],
+      onIntent: dispatch,
     });
 
-    ctx.cleanup(bindTextEditorYield(sf.focusEl as any, dispatch));
     ctx.cleanup(() => sf.dispose());
 
     return sf.el;

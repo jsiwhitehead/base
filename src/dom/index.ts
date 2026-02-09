@@ -34,4 +34,7 @@ export {
   textField,
   autosizeTextField,
   scalarField,
+  type TextFieldEditModel,
+  type TextFieldOpts,
+  type AutosizeTextFieldOpts,
 } from "./controls";

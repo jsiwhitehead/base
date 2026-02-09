@@ -24,7 +24,6 @@ import {
   escapeLadder,
   caretFromTarget,
   reconcileChildren,
-  bindTextEditorYield,
   consume,
   parseKeydownIntent,
 } from "../dom";
@@ -311,12 +310,11 @@ function mountRowMeta(args: {
         const readOnly = !isEditing.value || !canEdit;
         return { text, readOnly, isIssue: false };
       },
-      onCommitEvents: ["blur"],
+      onIntent: dispatch,
     });
 
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
-    ctx.cleanup(bindTextEditorYield(labelComp.focusEl, dispatch));
 
     return meta;
   });

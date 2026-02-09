@@ -27,7 +27,7 @@ Selection changes are frequent and must be cheap.
 
 - Selection-driven updates must be styling-only (e.g. `data-focused`) and must not rebuild structure.
 - Structural DOM updates must depend on item state (`core.item(id)`), not selection.
-- Any code that needs selection inside a component should depend on a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
+- Any code that needs selection inside a component should prefer a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
 - When swapping child components via `slot.set(...)`, gate swaps with a stable discriminator (e.g. `view`, `kind`) so reactive reruns do not remount unchanged structure.
 
 ### Views do not track focus manually
@@ -179,7 +179,10 @@ From Core’s perspective:
 
 - An item is editable iff `item.mode.kind !== "readonly"`.
 - Core exposes mode state; UI must respect readonly.
-- Core does not pre-filter edits by mode, and invalid transactions may still throw.
+- Core does not pre-filter edits by mode.
+- UI should not rely on exceptions for user-input validation.
+- Invalid user input should round-trip through Core issue state and be rendered from Core.
+- Core may still throw for programmer errors or invariant violations.
 
 ### UI default behavior
 
@@ -288,6 +291,14 @@ When focused on `DEFAULT_TARGET`:
 - Enter (`CONFIRM`) enters edit using the first editable target (if any), usually caret at end.
 - Typing (`TYPE`) enters edit using the first editable target and replaces existing text (select-all then type).
 - These are distinct entry modes: Enter is not select-all.
+
+### Editor commit models
+
+- Live editors commit on `input` (and only on `input`).
+- Draft editors keep local draft while focused; commit on `CONFIRM`, `TAB`, yielded `NAV`, or `blur`.
+- Draft editors cancel on `CANCEL`.
+- Draft state exists only for the focused edit session; once focus leaves, draft resets to the committed Core value.
+- In multiline editors, `Enter` commits and `Mod+Enter` inserts newline.
 
 ### Navigation does not implicitly enter edit
 

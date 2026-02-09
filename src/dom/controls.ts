@@ -1,6 +1,13 @@
 import type { Core, ItemId, Focus, Caret, Component } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
-import { createComponent, el, on, caretFromTarget, setData } from "./base";
+import {
+  createComponent,
+  el,
+  on,
+  caretFromTarget,
+  setData,
+  setDataBool,
+} from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -110,26 +117,6 @@ export function textInput(multiline: boolean): TextInputElement {
   return n;
 }
 
-type TextCommitEvent = "input" | "blur";
-
-function registerCommitHandlers(
-  ctx: {
-    on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
-      target: T,
-      type: K,
-      handler: (e: HTMLElementEventMap[K]) => void,
-      opts?: AddEventListenerOptions,
-    ): void;
-  },
-  target: TextInputElement,
-  events: readonly TextCommitEvent[] | undefined,
-  handler: () => void,
-): void {
-  const active = new Set(events ?? ["input", "blur"]);
-  if (active.has("input")) ctx.on(target, "input", handler);
-  if (active.has("blur")) ctx.on(target, "blur", handler);
-}
-
 export function syncValue(inp: TextInputElement, next: string) {
   if (inp.value === next) return;
 
@@ -201,7 +188,9 @@ export function bindTextEditorYield(
       }
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter") {
+      if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey))
+        return;
       consume(e);
       onIntent({ type: "CONFIRM", caret: { start, end } });
       return;
@@ -241,29 +230,123 @@ export type TextFieldState = {
   isIssue: boolean;
 };
 
+export type TextFieldEditModel = "live" | "draft";
+
 export type TextFieldOpts = {
   focus: Focus;
   target: string;
   multiline: boolean;
   className?: string;
+  editModel?: TextFieldEditModel;
   commit: (text: string) => void;
   getState: () => TextFieldState;
-  onCommitEvents?: readonly ("input" | "blur")[];
+  onIntent?: (i: Intent) => void;
 };
 
 export function textField(
   core: Core,
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
+  const editModel: TextFieldEditModel = opts.editModel ?? "draft";
+
   const c = createComponent(core, (ctx) => {
     const inp = textInput(opts.multiline);
     if (opts.className) inp.className = opts.className;
 
     setData(inp, "target", opts.target);
 
-    registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
-      opts.commit(inp.value),
-    );
+    let editing = false;
+    let dirty = false;
+    let baseline = "";
+    let draft = "";
+
+    const isThisTargetFocused = (): boolean => {
+      const sel = core.selection();
+      return (
+        sel.kind === "focused" &&
+        sel.focus.item === opts.focus.item &&
+        sel.focus.container === opts.focus.container &&
+        sel.target === opts.target
+      );
+    };
+
+    const beginDraftSession = () => {
+      if (editModel !== "draft") return;
+      if (editing) return;
+
+      const st = opts.getState();
+      if (st.readOnly) return;
+
+      const committed = st.text ?? "";
+      editing = true;
+      dirty = false;
+      baseline = committed;
+      draft = committed;
+      syncValue(inp, draft);
+    };
+
+    const commitDraft = (): void => {
+      if (!editing) return;
+      if (!dirty) return;
+
+      const st = opts.getState();
+      if (st.readOnly) return;
+
+      opts.commit(draft);
+      dirty = false;
+      baseline = draft;
+    };
+
+    const cancelDraft = (): void => {
+      if (!editing) return;
+      draft = baseline;
+      dirty = false;
+      syncValue(inp, baseline);
+    };
+
+    const handleIntent = (i: Intent) => {
+      if (editModel === "draft") {
+        if (i.type === "CANCEL") {
+          cancelDraft();
+          opts.onIntent?.(i);
+          return;
+        }
+
+        if (i.type === "CONFIRM" || i.type === "TAB" || i.type === "NAV") {
+          commitDraft();
+          opts.onIntent?.(i);
+          return;
+        }
+
+        opts.onIntent?.(i);
+        return;
+      }
+
+      opts.onIntent?.(i);
+    };
+
+    if (opts.onIntent) ctx.cleanup(bindTextEditorYield(inp, handleIntent));
+
+    ctx.on(inp, "focus", () => {
+      beginDraftSession();
+    });
+
+    ctx.on(inp, "input", () => {
+      if (editModel === "live") {
+        opts.commit(inp.value);
+        return;
+      }
+
+      if (!editing) beginDraftSession();
+      draft = inp.value;
+      dirty = true;
+    });
+
+    ctx.on(inp, "blur", () => {
+      if (editModel !== "draft") return;
+      if (!editing) return;
+      commitDraft();
+    });
 
     ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
 
@@ -274,7 +357,43 @@ export function textField(
     ctx.effect(() => {
       const st = opts.getState();
       inp.readOnly = st.readOnly;
-      syncValue(inp, st.text);
+
+      const committed = st.text ?? "";
+      const focused = isThisTargetFocused();
+
+      if (editModel === "live") {
+        syncValue(inp, committed);
+        setDataBool(inp, "issue", !!st.isIssue);
+        return;
+      }
+
+      if (!focused) {
+        editing = false;
+        dirty = false;
+        baseline = committed;
+        draft = committed;
+        syncValue(inp, committed);
+        setDataBool(inp, "issue", !!st.isIssue);
+        return;
+      }
+
+      if (!editing && !st.readOnly) {
+        editing = true;
+        dirty = false;
+        baseline = committed;
+        draft = committed;
+        syncValue(inp, draft);
+        setDataBool(inp, "issue", !!st.isIssue);
+        return;
+      }
+
+      if (!dirty && committed !== baseline) {
+        baseline = committed;
+        draft = committed;
+      }
+
+      syncValue(inp, draft);
+      setDataBool(inp, "issue", !!st.isIssue);
     });
 
     return inp;
@@ -297,6 +416,8 @@ export function autosizeTextField(
   core: Core,
   opts: AutosizeTextFieldOpts,
 ): FocusComponent<HTMLInputElement> {
+  const editModel: TextFieldEditModel = opts.editModel ?? "draft";
+
   let focusEl!: HTMLInputElement;
 
   const c = createComponent(core, (ctx) => {
@@ -314,9 +435,101 @@ export function autosizeTextField(
 
     wrap.append(mirror, inp);
 
-    registerCommitHandlers(ctx, inp, opts.onCommitEvents, () =>
-      opts.commit(inp.value),
-    );
+    let editing = false;
+    let dirty = false;
+    let baseline = "";
+    let draft = "";
+
+    const isThisTargetFocused = (): boolean => {
+      const sel = core.selection();
+      return (
+        sel.kind === "focused" &&
+        sel.focus.item === opts.focus.item &&
+        sel.focus.container === opts.focus.container &&
+        sel.target === opts.target
+      );
+    };
+
+    const beginDraftSession = () => {
+      if (editModel !== "draft") return;
+      if (editing) return;
+
+      const st = opts.getState();
+      if (st.readOnly) return;
+
+      const committed = st.text ?? "";
+      editing = true;
+      dirty = false;
+      baseline = committed;
+      draft = committed;
+      syncValue(inp, draft);
+      mirror.textContent = draft.length ? draft : " ";
+    };
+
+    const commitDraft = (): void => {
+      if (!editing) return;
+      if (!dirty) return;
+
+      const st = opts.getState();
+      if (st.readOnly) return;
+
+      opts.commit(draft);
+      dirty = false;
+      baseline = draft;
+    };
+
+    const cancelDraft = (): void => {
+      if (!editing) return;
+      draft = baseline;
+      dirty = false;
+      syncValue(inp, baseline);
+      mirror.textContent = baseline.length ? baseline : " ";
+    };
+
+    const handleIntent = (i: Intent) => {
+      if (editModel === "draft") {
+        if (i.type === "CANCEL") {
+          cancelDraft();
+          opts.onIntent?.(i);
+          return;
+        }
+
+        if (i.type === "CONFIRM" || i.type === "TAB" || i.type === "NAV") {
+          commitDraft();
+          opts.onIntent?.(i);
+          return;
+        }
+
+        opts.onIntent?.(i);
+        return;
+      }
+
+      opts.onIntent?.(i);
+    };
+
+    if (opts.onIntent) ctx.cleanup(bindTextEditorYield(inp, handleIntent));
+
+    ctx.on(inp, "focus", () => {
+      beginDraftSession();
+    });
+
+    ctx.on(inp, "input", () => {
+      if (editModel === "live") {
+        opts.commit(inp.value);
+        return;
+      }
+
+      if (!editing) beginDraftSession();
+      draft = inp.value;
+      dirty = true;
+      mirror.textContent = draft.length ? draft : " ";
+    });
+
+    ctx.on(inp, "blur", () => {
+      if (editModel !== "draft") return;
+      if (!editing) return;
+      commitDraft();
+    });
 
     ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
 
@@ -327,8 +540,47 @@ export function autosizeTextField(
     ctx.effect(() => {
       const st = opts.getState();
       inp.readOnly = st.readOnly;
-      syncValue(inp, st.text);
-      mirror.textContent = st.text.length ? st.text : " ";
+
+      const committed = st.text ?? "";
+      const focused = isThisTargetFocused();
+
+      if (editModel === "live") {
+        syncValue(inp, committed);
+        mirror.textContent = committed.length ? committed : " ";
+        setDataBool(inp, "issue", !!st.isIssue);
+        return;
+      }
+
+      if (!focused) {
+        editing = false;
+        dirty = false;
+        baseline = committed;
+        draft = committed;
+        syncValue(inp, committed);
+        mirror.textContent = committed.length ? committed : " ";
+        setDataBool(inp, "issue", !!st.isIssue);
+        return;
+      }
+
+      if (!editing && !st.readOnly) {
+        editing = true;
+        dirty = false;
+        baseline = committed;
+        draft = committed;
+        syncValue(inp, draft);
+        mirror.textContent = draft.length ? draft : " ";
+        setDataBool(inp, "issue", !!st.isIssue);
+        return;
+      }
+
+      if (!dirty && committed !== baseline) {
+        baseline = committed;
+        draft = committed;
+      }
+
+      syncValue(inp, draft);
+      mirror.textContent = draft.length ? draft : " ";
+      setDataBool(inp, "issue", !!st.isIssue);
     });
 
     return wrap;
@@ -350,8 +602,8 @@ export type ScalarFieldOpts = {
   multiline: boolean;
   className?: string;
   commitText?: (text: string) => void;
-  onCommitEvents?: readonly ("input" | "blur")[];
   getState?: () => ScalarFieldState;
+  onIntent?: (i: Intent) => void;
 };
 
 function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
@@ -402,7 +654,6 @@ function editableScalarEditor(args: {
   target: string;
   multiline: boolean;
   commitText?: (text: string) => void;
-  onCommitEvents?: readonly ("input" | "blur")[];
   getState: () => ScalarFieldState;
   className?: string;
   onIntent?: (i: Intent) => void;
@@ -412,23 +663,19 @@ function editableScalarEditor(args: {
     target: args.target,
     multiline: args.multiline,
     className: args.className ?? "",
+    editModel: "live",
     commit: (text) => args.commitText?.(text),
     getState: () => {
       const st = args.getState();
       return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
     },
-    onCommitEvents: args.onCommitEvents,
+    onIntent: args.onIntent,
   });
 
   const c = createComponent(args.core, (ctx) => {
     const host = el("div");
     host.append(fc.el);
-
-    if (args.onIntent)
-      ctx.cleanup(bindTextEditorYield(fc.focusEl, args.onIntent));
-
     ctx.cleanup(() => fc.dispose());
-
     return host;
   });
 
@@ -468,8 +715,8 @@ export function scalarField(
           target,
           multiline: opts.multiline,
           commitText: opts.commitText,
-          onCommitEvents: opts.onCommitEvents,
           getState,
+          onIntent: opts.onIntent,
         }) as unknown as FocusComponent<HTMLElement>;
         slot.set(current);
         focusEl = current.focusEl;
