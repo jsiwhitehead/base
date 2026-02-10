@@ -17,7 +17,7 @@ import {
   type Intent,
   el,
   createComponent,
-  createContent,
+  bindUiItemShell,
   autosizeTextField,
   textField,
   scalarField,
@@ -28,7 +28,6 @@ import {
   parseKeydownIntent,
   insertTextIntoActiveEditor,
   escapeLadder,
-  presentItem,
 } from "../dom";
 
 type SourceField = {
@@ -134,12 +133,6 @@ function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
   const prev = siblings[index - 1] ?? null;
   if (prev) return lastDescendant(core, prev);
   return ownerId === rootId ? null : ownerId;
-}
-
-function isEditing(
-  sel: Selection,
-): sel is Extract<Selection, { kind: "focused" }> {
-  return sel.kind === "focused" && sel.target !== DEFAULT_TARGET;
 }
 
 function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
@@ -481,8 +474,8 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    const rows = ctx.list(sourceWrap, (key: string) => {
-      return createComponent(core, (ctx2) => {
+    const rows = ctx.list(sourceWrap, (key: string) =>
+      createComponent(core, (ctx2) => {
         const row = el("div", "ui-source-row");
         const keyEl = el("div", "ui-source-key");
         const valEl = el("div", "ui-source-val");
@@ -529,8 +522,8 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
         });
 
         return row;
-      });
-    });
+      }),
+    );
 
     const labelFocused = computed(() => {
       const sel = core.selection();
@@ -596,7 +589,7 @@ function mountGroupBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     const mgr = ctx.list<ItemId>(wrap, (childId) => {
       const childFocus: Focus = { container: id, item: childId };
-      return mountNode(mountCtx, childFocus, true);
+      return mountOutlineNodeShell(mountCtx, childFocus, true);
     });
 
     ctx.effect(() => {
@@ -609,27 +602,16 @@ function mountGroupBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
   });
 }
 
-function mountOutlineItem(
+function mountOutlineBodyForItem(
   mountCtx: OutlineMountCtx,
   focus: Focus,
-  showMeta: boolean,
 ): Component {
   const { core } = mountCtx;
   const id = focus.item;
 
-  return createContent({ core, focus, view: "outline" }, (ctx) => {
-    const root = el("div");
-
-    if (showMeta) {
-      const metaComp = mountMeta(mountCtx, focus);
-      root.append(metaComp.el);
-      ctx.cleanup(() => metaComp.dispose());
-    }
-
-    const bodyHost = el("div");
-    root.append(bodyHost);
-
-    const bodySlot = ctx.slot(bodyHost);
+  return createComponent(core, (ctx) => {
+    const host = el("div", "ui-outline-item-body");
+    const slot = ctx.slot(host);
 
     let curKind: "group" | "scalar" | null = null;
     let cur: Component | null = null;
@@ -645,7 +627,7 @@ function mountOutlineItem(
           ? mountGroupBody(mountCtx, focus)
           : mountScalarBody(mountCtx, focus);
 
-      bodySlot.set(cur);
+      slot.set(cur);
     });
 
     ctx.cleanup(() => {
@@ -653,37 +635,66 @@ function mountOutlineItem(
       cur = null;
     });
 
-    return root;
+    return host;
   });
 }
 
-function mountNode(
+function mountBodyForItem(mountCtx: OutlineMountCtx, focus: Focus): Component {
+  const { core } = mountCtx;
+  const id = focus.item;
+
+  return createComponent(core, (ctx) => {
+    const host = el("div");
+    const slot = ctx.slot(host);
+
+    let curView: string | null = null;
+
+    ctx.effect(() => {
+      const wanted = core.view(id);
+      if (wanted === curView) return;
+      curView = wanted;
+
+      if (wanted === "outline") {
+        slot.set(mountOutlineBodyForItem(mountCtx, focus));
+        return;
+      }
+
+      const v = core.mountView({ id, focus, view: wanted });
+      slot.set(v);
+    });
+
+    return host;
+  });
+}
+
+function mountOutlineNodeShell(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   showMeta: boolean,
 ): Component {
   const { core } = mountCtx;
-  const id = focus.item;
 
-  return presentItem({
-    core,
-    focus,
-    className: "ui-outline-node",
-    mount(ctx, _host, slot) {
-      let curView: string | null = null;
+  return createComponent(core, (ctx) => {
+    const shell = el("div", "ui-outline-node");
+    const chromeHost = el("div", "ui-outline-chrome");
+    const bodyHost = el("div", "ui-outline-body");
+    shell.append(chromeHost, bodyHost);
 
-      ctx.effect(() => {
-        const wanted = core.view(id);
-        if (wanted === curView) return;
-        curView = wanted;
+    bindUiItemShell(ctx, { core, focus }, shell);
 
-        slot.set(
-          wanted === "outline"
-            ? mountOutlineItem(mountCtx, focus, showMeta)
-            : core.mountView({ id, focus, view: wanted }),
-        );
-      });
-    },
+    if (showMeta) {
+      const meta = mountMeta(mountCtx, focus);
+      chromeHost.replaceChildren(meta.el);
+      ctx.cleanup(() => meta.dispose());
+    } else {
+      chromeHost.replaceChildren();
+    }
+
+    const body = mountBodyForItem(mountCtx, focus);
+    bodyHost.replaceChildren(body.el);
+    ctx.cleanup(() => body.dispose());
+
+    return shell;
   });
 }
 
@@ -894,11 +905,10 @@ export function createOutlineView(args: {
     }
   };
 
-  const focus: Focus = args.focus ?? { container: rootId, item: rootId };
-  const content = mountOutlineItem(
+  const viewFocus: Focus = args.focus ?? { container: rootId, item: rootId };
+  const body = mountOutlineBodyForItem(
     { core, rootId, editPointsSignal, dispatch },
-    focus,
-    false,
+    viewFocus,
   );
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -910,10 +920,10 @@ export function createOutlineView(args: {
 
   return {
     id: `outline:${String(rootId)}`,
-    root: content.el,
+    root: body.el,
     onKeyDown,
     dispose() {
-      content.dispose();
+      body.dispose();
     },
   };
 }

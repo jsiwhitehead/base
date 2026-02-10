@@ -6,12 +6,11 @@ import type {
   Focus,
   DomView,
 } from "../core";
-import { DEFAULT_TARGET, clamp } from "../core/runtime";
+import { clamp } from "../core/runtime";
 import {
   el,
-  createContent,
+  createComponent,
   escapeLadder,
-  caret0,
   consume,
   parseKeydownIntent,
   type Intent,
@@ -68,15 +67,13 @@ const getScalarOr = (core: Core, id: ItemId, fallback: number): number => {
 };
 
 export const sliderCommands = {
-  setScalarValue(core: Core, focus: Focus, id: ItemId, value: number): void {
+  setScalarValue(core: Core, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetScalar(core, id)) return;
     core.commit((t) => t.setScalar(id, value));
-    core.focus(focus, DEFAULT_TARGET, { caret: caret0() });
   },
 
   nudgeScalarValue(
     core: Core,
-    focus: Focus,
     id: ItemId,
     deltaSteps: number,
     opts: SliderResolvedOpts,
@@ -84,7 +81,7 @@ export const sliderCommands = {
     if (!canSetScalar(core, id)) return;
     const cur = getScalarOr(core, id, opts.min);
     const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
-    sliderCommands.setScalarValue(core, focus, id, next);
+    sliderCommands.setScalarValue(core, id, next);
   },
 } as const;
 
@@ -95,14 +92,9 @@ type SliderMountCtx = {
   opts: SliderResolvedOpts;
 };
 
-function mountSliderContent({
-  core,
-  id,
-  focus,
-  opts,
-}: SliderMountCtx): Component {
-  return createContent({ core, focus, view: "slider" }, (ctx) => {
-    const root = el("div");
+function mountSliderBody({ core, id, opts }: SliderMountCtx): Component {
+  return createComponent(core, (ctx) => {
+    const root = el("div", "ui-slider");
 
     const input = document.createElement("input");
     input.type = "range";
@@ -116,7 +108,7 @@ function mountSliderContent({
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
-      sliderCommands.setScalarValue(core, focus, id, next);
+      sliderCommands.setScalarValue(core, id, next);
     };
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
@@ -156,7 +148,7 @@ export function createSliderView(args: {
   const safeFocus: Focus = args.focus ?? { container: id, item: id };
   const resolved = DEFAULT_SLIDER_OPTS;
 
-  const content = mountSliderContent({
+  const content = mountSliderBody({
     core,
     id,
     focus: safeFocus,
@@ -172,13 +164,7 @@ export function createSliderView(args: {
       case "NAV": {
         const mul = intent.mode === "jump" ? 10 : 1;
         const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-        sliderCommands.nudgeScalarValue(
-          core,
-          safeFocus,
-          id,
-          dir * mul,
-          resolved,
-        );
+        sliderCommands.nudgeScalarValue(core, id, dir * mul, resolved);
         return;
       }
 

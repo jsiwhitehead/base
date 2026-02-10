@@ -14,7 +14,6 @@ import {
   flushDomEffects,
   expectSel,
   requireItemEl,
-  requirePresenterSurface,
   requireTargetInput,
   requireEl,
   requireSameEl,
@@ -24,7 +23,7 @@ import {
 } from "./test-utils";
 
 describe("views", () => {
-  test("outline: selection moves do not replace item roots or presenter surfaces", async () => {
+  test("outline: selection moves do not replace item roots", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const a = mkBlank(core, rootId, { label: "a", value: 1 });
@@ -40,8 +39,6 @@ describe("views", () => {
 
     const aEl0 = requireItemEl(view.root, a);
     const bEl0 = requireItemEl(view.root, b);
-    const aSurf0 = requirePresenterSurface(aEl0);
-    const bSurf0 = requirePresenterSurface(bEl0);
 
     fireViewKey(view, "ArrowDown");
     fireViewKey(view, "ArrowDown");
@@ -50,13 +47,9 @@ describe("views", () => {
 
     const aEl1 = requireItemEl(view.root, a);
     const bEl1 = requireItemEl(view.root, b);
-    const aSurf1 = requirePresenterSurface(aEl1);
-    const bSurf1 = requirePresenterSurface(bEl1);
 
     requireSameEl(aEl0, aEl1);
     requireSameEl(bEl0, bEl1);
-    requireSameEl(aSurf0, aSurf1);
-    requireSameEl(bSurf0, bSurf1);
 
     const sel = core.selection();
     expect(sel.kind).toBe("focused");
@@ -65,7 +58,7 @@ describe("views", () => {
     }
   });
 
-  test("outline: click focuses presenter surface; does not replace surface", async () => {
+  test("outline: click focuses item shell; does not replace shell", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x", value: 1 });
@@ -74,18 +67,16 @@ describe("views", () => {
     mountDomView(view);
     await flushDomEffects();
 
-    const itemEl = requireItemEl(view.root, x);
-    const surface0 = requirePresenterSurface(itemEl);
+    const itemEl0 = requireItemEl(view.root, x);
 
-    pointerDown(surface0);
+    pointerDown(itemEl0);
     await flushDomEffects();
 
-    expect(document.activeElement === surface0).toBe(true);
+    expect(document.activeElement === itemEl0).toBe(true);
     expectSel(core, { container: rootId, item: x, target: DEFAULT_TARGET });
 
     const itemEl1 = requireItemEl(view.root, x);
-    const surface1 = requirePresenterSurface(itemEl1);
-    requireSameEl(surface0, surface1);
+    requireSameEl(itemEl0, itemEl1);
   });
 
   test("outline: printable key at DEFAULT_TARGET enters value editor and inserts", async () => {
@@ -170,12 +161,12 @@ describe("views", () => {
     requireSameEl(bEl0, bEl1);
     requireSameEl(cEl0, cEl1);
 
-    const order = nodeOrderByDataId(view.root, `.ui-outline-node > .ui-item`);
+    const order = nodeOrderByDataId(view.root, `.ui-outline-node`);
     const filtered = order.filter((id) => id === a || id === b || id === c);
     expect(filtered).toEqual([c, a, b]);
   });
 
-  test("table: navigation does not replace row item roots or cell hosts", async () => {
+  test("table: navigation does not replace row item roots or cell shells", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -199,11 +190,11 @@ describe("views", () => {
     const rowAEl0 = requireItemEl(view.root, rowA);
     const rowBEl0 = requireItemEl(view.root, rowB);
 
-    const cellHost0 = requireEl(
-      view.root.querySelector(
+    const cellA0 = requireEl(
+      rowAEl0.querySelector(
         `.ui-table-cell[data-col="score"]`,
       ) as HTMLElement | null,
-      "Missing score cell host",
+      "Missing rowA score cell",
     );
 
     fireViewKey(view, "ArrowRight");
@@ -232,14 +223,14 @@ describe("views", () => {
     requireSameEl(rowAEl0, rowAEl1);
     requireSameEl(rowBEl0, rowBEl1);
 
-    const cellHost1 = requireEl(
-      view.root.querySelector(
+    const cellA1 = requireEl(
+      rowAEl1.querySelector(
         `.ui-table-cell[data-col="score"]`,
       ) as HTMLElement | null,
-      "Missing score cell host",
+      "Missing rowA score cell",
     );
 
-    requireSameEl(cellHost0, cellHost1);
+    requireSameEl(cellA0, cellA1);
   });
 
   test("table: printable key from row selection focuses first cell value and inserts", async () => {
@@ -287,14 +278,14 @@ describe("views", () => {
     mountDomView(outline);
     await flushDomEffects();
 
-    const nestedCellHost = requireEl(
+    const nestedCell = requireEl(
       outline.root.querySelector(
         `.ui-item[data-view="table"] .ui-table-cell[data-col="score"]`,
       ) as HTMLElement | null,
-      "Missing nested cell host",
+      "Missing nested cell",
     );
 
-    pointerDown(nestedCellHost);
+    pointerDown(nestedCell);
     await flushDomEffects();
 
     expectSel(core, { container: rowA, item: aScore, target: DEFAULT_TARGET });

@@ -1,20 +1,19 @@
 export type { NavDir, NavMode, Intent, FocusComponent } from "./controls";
 
 export {
+  Disposer,
   el,
   on,
   reconcileChildren,
   setData,
   setDataBool,
   applyUiItemState,
-  createComponent,
-  createContent,
   caretFromTarget,
-  presentItem,
+  createComponent,
+  bindUiItemShell,
   type Ctx,
-  type ContentSpec,
-  type PresentItemOpts,
   type UiItemState,
+  type ShellSpec,
 } from "./base";
 
 export {

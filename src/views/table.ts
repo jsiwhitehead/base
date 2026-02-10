@@ -15,7 +15,7 @@ import {
   type Intent,
   el,
   createComponent,
-  createContent,
+  bindUiItemShell,
   textField,
   SELECT_ALL,
   caret0,
@@ -294,10 +294,8 @@ export const tableCommands = {
 
   renameColumn(core: Core, tableId: ItemId, colId: ItemId, to: string): void {
     void tableId;
-
     const b = normCol(to);
     if (!b) return;
-
     core.commit((t) => {
       t.setLabel(colId, b);
     });
@@ -381,95 +379,132 @@ function mountRowMeta(args: {
   });
 }
 
-function mountCellHost(
+function focusHeaderCol(
+  tableId: ItemId,
+  colId: ItemId,
+): { focus: Focus; target: string; caret: Caret } {
+  return {
+    focus: { container: tableId, item: tableId },
+    target: `col:${colId}`,
+    caret: caretAt(1_000_000),
+  };
+}
+
+function focusFirstBodyCellInColumn(
+  core: Core,
+  tableId: ItemId,
+  colName: string,
+): NavResult | null {
+  const rows = rowIds(core, tableId);
+  const firstBodyRow = rows[1] ?? null;
+  if (!firstBodyRow) return null;
+  return focusCellByColumnName(core, tableId, firstBodyRow, colName, caret0());
+}
+
+function mountCellShell(
+  mountCtx: TableMountCtx,
+  rowId: ItemId,
+  colName: string,
+  cellId: ItemId,
+): Component {
+  const { core } = mountCtx;
+  const focus: Focus = { container: rowId, item: cellId };
+
+  return createComponent(core, (ctx) => {
+    const shell = el("div", "ui-table-cell");
+    shell.setAttribute("data-col", colName);
+
+    bindUiItemShell(ctx, { core, focus, part: "cell" }, shell);
+
+    const bodyHost = el("div", "ui-table-cell-body");
+    shell.append(bodyHost);
+
+    const wanted = core.view(cellId);
+    const body = core.mountView({ id: cellId, focus, view: wanted });
+    bodyHost.replaceChildren(body.el);
+    ctx.cleanup(() => body.dispose());
+
+    return shell;
+  });
+}
+
+function mountColumnCellHost(
   mountCtx: TableMountCtx,
   rowId: ItemId,
   colId: ItemId,
 ): Component {
-  return createComponent(mountCtx.core, (ctx) => {
-    const host = el("div", "ui-table-cell");
+  const { core, tableId } = mountCtx;
+  const rowFocus: Focus = { container: tableId, item: rowId };
 
+  return createComponent(core, (ctx) => {
+    const host = el("div");
     const slot = ctx.slot(host);
 
-    const colName = () => {
-      const c = mountCtx.columnsSignal.value.find((x) => x.id === colId);
-      return c?.name ?? "";
-    };
+    const colName = () =>
+      mountCtx.columnsSignal.value.find((c) => c.id === colId)?.name ?? "";
 
-    const getCellId = () => {
+    const resolveCellId = () => {
       const nm = colName();
-      return nm ? findChildByLabel(mountCtx.core, rowId, nm) : null;
+      return nm ? findChildByLabel(core, rowId, nm) : null;
     };
 
     ctx.effect(() => {
-      host.setAttribute("data-col", colName());
-    });
+      const nm = colName();
+      const cid = resolveCellId();
 
-    ctx.effect(() => {
-      const cellItemId = getCellId();
-      if (!cellItemId) {
-        slot.clear();
+      if (!cid) {
+        const empty = el("div", "ui-table-cell ui-table-cell-empty");
+        empty.setAttribute("data-col", nm);
+        empty.tabIndex = -1;
+
+        ctx.on(empty, "pointerdown", (e: PointerEvent) => {
+          core.focus(rowFocus, DEFAULT_TARGET, {
+            caret: caretFromTarget(e.target),
+          });
+          e.stopPropagation();
+        });
+
+        slot.set({
+          el: empty,
+          dispose() {
+            empty.replaceChildren();
+          },
+        });
         return;
       }
 
-      const focus: Focus = { container: rowId, item: cellItemId };
-
-      ctx.target(focus, DEFAULT_TARGET, () => host);
-
-      const wanted = mountCtx.core.view(cellItemId);
-      slot.set(
-        mountCtx.core.mountView({ id: cellItemId, focus, view: wanted }),
-      );
-    });
-
-    ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      const nextCell = getCellId();
-      const res = nextCell
-        ? focusCellContainer(rowId, nextCell, caretFromTarget(e.target))
-        : focusRowContainer(mountCtx.tableId, rowId, caretFromTarget(e.target));
-
-      mountCtx.core.focus(res.focus, res.target, { caret: res.caret });
-      e.stopPropagation();
+      slot.set(mountCellShell(mountCtx, rowId, nm, cid));
     });
 
     return host;
   });
 }
 
-function mountRowContent(mountCtx: TableMountCtx, rowId: ItemId): Component {
+function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
   const { core, tableId, dispatch } = mountCtx;
   const focus: Focus = { container: tableId, item: rowId };
 
-  return createContent({ core, focus, view: "table", part: "row" }, (ctx) => {
-    const rowItem = el("div", "ui-table-row");
+  return createComponent(core, (ctx) => {
+    const rowShell = el("div", "ui-table-row");
+    bindUiItemShell(ctx, { core, focus, part: "row" }, rowShell);
 
-    ctx.target(focus, DEFAULT_TARGET, () => rowItem);
+    const metaHost = el("div", "ui-table-row-meta");
+    const cellsHost = el("div", "ui-table-row-cells");
+    rowShell.append(metaHost, cellsHost);
 
-    ctx.on(rowItem, "pointerdown", (e: PointerEvent) => {
-      const sel = core.selection();
-      if (
-        isRowSel(sel, tableId) &&
-        sel.focus.item === rowId &&
-        sel.target === DEFAULT_TARGET
-      )
-        return;
-      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
-      e.stopPropagation();
-    });
+    const meta = mountRowMeta({ core, tableId, rowId, focus, dispatch });
+    metaHost.replaceChildren(meta.el);
+    ctx.cleanup(() => meta.dispose());
 
-    const metaComp = mountRowMeta({ core, tableId, rowId, focus, dispatch });
-    rowItem.append(metaComp.el);
-    ctx.cleanup(() => metaComp.dispose());
-
-    const cellList = ctx.list<ItemId>(rowItem, (cid) =>
-      mountCellHost(mountCtx, rowId, cid),
+    const cellMgr = ctx.list<ItemId>(cellsHost, (colId) =>
+      mountColumnCellHost(mountCtx, rowId, colId),
     );
 
     ctx.effect(() => {
-      cellList.update(mountCtx.columnsSignal.value.map((c) => c.id));
+      cellMgr.update(mountCtx.columnsSignal.value.map((c) => c.id));
     });
 
-    return rowItem;
+    return rowShell;
   });
 }
 
@@ -553,9 +588,7 @@ function mountBody(mountCtx: TableMountCtx): Component {
   return createComponent(mountCtx.core, (ctx) => {
     const body = el("div", "ui-table-body");
 
-    const rows = ctx.list<ItemId>(body, (rid) =>
-      mountRowContent(mountCtx, rid),
-    );
+    const rows = ctx.list<ItemId>(body, (rid) => mountRowShell(mountCtx, rid));
 
     ctx.effect(() => {
       const snap = mountCtx.core.item(mountCtx.tableId);
@@ -565,53 +598,6 @@ function mountBody(mountCtx: TableMountCtx): Component {
 
     return body;
   });
-}
-
-function mountTableContent(args: {
-  core: Core;
-  tableId: ItemId;
-  focus: Focus;
-  columnsSignal: { value: Column[] };
-  dispatch: (intent: Intent) => void;
-}): Component {
-  const { core, tableId, focus, dispatch, columnsSignal } = args;
-
-  return createContent({ core, focus, view: "table" }, (ctx) => {
-    const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
-
-    const header = mountHeader(mountCtx);
-    const body = mountBody(mountCtx);
-
-    const root = el("div");
-    root.append(header.el, body.el);
-
-    ctx.cleanup(() => header.dispose());
-    ctx.cleanup(() => body.dispose());
-
-    return root;
-  });
-}
-
-function focusHeaderCol(
-  tableId: ItemId,
-  colId: ItemId,
-): { focus: Focus; target: string; caret: Caret } {
-  return {
-    focus: { container: tableId, item: tableId },
-    target: `col:${colId}`,
-    caret: caretAt(1_000_000),
-  };
-}
-
-function focusFirstBodyCellInColumn(
-  core: Core,
-  tableId: ItemId,
-  colName: string,
-): NavResult | null {
-  const rows = rowIds(core, tableId);
-  const firstBodyRow = rows[1] ?? null;
-  if (!firstBodyRow) return null;
-  return focusCellByColumnName(core, tableId, firstBodyRow, colName, caret0());
 }
 
 export function createTableView(args: {
@@ -755,22 +741,25 @@ export function createTableView(args: {
         return;
       }
 
-      case "DELETE_BOUNDARY": {
+      case "DELETE_BOUNDARY":
+      case "DELETE":
         return;
-      }
-
-      case "DELETE": {
-        return;
-      }
     }
   };
 
-  const content = mountTableContent({
-    core,
-    tableId,
-    focus: tableFocus,
-    columnsSignal,
-    dispatch,
+  const content = createComponent(core, (ctx) => {
+    const root = el("div", "ui-table");
+    const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
+
+    const header = mountHeader(mountCtx);
+    const body = mountBody(mountCtx);
+
+    root.append(header.el, body.el);
+
+    ctx.cleanup(() => header.dispose());
+    ctx.cleanup(() => body.dispose());
+
+    return root;
   });
 
   const onKeyDown = (e: KeyboardEvent) => {

@@ -175,7 +175,7 @@ export type Runtime<C> = {
     id: ItemId;
     focus?: Focus;
     view: ViewName;
-  }): Component | null;
+  }): Component;
 
   installGlobalListeners(win?: Window): () => void;
 
@@ -416,15 +416,21 @@ export function createRuntime<C>(opts: {
     id: ItemId;
     focus?: Focus;
     view: ViewName;
-  }): Component | null => {
+  }): Component => {
     const id = opts2.id;
     const focus: Focus = opts2.focus ?? { container: id, item: id };
 
     const entryId = entryIdFromItemId(id);
-    if (entryId == null) return null;
+    if (entryId == null) {
+      throw new Error(`mountView expects an entry item id, got: ${id}`);
+    }
 
-    const factory = views[opts2.view];
-    if (!factory) return null;
+    const factory = views[opts2.view] ?? views.outline;
+    if (!factory) {
+      throw new Error(
+        `No view factory available for '${opts2.view}' and outline fallback is missing`,
+      );
+    }
 
     const view = factory({ core: opts.getCore(), id, focus });
 

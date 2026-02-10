@@ -202,7 +202,7 @@ export type Core = {
     id: ItemId;
     focus?: Focus;
     view: ViewName;
-  }): Component | null;
+  }): Component;
 };
 
 export type CollabWire = {

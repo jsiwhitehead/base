@@ -29,58 +29,54 @@ Selection changes are frequent and must be cheap.
 - Structural DOM updates must depend on item state (`core.item(id)`), not selection.
 - Any code that needs selection inside a component should prefer a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
 - When swapping child components via `slot.set(...)`, gate swaps with a stable discriminator (e.g. `view`, `kind`) so reactive reruns do not remount unchanged structure.
+- The body component is swapped only when `core.view(id)` (or another item-driven discriminator such as `kind`) changes, not when selection changes.
 
 ### Views do not track focus manually
 
 - Views attach logical targets to DOM elements via `core.attachTarget(...)`.
 - Runtime focuses the correct DOM element when selection changes.
-- Active view is derived from the focused DOM element (closest view root).
-- Global keydown routes to the closest mounted view root containing the focused element (or last focused presenter surface).
-- No pointer-based “active view tracking” exists.
+- Global keydown is delivered to the current root `DomView.onKeyDown`.
+- Root view behavior is selection-driven and updates selection.
 - Views must not store module-level “active view” state.
 
-## Two roles everywhere: Presenter vs Content
+## Two layers: Shell vs Body
 
-### Presenter (owned by the parent/context view)
+### Shell (owned by the parent/context view)
 
-Presenter renders exactly one wrapper element for an item as presented inside a parent view.
+Shell renders exactly one wrapper element for each presented item. That wrapper is the `.ui-item`.
 
-Presenter responsibilities:
+Shell responsibilities:
 
-- Render exactly one wrapper element.
-- Attach `DEFAULT_TARGET` to that wrapper:
+- Add `.ui-item` class.
+- Apply `applyUiItemState(.ui-item, { id, view, kind, mode, part? })` using `core.item(id)` and `core.view(id)`.
+- Maintain `data-focused`.
+- Attach `DEFAULT_TARGET` to the shell:
 
 ```ts
-ctx.target(focus, DEFAULT_TARGET, () => presenterEl)
+ctx.target(focus, DEFAULT_TARGET, () => shellEl)
 ```
 
-- Place the child `.ui-item` directly inside the wrapper.
-- Handle pointer selection on the wrapper:
+- Handle pointer selection on the shell:
 
 ```ts
 core.focus(focus, DEFAULT_TARGET, { caret? })
 ```
 
-- Style via `:has(> .ui-item[...])` (Presenter reads state from its child `.ui-item`).
-- Presenter must not mount/unmount child content based on selection.
-- Presenter wrapper is programmatically focusable (`tabIndex=-1`) and is typically `document.activeElement` when selected.
-- Presenter keeps one stable wrapper element instance for that presented item.
+- Shell must not mount/unmount body content based on selection.
+- Shell keeps one stable element instance for that presented item.
 
-Presenter constraints:
+Shell constraints:
 
-- Presenter is not `.ui-item`.
-- Presenter never calls `applyUiItemState`.
-- Presenter never attaches non-default targets.
+- Shell attaches `DEFAULT_TARGET` only.
+- Shell must not attach any non-default targets.
 
-### Content (owned by the item’s view)
+### Body (owned by the item’s view)
 
-Content is the item view implementation.
+Body is the mounted item view implementation.
 
-Content responsibilities:
+Body responsibilities:
 
-- Render exactly one root element: `.ui-item`.
-- Call `applyUiItemState(.ui-item, { id, view, kind, mode, part? })` based on `core.item(id)`.
-- Set `data-focused` separately from a local `isFocused` computed.
+- Render the inner content only (value/body UI) inside the shell.
 - Attach only non-default targets.
 - Render the item’s internal structure, controls, and editors.
 
@@ -90,56 +86,47 @@ Non-default targets include:
 - `label`
 - `source:*`
 
-Content constraints:
+Body constraints:
 
-- `.ui-item` never attaches `DEFAULT_TARGET`.
-- Content may still call `core.focus(...)` to move to Presenter/`DEFAULT_TARGET` when appropriate.
-- Content must not mount/unmount structural subtrees based on selection; selection may affect styling, caret/selection ranges, and editor state.
+- Body never attaches `DEFAULT_TARGET`.
+- Body may still call `core.focus(...)` to move to shell/`DEFAULT_TARGET` when appropriate.
+- Body may include chrome only when it is truly body-owned; otherwise keep chrome in the parent/context view.
+- Body must not mount/unmount structural subtrees based on selection; selection may affect styling, caret/selection ranges, and editor state.
 
 ## Item ownership and view composition
 
-### One item → one Content view at a time
+### One item → one shell + one body at a time
 
-- Each Core item is rendered by exactly one view as Content at a time.
-- That view owns the `.ui-item` subtree.
+- Each Core item is presented by exactly one parent/context at a time, which owns the `.ui-item` shell.
+- The mounted view owns only the body subtree inside that shell.
+- A view's `DomView.root` renders body only; its parent/context provides the `.ui-item` shell.
 
 ### Nesting uses `core.view(...)` + `core.mountView(...)`
 
 When a view wants to render a child item:
 
 ```ts
-const view = core.view(id)
-const comp = core.mountView({ id, focus, view })
+const shell = el("div", "ui-item")
+bindUiItemShell(ctx, { core, focus, part }, shell)
+
+const body = core.mountView({ id, focus, view: core.view(id) })
+shell.append(body.el)
+ctx.cleanup(() => body.dispose())
 ```
 
 - `core.view(id)` decides the desired view name (reactive when read in a reactive context).
 - `core.mountView(...)` mounts exactly the requested view.
 - Continue/fallback behavior is handled by the hosting view, not by Core.
-- The returned component’s `.el` is Content (a `.ui-item` root).
+- The returned component’s `.el` is body content mounted inside the shell.
 
-### Parent supplies Presenter around child Content
+### Parent/context always supplies the shell around body
 
-Regardless of whether child Content came from:
+Regardless of whether body came from:
 
 - `core.mountView(...)`, or
 - Parent continuing rendering itself,
 
-The parent still creates the Presenter wrapper for that child item and attaches `DEFAULT_TARGET` there.
-
-This makes all parent/child pairings consistent.
-
-### Embedded-only roles: Presenter optional
-
-If an item is rendered in a role that is guaranteed to only ever appear inside one specific parent view context (not independently mountable or presented by arbitrary views), then:
-
-- Content `.ui-item` may attach `DEFAULT_TARGET` directly.
-- No Presenter wrapper is required.
-
-Why: The normal rule exists to prevent conflicts when an item can be presented in multiple contexts. Embedded-only roles have no ambiguity, so skipping Presenter reduces DOM without risk.
-
-Constraint: only use this when the item cannot ever be rendered in multiple contexts and cannot be mounted as a `DomView` root via `core.mountView(...)`.
-
-This is an exception. The default pattern is always Presenter + Content.
+The parent/context still creates the same `.ui-item` shell and attaches `DEFAULT_TARGET` there.
 
 ## `.ui-item` contract
 
@@ -148,16 +135,18 @@ This is an exception. The default pattern is always Presenter + Content.
 `.ui-item` represents:
 
 - Exactly one Core item.
-- In exactly one view context (the owning Content view).
+- As presented in exactly one parent/context.
 
 ### Required state on `.ui-item`
 
 `applyUiItemState` sets:
 
 - `data-id`
-- `data-view` (owning view)
+- `data-view` (derived from `core.view(id)`)
 - `data-kind`
 - `data-mode`
+
+`data-view` is the view currently mounted as the item's body (from `core.view(id)`), not the parent/context view.
 
 Optional:
 
@@ -169,7 +158,7 @@ Focus styling sets:
 
 Focus (`data-focused`) is derived from selection and must not force structural work.
 
-No other element represents an item.
+The shell applies this state and serves as the item focus surface. No other element represents an item.
 
 ## Mode vs editability (UI contract)
 
@@ -223,8 +212,8 @@ The `label` target is a valid target, but it is not part of the normal Enter/typ
 
 ### Target attachment rules
 
-- Presenter attaches `DEFAULT_TARGET`.
-- Content attaches all non-default targets.
+- Shell attaches `DEFAULT_TARGET`.
+- Body attaches all non-default targets.
 
 ### Caret rules
 
@@ -244,8 +233,13 @@ The `label` target is a valid target, but it is not part of the normal Enter/typ
 
 ### Programmatic focus only
 
-- Presenter/content targets may be focusable programmatically.
+- Shell/body targets may be focusable programmatically.
 - Targets other than the app root are not tabbable.
+
+### Keyboard routing
+
+- Global keydown routes to the currently mounted root view instance.
+- Views interpret selection and dispatch navigation/edit intents.
 
 ## Controls and yielding
 
@@ -282,7 +276,7 @@ This allows view-specific rules to be implemented cleanly.
 
 ### Pointer (click) behavior
 
-- Presenters should handle `pointerdown` by focusing `DEFAULT_TARGET`.
+- `.ui-item` shells should handle `pointerdown` by focusing `DEFAULT_TARGET`.
 
 ### Enter and typing from `DEFAULT_TARGET`
 
@@ -313,7 +307,7 @@ When a navigation command moves to a different item:
 
 Outline has two related but distinct position spaces:
 
-1. Presenter geometry (structural selection over items).
+1. Shell geometry (structural selection over items).
 2. Edit-flow geometry (editing traversal over edit targets).
 
 `DEFAULT_TARGET` navigation:
@@ -336,7 +330,7 @@ Edit-flow traversal (outline only):
 Edit stops:
 
 - DFS over presented outline items.
-- For each item, `getEditableTargets(item)` contributes 0..N stops.
+- For each item, the view defines 0..N edit stops (targets).
 - Readonly outputs contribute 0 edit targets and are naturally skipped.
 
 Structural edits:
@@ -350,7 +344,7 @@ Table is primarily structural/spatial.
 `DEFAULT_TARGET` navigation:
 
 - Arrows move spatially across the grid (row/column).
-- Tab / Shift+Tab = prev/next column (cell selection movement).
+- Tab / Shift+Tab = prev/next column (cell selection movement, landing on `DEFAULT_TARGET`).
 - Enter = enter edit (first edit target), caret at end.
 - Typing = enter edit + replace.
 
@@ -367,10 +361,10 @@ Edit navigation (cell editor focused):
 
 Styling is driven primarily by `.ui-item` data attributes (state from `applyUiItemState`, plus `data-focused` and optional `data-part`).
 
-### Layout + chrome live on Presenter
+### Layout + chrome live on the shell
 
-- Presenter provides geometry and chrome.
-- Presenter styles itself based on its direct child `.ui-item` using `:has(...)`.
+- The `.ui-item` shell provides geometry and chrome.
+- Styling reads directly from `.ui-item[data-*]`.
 
 ### CSS must not assume child view structure
 
@@ -393,17 +387,17 @@ Styling is driven primarily by `.ui-item` data attributes (state from `applyUiIt
 
 ## Summary of invariants
 
-- One item → one `.ui-item` (Content root).
-- `.ui-item` is owned by its Content view.
+- One item → exactly one `.ui-item` shell (created by the parent/context that presents it).
+- `.ui-item` shell applies state (`applyUiItemState`), attaches `DEFAULT_TARGET`, and handles `pointerdown` focus.
 - `applyUiItemState` always applies to the `.ui-item` root.
-- Two roles everywhere: Presenter vs Content.
-- Presenter attaches `DEFAULT_TARGET` only.
-- Content attaches non-default targets only.
+- Two layers everywhere: Shell vs Body.
+- Shell attaches `DEFAULT_TARGET` only.
+- Body attaches non-default targets only.
 - One tabbable element total (app root).
 - No browser tab-order navigation.
 - Tab / Shift+Tab are always app commands.
 - Nested view composition is driven by `core.view(id)` + `core.mountView(...)`.
 - Focus is item-based and routed by Core.
-- Selection changes must not replace `.ui-item` roots or presenter surfaces; tests assert DOM node identity stability across navigation.
+- Global keydown routes to the stable mounted root view instance (no mount-per-key).
+- Selection changes must not replace `.ui-item` shell nodes; tests assert DOM node identity stability across navigation.
 - Item-driven structure changes may replace descendants below `.ui-item`, but `.ui-item` root identity remains stable unless the mounted view changes.
-- `pointerdown` should only change selection/focus state; it should not trigger mount/unmount.

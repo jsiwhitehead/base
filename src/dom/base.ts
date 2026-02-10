@@ -259,78 +259,53 @@ export function createComponent(
   };
 }
 
-export type ContentSpec = {
+export type ShellSpec = {
   core: Core;
   focus: Focus;
-  view: ViewName;
   part?: string;
 };
 
-export function createContent(
-  spec: ContentSpec,
-  build: (ctx: Ctx) => HTMLElement,
-): Component {
-  return createComponent(spec.core, (ctx) => {
-    const root = build(ctx);
-    root.classList.add("ui-item");
+export function bindUiItemShell(
+  ctx: Ctx,
+  spec: ShellSpec,
+  shell: HTMLElement,
+): void {
+  shell.classList.add("ui-item");
+  if (!shell.hasAttribute("tabindex")) shell.tabIndex = -1;
 
-    const isFocused = computed(() => {
-      const sel = spec.core.selection();
-      return (
-        sel.kind === "focused" &&
-        sel.focus.item === spec.focus.item &&
-        sel.focus.container === spec.focus.container
-      );
-    });
-
-    ctx.effect(() => {
-      const snap = spec.core.item(spec.focus.item);
-      applyUiItemState(root, {
-        id: spec.focus.item,
-        view: spec.view,
-        kind: snap.content.kind,
-        mode: snap.mode.kind,
-        part: spec.part ?? null,
-      });
-    });
-
-    ctx.effect(() => {
-      setDataBool(root, "focused", isFocused.value);
-    });
-
-    return root;
+  const isFocused = computed(() => {
+    const sel = spec.core.selection();
+    return (
+      sel.kind === "focused" &&
+      sel.focus.item === spec.focus.item &&
+      sel.focus.container === spec.focus.container
+    );
   });
-}
 
-export type PresentItemOpts = {
-  core: Core;
-  focus: Focus;
-  className?: string;
-  mount: (
-    ctx: Ctx,
-    host: HTMLElement,
-    slot: { set(next: Component | null): void; clear(): void },
-  ) => void;
-};
+  ctx.target(spec.focus, DEFAULT_TARGET, () => shell);
 
-export function presentItem(opts: PresentItemOpts): Component {
-  const { core, focus } = opts;
-
-  return createComponent(core, (ctx) => {
-    const host = el("div", opts.className);
-    host.tabIndex = -1;
-
-    const slot = ctx.slot(host);
-
-    ctx.target(focus, DEFAULT_TARGET, () => host);
-
-    ctx.on(host, "pointerdown", (e: PointerEvent) => {
-      core.focus(focus, DEFAULT_TARGET, { caret: caretFromTarget(e.target) });
-      e.stopPropagation();
+  ctx.on(shell, "pointerdown", (e: PointerEvent) => {
+    spec.core.focus(spec.focus, DEFAULT_TARGET, {
+      caret: caretFromTarget(e.target),
     });
+    e.stopPropagation();
+  });
 
-    opts.mount(ctx, host, slot);
+  ctx.effect(() => {
+    const id = spec.focus.item;
+    const snap = spec.core.item(id);
+    const view = spec.core.view(id) as ViewName;
 
-    return host;
+    applyUiItemState(shell, {
+      id,
+      view,
+      kind: snap.content.kind,
+      mode: snap.mode.kind,
+      part: spec.part ?? null,
+    });
+  });
+
+  ctx.effect(() => {
+    setDataBool(shell, "focused", isFocused.value);
   });
 }

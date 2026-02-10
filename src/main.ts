@@ -1,8 +1,8 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import type { Core, ItemId, ViewKind, ViewName, Scalar } from "./core";
+import type { Core, ItemId, ViewKind, ViewName, Scalar, Component } from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
-import { presentItem, el } from "./dom";
+import { el, createComponent, bindUiItemShell } from "./dom";
 import { createDebugPanel, createDebugState, instrumentCore } from "./debug";
 
 export type App = {
@@ -40,17 +40,31 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   const focus = { container: rootId, item: rootId };
 
-  const appPresenter = presentItem({
-    core,
-    focus,
-    className: "ui-app",
-    mount(ctx, _host, slot) {
-      ctx.effect(() => {
-        const wanted = core.view(rootId);
-        const mounted = core.mountView({ id: rootId, focus, view: wanted });
-        slot.set(mounted);
-      });
-    },
+  let currentRootView:
+    | (Component & { onKeyDown?(e: KeyboardEvent): void })
+    | null = null;
+
+  const appRoot = createComponent(core, (ctx) => {
+    const rootShell = el("div", "ui-app");
+    const bodyHost = el("div", "ui-app-body");
+    rootShell.append(bodyHost);
+
+    bindUiItemShell(ctx, { core, focus }, rootShell);
+
+    const slot = ctx.slot(bodyHost);
+
+    ctx.effect(() => {
+      const wanted = core.view(rootId);
+      const mounted = core.mountView({ id: rootId, focus, view: wanted });
+      currentRootView = mounted;
+      slot.set(mounted);
+    });
+
+    ctx.cleanup(() => {
+      currentRootView = null;
+    });
+
+    return rootShell;
   });
 
   const shell = el("div", "ui-shell");
@@ -70,7 +84,11 @@ export function createApp(opts: CreateAppOpts = {}): App {
     { capture: true },
   );
 
-  main.append(appPresenter.el);
+  main.addEventListener("keydown", (e: KeyboardEvent) => {
+    currentRootView?.onKeyDown?.(e);
+  });
+
+  main.append(appRoot.el);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
@@ -94,7 +112,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
     rootId,
     dispose() {
       debugPanel?.dispose();
-      appPresenter.dispose();
+      appRoot.dispose();
       hostEl.replaceChildren();
       core.dispose();
     },

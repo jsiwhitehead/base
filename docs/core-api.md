@@ -23,6 +23,7 @@ Creates a new Core instance.
 - The root item always exists.
 - The root item cannot be removed.
 - `createCore` accepts an optional collaboration adapter that receives committed transactions and can apply remote transactions.
+- `createCore` also accepts a view-factory registry used by `core.mountView(...)`.
 - A Core instance owns all state and must be explicitly disposed.
 
 ## Reactivity model
@@ -332,7 +333,7 @@ core.mountView({ id, focus?, view: ViewName }): Component
 
 `core.view(id)` returns the current view name for an item.
 
-If the ID does not exist or the stored view cannot be resolved, Core returns the default view name.
+If the ID does not exist or the stored view cannot be resolved, Core returns the default view name (`"outline"`).
 
 `core.mountView(...)` mounts the requested view for an item and returns:
 
@@ -341,6 +342,12 @@ type Component = { el: HTMLElement, dispose(): void }
 ```
 
 Calling `dispose` must release all resources associated with the view.
+
+`core.mountView(...)` always returns a `Component` for entry item IDs.
+
+- Throws if `id` is not an entry item ID.
+- Uses the requested view factory, or falls back to `"outline"` if missing.
+- Throws if no `"outline"` factory is registered.
 
 ### View semantics
 
