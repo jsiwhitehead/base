@@ -14,7 +14,6 @@ import {
 } from "../core";
 import {
   type NavDir,
-  type NavMode,
   type Intent,
   el,
   createComponent,
@@ -80,114 +79,172 @@ function patchSource(source: Source, key: string, text: string): Source {
   return source;
 }
 
-function getEditStopsForItem(core: Core, id: ItemId): string[] {
-  const it = core.item(id);
-
-  if (it.mode.kind === "source") {
-    return fieldsFromSource(it.mode.source).map((f) => `source:${f.key}`);
-  }
-
-  if (it.mode.kind === "direct" && it.content.kind === "scalar") {
-    return [VALUE_TARGET];
-  }
-
-  return [];
-}
-
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const c = core.item(id).content;
   return c.kind === "group" ? c.children : [];
 };
 
-const isNavStop = (core: Core, id: ItemId) => {
-  const it = core.item(id);
-  const kids = it.content.kind === "group" ? it.content.children : [];
-  return kids.length === 0 || it.mode.kind === "source";
-};
+function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
+  if (id === rootId) return null;
+  const loc = core.locate(id);
+  return loc ? loc.ownerId : null;
+}
 
-function collectNavStopsFrom(core: Core, rootId: ItemId): ItemId[] {
-  const out: ItemId[] = [];
+function focusFor(core: Core, rootId: ItemId, id: ItemId): Focus {
+  const p = parentOf(core, rootId, id);
+  return { container: p ?? rootId, item: id };
+}
+
+function firstChild(core: Core, id: ItemId): ItemId | null {
+  const kids = childrenOf(core, id);
+  return kids[0] ?? null;
+}
+
+function lastDescendant(core: Core, id: ItemId): ItemId {
+  let cur = id;
+  while (true) {
+    const kids = childrenOf(core, cur);
+    if (kids.length === 0) return cur;
+    cur = kids[kids.length - 1]!;
+  }
+}
+
+function nextVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
+  const fc = firstChild(core, id);
+  if (fc) return fc;
+
+  let cur: ItemId | null = id;
+  while (cur) {
+    const loc = core.locate(cur);
+    if (!loc) return null;
+    const { ownerId, index, siblings } = loc;
+    const sib = siblings[index + 1] ?? null;
+    if (sib) return sib;
+    cur = ownerId;
+    if (cur === rootId) return null;
+  }
+  return null;
+}
+
+function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
+  if (id === rootId) return null;
+  const loc = core.locate(id);
+  if (!loc) return null;
+  const { ownerId, index, siblings } = loc;
+  const prev = siblings[index - 1] ?? null;
+  if (prev) return lastDescendant(core, prev);
+  return ownerId === rootId ? null : ownerId;
+}
+
+function isEditing(
+  sel: Selection,
+): sel is Extract<Selection, { kind: "focused" }> {
+  return sel.kind === "focused" && sel.target !== DEFAULT_TARGET;
+}
+
+function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
+  const it = core.item(id);
+  if (it.mode.kind === "source") return true;
+  return it.mode.kind === "direct" && it.content.kind === "scalar";
+}
+
+function editStopsForItem(core: Core, id: ItemId): string[] {
+  const it = core.item(id);
+  if (it.mode.kind === "source") {
+    return fieldsFromSource(it.mode.source).map((f) => `source:${f.key}`);
+  }
+  if (it.mode.kind === "direct" && it.content.kind === "scalar")
+    return [VALUE_TARGET];
+  return [];
+}
+
+function primaryEditTarget(core: Core, id: ItemId): string | null {
+  return editStopsForItem(core, id)[0] ?? null;
+}
+
+function textForTarget(core: Core, id: ItemId, target: string): string {
+  const it = core.item(id);
+  if (target === VALUE_TARGET) {
+    return it.content.kind === "scalar" ? scalarToText(it.content.value) : "";
+  }
+  if (target.startsWith("source:")) {
+    if (it.mode.kind !== "source") return "";
+    const key = target.slice("source:".length);
+    return (
+      fieldsFromSource(it.mode.source).find((f) => f.key === key)?.text ?? ""
+    );
+  }
+  if (target === LABEL_TARGET) return it.label ?? "";
+  return "";
+}
+
+type EditPoint = { id: ItemId; target: string };
+
+function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
+  const out: EditPoint[] = [];
   const walk = (ownerId: ItemId) => {
-    for (const childId of childrenOf(core, ownerId)) {
-      if (isNavStop(core, childId)) out.push(childId);
-      walk(childId);
+    for (const cid of childrenOf(core, ownerId)) {
+      if (isLeafForEditTraversal(core, cid)) {
+        for (const t of editStopsForItem(core, cid))
+          out.push({ id: cid, target: t });
+      }
+      walk(cid);
     }
   };
   walk(rootId);
   return out;
 }
 
-type NavResult = { focus: Focus; target: string; caret?: Caret };
-
-function findPresentedParent(
-  rootId: ItemId,
-  core: Core,
-  want: ItemId,
-): ItemId | null {
-  if (rootId === want) return null;
-
-  const stack: ItemId[] = [rootId];
-
-  while (stack.length) {
-    const cur = stack.pop()!;
-    const kids = childrenOf(core, cur);
-    for (const k of kids) {
-      if (k === want) return cur;
-      stack.push(k);
-    }
-  }
-
-  return null;
-}
-
-function outlineNavMove(
+function moveEditPoint(
   core: Core,
   rootId: ItemId,
-  stops: ItemId[],
-  sel: Selection,
+  points: readonly EditPoint[],
+  sel: Extract<Selection, { kind: "focused" }>,
   dir: NavDir,
-  mode: NavMode,
-): NavResult | null {
-  if (sel.kind !== "focused") return null;
+): { focus: Focus; target: string; caret: Caret } | null {
+  if (points.length === 0) return null;
 
-  const from = sel.focus.item;
-  const at = Math.max(0, stops.indexOf(from));
+  const backward = dir === "up" || dir === "left";
+  const forward = dir === "down" || dir === "right";
+  if (!backward && !forward) return null;
 
-  const neighbor = (delta: -1 | 1) => {
-    const j = at + delta;
-    return j >= 0 && j < stops.length ? stops[j]! : null;
-  };
-
-  const firstChildStop = (id: ItemId): ItemId | null => {
-    for (const cid of childrenOf(core, id)) {
-      if (isNavStop(core, cid)) return cid;
-      const deeper = firstChildStop(cid);
-      if (deeper) return deeper;
-    }
-    return null;
-  };
-
-  let next: ItemId | null = null;
-
-  if (dir === "up") next = neighbor(-1);
-  else if (dir === "down") next = neighbor(1);
-  else if (dir === "right") {
-    next = firstChildStop(from) ?? neighbor(1);
-    if (mode === "jump") next = neighbor(1) ?? next;
-  } else if (dir === "left") {
-    const prev = neighbor(-1);
-    const parent = findPresentedParent(rootId, core, from);
-    next = prev ?? parent;
-    if (mode === "jump") next = parent ?? prev ?? null;
+  let at = points.findIndex(
+    (p) => p.id === sel.focus.item && p.target === sel.target,
+  );
+  if (at < 0) {
+    const firstForItem = points.findIndex((p) => p.id === sel.focus.item);
+    at = firstForItem >= 0 ? firstForItem : 0;
   }
 
+  const nextIdx = backward ? at - 1 : at + 1;
+  const next = points[nextIdx] ?? null;
   if (!next) return null;
 
+  const caret = backward
+    ? caretAt(textForTarget(core, next.id, next.target).length)
+    : caret0();
+
   return {
-    focus: { container: sel.focus.container, item: next },
-    target: DEFAULT_TARGET,
-    caret: caret0(),
+    focus: focusFor(core, rootId, next.id),
+    target: next.target,
+    caret,
   };
+}
+
+function caretFromActiveEditor(): Caret | null {
+  const a = document.activeElement;
+  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
+    return null;
+  const start = a.selectionStart ?? 0;
+  const end = a.selectionEnd ?? start;
+  return { start, end };
+}
+
+function clampCaretToText(c: Caret, text: string): Caret {
+  const len = text.length;
+  const s = Math.max(0, Math.min(c.start, len));
+  const e = Math.max(0, Math.min(c.end, len));
+  return { start: s, end: e };
 }
 
 export const outlineCommands = {
@@ -214,9 +271,9 @@ export const outlineCommands = {
     core: Core,
     sel: Extract<Selection, { kind: "focused" }>,
     side: "before" | "after",
-  ): void {
+  ): ItemId | null {
     const loc = core.locate(sel.focus.item);
-    if (!loc) return;
+    if (!loc) return null;
 
     const { ownerId: containerId, index: idx } = loc;
     const at = side === "before" ? idx : idx + 1;
@@ -226,9 +283,7 @@ export const outlineCommands = {
       id = t.insertChild(containerId, { at, kind: "blank" });
     });
 
-    core.focus({ container: containerId, item: id }, VALUE_TARGET, {
-      caret: caret0(),
-    });
+    return id || null;
   },
 
   splitAt(
@@ -236,18 +291,17 @@ export const outlineCommands = {
     sel: Extract<Selection, { kind: "focused" }>,
     caretStart: number,
     caretEnd = caretStart,
-  ): void {
+  ): ItemId | null {
     const id = sel.focus.item;
     const snap = core.item(id);
 
     const loc = core.locate(id);
-    if (!loc) return;
+    if (!loc) return null;
 
     const { ownerId: containerId, index: idx } = loc;
 
     if (!(snap.mode.kind === "direct" && snap.content.kind === "scalar")) {
-      outlineCommands.insertSibling(core, sel, "after");
-      return;
+      return outlineCommands.insertSibling(core, sel, "after");
     }
 
     const curText = scalarToText(snap.content.value);
@@ -267,26 +321,24 @@ export const outlineCommands = {
       t.setScalar(rightId, parseScalar(right));
     });
 
-    core.focus({ container: containerId, item: rightId }, VALUE_TARGET, {
-      caret: caret0(),
-    });
+    return rightId || null;
   },
 
   joinBoundary(
     core: Core,
     sel: Extract<Selection, { kind: "focused" }>,
     dir: "backward" | "forward",
-  ): void {
+  ): { id: ItemId; caret: Caret } | null {
     const loc = core.locate(sel.focus.item);
-    if (!loc) return;
+    if (!loc) return null;
 
-    const { ownerId: containerId, index: idx, siblings } = loc;
+    const { index: idx, siblings } = loc;
 
     const neighbor =
       dir === "backward"
         ? (siblings[idx - 1] ?? null)
         : (siblings[idx + 1] ?? null);
-    if (!neighbor) return;
+    if (!neighbor) return null;
 
     const leftId = dir === "backward" ? neighbor : sel.focus.item;
     const rightId = dir === "backward" ? sel.focus.item : neighbor;
@@ -294,8 +346,8 @@ export const outlineCommands = {
     const a = core.item(leftId);
     const b = core.item(rightId);
 
-    if (!(a.mode.kind === "direct" && a.content.kind === "scalar")) return;
-    if (!(b.mode.kind === "direct" && b.content.kind === "scalar")) return;
+    if (!(a.mode.kind === "direct" && a.content.kind === "scalar")) return null;
+    if (!(b.mode.kind === "direct" && b.content.kind === "scalar")) return null;
 
     const leftText = scalarToText(a.content.value);
     const rightText = scalarToText(b.content.value);
@@ -305,20 +357,18 @@ export const outlineCommands = {
       t.remove(rightId);
     });
 
-    core.focus({ container: containerId, item: leftId }, VALUE_TARGET, {
-      caret: caretAt(leftText.length),
-    });
+    return { id: leftId, caret: caretAt(leftText.length) };
   },
 
   removeItem(
     core: Core,
     sel: Extract<Selection, { kind: "focused" }>,
     prefer: "prev" | "next",
-  ): void {
+  ): ItemId | null {
     const loc = core.locate(sel.focus.item);
-    if (!loc) return;
+    if (!loc) return null;
 
-    const { ownerId: containerId, index: idx, siblings } = loc;
+    const { index: idx, siblings } = loc;
 
     const prev = siblings[idx - 1] ?? null;
     const next = siblings[idx + 1] ?? null;
@@ -328,26 +378,7 @@ export const outlineCommands = {
 
     core.commit((t) => t.remove(sel.focus.item));
 
-    if (chosen) {
-      core.focus(
-        { container: containerId, item: chosen },
-        DEFAULT_TARGET,
-        prefer === "prev"
-          ? {
-              caret: caretAt(
-                scalarToText(
-                  core.item(chosen).content.kind === "scalar"
-                    ? (core.item(chosen).content as any).value
-                    : null,
-                ).length,
-              ),
-            }
-          : { caret: caret0() },
-      );
-      return;
-    }
-
-    core.blur();
+    return chosen;
   },
 
   changeNesting(
@@ -355,12 +386,12 @@ export const outlineCommands = {
     rootId: ItemId,
     sel: Extract<Selection, { kind: "focused" }>,
     dir: "in" | "out",
-  ): void {
+  ): Focus | null {
     const id = sel.focus.item;
 
     if (dir === "in") {
       const loc = core.locate(id);
-      if (!loc) return;
+      if (!loc) return null;
 
       const { ownerId: containerId, index: idx } = loc;
 
@@ -374,24 +405,23 @@ export const outlineCommands = {
         t.move(id, wrapperId, { at: 0 });
       });
 
-      core.focus({ container: wrapperId, item: id }, DEFAULT_TARGET, {
-        caret: caret0(),
-      });
-      return;
+      return { container: wrapperId, item: id };
     }
 
     const loc = core.locate(id);
-    if (!loc) return;
+    if (!loc) return null;
 
     const { ownerId: containerId } = loc;
-    const parentId = findPresentedParent(rootId, core, containerId);
-    if (!parentId) return;
+    if (containerId === rootId) return null;
+
+    const parentId = parentOf(core, rootId, containerId);
+    if (!parentId) return null;
 
     const parentSnap = core.item(parentId);
-    if (parentSnap.content.kind !== "group") return;
+    if (parentSnap.content.kind !== "group") return null;
 
     const wrapperIdx = parentSnap.content.children.indexOf(containerId);
-    if (wrapperIdx < 0) return;
+    if (wrapperIdx < 0) return null;
 
     const wrapperLabel = core.item(containerId).label ?? "";
 
@@ -401,56 +431,14 @@ export const outlineCommands = {
       t.setLabel(id, wrapperLabel);
     });
 
-    core.focus({ container: parentId, item: id }, DEFAULT_TARGET, {
-      caret: caret0(),
-    });
-  },
-
-  confirm(core: Core, sel: Extract<Selection, { kind: "focused" }>): void {
-    const id = sel.focus.item;
-    const it = core.item(id);
-
-    if (it.mode.kind === "direct" && it.content.kind === "scalar") {
-      core.focus(sel.focus, VALUE_TARGET, {
-        caret: caretAt(scalarToText(it.content.value).length),
-      });
-      return;
-    }
-
-    if (it.mode.kind === "source") {
-      core.focus(sel.focus, "source:expr", { caret: caret0() });
-      return;
-    }
-
-    outlineCommands.insertSibling(core, sel, "after");
-  },
-
-  deleteBoundary(
-    core: Core,
-    sel: Extract<Selection, { kind: "focused" }>,
-    dir: "backward" | "forward",
-  ): void {
-    const prefer = dir === "backward" ? "prev" : "next";
-    const it = core.item(sel.focus.item);
-
-    if (!(it.mode.kind === "direct" && it.content.kind === "scalar")) {
-      outlineCommands.removeItem(core, sel, prefer);
-      return;
-    }
-
-    if (scalarToText(it.content.value).length === 0) {
-      outlineCommands.removeItem(core, sel, prefer);
-      return;
-    }
-
-    outlineCommands.joinBoundary(core, sel, dir);
+    return { container: parentId, item: id };
   },
 } as const;
 
 type OutlineMountCtx = {
   core: Core;
   rootId: ItemId;
-  navMove: (sel: Selection, dir: NavDir, mode: NavMode) => NavResult | null;
+  editPointsSignal: { value: EditPoint[] };
   dispatch: (intent: Intent) => void;
 };
 
@@ -595,7 +583,6 @@ function mountScalarBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
     });
 
     ctx.cleanup(() => sf.dispose());
-
     return sf.el;
   });
 }
@@ -707,44 +694,108 @@ export function createOutlineView(args: {
 }): DomView {
   const { core, id: rootId } = args;
 
-  const navStopsSignal = computed(() => collectNavStopsFrom(core, rootId));
-
-  const navMove = (sel: Selection, dir: NavDir, mode: NavMode) =>
-    outlineNavMove(core, rootId, navStopsSignal.value, sel, dir, mode);
+  const editPointsSignal = computed(() => collectEditPoints(core, rootId));
 
   const dispatch = (intent: Intent): void => {
     const sel = core.selection();
 
     switch (intent.type) {
+      case "TAB": {
+        if (sel.kind !== "focused") return;
+
+        const wasEditing = sel.target !== DEFAULT_TARGET;
+        const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
+        const fromCaret = wasEditing ? caretFromActiveEditor() : null;
+
+        const nextFocus = outlineCommands.changeNesting(
+          core,
+          rootId,
+          sel,
+          intent.shift ? "out" : "in",
+        );
+        if (!nextFocus) return;
+
+        if (!wasEditing) {
+          core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
+        const validTargets = new Set(editStopsForItem(core, nextFocus.item));
+        const nextTarget = validTargets.has(fromTarget)
+          ? fromTarget
+          : DEFAULT_TARGET;
+
+        if (nextTarget === DEFAULT_TARGET) {
+          core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
+        const txt = textForTarget(core, nextFocus.item, nextTarget);
+        const nextCaret = fromCaret
+          ? clampCaretToText(fromCaret, txt)
+          : caretAt(txt.length);
+
+        core.focus(nextFocus, nextTarget, { caret: nextCaret });
+        return;
+      }
+
       case "NAV": {
-        const res = navMove(sel, intent.dir, intent.mode);
-        if (res) core.focus(res.focus, res.target, { caret: res.caret });
+        if (sel.kind !== "focused") return;
+
+        if (sel.target === DEFAULT_TARGET) {
+          const fromId = sel.focus.item;
+          let nextId: ItemId | null = null;
+
+          if (intent.dir === "left") nextId = parentOf(core, rootId, fromId);
+          else if (intent.dir === "right") nextId = firstChild(core, fromId);
+          else if (intent.dir === "up")
+            nextId = prevVisible(core, rootId, fromId);
+          else if (intent.dir === "down")
+            nextId = nextVisible(core, rootId, fromId);
+
+          if (!nextId) return;
+
+          core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET, {
+            caret: caret0(),
+          });
+          return;
+        }
+
+        const move = moveEditPoint(
+          core,
+          rootId,
+          editPointsSignal.value,
+          sel,
+          intent.dir,
+        );
+        if (!move) return;
+        core.focus(move.focus, move.target, { caret: move.caret });
         return;
       }
 
       case "TYPE": {
         if (sel.kind !== "focused") return;
 
-        if (sel.target === VALUE_TARGET) {
-          const id = sel.focus.item;
-          const it = core.item(id);
-          if (
-            intent.char === "=" &&
-            it.mode.kind === "direct" &&
-            it.content.kind === "scalar" &&
-            scalarToText(it.content.value).trim() === ""
-          ) {
-            outlineCommands.setDerived(core, id);
-            core.focus(sel.focus, "source:expr", { caret: caret0() });
-            return;
-          }
+        const id = sel.focus.item;
+        const it = core.item(id);
+
+        if (
+          intent.char === "=" &&
+          (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
+          it.mode.kind === "direct" &&
+          it.content.kind === "scalar" &&
+          scalarToText(it.content.value).trim() === ""
+        ) {
+          outlineCommands.setDerived(core, id);
+          core.focus(focusFor(core, rootId, id), "source:expr", {
+            caret: caret0(),
+          });
           return;
         }
 
         if (sel.target !== DEFAULT_TARGET) return;
 
-        const stops = getEditStopsForItem(core, sel.focus.item);
-        const target = stops[0] ?? null;
+        const target = primaryEditTarget(core, id);
         if (!target) return;
 
         core.focus(sel.focus, target, { caret: SELECT_ALL });
@@ -757,43 +808,82 @@ export function createOutlineView(args: {
 
         if (sel.target !== DEFAULT_TARGET) {
           if (sel.target === VALUE_TARGET && intent.caret) {
-            outlineCommands.splitAt(
+            const nextId = outlineCommands.splitAt(
               core,
               sel,
               intent.caret.start,
               intent.caret.end,
             );
+            if (!nextId) return;
+            core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
+              caret: caret0(),
+            });
             return;
           }
+
           core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
           return;
         }
 
-        outlineCommands.confirm(core, sel);
-        return;
-      }
+        const id = sel.focus.item;
+        const target = primaryEditTarget(core, id);
+        if (target) {
+          core.focus(sel.focus, target, {
+            caret: caretAt(textForTarget(core, id, target).length),
+          });
+          return;
+        }
 
-      case "TAB": {
-        if (sel.kind !== "focused") return;
-        outlineCommands.changeNesting(
-          core,
-          rootId,
-          sel,
-          intent.shift ? "out" : "in",
-        );
+        const nextId = outlineCommands.insertSibling(core, sel, "after");
+        if (!nextId) return;
+        core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
+          caret: caret0(),
+        });
         return;
       }
 
       case "DELETE_BOUNDARY": {
         if (sel.kind !== "focused") return;
-        outlineCommands.deleteBoundary(core, sel, intent.dir);
+
+        const prefer = intent.dir === "backward" ? "prev" : "next";
+        const it = core.item(sel.focus.item);
+
+        if (!(it.mode.kind === "direct" && it.content.kind === "scalar")) {
+          const chosen = outlineCommands.removeItem(core, sel, prefer);
+          if (!chosen) {
+            core.blur();
+            return;
+          }
+          core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
+            caret: caret0(),
+          });
+          return;
+        }
+
+        if (scalarToText(it.content.value).length === 0) {
+          const chosen = outlineCommands.removeItem(core, sel, prefer);
+          if (!chosen) {
+            core.blur();
+            return;
+          }
+          core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
+            caret: caret0(),
+          });
+          return;
+        }
+
+        const joined = outlineCommands.joinBoundary(core, sel, intent.dir);
+        if (!joined) return;
+        core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
+          caret: joined.caret,
+        });
         return;
       }
 
       case "DELETE": {
         if (sel.kind !== "focused") return;
         if (sel.target !== DEFAULT_TARGET) return;
-        outlineCommands.deleteBoundary(core, sel, intent.dir);
+        dispatch({ type: "DELETE_BOUNDARY", dir: intent.dir });
         return;
       }
 
@@ -806,7 +896,7 @@ export function createOutlineView(args: {
 
   const focus: Focus = args.focus ?? { container: rootId, item: rootId };
   const content = mountOutlineItem(
-    { core, rootId, navMove, dispatch },
+    { core, rootId, editPointsSignal, dispatch },
     focus,
     false,
   );

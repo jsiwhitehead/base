@@ -288,8 +288,8 @@ This allows view-specific rules to be implemented cleanly.
 
 When focused on `DEFAULT_TARGET`:
 
-- Enter (`CONFIRM`) enters edit using the first editable target (if any), usually caret at end.
-- Typing (`TYPE`) enters edit using the first editable target and replaces existing text (select-all then type).
+- Enter (`CONFIRM`) enters edit using the first edit target (if any), usually caret at end.
+- Typing (`TYPE`) enters edit using the first edit target and replaces existing text (select-all then type).
 - These are distinct entry modes: Enter is not select-all.
 
 ### Editor commit models
@@ -314,7 +314,7 @@ When a navigation command moves to a different item:
 Outline has two related but distinct position spaces:
 
 1. Presenter geometry (structural selection over items).
-2. Edit-flow geometry (editing traversal over editable targets).
+2. Edit-flow geometry (editing traversal over edit targets).
 
 `DEFAULT_TARGET` navigation:
 
@@ -324,12 +324,14 @@ Outline has two related but distinct position spaces:
 
 Entering edit:
 
-- From `DEFAULT_TARGET`, Enter/typing enters first editable target if present.
-- If item has no edit targets, Enter advances like ArrowDown.
+- From `DEFAULT_TARGET`, Enter/typing enters first edit target if present.
+- If item has no edit targets, Enter performs the view's structural default.
 
 Edit-flow traversal (outline only):
 
-Current behavior: navigation commands that move to another item land on destination `DEFAULT_TARGET` (they do not stay in edit on destination).
+- When focused on an edit target, Arrow keys traverse the edit-flow space.
+- Traversal moves to the next/previous edit stop and stays in edit (target remains non-default).
+- Caret policy: forward sets caret at start; backward sets caret at end.
 
 Edit stops:
 
@@ -349,13 +351,15 @@ Table is primarily structural/spatial.
 
 - Arrows move spatially across the grid (row/column).
 - Tab / Shift+Tab = prev/next column (cell selection movement).
-- Enter = enter edit (first editable target), caret at end.
+- Enter = enter edit (first edit target), caret at end.
 - Typing = enter edit + replace.
 
 Edit navigation (cell editor focused):
 
 - Text editing is standard inside the field.
-- Any command that moves to a different cell/item lands in `DEFAULT_TARGET` mode on the destination (e.g. Tab / Shift+Tab, Enter, arrows).
+- Enter commits/exits edit and moves down one row in the same column, landing on destination `DEFAULT_TARGET`.
+- Tab / Shift+Tab move to next/prev column, landing on destination `DEFAULT_TARGET`.
+- Arrow keys may move out of the editor at boundaries (yield), landing on destination `DEFAULT_TARGET`.
 
 ## Styling conventions
 

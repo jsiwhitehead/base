@@ -49,8 +49,9 @@ export function reconcileChildren(
     const cur = parent.children.item(i);
     if (cur !== next) parent.insertBefore(next, cur);
   }
-  while (parent.children.length > desired.length)
+  while (parent.children.length > desired.length) {
     parent.lastElementChild?.remove();
+  }
 }
 
 export function setData(
