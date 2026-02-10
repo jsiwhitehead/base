@@ -192,10 +192,18 @@ describe("views", () => {
 
     const cellA0 = requireEl(
       rowAEl0.querySelector(
-        `.ui-table-cell[data-col="score"]`,
+        `.ui-table-cells .ui-table-cell`,
       ) as HTMLElement | null,
-      "Missing rowA score cell",
+      "Missing rowA first data cell",
     );
+
+    fireViewKey(view, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, {
+      container: tableId,
+      item: rowA,
+      target: "label",
+    });
 
     fireViewKey(view, "ArrowRight");
     await flushDomEffects();
@@ -215,6 +223,10 @@ describe("views", () => {
 
     fireViewKey(view, "ArrowLeft");
     await flushDomEffects();
+    expectSel(core, { container: tableId, item: rowB, target: "label" });
+
+    fireViewKey(view, "Enter");
+    await flushDomEffects();
     expectSel(core, { container: tableId, item: rowB, target: DEFAULT_TARGET });
 
     const rowAEl1 = requireItemEl(view.root, rowA);
@@ -225,15 +237,15 @@ describe("views", () => {
 
     const cellA1 = requireEl(
       rowAEl1.querySelector(
-        `.ui-table-cell[data-col="score"]`,
+        `.ui-table-cells .ui-table-cell`,
       ) as HTMLElement | null,
-      "Missing rowA score cell",
+      "Missing rowA first data cell",
     );
 
     requireSameEl(cellA0, cellA1);
   });
 
-  test("table: printable key from row selection focuses first cell value and inserts", async () => {
+  test("table: printable key from row selection does not enter edit", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -254,12 +266,11 @@ describe("views", () => {
     fireViewKey(view, "7");
     await flushDomEffects();
 
-    expectSel(core, { container: rowA, item: aScoreId, target: "value" });
+    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
 
     const cellItemEl = requireItemEl(view.root, aScoreId);
     const valueEl = requireTargetInput(cellItemEl, "value");
-    const text = (valueEl as HTMLInputElement | HTMLTextAreaElement).value;
-    expect(text.includes("7")).toBe(true);
+    expect((valueEl as HTMLInputElement | HTMLTextAreaElement).value).toBe("");
   });
 
   test("table: global keydown routes to active nested view (outline hosting a table)", async () => {
@@ -280,7 +291,7 @@ describe("views", () => {
 
     const nestedCell = requireEl(
       outline.root.querySelector(
-        `.ui-item[data-view="table"] .ui-table-cell[data-col="score"]`,
+        `.ui-table .ui-table-cells .ui-table-cell`,
       ) as HTMLElement | null,
       "Missing nested cell",
     );

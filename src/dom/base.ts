@@ -70,22 +70,6 @@ export function setDataBool(el0: HTMLElement, key: string, on0: boolean): void {
   (el0.dataset as any)[key] = on0 ? "true" : "false";
 }
 
-export type UiItemState = {
-  id: string;
-  view: ViewName;
-  kind: string;
-  mode: string;
-  part?: string | null;
-};
-
-export function applyUiItemState(root: HTMLElement, st: UiItemState): void {
-  setData(root, "id", st.id);
-  setData(root, "view", st.view);
-  setData(root, "kind", st.kind);
-  setData(root, "mode", st.mode);
-  setData(root, "part", st.part ?? null);
-}
-
 type ChildRec = { element: HTMLElement; dispose: () => void };
 
 class ChildManager<Id extends string | number> {
@@ -262,7 +246,6 @@ export function createComponent(
 export type ShellSpec = {
   core: Core;
   focus: Focus;
-  part?: string;
 };
 
 export function bindUiItemShell(
@@ -271,6 +254,7 @@ export function bindUiItemShell(
   shell: HTMLElement,
 ): void {
   shell.classList.add("ui-item");
+  shell.dataset.id = spec.focus.item;
   if (!shell.hasAttribute("tabindex")) shell.tabIndex = -1;
 
   const isFocused = computed(() => {
@@ -292,20 +276,10 @@ export function bindUiItemShell(
   });
 
   ctx.effect(() => {
-    const id = spec.focus.item;
-    const snap = spec.core.item(id);
-    const view = spec.core.view(id) as ViewName;
-
-    applyUiItemState(shell, {
-      id,
-      view,
-      kind: snap.content.kind,
-      mode: snap.mode.kind,
-      part: spec.part ?? null,
-    });
+    shell.classList.toggle("is-focused", isFocused.value);
   });
+}
 
-  ctx.effect(() => {
-    setDataBool(shell, "focused", isFocused.value);
-  });
+export function stampBody(root: HTMLElement, view: ViewName): void {
+  root.classList.add("ui-body", `ui-${String(view)}`);
 }

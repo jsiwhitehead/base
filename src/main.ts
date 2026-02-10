@@ -1,5 +1,12 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import type { Core, ItemId, ViewKind, ViewName, Scalar, Component } from "./core";
+import type {
+  Core,
+  ItemId,
+  ViewKind,
+  ViewName,
+  Scalar,
+  Component,
+} from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
 import { el, createComponent, bindUiItemShell } from "./dom";
@@ -69,7 +76,6 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   const shell = el("div", "ui-shell");
   const main = el("div", "ui-shell-main");
-  const side = el("div", "ui-shell-side");
 
   main.tabIndex = 0;
 
@@ -89,6 +95,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
   });
 
   main.append(appRoot.el);
+  shell.append(main);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
@@ -99,12 +106,10 @@ export function createApp(opts: CreateAppOpts = {}): App {
       probeRoot: main,
       className: "ui-debug",
     });
-    side.append(debugPanel.el);
+    shell.append(debugPanel.el);
   }
 
-  shell.append(main, side);
   hostEl.replaceChildren(shell);
-
   main.focus();
 
   const app: App = {

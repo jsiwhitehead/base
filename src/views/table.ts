@@ -1,42 +1,75 @@
 import { computed } from "@preact/signals-core";
 import type {
-  Core,
   ItemId,
+  Core,
   Component,
-  Caret,
   Focus,
+  Caret,
   Selection,
   DomView,
+  Source,
 } from "../core";
 import { DEFAULT_TARGET } from "../core";
 import {
-  type NavDir,
-  type NavMode,
   type Intent,
+  type NavDir,
   el,
   createComponent,
   bindUiItemShell,
+  autosizeTextField,
   textField,
-  SELECT_ALL,
   caret0,
   caretAt,
-  insertTextIntoActiveEditor,
-  escapeLadder,
-  caretFromTarget,
-  reconcileChildren,
+  SELECT_ALL,
   consume,
   parseKeydownIntent,
+  insertTextIntoActiveEditor,
+  escapeLadder,
+  stampBody,
 } from "../dom";
 
-type NavResult = { focus: Focus; target: string; caret?: Caret };
-
-const ROW_LABEL_TARGET = "label";
+const LABEL_TARGET = "label";
 const VALUE_TARGET = "value";
 
-type Column = { id: ItemId; name: string };
+type SourceField = {
+  key: string;
+  label: string;
+  multiline: boolean;
+  text: string;
+};
 
-function normCol(s: string): string {
-  return (s ?? "").trim();
+function fieldsFromSource(source: Source): SourceField[] {
+  if (source.type === "derived") {
+    return [
+      { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
+    ];
+  }
+  return [
+    { key: "from", label: "~", multiline: false, text: source.from ?? "" },
+    {
+      key: "where",
+      label: "where:",
+      multiline: true,
+      text: source.where ?? "",
+    },
+    {
+      key: "orderBy",
+      label: "orderBy:",
+      multiline: true,
+      text: source.orderBy ?? "",
+    },
+  ];
+}
+
+function patchSource(source: Source, key: string, text: string): Source {
+  if (source.type === "derived") {
+    if (key === "expr") return { type: "derived", expr: text };
+    return source;
+  }
+  if (key === "from") return { ...source, from: text };
+  if (key === "where") return { ...source, where: text };
+  if (key === "orderBy") return { ...source, orderBy: text };
+  return source;
 }
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
@@ -44,77 +77,9 @@ const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   return c.kind === "group" ? c.children : [];
 };
 
-const labelOf = (core: Core, id: ItemId): string => core.item(id).label ?? "";
-
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
   ...childrenOf(core, tableId),
 ];
-
-function headerRowId(core: Core, tableId: ItemId): ItemId | null {
-  const rows = rowIds(core, tableId);
-  return rows[0] ?? null;
-}
-
-function deriveColumns(core: Core, tableId: ItemId): Column[] {
-  const hid = headerRowId(core, tableId);
-  if (!hid) return [];
-  return childrenOf(core, hid).map((cid) => ({
-    id: cid,
-    name: normCol(labelOf(core, cid)),
-  }));
-}
-
-function findChildByLabel(
-  core: Core,
-  ownerId: ItemId,
-  label: string,
-): ItemId | null {
-  const want = normCol(label);
-  if (!want) return null;
-
-  for (const childId of childrenOf(core, ownerId)) {
-    const nm = normCol(labelOf(core, childId));
-    if (nm === want) return childId;
-  }
-  return null;
-}
-
-function focusRowContainer(
-  tableId: ItemId,
-  rowId: ItemId,
-  caret: Caret = caret0(),
-): NavResult {
-  return {
-    focus: { container: tableId, item: rowId },
-    target: DEFAULT_TARGET,
-    caret,
-  };
-}
-
-function focusCellContainer(
-  rowId: ItemId,
-  cellId: ItemId,
-  caret: Caret = caret0(),
-): NavResult {
-  return {
-    focus: { container: rowId, item: cellId },
-    target: DEFAULT_TARGET,
-    caret,
-  };
-}
-
-function focusCellByColumnName(
-  core: Core,
-  tableId: ItemId,
-  rowId: ItemId,
-  colName: string,
-  caret: Caret = caret0(),
-): NavResult {
-  const cellId = findChildByLabel(core, rowId, colName);
-  return cellId
-    ? focusCellContainer(rowId, cellId, caret)
-    : focusRowContainer(tableId, rowId, caret);
-}
 
 function isFocused(
   sel: Selection,
@@ -122,147 +87,71 @@ function isFocused(
   return sel.kind === "focused";
 }
 
-function isRowSel(
-  sel: Selection,
-  tableId: ItemId,
-): sel is Extract<Selection, { kind: "focused" }> & {
-  focus: { container: ItemId };
-} {
-  return isFocused(sel) && sel.focus.container === tableId;
-}
-
-function isHeaderFocus(
+function isRowContainerSel(
   sel: Extract<Selection, { kind: "focused" }>,
   tableId: ItemId,
 ): boolean {
-  return (
-    sel.focus.container === tableId &&
-    sel.focus.item === tableId &&
-    sel.target.startsWith("col:")
-  );
+  return sel.focus.container === tableId && sel.target === DEFAULT_TARGET;
 }
 
-function headerInfo(
-  cols: readonly Column[],
-  sel: Selection,
+function isRowLabelSel(
+  sel: Extract<Selection, { kind: "focused" }>,
   tableId: ItemId,
-): { colId: ItemId; idx: number } | null {
-  if (!isFocused(sel)) return null;
-  if (!isHeaderFocus(sel, tableId)) return null;
-  const colId = sel.target.slice("col:".length) as ItemId;
-  const idx = cols.findIndex((c) => c.id === colId);
-  if (idx < 0) return null;
-  return { colId, idx };
+): boolean {
+  return sel.focus.container === tableId && sel.target === LABEL_TARGET;
 }
 
-function tableNavMove(
+function isCellSel(
   core: Core,
   tableId: ItemId,
-  sel: Selection,
-  dir: NavDir,
-  _mode: NavMode,
-  cols: readonly Column[],
-): NavResult | null {
-  if (!isFocused(sel)) return null;
-
-  const rows = rowIds(core, tableId);
-  if (rows.length === 0) return null;
-
-  const colNames = cols.map((c) => c.name);
-
-  const moveRow = (rowId: ItemId, delta: number) => {
-    const r = rows.indexOf(rowId);
-    if (r < 0) return null;
-    const nextRow = rows[r + delta];
-    return nextRow ? focusRowContainer(tableId, nextRow) : null;
-  };
-
-  const moveCellHoriz = (
-    rowId: ItemId,
-    colIdx: number,
-    delta: number,
-  ): NavResult | null => {
-    const nc = colIdx + delta;
-    if (nc < 0) return focusRowContainer(tableId, rowId);
-
-    const nextCol = colNames[nc];
-    if (nextCol == null) return null;
-
-    const nextCell = nextCol ? findChildByLabel(core, rowId, nextCol) : null;
-    return nextCell
-      ? focusCellContainer(rowId, nextCell)
-      : focusRowContainer(tableId, rowId);
-  };
-
-  const moveCellVert = (
-    rowIdx: number,
-    colIdx: number,
-    delta: number,
-  ): NavResult | null => {
-    const nextRow = rows[rowIdx + delta];
-    if (!nextRow) return null;
-
-    const col = colNames[colIdx];
-    if (col == null) return null;
-
-    const nextCell = col ? findChildByLabel(core, nextRow, col) : null;
-    return nextCell
-      ? focusCellContainer(nextRow, nextCell)
-      : focusRowContainer(tableId, nextRow);
-  };
-
-  if (sel.focus.container === tableId) {
-    const rowId = sel.focus.item;
-
-    if (dir === "up") return moveRow(rowId, -1);
-    if (dir === "down") return moveRow(rowId, 1);
-
-    if (dir === "right") {
-      const firstCol = colNames[0] ?? null;
-      if (!firstCol) return null;
-      const cid = findChildByLabel(core, rowId, firstCol);
-      return cid ? focusCellContainer(rowId, cid) : null;
-    }
-
-    if (dir === "left") return null;
-
-    return null;
-  }
-
+  rows: readonly ItemId[],
+  sel: Extract<Selection, { kind: "focused" }>,
+): boolean {
   const rowId = sel.focus.container;
-  const cellId = sel.focus.item;
+  if (rowId === tableId) return false;
+  if (!rows.includes(rowId)) return false;
+  return childrenOf(core, rowId).includes(sel.focus.item);
+}
 
-  const rowsIdx = rows.indexOf(rowId);
-  if (rowsIdx < 0) return null;
+function cellColIdx(core: Core, rowId: ItemId, cellId: ItemId): number {
+  return childrenOf(core, rowId).indexOf(cellId);
+}
 
-  const colLabel = normCol(labelOf(core, cellId));
-  const colIdx = Math.max(0, colNames.indexOf(colLabel));
+function focusRowLabel(
+  tableId: ItemId,
+  rowId: ItemId,
+  caret: Caret,
+): { focus: Focus; target: string; caret: Caret } {
+  return {
+    focus: { container: tableId, item: rowId },
+    target: LABEL_TARGET,
+    caret,
+  };
+}
 
-  if (dir === "left") return moveCellHoriz(rowId, colIdx, -1);
-  if (dir === "right") return moveCellHoriz(rowId, colIdx, 1);
+function focusRowContainer(
+  tableId: ItemId,
+  rowId: ItemId,
+): { focus: Focus; target: string; caret: Caret } {
+  return {
+    focus: { container: tableId, item: rowId },
+    target: DEFAULT_TARGET,
+    caret: caret0(),
+  };
+}
 
-  if (dir === "up") {
-    if (rowsIdx === 1) {
-      const headerCol = cols[colIdx]?.id ?? null;
-      if (!headerCol) return null;
-      return {
-        focus: { container: tableId, item: tableId },
-        target: `col:${headerCol}`,
-      };
-    }
-    return moveCellVert(rowsIdx, colIdx, -1);
-  }
-
-  if (dir === "down") return moveCellVert(rowsIdx, colIdx, 1);
-
-  return null;
+function focusCellContainer(
+  rowId: ItemId,
+  cellId: ItemId,
+): { focus: Focus; target: string; caret: Caret } {
+  return {
+    focus: { container: rowId, item: cellId },
+    target: DEFAULT_TARGET,
+    caret: caret0(),
+  };
 }
 
 export const tableCommands = {
-  setLabel(core: Core, rowId: ItemId, text: string): void {
-    core.commit((t) => t.setLabel(rowId, text));
-  },
-
   addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {
     const rows = rowIds(core, tableId);
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
@@ -291,83 +180,42 @@ export const tableCommands = {
       });
     else core.blur();
   },
-
-  renameColumn(core: Core, tableId: ItemId, colId: ItemId, to: string): void {
-    void tableId;
-    const b = normCol(to);
-    if (!b) return;
-    core.commit((t) => {
-      t.setLabel(colId, b);
-    });
-  },
-
-  confirm(
-    core: Core,
-    tableId: ItemId,
-    sel: Extract<Selection, { kind: "focused" }>,
-  ): void {
-    if (sel.focus.container === tableId) {
-      tableCommands.addRowAfter(core, tableId, sel.focus.item);
-      return;
-    }
-
-    if (sel.target === DEFAULT_TARGET) {
-      core.focus(sel.focus, VALUE_TARGET, { caret: caretAt(1_000_000) });
-      return;
-    }
-
-    const cols = deriveColumns(core, tableId);
-    const move = tableNavMove(core, tableId, sel, "down", "step", cols);
-    if (move) {
-      core.focus(move.focus, move.target, { caret: move.caret });
-      return;
-    }
-
-    tableCommands.addRowAfter(core, tableId, sel.focus.container);
-  },
 } as const;
 
-type TableMountCtx = {
-  core: Core;
-  tableId: ItemId;
-  columnsSignal: { value: Column[] };
-  dispatch: (intent: Intent) => void;
-};
-
-function mountRowMeta(args: {
-  core: Core;
-  tableId: ItemId;
-  rowId: ItemId;
-  focus: Focus;
-  dispatch: (intent: Intent) => void;
-}): Component {
-  const { core, tableId, rowId, focus, dispatch } = args;
-
+function mountItemMeta(
+  core: Core,
+  focus: Focus,
+  id: ItemId,
+  dispatch: (i: Intent) => void,
+): Component {
   return createComponent(core, (ctx) => {
     const meta = el("div", "ui-meta");
-    const labelWrap = el("div", "ui-label");
-    meta.append(labelWrap);
 
-    const isEditing = computed(() => {
-      const sel = core.selection();
-      return (
-        isRowSel(sel, tableId) &&
-        sel.focus.item === rowId &&
-        sel.target === ROW_LABEL_TARGET
-      );
-    });
+    const labelWrap = el("div", "ui-meta-label");
+    const sourceWrap = el("div", "ui-meta-source");
+    meta.append(labelWrap, sourceWrap);
 
-    const labelComp = textField(core, {
+    const canEditLabel = () => core.item(id).mode.kind !== "readonly";
+
+    const commitLabel = (text: string) => {
+      if (!canEditLabel()) return;
+      const cur = core.item(id).label ?? "";
+      if (cur === text) return;
+      core.commit((t) => t.setLabel(id, text));
+    };
+
+    const labelComp = autosizeTextField(core, {
       focus,
-      target: ROW_LABEL_TARGET,
-      multiline: false,
-      commit: (text) => tableCommands.setLabel(core, rowId, text),
+      target: LABEL_TARGET,
+      yieldNav: false,
+      commit: commitLabel,
       getState: () => {
-        const row = core.item(rowId);
-        const canEdit = row.mode.kind !== "readonly";
-        const text = row.label ?? "";
-        const readOnly = !isEditing.value || !canEdit;
-        return { text, readOnly, isIssue: false };
+        const snap = core.item(id);
+        return {
+          text: snap.label ?? "",
+          readOnly: !canEditLabel(),
+          isIssue: false,
+        };
       },
       onIntent: dispatch,
     });
@@ -375,229 +223,368 @@ function mountRowMeta(args: {
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
+    const rows = ctx.list<string>(sourceWrap, (key) =>
+      createComponent(core, (ctx2) => {
+        const row = el("div", "ui-meta-source-row");
+        const keyEl = el("div", "ui-meta-source-key");
+        const valEl = el("div", "ui-meta-source-val");
+        row.append(keyEl, valEl);
+
+        const tkey = `source:${key}`;
+
+        const specForKey = (): SourceField | null => {
+          const snap = core.item(id);
+          if (snap.mode.kind !== "source") return null;
+          return (
+            fieldsFromSource(snap.mode.source).find((f) => f.key === key) ??
+            null
+          );
+        };
+
+        const commitField = (text: string) => {
+          const snap = core.item(id);
+          if (snap.mode.kind !== "source") return;
+          const next = patchSource(snap.mode.source, key, text);
+          core.commit((t) => t.setSource(id, next));
+        };
+
+        const fc = textField(core, {
+          focus,
+          target: tkey,
+          multiline: specForKey()?.multiline ?? true,
+          commit: commitField,
+          getState: () => {
+            const snap = core.item(id);
+            if (snap.mode.kind !== "source")
+              return { text: "", readOnly: true, isIssue: false };
+            const txt =
+              fieldsFromSource(snap.mode.source).find((x) => x.key === key)
+                ?.text ?? "";
+            return { text: txt, readOnly: false, isIssue: false };
+          },
+          onIntent: dispatch,
+        });
+
+        valEl.replaceChildren(fc.el);
+        ctx2.cleanup(() => fc.dispose());
+
+        ctx2.effect(() => {
+          keyEl.textContent = specForKey()?.label ?? "";
+        });
+
+        return row;
+      }),
+    );
+
+    const fieldsSignal = computed(() => {
+      const snap = core.item(id);
+      return snap.mode.kind === "source"
+        ? fieldsFromSource(snap.mode.source)
+        : [];
+    });
+
+    ctx.effect(() => {
+      rows.update(fieldsSignal.value.map((f) => f.key));
+    });
+
     return meta;
   });
 }
 
-function focusHeaderCol(
-  tableId: ItemId,
-  colId: ItemId,
-): { focus: Focus; target: string; caret: Caret } {
-  return {
-    focus: { container: tableId, item: tableId },
-    target: `col:${colId}`,
-    caret: caretAt(1_000_000),
-  };
-}
+type TableSignals = {
+  rows: { value: ItemId[] };
+  schemaRowId: { value: ItemId | null };
+  colCount: { value: number };
+};
 
-function focusFirstBodyCellInColumn(
-  core: Core,
-  tableId: ItemId,
-  colName: string,
-): NavResult | null {
-  const rows = rowIds(core, tableId);
-  const firstBodyRow = rows[1] ?? null;
-  if (!firstBodyRow) return null;
-  return focusCellByColumnName(core, tableId, firstBodyRow, colName, caret0());
-}
+type TableMountCtx = {
+  core: Core;
+  tableId: ItemId;
+  sig: TableSignals;
+  dispatch: (intent: Intent) => void;
+};
 
-function mountCellShell(
-  mountCtx: TableMountCtx,
-  rowId: ItemId,
-  colName: string,
-  cellId: ItemId,
-): Component {
-  const { core } = mountCtx;
-  const focus: Focus = { container: rowId, item: cellId };
+function mountHeader(mountCtx: TableMountCtx): Component {
+  const { core, sig, dispatch } = mountCtx;
 
   return createComponent(core, (ctx) => {
-    const shell = el("div", "ui-table-cell");
-    shell.setAttribute("data-col", colName);
+    const header = el("div", "ui-table-header");
 
-    bindUiItemShell(ctx, { core, focus, part: "cell" }, shell);
+    const metaHead = el("div", "ui-table-col ui-table-col-meta");
+    header.append(metaHead);
 
-    const bodyHost = el("div", "ui-table-cell-body");
-    shell.append(bodyHost);
+    const colsHost = el("div", "ui-table-cols");
+    header.append(colsHost);
 
-    const wanted = core.view(cellId);
-    const body = core.mountView({ id: cellId, focus, view: wanted });
-    bodyHost.replaceChildren(body.el);
-    ctx.cleanup(() => body.dispose());
+    const cols = ctx.list<number>(colsHost, (colIdx) =>
+      createComponent(core, (ctx2) => {
+        const col = el("div", "ui-table-col");
+        const slot = ctx2.slot(col);
 
-    return shell;
-  });
-}
+        let curRid: ItemId | null = null;
+        let curCid: ItemId | null = null;
 
-function mountColumnCellHost(
-  mountCtx: TableMountCtx,
-  rowId: ItemId,
-  colId: ItemId,
-): Component {
-  const { core, tableId } = mountCtx;
-  const rowFocus: Focus = { container: tableId, item: rowId };
+        ctx2.effect(() => {
+          const rid = sig.schemaRowId.value;
+          const cid = rid ? (childrenOf(core, rid)[colIdx] ?? null) : null;
 
-  return createComponent(core, (ctx) => {
-    const host = el("div");
-    const slot = ctx.slot(host);
+          if (rid === curRid && cid === curCid) return;
+          curRid = rid;
+          curCid = cid;
 
-    const colName = () =>
-      mountCtx.columnsSignal.value.find((c) => c.id === colId)?.name ?? "";
+          if (!rid || !cid) {
+            slot.clear();
+            return;
+          }
 
-    const resolveCellId = () => {
-      const nm = colName();
-      return nm ? findChildByLabel(core, rowId, nm) : null;
-    };
-
-    ctx.effect(() => {
-      const nm = colName();
-      const cid = resolveCellId();
-
-      if (!cid) {
-        const empty = el("div", "ui-table-cell ui-table-cell-empty");
-        empty.setAttribute("data-col", nm);
-        empty.tabIndex = -1;
-
-        ctx.on(empty, "pointerdown", (e: PointerEvent) => {
-          core.focus(rowFocus, DEFAULT_TARGET, {
-            caret: caretFromTarget(e.target),
-          });
-          e.stopPropagation();
+          slot.set(
+            mountItemMeta(core, { container: rid, item: cid }, cid, dispatch),
+          );
         });
 
-        slot.set({
-          el: empty,
-          dispose() {
-            empty.replaceChildren();
-          },
-        });
-        return;
-      }
-
-      slot.set(mountCellShell(mountCtx, rowId, nm, cid));
-    });
-
-    return host;
-  });
-}
-
-function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
-  const { core, tableId, dispatch } = mountCtx;
-  const focus: Focus = { container: tableId, item: rowId };
-
-  return createComponent(core, (ctx) => {
-    const rowShell = el("div", "ui-table-row");
-    bindUiItemShell(ctx, { core, focus, part: "row" }, rowShell);
-
-    const metaHost = el("div", "ui-table-row-meta");
-    const cellsHost = el("div", "ui-table-row-cells");
-    rowShell.append(metaHost, cellsHost);
-
-    const meta = mountRowMeta({ core, tableId, rowId, focus, dispatch });
-    metaHost.replaceChildren(meta.el);
-    ctx.cleanup(() => meta.dispose());
-
-    const cellMgr = ctx.list<ItemId>(cellsHost, (colId) =>
-      mountColumnCellHost(mountCtx, rowId, colId),
+        return col;
+      }),
     );
 
     ctx.effect(() => {
-      cellMgr.update(mountCtx.columnsSignal.value.map((c) => c.id));
+      const n = sig.colCount.value;
+      cols.update(Array.from({ length: n }, (_, i) => i));
     });
 
-    return rowShell;
-  });
-}
-
-function mountHeader(mountCtx: TableMountCtx): Component {
-  return createComponent(mountCtx.core, (ctx) => {
-    const header = el("div", "ui-table-header");
-
-    const metaSpacer = el("div", "ui-table-col ui-table-col-meta");
-    header.append(metaSpacer);
-
-    const columnEls = new Map<ItemId, HTMLElement>();
-
-    const reconcile = (cols: readonly Column[]) => {
-      const desired: HTMLElement[] = [metaSpacer];
-
-      for (const col of cols) {
-        let cell = columnEls.get(col.id);
-        if (!cell) {
-          cell = el("div", "ui-table-col");
-          cell.setAttribute("data-col", col.name);
-
-          const wrap = el("div", "ui-table-col-label");
-          const headerFocus: Focus = {
-            container: mountCtx.tableId,
-            item: mountCtx.tableId,
-          };
-          const target = `col:${col.id}`;
-
-          const fc = textField(mountCtx.core, {
-            focus: headerFocus,
-            target,
-            multiline: false,
-            commit: (text) =>
-              tableCommands.renameColumn(
-                mountCtx.core,
-                mountCtx.tableId,
-                col.id,
-                text,
-              ),
-            getState: () => {
-              const exists = mountCtx.columnsSignal.value.some(
-                (c) => c.id === col.id,
-              );
-              const text = labelOf(mountCtx.core, col.id);
-              return { text, readOnly: !exists, isIssue: false };
-            },
-            onIntent: mountCtx.dispatch,
-          });
-
-          wrap.replaceChildren(fc.el);
-          ctx.cleanup(() => fc.dispose());
-
-          cell.append(wrap);
-          columnEls.set(col.id, cell);
-        } else {
-          cell.setAttribute("data-col", col.name);
-        }
-
-        desired.push(cell);
-      }
-
-      reconcileChildren(header, desired);
-
-      const keep = new Set(cols.map((c) => c.id));
-      for (const [id, cell] of columnEls) {
-        if (keep.has(id)) continue;
-        cell.remove();
-        columnEls.delete(id);
-      }
-    };
-
-    ctx.effect(() => {
-      reconcile(mountCtx.columnsSignal.value);
+    ctx.on(header, "pointerdown", (e: PointerEvent) => {
+      e.stopPropagation();
     });
 
     return header;
   });
 }
 
+function mountDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
+  return createComponent(core, (ctx) => {
+    const host = el("div", "ui-table-cell");
+
+    const focus: Focus = { container: rowId, item: cellId };
+    bindUiItemShell(ctx, { core, focus }, host);
+
+    const body = core.mountView({ id: cellId, focus, view: core.view(cellId) });
+    host.replaceChildren(body.el);
+    ctx.cleanup(() => body.dispose());
+
+    return host;
+  });
+}
+
+function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
+  const { core, tableId, sig, dispatch } = mountCtx;
+
+  return createComponent(core, (ctx) => {
+    const row = el("div", "ui-table-row");
+    bindUiItemShell(
+      ctx,
+      { core, focus: { container: tableId, item: rowId } },
+      row,
+    );
+
+    const metaCell = el("div", "ui-table-cell ui-table-cell-meta");
+    row.append(metaCell);
+
+    const meta = mountItemMeta(
+      core,
+      { container: tableId, item: rowId },
+      rowId,
+      dispatch,
+    );
+    metaCell.replaceChildren(meta.el);
+    ctx.cleanup(() => meta.dispose());
+
+    const cellsHost = el("div", "ui-table-cells");
+    row.append(cellsHost);
+
+    const cells = ctx.list<string>(cellsHost, (key) => {
+      const idx = key.indexOf("\u001f");
+      const cellId = (idx >= 0 ? key.slice(idx + 1) : "") as ItemId;
+      return mountDataCell(core, rowId, cellId);
+    });
+
+    ctx.effect(() => {
+      const n = sig.colCount.value;
+      const rowCells = childrenOf(core, rowId);
+      const keys: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const cid = rowCells[i];
+        if (!cid) continue;
+        keys.push(`${i}\u001f${cid}`);
+      }
+      cells.update(keys);
+    });
+
+    return row;
+  });
+}
+
 function mountBody(mountCtx: TableMountCtx): Component {
+  const { sig } = mountCtx;
+
   return createComponent(mountCtx.core, (ctx) => {
     const body = el("div", "ui-table-body");
 
-    const rows = ctx.list<ItemId>(body, (rid) => mountRowShell(mountCtx, rid));
+    const rowsHost = el("div", "ui-table-rows");
+    body.append(rowsHost);
+
+    const rows = ctx.list<ItemId>(rowsHost, (rid) =>
+      mountRowShell(mountCtx, rid),
+    );
 
     ctx.effect(() => {
-      const snap = mountCtx.core.item(mountCtx.tableId);
-      const c = snap.content;
-      rows.update(c.kind === "group" ? [...c.children] : []);
+      rows.update(sig.rows.value);
     });
 
     return body;
   });
+}
+
+function tableNavMove(
+  core: Core,
+  tableId: ItemId,
+  rows: readonly ItemId[],
+  ncols: number,
+  sel: Extract<Selection, { kind: "focused" }>,
+  dir: NavDir,
+): { focus: Focus; target: string; caret: Caret } | null {
+  if (rows.length === 0) return null;
+
+  if (isRowContainerSel(sel, tableId)) {
+    const rowId = sel.focus.item;
+    const rowIdx = rows.indexOf(rowId);
+    if (rowIdx < 0) return null;
+
+    if (dir === "up") {
+      const prev = rows[rowIdx - 1] ?? null;
+      return prev ? focusRowContainer(tableId, prev) : null;
+    }
+
+    if (dir === "down") {
+      const next = rows[rowIdx + 1] ?? null;
+      return next ? focusRowContainer(tableId, next) : null;
+    }
+
+    if (dir === "right") {
+      return focusRowLabel(tableId, rowId, caretAt(1_000_000));
+    }
+
+    return null;
+  }
+
+  if (isRowLabelSel(sel, tableId)) {
+    const rowId = sel.focus.item;
+    const rowIdx = rows.indexOf(rowId);
+    if (rowIdx < 0) return null;
+
+    if (dir === "up") {
+      const prev = rows[rowIdx - 1] ?? null;
+      return prev ? focusRowLabel(tableId, prev, caretAt(1_000_000)) : null;
+    }
+
+    if (dir === "down") {
+      const next = rows[rowIdx + 1] ?? null;
+      return next ? focusRowLabel(tableId, next, caretAt(1_000_000)) : null;
+    }
+
+    if (dir === "right") {
+      const firstCell = ncols > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+      return firstCell ? focusCellContainer(rowId, firstCell) : null;
+    }
+
+    return null;
+  }
+
+  if (!isCellSel(core, tableId, rows, sel)) return null;
+
+  const rowId = sel.focus.container;
+  const cellId = sel.focus.item;
+
+  const rowIdx = rows.indexOf(rowId);
+  if (rowIdx < 0) return null;
+
+  const colIdx = cellColIdx(core, rowId, cellId);
+  if (colIdx < 0) return null;
+
+  if (dir === "left") {
+    if (colIdx === 0) return focusRowLabel(tableId, rowId, caretAt(1_000_000));
+    const prev = childrenOf(core, rowId)[colIdx - 1] ?? null;
+    return prev ? focusCellContainer(rowId, prev) : null;
+  }
+
+  if (dir === "right") {
+    const next = childrenOf(core, rowId)[colIdx + 1] ?? null;
+    return next ? focusCellContainer(rowId, next) : null;
+  }
+
+  if (dir === "up") {
+    const prevRow = rows[rowIdx - 1] ?? null;
+    if (!prevRow) return null;
+    const prevCell = childrenOf(core, prevRow)[colIdx] ?? null;
+    return prevCell ? focusCellContainer(prevRow, prevCell) : null;
+  }
+
+  const nextRow = rows[rowIdx + 1] ?? null;
+  if (!nextRow) return null;
+  const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
+  return nextCell ? focusCellContainer(nextRow, nextCell) : null;
+}
+
+function tabMove(
+  core: Core,
+  tableId: ItemId,
+  rows: readonly ItemId[],
+  ncols: number,
+  sel: Extract<Selection, { kind: "focused" }>,
+  shift: boolean,
+): { focus: Focus; target: string; caret: Caret } | null {
+  if (rows.length === 0) return null;
+
+  const dir = shift ? -1 : 1;
+
+  if (isRowContainerSel(sel, tableId)) {
+    const rowId = sel.focus.item;
+    return shift ? null : focusRowLabel(tableId, rowId, caretAt(1_000_000));
+  }
+
+  if (isRowLabelSel(sel, tableId)) {
+    const rowId = sel.focus.item;
+    if (shift) return focusRowContainer(tableId, rowId);
+    const firstCell = ncols > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+    return firstCell ? focusCellContainer(rowId, firstCell) : null;
+  }
+
+  if (!isCellSel(core, tableId, rows, sel)) return null;
+
+  const rowId = sel.focus.container;
+  const cellId = sel.focus.item;
+
+  const rowIdx = rows.indexOf(rowId);
+  if (rowIdx < 0) return null;
+
+  const colIdx = cellColIdx(core, rowId, cellId);
+  if (colIdx < 0) return null;
+
+  const nextCol = colIdx + dir;
+
+  if (nextCol >= 0 && nextCol < ncols) {
+    const nextCell = childrenOf(core, rowId)[nextCol] ?? null;
+    return nextCell ? focusCellContainer(rowId, nextCell) : null;
+  }
+
+  const nextRow = rows[rowIdx + dir] ?? null;
+  if (!nextRow) return null;
+
+  if (dir > 0) return focusRowLabel(tableId, nextRow, caretAt(1_000_000));
+
+  const lastCell =
+    ncols > 0 ? (childrenOf(core, nextRow)[ncols - 1] ?? null) : null;
+  return lastCell
+    ? focusCellContainer(nextRow, lastCell)
+    : focusRowLabel(tableId, nextRow, caretAt(1_000_000));
 }
 
 export function createTableView(args: {
@@ -607,74 +594,38 @@ export function createTableView(args: {
 }): DomView {
   const { core, id: tableId } = args;
 
-  const tableFocus: Focus = args.focus ?? { container: tableId, item: tableId };
-  const columnsSignal = computed(() => deriveColumns(core, tableId));
+  const rowsSignal = computed(() => rowIds(core, tableId));
+  const schemaRowIdSignal = computed(() => rowsSignal.value[0] ?? null);
+  const colCountSignal = computed(() => {
+    const rid = schemaRowIdSignal.value;
+    return rid ? childrenOf(core, rid).length : 0;
+  });
+
+  const sig: TableSignals = {
+    rows: rowsSignal,
+    schemaRowId: schemaRowIdSignal,
+    colCount: colCountSignal,
+  };
 
   const dispatch = (intent: Intent): void => {
-    const sel = core.selection();
-    const cols = columnsSignal.value;
-    const hdr = headerInfo(cols, sel, tableId);
+    const sel0 = core.selection();
+
+    if (intent.type === "CANCEL") {
+      escapeLadder(core);
+      return;
+    }
+
+    if (!isFocused(sel0)) return;
+
+    const rows = sig.rows.value;
+    const ncols = sig.colCount.value;
 
     switch (intent.type) {
-      case "TAB": {
-        if (!isFocused(sel)) return;
-
-        if (hdr) {
-          const next = cols[hdr.idx + (intent.shift ? -1 : 1)] ?? null;
-          if (!next) return;
-          const dst = focusHeaderCol(tableId, next.id);
-          core.focus(dst.focus, dst.target, { caret: dst.caret });
-          return;
-        }
-
-        const res = tableNavMove(
-          core,
-          tableId,
-          sel,
-          intent.shift ? "left" : "right",
-          "step",
-          cols,
-        );
-        if (!res) return;
-        core.focus(res.focus, DEFAULT_TARGET, { caret: caret0() });
-        return;
-      }
-
       case "NAV": {
-        if (!isFocused(sel)) return;
-
-        if (hdr) {
-          if (intent.dir === "left" || intent.dir === "right") {
-            const next =
-              cols[hdr.idx + (intent.dir === "left" ? -1 : 1)] ?? null;
-            if (!next) return;
-            const dst = focusHeaderCol(tableId, next.id);
-            core.focus(dst.focus, dst.target, { caret: dst.caret });
-            return;
-          }
-
-          if (intent.dir === "down") {
-            const colName = cols[hdr.idx]?.name ?? "";
-            const move = focusFirstBodyCellInColumn(core, tableId, colName);
-            if (!move) return;
-            core.focus(move.focus, DEFAULT_TARGET, { caret: caret0() });
-            return;
-          }
-
-          return;
-        }
-
-        const res = tableNavMove(
-          core,
-          tableId,
-          sel,
-          intent.dir,
-          intent.mode,
-          cols,
-        );
+        const res = tableNavMove(core, tableId, rows, ncols, sel0, intent.dir);
         if (!res) return;
 
-        if (sel.target !== DEFAULT_TARGET) {
+        if (sel0.target !== DEFAULT_TARGET && res.target === DEFAULT_TARGET) {
           core.focus(res.focus, DEFAULT_TARGET, { caret: caret0() });
           return;
         }
@@ -683,73 +634,69 @@ export function createTableView(args: {
         return;
       }
 
-      case "CONFIRM": {
-        if (!isFocused(sel)) return;
-
-        if (hdr) {
-          const colName = cols[hdr.idx]?.name ?? "";
-          const move = focusFirstBodyCellInColumn(core, tableId, colName);
-          if (!move) return;
-          core.focus(move.focus, DEFAULT_TARGET, { caret: caret0() });
-          return;
-        }
-
-        if (sel.target === DEFAULT_TARGET) {
-          tableCommands.confirm(core, tableId, sel);
-          return;
-        }
-
-        const move = tableNavMove(core, tableId, sel, "down", "step", cols);
-        if (move) {
-          core.focus(move.focus, DEFAULT_TARGET, { caret: caret0() });
-          return;
-        }
-
-        core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+      case "TAB": {
+        const res = tabMove(core, tableId, rows, ncols, sel0, intent.shift);
+        if (!res) return;
+        core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
 
-      case "CANCEL": {
-        escapeLadder(core);
+      case "CONFIRM": {
+        if (isRowContainerSel(sel0, tableId)) {
+          tableCommands.addRowAfter(core, tableId, sel0.focus.item);
+          return;
+        }
+
+        if (isCellSel(core, tableId, rows, sel0)) {
+          if (sel0.target === DEFAULT_TARGET) {
+            core.focus(sel0.focus, VALUE_TARGET, { caret: caretAt(1_000_000) });
+            return;
+          }
+          core.focus(sel0.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
+        if (isRowLabelSel(sel0, tableId)) {
+          core.focus(sel0.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
         return;
       }
 
       case "TYPE": {
-        if (hdr) return;
-        if (!isFocused(sel)) return;
-        if (sel.target !== DEFAULT_TARGET) return;
+        if (sel0.target !== DEFAULT_TARGET) return;
 
-        if (sel.focus.container === tableId) {
-          const rowId = sel.focus.item;
-          const firstCol = cols[0];
-          if (!firstCol) return;
+        if (isRowContainerSel(sel0, tableId)) {
+          return;
+        }
 
-          const cellId = firstCol.name
-            ? findChildByLabel(core, rowId, firstCol.name)
-            : null;
-          if (!cellId) return;
-
-          core.focus({ container: rowId, item: cellId }, VALUE_TARGET, {
-            caret: SELECT_ALL,
-          });
+        if (isCellSel(core, tableId, rows, sel0)) {
+          core.focus(sel0.focus, VALUE_TARGET, { caret: SELECT_ALL });
           queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
           return;
         }
 
-        core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
-        queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
         return;
       }
 
-      case "DELETE_BOUNDARY":
       case "DELETE":
+      case "DELETE_BOUNDARY":
         return;
     }
   };
 
   const content = createComponent(core, (ctx) => {
-    const root = el("div", "ui-table");
-    const mountCtx: TableMountCtx = { core, tableId, columnsSignal, dispatch };
+    const root = el("div");
+    stampBody(root, "table");
+
+    const tableFocus: Focus = args.focus ?? {
+      container: tableId,
+      item: tableId,
+    };
+    bindUiItemShell(ctx, { core, focus: tableFocus }, root);
+
+    const mountCtx: TableMountCtx = { core, tableId, sig, dispatch };
 
     const header = mountHeader(mountCtx);
     const body = mountBody(mountCtx);

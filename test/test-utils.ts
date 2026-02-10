@@ -299,9 +299,7 @@ export function nodeOrderByDataId(
 }
 
 export function requireFocusedItemEl(root: ParentNode): HTMLElement {
-  const el0 = root.querySelector(
-    `.ui-item[data-focused="true"]`,
-  ) as HTMLElement | null;
+  const el0 = root.querySelector(`.ui-item.is-focused`) as HTMLElement | null;
   if (!el0) throw new Error("Missing focused item element");
   return el0;
 }

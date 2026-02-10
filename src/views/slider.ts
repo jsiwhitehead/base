@@ -14,6 +14,7 @@ import {
   consume,
   parseKeydownIntent,
   type Intent,
+  stampBody,
 } from "../dom";
 
 export type SliderOpts = { min?: number; max?: number; step?: number };
@@ -94,7 +95,8 @@ type SliderMountCtx = {
 
 function mountSliderBody({ core, id, opts }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
-    const root = el("div", "ui-slider");
+    const root = el("div");
+    stampBody(root, "slider");
 
     const input = document.createElement("input");
     input.type = "range";

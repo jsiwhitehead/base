@@ -7,12 +7,11 @@ export {
   reconcileChildren,
   setData,
   setDataBool,
-  applyUiItemState,
   caretFromTarget,
   createComponent,
   bindUiItemShell,
+  stampBody,
   type Ctx,
-  type UiItemState,
   type ShellSpec,
 } from "./base";
 
@@ -32,7 +31,6 @@ export {
   syncValue,
   textField,
   autosizeTextField,
-  scalarField,
   type TextFieldEditModel,
   type TextFieldOpts,
   type AutosizeTextFieldOpts,

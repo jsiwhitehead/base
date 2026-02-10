@@ -1,17 +1,16 @@
 import { computed } from "@preact/signals-core";
-import {
-  type ItemId,
-  type Core,
-  type Component,
-  type Focus,
-  type Caret,
-  type Selection,
-  type DomView,
-  type ScalarOrBlank,
-  type Source,
-  parseScalar,
-  DEFAULT_TARGET,
+import type {
+  ItemId,
+  Core,
+  Component,
+  Focus,
+  Caret,
+  Selection,
+  DomView,
+  ScalarOrBlank,
+  Source,
 } from "../core";
+import { parseScalar, DEFAULT_TARGET } from "../core";
 import {
   type NavDir,
   type Intent,
@@ -20,7 +19,6 @@ import {
   bindUiItemShell,
   autosizeTextField,
   textField,
-  scalarField,
   SELECT_ALL,
   caret0,
   caretAt,
@@ -28,6 +26,7 @@ import {
   parseKeydownIntent,
   insertTextIntoActiveEditor,
   escapeLadder,
+  stampBody,
 } from "../dom";
 
 type SourceField = {
@@ -217,11 +216,7 @@ function moveEditPoint(
     ? caretAt(textForTarget(core, next.id, next.target).length)
     : caret0();
 
-  return {
-    focus: focusFor(core, rootId, next.id),
-    target: next.target,
-    caret,
-  };
+  return { focus: focusFor(core, rootId, next.id), target: next.target, caret };
 }
 
 function caretFromActiveEditor(): Caret | null {
@@ -442,8 +437,8 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
   return createComponent(core, (ctx) => {
     const meta = el("div", "ui-meta");
 
-    const labelWrap = el("div", "ui-label");
-    const sourceWrap = el("div", "ui-source");
+    const labelWrap = el("div", "ui-meta-label");
+    const sourceWrap = el("div", "ui-meta-source");
     meta.append(labelWrap, sourceWrap);
 
     const canEditLabel = () => core.item(id).mode.kind !== "readonly";
@@ -458,6 +453,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     const labelComp = autosizeTextField(core, {
       focus,
       target: LABEL_TARGET,
+      yieldNav: false,
       commit: commitLabel,
       getState: () => {
         const snap = core.item(id);
@@ -467,7 +463,6 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
           isIssue: false,
         };
       },
-      wrapClassName: "autosize",
       onIntent: dispatch,
     });
 
@@ -476,9 +471,9 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     const rows = ctx.list(sourceWrap, (key: string) =>
       createComponent(core, (ctx2) => {
-        const row = el("div", "ui-source-row");
-        const keyEl = el("div", "ui-source-key");
-        const valEl = el("div", "ui-source-val");
+        const row = el("div", "ui-meta-source-row");
+        const keyEl = el("div", "ui-meta-source-key");
+        const valEl = el("div", "ui-meta-source-val");
         row.append(keyEl, valEl);
 
         const tkey = `source:${key}`;
@@ -536,6 +531,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     });
 
     const hasLabel = computed(() => (core.item(id).label ?? "").trim() !== "");
+
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
       return snap.mode.kind === "source"
@@ -544,6 +540,7 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
     });
 
     const hasFields = computed(() => fieldsSignal.value.length > 0);
+
     const needMeta = computed(
       () => hasLabel.value || hasFields.value || labelFocused.value,
     );
@@ -560,141 +557,129 @@ function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
   });
 }
 
-function mountScalarBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
-  const { core, dispatch } = mountCtx;
-  const id = focus.item;
-
-  return createComponent(core, (ctx) => {
-    const sf = scalarField({
-      core,
-      focus,
-      className: "ui-outline-scalar",
-      target: VALUE_TARGET,
-      multiline: true,
-      commitText: (text) => outlineCommands.setText(core, id, text),
-      onIntent: dispatch,
-    });
-
-    ctx.cleanup(() => sf.dispose());
-    return sf.el;
-  });
-}
-
-function mountGroupBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
-  const { core } = mountCtx;
-  const id = focus.item;
-
-  return createComponent(core, (ctx) => {
-    const wrap = el("div", "ui-outline-group");
-
-    const mgr = ctx.list<ItemId>(wrap, (childId) => {
-      const childFocus: Focus = { container: id, item: childId };
-      return mountOutlineNodeShell(mountCtx, childFocus, true);
-    });
-
-    ctx.effect(() => {
-      const s = core.item(id);
-      const c = s.content;
-      mgr.update(c.kind === "group" ? [...c.children] : []);
-    });
-
-    return wrap;
-  });
-}
-
-function mountOutlineBodyForItem(
-  mountCtx: OutlineMountCtx,
-  focus: Focus,
-): Component {
-  const { core } = mountCtx;
-  const id = focus.item;
-
-  return createComponent(core, (ctx) => {
-    const host = el("div", "ui-outline-item-body");
-    const slot = ctx.slot(host);
-
-    let curKind: "group" | "scalar" | null = null;
-    let cur: Component | null = null;
-
-    ctx.effect(() => {
-      const snap = core.item(id);
-      const nextKind = snap.content.kind === "group" ? "group" : "scalar";
-      if (cur && curKind === nextKind) return;
-
-      curKind = nextKind;
-      cur =
-        nextKind === "group"
-          ? mountGroupBody(mountCtx, focus)
-          : mountScalarBody(mountCtx, focus);
-
-      slot.set(cur);
-    });
-
-    ctx.cleanup(() => {
-      curKind = null;
-      cur = null;
-    });
-
-    return host;
-  });
-}
-
-function mountBodyForItem(mountCtx: OutlineMountCtx, focus: Focus): Component {
-  const { core } = mountCtx;
-  const id = focus.item;
-
-  return createComponent(core, (ctx) => {
-    const host = el("div");
-    const slot = ctx.slot(host);
-
-    let curView: string | null = null;
-
-    ctx.effect(() => {
-      const wanted = core.view(id);
-      if (wanted === curView) return;
-      curView = wanted;
-
-      if (wanted === "outline") {
-        slot.set(mountOutlineBodyForItem(mountCtx, focus));
-        return;
-      }
-
-      const v = core.mountView({ id, focus, view: wanted });
-      slot.set(v);
-    });
-
-    return host;
-  });
-}
-
 function mountOutlineNodeShell(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   showMeta: boolean,
 ): Component {
   const { core } = mountCtx;
+  const id = focus.item;
 
   return createComponent(core, (ctx) => {
     const shell = el("div", "ui-outline-node");
-    const chromeHost = el("div", "ui-outline-chrome");
-    const bodyHost = el("div", "ui-outline-body");
-    shell.append(chromeHost, bodyHost);
-
     bindUiItemShell(ctx, { core, focus }, shell);
 
     if (showMeta) {
       const meta = mountMeta(mountCtx, focus);
-      chromeHost.replaceChildren(meta.el);
+      shell.append(meta.el);
       ctx.cleanup(() => meta.dispose());
-    } else {
-      chromeHost.replaceChildren();
     }
 
-    const body = mountBodyForItem(mountCtx, focus);
-    bodyHost.replaceChildren(body.el);
+    const wanted = core.view(id);
+    const body = core.mountView({ id, focus, view: wanted });
+    shell.append(body.el);
     ctx.cleanup(() => body.dispose());
 
     return shell;
+  });
+}
+
+function mountOutlineGroupBody(
+  mountCtx: OutlineMountCtx,
+  focus: Focus,
+): Component {
+  const { core, rootId } = mountCtx;
+  const id = focus.item;
+
+  return createComponent(core, (ctx) => {
+    const host = el("div");
+
+    const mgr = ctx.list<ItemId>(host, (childId) => {
+      const childFocus = focusFor(core, rootId, childId);
+      return mountOutlineNodeShell(mountCtx, childFocus, true);
+    });
+
+    ctx.effect(() => {
+      const snap = core.item(id);
+      const c = snap.content;
+      mgr.update(c.kind === "group" ? [...c.children] : []);
+    });
+
+    return host;
+  });
+}
+
+function mountOutlineScalarBody(
+  mountCtx: OutlineMountCtx,
+  focus: Focus,
+): Component {
+  const { core, dispatch } = mountCtx;
+  const id = focus.item;
+
+  return createComponent(core, (ctx) => {
+    const tf = textField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: true,
+      editModel: "live",
+      commit: (text) => outlineCommands.setText(core, id, text),
+      getState: () => {
+        const snap = core.item(id);
+        const c = snap.content;
+
+        if (c.kind === "issue") {
+          return { text: c.message ?? "", readOnly: true, isIssue: true };
+        }
+
+        if (c.kind === "scalar") {
+          const editable = snap.mode.kind === "direct";
+          return {
+            text: scalarToText(c.value),
+            readOnly: !editable,
+            isIssue: false,
+          };
+        }
+
+        return { text: "", readOnly: true, isIssue: false };
+      },
+      onIntent: dispatch,
+    });
+
+    ctx.cleanup(() => tf.dispose());
+    return tf.el;
+  });
+}
+
+function mountOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
+  const { core } = mountCtx;
+  const id = focus.item;
+
+  return createComponent(core, (ctx) => {
+    const root = el("div");
+    stampBody(root, "outline");
+
+    const slot = ctx.slot(root);
+
+    let curKind: "group" | "scalar" | null = null;
+
+    ctx.effect(() => {
+      const snap = core.item(id);
+      const nextKind = snap.content.kind === "group" ? "group" : "scalar";
+      if (curKind === nextKind) return;
+      curKind = nextKind;
+
+      slot.set(
+        nextKind === "group"
+          ? mountOutlineGroupBody(mountCtx, focus)
+          : mountOutlineScalarBody(mountCtx, focus),
+      );
+    });
+
+    ctx.cleanup(() => {
+      curKind = null;
+    });
+
+    return root;
   });
 }
 
@@ -906,7 +891,7 @@ export function createOutlineView(args: {
   };
 
   const viewFocus: Focus = args.focus ?? { container: rootId, item: rootId };
-  const body = mountOutlineBodyForItem(
+  const body = mountOutlineBody(
     { core, rootId, editPointsSignal, dispatch },
     viewFocus,
   );

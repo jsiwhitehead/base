@@ -1,4 +1,4 @@
-import type { Core, ItemId, Focus, Caret, Component } from "../core";
+import type { Core, Focus, Caret, Component } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import {
   createComponent,
@@ -238,6 +238,7 @@ export type TextFieldOpts = {
   multiline: boolean;
   className?: string;
   editModel?: TextFieldEditModel;
+  yieldNav?: boolean;
   commit: (text: string) => void;
   getState: () => TextFieldState;
   onIntent?: (i: Intent) => void;
@@ -248,6 +249,7 @@ export function textField(
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
   const editModel: TextFieldEditModel = opts.editModel ?? "draft";
+  const yieldNav = opts.yieldNav ?? true;
 
   const c = createComponent(core, (ctx) => {
     const inp = textInput(opts.multiline);
@@ -325,7 +327,8 @@ export function textField(
       opts.onIntent?.(i);
     };
 
-    if (opts.onIntent) ctx.cleanup(bindTextEditorYield(inp, handleIntent));
+    if (opts.onIntent && yieldNav)
+      ctx.cleanup(bindTextEditorYield(inp, handleIntent));
 
     ctx.on(inp, "focus", () => {
       beginDraftSession();
@@ -349,7 +352,6 @@ export function textField(
     });
 
     ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
-
     ctx.target(opts.focus, opts.target, () => inp, {
       caret: defaultTextCaret(),
     });
@@ -417,6 +419,7 @@ export function autosizeTextField(
   opts: AutosizeTextFieldOpts,
 ): FocusComponent<HTMLInputElement> {
   const editModel: TextFieldEditModel = opts.editModel ?? "draft";
+  const yieldNav = opts.yieldNav ?? true;
 
   let focusEl!: HTMLInputElement;
 
@@ -507,7 +510,8 @@ export function autosizeTextField(
       opts.onIntent?.(i);
     };
 
-    if (opts.onIntent) ctx.cleanup(bindTextEditorYield(inp, handleIntent));
+    if (opts.onIntent && yieldNav)
+      ctx.cleanup(bindTextEditorYield(inp, handleIntent));
 
     ctx.on(inp, "focus", () => {
       beginDraftSession();
@@ -532,7 +536,6 @@ export function autosizeTextField(
     });
 
     ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
-
     ctx.target(opts.focus, opts.target, () => inp, {
       caret: defaultTextCaret(),
     });
@@ -587,166 +590,4 @@ export function autosizeTextField(
   });
 
   return { ...c, focusEl };
-}
-
-export type ScalarFieldState = {
-  text: string;
-  editable: boolean;
-  isIssue: boolean;
-};
-
-export type ScalarFieldOpts = {
-  core: Core;
-  focus: Focus;
-  target: string;
-  multiline: boolean;
-  className?: string;
-  commitText?: (text: string) => void;
-  getState?: () => ScalarFieldState;
-  onIntent?: (i: Intent) => void;
-};
-
-function deriveScalarFieldState(core: Core, id: ItemId): ScalarFieldState {
-  const snap = core.item(id);
-  const c = snap.content;
-
-  if (c.kind === "issue") {
-    return { text: c.message, editable: false, isIssue: true };
-  }
-
-  if (c.kind === "scalar") {
-    const editable = snap.mode.kind === "direct";
-    const text = c.value == null ? "" : String(c.value);
-    return { text, editable, isIssue: false };
-  }
-
-  return { text: "", editable: false, isIssue: false };
-}
-
-function readonlyScalarView(args: {
-  core: Core;
-  focus: Focus;
-  target: string;
-  getState: () => ScalarFieldState;
-  className?: string;
-}): FocusComponent<HTMLElement> {
-  const c = createComponent(args.core, (ctx) => {
-    const d = el("div", args.className);
-    d.tabIndex = -1;
-    setData(d, "target", args.target);
-
-    ctx.cleanup(bindEditorPointerSelect(args.core, args.focus, args.target, d));
-    ctx.target(args.focus, args.target, () => d);
-
-    ctx.effect(() => {
-      d.textContent = args.getState().text;
-    });
-
-    return d;
-  });
-
-  return { ...c, focusEl: c.el };
-}
-
-function editableScalarEditor(args: {
-  core: Core;
-  focus: Focus;
-  target: string;
-  multiline: boolean;
-  commitText?: (text: string) => void;
-  getState: () => ScalarFieldState;
-  className?: string;
-  onIntent?: (i: Intent) => void;
-}): FocusComponent<TextInputElement> {
-  const fc = textField(args.core, {
-    focus: args.focus,
-    target: args.target,
-    multiline: args.multiline,
-    className: args.className ?? "",
-    editModel: "live",
-    commit: (text) => args.commitText?.(text),
-    getState: () => {
-      const st = args.getState();
-      return { text: st.text, readOnly: !st.editable, isIssue: st.isIssue };
-    },
-    onIntent: args.onIntent,
-  });
-
-  const c = createComponent(args.core, (ctx) => {
-    const host = el("div");
-    host.append(fc.el);
-    ctx.cleanup(() => fc.dispose());
-    return host;
-  });
-
-  return { ...c, focusEl: fc.focusEl };
-}
-
-export function scalarField(
-  opts: ScalarFieldOpts,
-): FocusComponent<HTMLElement> {
-  const { core, focus, target } = opts;
-  const id = focus.item;
-
-  const getState = opts.getState ?? (() => deriveScalarFieldState(core, id));
-
-  let focusEl: HTMLElement;
-
-  const c = createComponent(core, (ctx) => {
-    const host = el("div");
-    if (opts.className) host.className = opts.className;
-
-    const slot = ctx.slot(host);
-
-    focusEl = host;
-    let currentEditable: boolean | null = null;
-    let current: FocusComponent<HTMLElement> | null = null;
-
-    ctx.effect(() => {
-      const st = getState();
-      const nextEditable = !!st.editable;
-      if (current && currentEditable === nextEditable) return;
-      currentEditable = nextEditable;
-
-      if (nextEditable) {
-        current = editableScalarEditor({
-          core,
-          focus,
-          target,
-          multiline: opts.multiline,
-          commitText: opts.commitText,
-          getState,
-          onIntent: opts.onIntent,
-        }) as unknown as FocusComponent<HTMLElement>;
-        slot.set(current);
-        focusEl = current.focusEl;
-        return;
-      }
-
-      current = readonlyScalarView({
-        core,
-        focus,
-        target,
-        getState,
-      });
-      slot.set(current);
-      focusEl = current.focusEl;
-    });
-
-    ctx.cleanup(() => {
-      current = null;
-      currentEditable = null;
-      focusEl = host;
-    });
-
-    return host;
-  });
-
-  return {
-    el: c.el,
-    dispose: c.dispose,
-    get focusEl() {
-      return focusEl ?? c.el;
-    },
-  };
 }

@@ -25,7 +25,8 @@ All navigation and editing is expressed as updates to selection via:
 
 Selection changes are frequent and must be cheap.
 
-- Selection-driven updates must be styling-only (e.g. `data-focused`) and must not rebuild structure.
+- Selection-driven updates must be styling-only (e.g. `.is-focused`) and must not rebuild structure.
+- `.ui-item` element identity must remain stable across selection changes; only selection styling should change.
 - Structural DOM updates must depend on item state (`core.item(id)`), not selection.
 - Any code that needs selection inside a component should prefer a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
 - When swapping child components via `slot.set(...)`, gate swaps with a stable discriminator (e.g. `view`, `kind`) so reactive reruns do not remount unchanged structure.
@@ -48,8 +49,8 @@ Shell renders exactly one wrapper element for each presented item. That wrapper 
 Shell responsibilities:
 
 - Add `.ui-item` class.
-- Apply `applyUiItemState(.ui-item, { id, view, kind, mode, part? })` using `core.item(id)` and `core.view(id)`.
-- Maintain `data-focused`.
+- Maintain shell state class (`.is-focused`).
+- Keeps a stable `data-id` for diagnostics/tests.
 - Attach `DEFAULT_TARGET` to the shell:
 
 ```ts
@@ -67,29 +68,29 @@ core.focus(focus, DEFAULT_TARGET, { caret? })
 
 Shell constraints:
 
-- Shell attaches `DEFAULT_TARGET` only.
-- Shell must not attach any non-default targets.
+- Shell attaches `DEFAULT_TARGET`.
+- Shell/meta attaches `label` and `source:*` when those inputs are rendered.
 
 ### Body (owned by the item’s view)
 
 Body is the mounted item view implementation.
 
+Every `DomView.root` is a `.ui-body` element (or an element stamped as body), and is the only element returned by that view.
+
 Body responsibilities:
 
-- Render the inner content only (value/body UI) inside the shell.
-- Attach only non-default targets.
+- Render the inner content (`.ui-body`) for the item.
+- Attach body targets only.
 - Render the item’s internal structure, controls, and editors.
 
-Non-default targets include:
+Body targets include:
 
 - `value`
-- `label`
-- `source:*`
 
 Body constraints:
 
 - Body never attaches `DEFAULT_TARGET`.
-- Body may still call `core.focus(...)` to move to shell/`DEFAULT_TARGET` when appropriate.
+- Body does not attach `label`/`source:*` when those targets are rendered in shell/meta.
 - Body may include chrome only when it is truly body-owned; otherwise keep chrome in the parent/context view.
 - Body must not mount/unmount structural subtrees based on selection; selection may affect styling, caret/selection ranges, and editor state.
 
@@ -100,6 +101,7 @@ Body constraints:
 - Each Core item is presented by exactly one parent/context at a time, which owns the `.ui-item` shell.
 - The mounted view owns only the body subtree inside that shell.
 - A view's `DomView.root` renders body only; its parent/context provides the `.ui-item` shell.
+- In contexts where an item is never mounted as a standalone `DomView.root` (for example table row shells), the context view may render one element that acts as both shell and body surface for that item.
 
 ### Nesting uses `core.view(...)` + `core.mountView(...)`
 
@@ -107,7 +109,8 @@ When a view wants to render a child item:
 
 ```ts
 const shell = el("div", "ui-item")
-bindUiItemShell(ctx, { core, focus, part }, shell)
+bindUiItemShell(ctx, { core, focus }, shell)
+// optional: render .ui-meta with label/source targets here
 
 const body = core.mountView({ id, focus, view: core.view(id) })
 shell.append(body.el)
@@ -139,24 +142,15 @@ The parent/context still creates the same `.ui-item` shell and attaches `DEFAULT
 
 ### Required state on `.ui-item`
 
-`applyUiItemState` sets:
+Required:
 
-- `data-id`
-- `data-view` (derived from `core.view(id)`)
-- `data-kind`
-- `data-mode`
+- `.is-focused` (selection-derived)
 
-`data-view` is the view currently mounted as the item's body (from `core.view(id)`), not the parent/context view.
+Recommended:
 
-Optional:
+- `data-id` (stable diagnostics/tests selector)
 
-- `data-part` (only when a view renders multiple meaningful item roles)
-
-Focus styling sets:
-
-- `data-focused`
-
-Focus (`data-focused`) is derived from selection and must not force structural work.
+Focus styling (`.is-focused`) is derived from selection and must not force structural work.
 
 The shell applies this state and serves as the item focus surface. No other element represents an item.
 
@@ -193,27 +187,36 @@ The UI may intentionally convert mode (`direct` ↔ `source`), but:
 
 ## Focus targets
 
-### Targets per item
+### Item targets
 
 Each item exposes:
 
 - Exactly one `DEFAULT_TARGET` focus target.
-- 0..N edit targets.
+- 0..N item edit targets.
 
-Edit targets include:
+Item edit targets include:
 
 - `value`
 - `label`
 - `source:<fieldKey>`
 
+### View-owned targets (non-item)
+
 Views should not invent additional target patterns unless unavoidable.
+
+Table header edits are performed by editing schema-row cell items using standard item targets (`label`, `source:*`, etc.), not special table-header target names.
 
 The `label` target is a valid target, but it is not part of the normal Enter/typing-from-`DEFAULT_TARGET` edit flow.
 
+- Label editing is pointer-only for now.
+- Keyboard typing from row `DEFAULT_TARGET` does not enter label edit.
+- While editing a label, Arrow keys do not yield navigation.
+
 ### Target attachment rules
 
-- Shell attaches `DEFAULT_TARGET`.
-- Body attaches all non-default targets.
+- Shell/meta attaches `DEFAULT_TARGET`, `label`, and `source:<fieldKey>`.
+- Body attaches `value` (and future body-specific targets).
+- Standard item targets may be attached outside an item's `.ui-item` shell (for example table header meta), as long as focus `{container, item, target}` resolves to a mounted element.
 
 ### Caret rules
 
@@ -344,27 +347,104 @@ Table is primarily structural/spatial.
 `DEFAULT_TARGET` navigation:
 
 - Arrows move spatially across the grid (row/column).
-- Tab / Shift+Tab = prev/next column (cell selection movement, landing on `DEFAULT_TARGET`).
-- Enter = enter edit (first edit target), caret at end.
-- Typing = enter edit + replace.
+- Tab / Shift+Tab move to next/prev table traversal stop, landing on destination `DEFAULT_TARGET`.
+- Enter from a cell `DEFAULT_TARGET` = enter `value` edit (caret at end).
+- Enter from a row `DEFAULT_TARGET` = table structural default (insert row after).
+- Typing from a cell `DEFAULT_TARGET` = enter `value` edit + replace.
+- Typing from a row `DEFAULT_TARGET` does nothing (label edit is pointer-only).
 
 Edit navigation (cell editor focused):
 
 - Text editing is standard inside the field.
 - Enter commits/exits edit and moves down one row in the same column, landing on destination `DEFAULT_TARGET`.
-- Tab / Shift+Tab move to next/prev column, landing on destination `DEFAULT_TARGET`.
+- Tab / Shift+Tab commit and move to next/prev table traversal stop, landing on destination `DEFAULT_TARGET`.
 - Arrow keys may move out of the editor at boundaries (yield), landing on destination `DEFAULT_TARGET`.
+
+## View DOM outlines
+
+### Outline (`.ui-body.ui-outline`)
+
+```
+.ui-body.ui-outline
+```
+
+Group item in outline context:
+
+```
+.ui-body.ui-outline
+  .ui-item.ui-outline-node
+    .ui-meta
+      [label input target="label"]
+      [source inputs target="source:*" ...]
+    .ui-body...
+  .ui-item.ui-outline-node
+    ...
+```
+
+Scalar item in outline context:
+
+```
+.ui-body.ui-outline
+  [value editor input/textarea target="value"]
+```
+
+Notes:
+
+- Outline creates child `.ui-item` shells for presented children.
+- Meta, when shown, is shell-owned.
+- Scalar outline body can render just the value editor without wrapping itself in a shell.
+
+### Table (`.ui-body.ui-table`)
+
+```
+.ui-body.ui-table
+  .ui-table-header
+    .ui-table-col-meta
+    .ui-table-cols
+      .ui-table-col
+        .ui-meta   (mounted from schema cell item)
+      ...
+  .ui-table-body
+    .ui-table-rows
+      .ui-table-row.ui-item
+        .ui-table-cell.ui-table-cell-meta
+          .ui-meta (row item label/source)
+        .ui-table-cells
+          .ui-table-cell
+            .ui-body...
+          .ui-table-cell
+            ...
+      ...
+```
+
+Notes:
+
+- Row shells are direct children of `.ui-table-rows` inside `.ui-table-body`.
+- Each row uses a `.ui-table-cell-meta` cell plus a `.ui-table-cells` wrapper for data cells.
+
+### Slider (`.ui-body.ui-slider`)
+
+```
+.ui-body.ui-slider
+  input[type="range"]
+  .ui-slider-value
+```
+
+Notes:
+
+- Slider body exposes only slider UI; shell ownership for `DEFAULT_TARGET` remains in the parent/context.
+- Slider DOM should remain stable across selection changes.
 
 ## Styling conventions
 
-### Data-driven styling
+### Class-driven styling
 
-Styling is driven primarily by `.ui-item` data attributes (state from `applyUiItemState`, plus `data-focused` and optional `data-part`).
+Styling is driven primarily by `.ui-item` and state class (`.is-focused`).
 
 ### Layout + chrome live on the shell
 
 - The `.ui-item` shell provides geometry and chrome.
-- Styling reads directly from `.ui-item[data-*]`.
+- Styling reads directly from `.ui-item` state classes.
 
 ### CSS must not assume child view structure
 
@@ -388,11 +468,10 @@ Styling is driven primarily by `.ui-item` data attributes (state from `applyUiIt
 ## Summary of invariants
 
 - One item → exactly one `.ui-item` shell (created by the parent/context that presents it).
-- `.ui-item` shell applies state (`applyUiItemState`), attaches `DEFAULT_TARGET`, and handles `pointerdown` focus.
-- `applyUiItemState` always applies to the `.ui-item` root.
+- `.ui-item` shell applies state classes, attaches `DEFAULT_TARGET`, and handles `pointerdown` focus.
 - Two layers everywhere: Shell vs Body.
-- Shell attaches `DEFAULT_TARGET` only.
-- Body attaches non-default targets only.
+- Shell/meta own `DEFAULT_TARGET`, `label`, and `source:*` targets.
+- Body owns `value` targets.
 - One tabbable element total (app root).
 - No browser tab-order navigation.
 - Tab / Shift+Tab are always app commands.
