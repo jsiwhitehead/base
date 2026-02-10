@@ -1,482 +1,1004 @@
-# UI Design Guide
+# UI Guide
 
-This guide describes the UI system layered on Core. The goals are:
+This guide describes the DOM/UI system layered on Core: how UI is structured, how it mounts and disposes safely, how it stays reactive and stable, and how user interaction is routed consistently across views.
 
-- Predictable (selection drives focus and interaction).
-- Composable (nested views work without coupling).
-- Minimal (small DOM + small set of conventions).
-- Consistent across views.
+**This guide does not duplicate the Core contract.** The Core API and selection model are defined in `core-api.md`. This guide documents the UI layer conventions and responsibilities.
 
-## Core mental model
+---
 
-### Selection is the single source of truth
+## 0. Scope and principles
 
-Core always has one selection:
+The UI layer is intentionally small. It is not a general UI framework. It is a small set of primitives and conventions designed for an editor-like application where:
 
-- `idle`
-- `focused: { focus: { container, item }, target, caret? }`
+- selection drives focus and interaction
+- nested views compose cleanly
+- DOM identity remains stable across navigation
+- keyboard behavior is predictable and consistent
 
-All navigation and editing is expressed as updates to selection via:
+Core principles:
 
-- `core.focus(...)`
-- `core.blur()`
+1. **Core is the source of truth.**
+   UI renders Core state and commits changes through Core.
 
-### Reactivity and DOM stability
+2. **Selection is the single focus truth.**
+   UI does not track focus manually; it attaches targets and Core selection determines the active DOM element.
 
-Selection changes are frequent and must be cheap.
+3. **Shell is stable; body is swappable.**
+   Selection changes should be cheap and styling-only.
 
-- Selection-driven updates must be styling-only (e.g. `.is-focused`) and must not rebuild structure.
-- `.ui-item` element identity must remain stable across selection changes; only selection styling should change.
-- Structural DOM updates must depend on item state (`core.item(id)`), not selection.
-- Any code that needs selection inside a component should prefer a local primitive computed (e.g. `isFocused`) rather than reading `core.selection()` in broad effects.
-- When swapping child components via `slot.set(...)`, gate swaps with a stable discriminator (e.g. `view`, `kind`) so reactive reruns do not remount unchanged structure.
-- The body component is swapped only when `core.view(id)` (or another item-driven discriminator such as `kind`) changes, not when selection changes.
+4. **Interaction is semantic.**
+   Views interpret high-level intents (`NAV`, `TAB`, etc.) rather than raw DOM key events.
 
-### Views do not track focus manually
+5. **Tab is always an app command.**
+   The UI does not use browser tab-order navigation.
 
-- Views attach logical targets to DOM elements via `core.attachTarget(...)`.
-- Runtime focuses the correct DOM element when selection changes.
-- Global keydown is delivered to the current root `DomView.onKeyDown`.
-- Root view behavior is selection-driven and updates selection.
-- Views must not store module-level “active view” state.
+---
 
-## Two layers: Shell vs Body
+# 1) UI Architecture
 
-### Shell (owned by the parent/context view)
+This chapter describes how the DOM is structured, how components are mounted/disposed, and how reactivity is kept stable.
 
-Shell renders exactly one wrapper element for each presented item. That wrapper is the `.ui-item`.
+---
 
-Shell responsibilities:
+## 1.1 Two layers everywhere: Shell vs Body
 
-- Add `.ui-item` class.
-- Maintain shell state class (`.is-focused`).
-- Keeps a stable `data-id` for diagnostics/tests.
-- Attach `DEFAULT_TARGET` to the shell:
+Every presented item is represented using two conceptual layers:
 
-```ts
-ctx.target(focus, DEFAULT_TARGET, () => shellEl)
-```
+### Shell (owned by the parent/context)
 
-- Handle pointer selection on the shell:
+The shell is the stable wrapper element for an item.
 
-```ts
-core.focus(focus, DEFAULT_TARGET, { caret? })
-```
+A shell is responsible for:
 
-- Shell must not mount/unmount body content based on selection.
-- Shell keeps one stable element instance for that presented item.
+- representing exactly one Core item presentation
+- adding the `.ui-item` class
+- setting a stable `data-id` (recommended)
+- being programmatically focusable (`tabIndex = -1` if not already set)
+- attaching `DEFAULT_TARGET`
+- handling pointer selection on the item
+- applying selection-driven state classes (e.g. `.is-focused`)
+- optionally rendering **meta chrome** (label + source fields)
 
-Shell constraints:
+Shell logic is shared and implemented by:
 
-- Shell attaches `DEFAULT_TARGET`.
-- Shell/meta attaches `label` and `source:*` when those inputs are rendered.
+- `bindUiItemShell(ctx, { core, focus }, shellEl)`
 
-### Body (owned by the item’s view)
+Shells must remain structurally stable across selection changes.
 
-Body is the mounted item view implementation.
+---
 
-Every `DomView.root` is a `.ui-body` element (or an element stamped as body), and is the only element returned by that view.
+### Meta (part of shell ownership)
 
-Body responsibilities:
+Meta is item chrome rendered by the parent/context.
 
-- Render the inner content (`.ui-body`) for the item.
-- Attach body targets only.
-- Render the item’s internal structure, controls, and editors.
+Meta includes:
 
-Body targets include:
+- label editor (`target = "label"`)
+- source field editors (`target = "source:*"`)
 
-- `value`
+Meta is not view-specific. It is item-specific.
 
-Body constraints:
+Meta may be conditionally shown/hidden based on item state (label exists, item is in source mode, etc.), but the ownership boundary remains the same.
 
-- Body never attaches `DEFAULT_TARGET`.
-- Body does not attach `label`/`source:*` when those targets are rendered in shell/meta.
-- Body may include chrome only when it is truly body-owned; otherwise keep chrome in the parent/context view.
-- Body must not mount/unmount structural subtrees based on selection; selection may affect styling, caret/selection ranges, and editor state.
+---
 
-## Item ownership and view composition
+### Body (owned by the mounted view)
 
-### One item → one shell + one body at a time
+The body is the view-specific UI subtree.
 
-- Each Core item is presented by exactly one parent/context at a time, which owns the `.ui-item` shell.
-- The mounted view owns only the body subtree inside that shell.
-- A view's `DomView.root` renders body only; its parent/context provides the `.ui-item` shell.
-- In contexts where an item is never mounted as a standalone `DomView.root` (for example table row shells), the context view may render one element that acts as both shell and body surface for that item.
+A body is responsible for:
 
-### Nesting uses `core.view(...)` + `core.mountView(...)`
+- rendering `.ui-body` (or an element stamped as body)
+- rendering view-specific structure
+- rendering children (via shell/body composition)
+- attaching **body-owned targets**
+- rendering view-owned controls (text editors, sliders, etc.)
 
-When a view wants to render a child item:
+Bodies are mounted via:
 
-```ts
-const shell = el("div", "ui-item")
-bindUiItemShell(ctx, { core, focus }, shell)
-// optional: render .ui-meta with label/source targets here
+- `core.mountView({ id, focus, view: core.view(id) })`
 
-const body = core.mountView({ id, focus, view: core.view(id) })
-shell.append(body.el)
-ctx.cleanup(() => body.dispose())
-```
+In composed contexts (for example, table header meta and row shells), a context view may render elements that act as shell + body surface for items that are not mounted as standalone roots. Target ownership rules still apply.
 
-- `core.view(id)` decides the desired view name (reactive when read in a reactive context).
-- `core.mountView(...)` mounts exactly the requested view.
-- Continue/fallback behavior is handled by the hosting view, not by Core.
-- The returned component’s `.el` is body content mounted inside the shell.
+---
 
-### Parent/context always supplies the shell around body
+### Target ownership contract (hard rule)
 
-Regardless of whether body came from:
+This is a core UI invariant.
 
-- `core.mountView(...)`, or
-- Parent continuing rendering itself,
+**Shell/meta owns these targets:**
 
-The parent/context still creates the same `.ui-item` shell and attaches `DEFAULT_TARGET` there.
-
-## `.ui-item` contract
-
-### `.ui-item` semantics
-
-`.ui-item` represents:
-
-- Exactly one Core item.
-- As presented in exactly one parent/context.
-
-### Required state on `.ui-item`
-
-Required:
-
-- `.is-focused` (selection-derived)
-
-Recommended:
-
-- `data-id` (stable diagnostics/tests selector)
-
-Focus styling (`.is-focused`) is derived from selection and must not force structural work.
-
-The shell applies this state and serves as the item focus surface. No other element represents an item.
-
-## Mode vs editability (UI contract)
-
-### Core truth
-
-From Core’s perspective:
-
-- An item is editable iff `item.mode.kind !== "readonly"`.
-- Core exposes mode state; UI must respect readonly.
-- Core does not pre-filter edits by mode.
-- UI should not rely on exceptions for user-input validation.
-- Invalid user input should round-trip through Core issue state and be rendered from Core.
-- Core may still throw for programmer errors or invariant violations.
-
-### UI default behavior
-
-UI behavior should generally follow `item.mode.kind`:
-
-- `direct`: render direct content editors.
-- `source`: render source-related editors; derived output is not directly edited by default.
-- `readonly`: render read-only views only.
-
-`readonly` is the hard stop. `direct` vs `source` determines which editor targets exist.
-
-### Mode conversion
-
-The UI may intentionally convert mode (`direct` ↔ `source`), but:
-
-- It must be explicit.
-- It must be intentional.
-- It must not happen implicitly during normal editing.
-
-## Focus targets
-
-### Item targets
-
-Each item exposes:
-
-- Exactly one `DEFAULT_TARGET` focus target.
-- 0..N item edit targets.
-
-Item edit targets include:
-
-- `value`
+- `DEFAULT_TARGET`
 - `label`
 - `source:<fieldKey>`
 
-### View-owned targets (non-item)
+**Body owns these targets:**
 
-Views should not invent additional target patterns unless unavoidable.
+- `value`
+- any future body-specific targets
 
-Table header edits are performed by editing schema-row cell items using standard item targets (`label`, `source:*`, etc.), not special table-header target names.
+Bodies must not attach `label` or `source:*`.
+Shell/meta must not attach `value`.
 
-The `label` target is a valid target, but it is not part of the normal Enter/typing-from-`DEFAULT_TARGET` edit flow.
+This keeps:
 
-- Label editing is pointer-only for now.
-- Keyboard typing from row `DEFAULT_TARGET` does not enter label edit.
-- While editing a label, Arrow keys do not yield navigation.
+- item chrome consistent across contexts
+- view bodies simpler
+- target behavior uniform regardless of which view is mounted
 
-### Target attachment rules
+---
 
-- Shell/meta attaches `DEFAULT_TARGET`, `label`, and `source:<fieldKey>`.
-- Body attaches `value` (and future body-specific targets).
-- Standard item targets may be attached outside an item's `.ui-item` shell (for example table header meta), as long as focus `{container, item, target}` resolves to a mounted element.
+### Editability and mode
 
-### Caret rules
+Editability is mode-driven:
 
-- Caret values are meaningful only for targets that support text cursor placement (typically edit targets).
+- `readonly` is a hard stop for editing
+- `direct` vs `source` determines which edit targets exist (`value` vs `source:*`)
 
-## Tabbability and keyboard routing
+The UI may convert modes (`direct` <-> `source`), but conversion must be explicit.
 
-### One tabbable element total
+---
 
-- Exactly one tabbable element in the whole app: the top-level app root.
-- No browser tab-order navigation is used.
+## 1.2 Component model and lifecycle
+
+The UI uses a minimal component model.
+
+A component is:
+
+```ts
+type Component = { el: HTMLElement; dispose(): void };
+```
+
+The only correct way to create a component is:
+
+- `createComponent(core, (ctx) => HTMLElement)`
+
+`createComponent` provides:
+
+- automatic disposal of:
+  - event listeners
+  - reactive effects
+  - mounted child components
+  - target bindings
+
+- predictable teardown:
+  - all cleanups run
+  - the component root is emptied
+
+This is the primary mechanism preventing:
+
+- memory leaks
+- stale DOM
+- stale focus targets
+- duplicate effects
+
+---
+
+## 1.3 `Ctx`: the UI’s “micro-framework”
+
+`createComponent` supplies a `Ctx` that provides safe building blocks.
+
+### `ctx.cleanup(fn)`
+
+Registers a cleanup function.
+
+Use this whenever you mount another component or register any external disposer.
+
+---
+
+### `ctx.on(el, type, handler, opts?)`
+
+Registers an event listener and automatically removes it on dispose.
+
+Views should not call `addEventListener` directly.
+
+---
+
+### `ctx.effect(run)`
+
+Registers a reactive effect using signals.
+
+`run()` may return a cleanup function which is called:
+
+- before the effect re-runs
+- when the component is disposed
+
+Effects should be written as idempotent updates to DOM state.
+
+---
+
+### `ctx.slot(host)`
+
+Manages a single mounted child component inside a host element.
+
+Used when a subtree must swap based on a discriminator (view kind, content kind).
+
+---
+
+### `ctx.list(host, create)`
+
+Manages a keyed list of child components.
+
+Provides:
+
+- stable reuse of children by id
+- deterministic disposal of removed children
+- DOM reconciliation without destroying stable nodes
+
+This is the standard way to render item children.
+
+---
+
+### `ctx.target(focus, target, getEl, opts?)`
+
+Attaches a Core focus target binding.
+
+This registers a DOM element as the focus destination for a given `{ focus, target }`.
+
+This is the only correct way to integrate DOM focus with Core selection.
+
+---
+
+## 1.4 DOM helpers and conventions
+
+The UI layer provides small helpers that encode conventions:
+
+- `el(tag, className?, text?)`
+- `reconcileChildren(parent, desired)`
+- `setData(el, key, value)`
+- `setDataBool(el, key, on)`
+- `caretFromTarget(eventTarget)`
+
+These helpers exist to:
+
+- keep DOM code terse and consistent
+- avoid ad-hoc reconciliation patterns
+- make debugging easier via stable datasets
+
+---
+
+## 1.5 Reactivity & stability rules
+
+Selection changes are frequent and must be cheap.
+
+### Rule: selection-driven updates must be styling-only
+
+Selection-driven effects should only:
+
+- toggle classes
+- update datasets
+- update caret ranges / editor state
+
+Selection-driven effects must not:
+
+- rebuild shells
+- remount bodies
+- restructure lists
+
+---
+
+### Rule: `.ui-item` identity must be stable across navigation
+
+A `.ui-item` element represents a specific item presentation.
+
+When selection moves, the `.ui-item` DOM nodes must not be replaced; only their styling should change.
+
+This is foundational to predictable focus and pointer behavior.
+
+---
+
+### Rule: structural swaps must be gated by stable discriminators
+
+When using `slot.set(...)`, swaps must be gated by discriminators such as:
+
+- item content kind (`group` vs `scalar`)
+- item view name
+
+Reactive re-runs should not remount unchanged structure.
+
+---
+
+### Rule: prefer small computed selectors
+
+When a component needs selection state, it should prefer local computed signals like:
+
+- `isFocused = computed(() => ...)`
+
+Rather than broad effects that read selection repeatedly.
+
+This keeps selection reads cheap and local.
+
+---
+
+# 2) Interaction & Editing
+
+This chapter defines how keyboard and pointer input is routed and how editors behave.
+
+---
+
+## 2.1 Focus, targets, and caret (UI-level model)
+
+Core selection is always either:
+
+- idle (blurred)
+- focused: `{ focus, target, caret? }`
+
+The UI treats targets as named focus surfaces:
+
+- `DEFAULT_TARGET` — item container focus (shell)
+- `label` — label editor (shell/meta)
+- `source:*` — source editors (shell/meta)
+- `value` — primary content editor (body)
+
+Universal item edit targets are:
+
+- `source:*` fields (in source mode)
+- `value` (in direct scalar mode)
+
+`label` is a valid target but is not part of standard keyboard edit-entry flow.
+
+Universal label editing policy (current):
+
+- label editing is pointer-accessible only
+- keyboard navigation does not enter label
+- label targets do not yield navigation while editing
+- label is not part of edit-stop traversal
+
+Caret values are meaningful only for caret-supporting targets (typically text editors).
+
+---
+
+## 2.2 Hard focus and tab invariants
+
+These are intentional design choices.
+
+### Exactly one tabbable element
+
+The app uses exactly one tabbable element total:
+
+- the top-level application container
+
+No other element participates in browser tab-order navigation.
+
+---
 
 ### Tab / Shift+Tab are always app commands
 
-- Tab is never used for browser focus traversal.
-- Even when editing text, Tab is defined by the view.
+Tab is never used for browser focus traversal.
+
+Even inside text editors:
+
+- Tab is intercepted and translated into an app intent
+- the view defines what Tab means
+
+This makes keyboard behavior consistent and view-controlled.
+
+---
+
+### Tab is delivered to the current view
+
+`TAB` / `Shift+TAB` is always interpreted by exactly one current view based on focused ownership.
+
+- focus on an outer container/target routes `TAB` to the parent/context view
+- focus on an inner container/target routes `TAB` to the child view that owns that target
+
+This keeps behavior local to the focused item context regardless of target type.
+
+---
 
 ### Programmatic focus only
 
-- Shell/body targets may be focusable programmatically.
-- Targets other than the app root are not tabbable.
+Targets are focused programmatically based on Core selection.
 
-### Keyboard routing
+Inputs may still be focusable (for selection/caret), but they are not part of tab-order.
 
-- Global keydown routes to the currently mounted root view instance.
-- Views interpret selection and dispatch navigation/edit intents.
+---
 
-## Controls and yielding
+## 2.3 Intent model (semantic keyboard)
 
-### Controls
+The UI defines a shared intent vocabulary:
 
-Controls are reusable UI building blocks.
+- `NAV { dir, mode }`
+- `TAB { shift }`
+- `CONFIRM { caret? }`
+- `CANCEL`
+- `TYPE { char }`
+- `DELETE { dir }`
+- `DELETE_BOUNDARY { dir }`
 
-Controls:
+Views interpret intents. Controls emit intents.
 
-- Do not create `.ui-item`.
-- Are always owned by a view.
-- Participate in focus only via the view that contains them.
+This separation is what keeps:
 
-### Yielding is semantic, not bubbling
+- view logic simple
+- editor logic reusable
+- behavior consistent across views
 
-When an editor wants to yield to navigation/commands, it does not “bubble key events”. Instead it emits semantic intents like:
+---
+
+## 2.4 Keyboard routing
+
+Keyboard routing happens at two levels.
+
+### Global routing
+
+The app root receives keydown events and forwards them to the currently mounted root `DomView.onKeyDown`.
+
+That root view:
+
+- parses the event into an intent
+- consumes the event
+- dispatches the intent based on Core selection
+
+---
+
+### Editor yielding
+
+Editors implement “yielding” via:
+
+- `bindTextEditorYield(inp, onIntent)`
+
+Yielding is semantic, not bubbling.
+It applies to text edit targets (`source:*`, `value`), not to `label`.
+
+Instead of letting arrow keys bubble, editors detect boundary conditions and emit intents like:
 
 - `NAV`
 - `TAB`
 - `CONFIRM`
 - `CANCEL`
-- `DELETE`
 - `DELETE_BOUNDARY`
-- `TYPE`
 
-This allows view-specific rules to be implemented cleanly.
+This is what enables:
 
-## Universal interaction rules
+- outline-style editing
+- grid-style editing
+- predictable navigation at text boundaries
+
+---
+
+## 2.5 Pointer routing
+
+Pointer behavior is intentionally simple and consistent.
+
+### Shell pointerdown
+
+`.ui-item` shells handle pointerdown by:
+
+- focusing the item at `DEFAULT_TARGET`
+- capturing a caret (if the pointer was on a text editor)
+- stopping propagation
+
+This is owned by `bindUiItemShell`.
+
+---
+
+### Editor pointerdown
+
+Editors handle pointerdown by:
+
+- focusing their specific target
+- using `caretFromTarget(e.target)` for caret placement
+- stopping propagation
+
+---
+
+## 2.6 Text editing controls
+
+The UI provides two primary text controls:
+
+- `textField` — input or textarea
+- `autosizeTextField` — input with mirror span for width
+
+Both controls:
+
+- attach their target via `ctx.target(...)`
+- participate in yielding via `bindTextEditorYield(...)`
+- respect readonly state
+- surface issue state via `data-issue`
+
+---
+
+### 2.6.1 Editor commit models
+
+Editors support two commit models:
+
+#### Live
+
+- commits on every `input`
+- no local draft state
+- cancel does not revert
+
+Use when:
+
+- updates are cheap
+- “what you see is what Core has” is desired
+
+---
+
+#### Draft
+
+- maintains local draft state while focused
+- commits on:
+  - `CONFIRM`
+  - `TAB`
+  - yielded `NAV`
+  - `blur`
+
+- cancels on `CANCEL`
+- resets to committed state when focus leaves
+
+Draft mode exists to provide:
+
+- explicit commit points
+- cancellation
+- stable editing across reactive reruns
+
+---
+
+### 2.6.2 Multiline Enter rules
+
+In multiline editors:
+
+- `Enter` is interpreted as `CONFIRM` (commit/exit) by default.
+- `Ctrl+Enter` or `Meta+Enter` inserts a newline.
+
+This preserves:
+
+- fast commit behavior
+- the ability to enter multiline content intentionally
+
+---
+
+## 2.7 Universal interaction rules
+
+These are shared across views.
 
 ### Escape ladder
 
-- If `sel.kind === "focused"` and `sel.target !== DEFAULT_TARGET` → Escape moves to `DEFAULT_TARGET`.
-- Otherwise Escape blurs to idle (`core.blur()`).
+Escape behaves as:
 
-### Pointer (click) behavior
+- if focused on a non-default target → focus `DEFAULT_TARGET`
+- else → blur
 
-- `.ui-item` shells should handle `pointerdown` by focusing `DEFAULT_TARGET`.
+---
 
-### Enter and typing from `DEFAULT_TARGET`
+### Typing from `DEFAULT_TARGET`
 
 When focused on `DEFAULT_TARGET`:
 
-- Enter (`CONFIRM`) enters edit using the first edit target (if any), usually caret at end.
-- Typing (`TYPE`) enters edit using the first edit target and replaces existing text (select-all then type).
-- These are distinct entry modes: Enter is not select-all.
+- `TYPE` enters the first item edit target (if any)
+- selects all
+- inserts the typed character
 
-### Editor commit models
+---
 
-- Live editors commit on `input` (and only on `input`).
-- Draft editors keep local draft while focused; commit on `CONFIRM`, `TAB`, yielded `NAV`, or `blur`.
-- Draft editors cancel on `CANCEL`.
-- Draft state exists only for the focused edit session; once focus leaves, draft resets to the committed Core value.
-- In multiline editors, `Enter` commits and `Mod+Enter` inserts newline.
+### Enter from `DEFAULT_TARGET`
+
+When focused on `DEFAULT_TARGET`:
+
+- `CONFIRM` enters the first item edit target (if any)
+- caret is placed at end (not select-all)
+- if there is no item edit target, `CONFIRM` performs the view structural default
+
+---
 
 ### Navigation does not implicitly enter edit
 
-When a navigation command moves to a different item:
+When navigation moves focus to a different item:
 
-- The destination is focused in `DEFAULT_TARGET` mode.
-- Navigation never auto-enters edit as a side effect.
+- the destination is focused at `DEFAULT_TARGET`
+- navigation never auto-enters editing
 
-## View-specific navigation principles
+---
 
-### Outline
+# 3) View Specs
 
-Outline has two related but distinct position spaces:
+This chapter describes each view and its intent interpretation.
 
-1. Shell geometry (structural selection over items).
-2. Edit-flow geometry (editing traversal over edit targets).
+All views should be documented using the same template:
 
-`DEFAULT_TARGET` navigation:
+1. Purpose / mental model
+2. DOM shape
+3. Focus surfaces + targets
+4. Navigation rules
+5. Editing rules
+6. Structural commands
+7. Notable edge cases
 
-- Up/Down = previous/next presented item in outline order.
-- Left = parent (if any).
-- Right = first child (if any).
+---
 
-Entering edit:
+## 3.1 Outline view
 
-- From `DEFAULT_TARGET`, Enter/typing enters first edit target if present.
-- If item has no edit targets, Enter performs the view's structural default.
+### Purpose
 
-Edit-flow traversal (outline only):
+Outline is a hierarchical editor optimized for:
 
-- When focused on an edit target, Arrow keys traverse the edit-flow space.
-- Traversal moves to the next/previous edit stop and stays in edit (target remains non-default).
-- Caret policy: forward sets caret at start; backward sets caret at end.
+- structural navigation
+- fast text editing
+- nesting / splitting / joining
 
-Edit stops:
+Outline presents items in a depth-first visible order.
 
-- DFS over presented outline items.
-- For each item, the view defines 0..N edit stops (targets).
-- Readonly outputs contribute 0 edit targets and are naturally skipped.
+---
 
-Structural edits:
+### DOM shape
 
-- Tab / Shift+Tab = indent / outdent (from edit or `DEFAULT_TARGET`).
+Outline renders:
 
-### Table
+- a body stamped as `.ui-body.ui-outline`
+- for each presented item:
+  - a `.ui-outline-node` shell (`.ui-item`)
+  - optional `.ui-meta` in the shell (label + source)
+  - the mounted body for that item’s view
 
-Table is primarily structural/spatial.
+Group items render children recursively.
 
-`DEFAULT_TARGET` navigation:
+Scalar items render a body editor (`value`) and do not necessarily wrap themselves in an additional shell when mounted as the body root.
 
-- Arrows move spatially across the grid (row/column).
-- Tab / Shift+Tab move to next/prev table traversal stop, landing on destination `DEFAULT_TARGET`.
-- Enter from a cell `DEFAULT_TARGET` = enter `value` edit (caret at end).
-- Enter from a row `DEFAULT_TARGET` = table structural default (insert row after).
-- Typing from a cell `DEFAULT_TARGET` = enter `value` edit + replace.
-- Typing from a row `DEFAULT_TARGET` does nothing (label edit is pointer-only).
+Canonical structure:
 
-Edit navigation (cell editor focused):
-
-- Text editing is standard inside the field.
-- Enter commits/exits edit and moves down one row in the same column, landing on destination `DEFAULT_TARGET`.
-- Tab / Shift+Tab commit and move to next/prev table traversal stop, landing on destination `DEFAULT_TARGET`.
-- Arrow keys may move out of the editor at boundaries (yield), landing on destination `DEFAULT_TARGET`.
-
-## View DOM outlines
-
-### Outline (`.ui-body.ui-outline`)
-
-```
+```text
 .ui-body.ui-outline
-```
-
-Group item in outline context:
-
-```
-.ui-body.ui-outline
-  .ui-item.ui-outline-node
-    .ui-meta
-      [label input target="label"]
-      [source inputs target="source:*" ...]
-    .ui-body...
-  .ui-item.ui-outline-node
+  .ui-outline-node.ui-item                       (target: DEFAULT_TARGET)
+    .ui-meta                                     (optional shell/meta chrome)
+      [label editor]                             (target: label)
+      [source editor(s)]                         (target: source:*)
+    .ui-body...                                  (mounted child view body)
+  .ui-outline-node.ui-item
     ...
 ```
 
-Scalar item in outline context:
+Scalar item body (direct scalar):
 
-```
+```text
 .ui-body.ui-outline
-  [value editor input/textarea target="value"]
+  [value editor]                                 (target: value)
 ```
 
-Notes:
+---
 
-- Outline creates child `.ui-item` shells for presented children.
-- Meta, when shown, is shell-owned.
-- Scalar outline body can render just the value editor without wrapping itself in a shell.
+### Focus surfaces and targets
 
-### Table (`.ui-body.ui-table`)
+Outline uses:
 
-```
+Shell/meta targets:
+
+- `DEFAULT_TARGET`
+- `label` (see universal label policy)
+- `source:*`
+
+Body targets:
+
+- `value`
+
+---
+
+### Navigation rules
+
+#### Container focus (`DEFAULT_TARGET`)
+
+Arrow navigation is structural:
+
+- up/down: previous/next visible item
+- left: parent item (if any)
+- right: first child (if any)
+
+---
+
+#### Edit focus (non-default targets)
+
+When focused on an edit target (`value` or `source:*`):
+
+- arrow keys traverse the edit-flow space
+- traversal moves between edit stops (not structural shells)
+
+Edit stops include:
+
+- `source:*` fields for source-mode leaf items
+- `value` for direct scalar leaf items
+
+Label is excluded for now.
+
+Caret policy:
+
+- forward traversal places caret at start
+- backward traversal places caret at end
+
+---
+
+### Editing rules
+
+#### Primary edit target
+
+Outline follows the universal first-edit-target rule (`source:*` then `value`).
+
+---
+
+#### `=` shortcut
+
+If the user types `=` on an empty direct scalar:
+
+- the item is converted to derived source mode
+- focus moves to `source:expr`
+
+---
+
+### Confirm rules
+
+Enter behavior (outline-specific cases):
+
+- If editing `value`:
+  - split the scalar at caret selection into two sibling items
+  - focus the new right item’s `value`
+
+- If editing a `source:*` field:
+  - exit to `DEFAULT_TARGET`
+
+---
+
+### Tab rules
+
+Tab performs nesting:
+
+- Tab: indent (nest in)
+- Shift+Tab: outdent (nest out)
+
+When tabbing while editing:
+
+- the view attempts to preserve the same target
+- caret is clamped into the new text
+
+---
+
+### Delete rules
+
+Outline interprets boundary delete as:
+
+- removing empty items
+- joining adjacent scalar items when appropriate
+- removing non-scalar items structurally
+
+After deletion:
+
+- focus moves to a neighboring item or blurs if none remain
+
+---
+
+## 3.2 Table view
+
+### Purpose
+
+Table presents a group item as a grid:
+
+- children of the table are rows
+- children of each row are cells
+- the first row defines the schema (column count)
+
+Table is optimized for:
+
+- spatial navigation
+- fast data entry
+- nested cell views
+
+---
+
+### DOM shape
+
+Table mounts:
+
+- `.ui-body.ui-table`
+  - `.ui-table-header`
+  - `.ui-table-body`
+
+Rows are rendered as `.ui-table-row.ui-item` shells.
+
+Each row contains:
+
+- a meta-column cell (`.ui-table-meta-col`) for row item meta
+- a set of cell shells for each cell item
+
+The header renders schema cell meta (label/source) by mounting the schema-row cell items’ meta UI.
+
+Canonical structure:
+
+```text
 .ui-body.ui-table
   .ui-table-header
-    .ui-table-col-meta
-    .ui-table-cols
-      .ui-table-col
-        .ui-meta   (mounted from schema cell item)
-      ...
+    .ui-table-col.ui-table-meta-col
+    .ui-table-col
+      .ui-meta                                   (schema cell meta: label/source targets)
+    ...
   .ui-table-body
     .ui-table-rows
-      .ui-table-row.ui-item
-        .ui-table-cell.ui-table-cell-meta
-          .ui-meta (row item label/source)
+      .ui-table-row.ui-item                      (row target: DEFAULT_TARGET)
+        .ui-table-cell.ui-table-meta-col
+          .ui-meta                               (row meta: label/source targets)
         .ui-table-cells
-          .ui-table-cell
-            .ui-body...
-          .ui-table-cell
-            ...
+          .ui-table-cell.ui-item                 (cell target: DEFAULT_TARGET)
+            .ui-body...                          (mounted cell view body; value target when scalar)
+          ...
       ...
 ```
 
-Notes:
+---
 
-- Row shells are direct children of `.ui-table-rows` inside `.ui-table-body`.
-- Each row uses a `.ui-table-cell-meta` cell plus a `.ui-table-cells` wrapper for data cells.
+### Focus surfaces and targets
 
-### Slider (`.ui-body.ui-slider`)
+Row shells:
 
-```
+- `DEFAULT_TARGET` is attached to the row shell
+
+Row meta targets:
+
+- `label` (see universal label policy)
+- `source:*`
+
+Cell shells:
+
+- `DEFAULT_TARGET` attached to each cell shell
+
+Cell body targets:
+
+- `value` for editable scalar cells
+
+---
+
+### Traversal stops
+
+- row container focus
+- cell container focus
+- cell edit targets (`value`)
+- source edit stops where applicable
+
+---
+
+### Navigation rules
+
+#### Row container focus (`DEFAULT_TARGET`)
+
+- up/down: move between rows
+- right: enter first cell container (column 0)
+- left: no-op (table does not currently escape left)
+
+---
+
+#### Cell container focus (`DEFAULT_TARGET`)
+
+- left/right: move between cells
+- up/down: move between rows in same column
+- left from column 0: returns to row container focus
+
+---
+
+#### Cell edit focus (`value`)
+
+Editors yield at boundaries:
+
+- arrow keys yield at start/end to move to neighbor cell
+
+---
+
+### Tab traversal rules
+
+Tab provides a linear traversal order:
+
+- row container → first cell → next cells → next row container → …
+
+Shift+Tab moves backward.
+
+---
+
+### Confirm rules (Enter)
+
+Enter behavior is intentionally spreadsheet-like:
+
+- From row container focus:
+  - insert a new row after current row
+  - focus new row container
+
+- From cell editing (`value`):
+  - commit and exit edit
+  - move focus down one row in the same column (if possible)
+  - otherwise exit to the same cell container
+
+---
+
+### Type-to-edit
+
+Type-to-edit exception:
+
+- typing while row container-focused does nothing (row container is structural)
+
+---
+
+### Structural commands
+
+Table supports:
+
+- add row after current row (Enter from row container)
+- remove row (command-driven; not bound to Delete by default)
+
+---
+
+## 3.3 Slider view
+
+### Purpose
+
+Slider is a scalar editor optimized for numeric adjustment.
+
+It provides:
+
+- pointer dragging
+- keyboard nudging
+- formatted numeric display
+
+---
+
+### DOM shape
+
+Slider mounts:
+
+- `.ui-body.ui-slider`
+  - `<input type="range">`
+  - `.ui-slider-value`
+
+Canonical structure:
+
+```text
 .ui-body.ui-slider
-  input[type="range"]
+  input[type="range"]                            (body control; not a separate Core target)
   .ui-slider-value
 ```
 
-Notes:
+---
 
-- Slider body exposes only slider UI; shell ownership for `DEFAULT_TARGET` remains in the parent/context.
-- Slider DOM should remain stable across selection changes.
+### Focus surfaces and targets
 
-## Styling conventions
+Slider does not introduce extra targets beyond `DEFAULT_TARGET`.
 
-### Class-driven styling
+The slider input is not a separate focus target; it is a body control.
 
-Styling is driven primarily by `.ui-item` and state class (`.is-focused`).
+---
 
-### Layout + chrome live on the shell
+### Navigation rules
 
-- The `.ui-item` shell provides geometry and chrome.
-- Styling reads directly from `.ui-item` state classes.
+Arrow keys nudge the value:
 
-### CSS must not assume child view structure
+- left/down: decrement
+- right/up: increment
 
-- CSS should not assume a specific child view implementation.
-- Views should not rely on other views’ DOM internals.
+Jump vs step:
 
-## Minimal DOM and composition rules
+- jump nudges by 10 steps
+- step nudges by 1 step
 
-### Minimal DOM principle
+---
 
-- DOM structure should be minimal and intentional.
-- Wrappers are introduced only when required.
+### Editing rules
 
-### Composition rules
+Slider commits only when:
 
-- Views are independent and composable.
-- Views do not reach into other views’ DOM.
-- Views do not special-case other views.
-- Adding a new view must not require changes to existing views.
+- the item is a direct scalar
+- the value is numeric/coercible
 
-## Summary of invariants
+Value display formatting depends on step precision.
 
-- One item → exactly one `.ui-item` shell (created by the parent/context that presents it).
-- `.ui-item` shell applies state classes, attaches `DEFAULT_TARGET`, and handles `pointerdown` focus.
-- Two layers everywhere: Shell vs Body.
-- Shell/meta own `DEFAULT_TARGET`, `label`, and `source:*` targets.
-- Body owns `value` targets.
+---
+
+# Summary of invariants
+
+- One item presentation → exactly one `.ui-item` shell.
+- Shell owns: `DEFAULT_TARGET`, label, and source targets.
+- Body owns: value targets.
+- Shell identity is stable across selection changes.
+- Selection-driven updates must be styling-only.
 - One tabbable element total (app root).
-- No browser tab-order navigation.
-- Tab / Shift+Tab are always app commands.
-- Nested view composition is driven by `core.view(id)` + `core.mountView(...)`.
-- Focus is item-based and routed by Core.
-- Global keydown routes to the stable mounted root view instance (no mount-per-key).
-- Selection changes must not replace `.ui-item` shell nodes; tests assert DOM node identity stability across navigation.
-- Item-driven structure changes may replace descendants below `.ui-item`, but `.ui-item` root identity remains stable unless the mounted view changes.
+- Tab/Shift+Tab are always app commands.
+- Tab is delivered to the current view (outer -> parent/context view; inner -> child view).
+- Interaction is routed via intents.
+- Editors yield semantically (they emit intents rather than bubbling raw events).
+- Label editing is pointer-only and does not yield navigation.
+- `CONFIRM` from `DEFAULT_TARGET` enters first item edit target, or runs the view structural default when no edit target exists.
+- Table Enter in cell edit commits and moves down when possible.
+- Mod+Enter inserts newline in multiline editors.
