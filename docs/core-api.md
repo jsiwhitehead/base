@@ -79,12 +79,12 @@ This ensures `core.item` always succeeds.
 
 ```ts
 type Content =
-  | { kind: "scalar", value: Scalar | null }
+  | { kind: "value", value: Value | null }
   | { kind: "group", children: readonly ItemId[] }
   | { kind: "issue", message: string }
 ```
 
-### Scalar
+### Value
 
 - Represents a single value.
 - `null` represents blank.
@@ -153,7 +153,7 @@ Sources define how an item’s content is computed.
 - `derived`: produces content from an expression.
 - `lens`: selects and transforms items from a group.
 
-The result of a source determines the item’s visible content kind (scalar or group).
+The result of a source determines the item’s visible content kind (value or group).
 
 ## Editing
 
@@ -178,7 +178,7 @@ If a commit produces no ops, undo history is not extended.
 ```ts
 tx.setLabel(id, label)
 tx.setView(id, view)
-tx.setScalar(id, value)
+tx.setValue(id, value)
 tx.setSource(id, source)
 tx.setGroup(id)
 tx.insertChild(ownerId, opts)
@@ -188,7 +188,7 @@ tx.remove(id)
 
 ### Group conversion rule
 
-Content may switch between `group` and non-group (`scalar`/`source`) only when the group is empty.
+Content may switch between `group` and non-group (`value`/`source`) only when the group is empty.
 If an operation would convert a non-empty group to non-group, the commit throws.
 
 `setLabel`:
@@ -201,9 +201,9 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 
 - Sets the preferred view for the item.
 
-`setScalar`:
+`setValue`:
 
-- Replaces the item’s content with a scalar value or blank.
+- Replaces the item’s content with a value or blank.
 - Subject to the group conversion rule.
 
 `setSource`:
@@ -220,7 +220,7 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 
 - `opts?: { at?: number }`
 - Creates a new child item under `ownerId`.
-- New items are created as blank scalar items.
+- New items are created as blank value items.
 - If `at` is omitted, the item is appended.
 - Returns the newly created item’s ID.
 
@@ -457,6 +457,6 @@ Constants:
 
 - `DEFAULT_TARGET: string`: Default focus target used when none is specified.
 
-Scalar helpers:
+Value helpers:
 
-- `parseScalar(text): Scalar | null`: Converts user-entered text into a scalar value.
+- `parseValue(text): Value | null`: Converts user-entered text into a value.

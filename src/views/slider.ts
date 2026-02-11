@@ -4,7 +4,7 @@ import type {
   DomView,
   Focus,
   ItemId,
-  ScalarOrBlank,
+  ValueOrBlank,
 } from "../core";
 import type { Intent } from "../dom";
 import { createComponent, el, escapeLadder, stampBody } from "../dom";
@@ -22,7 +22,7 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
 
-function toNumberOr(v: ScalarOrBlank, fallback: number): number {
+function toNumberOr(v: ValueOrBlank, fallback: number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
   if (typeof v === "string") {
     const n = Number(v);
@@ -50,34 +50,34 @@ function formatNumberForStep(n: number, step: number): string {
   return p <= 0 ? String(Math.trunc(n)) : n.toFixed(p);
 }
 
-const canSetScalar = (core: Core, id: ItemId): boolean => {
+const canSetValue = (core: Core, id: ItemId): boolean => {
   const it = core.item(id);
-  return it.mode.kind === "direct" && it.content.kind === "scalar";
+  return it.mode.kind === "direct" && it.content.kind === "value";
 };
 
-const getScalarOr = (core: Core, id: ItemId, fallback: number): number => {
+const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
   const it = core.item(id);
-  if (it.content.kind === "scalar")
+  if (it.content.kind === "value")
     return toNumberOr(it.content.value, fallback);
   return fallback;
 };
 
 const sliderCommands = {
-  setScalarValue(core: Core, id: ItemId, value: number): void {
-    if (!Number.isFinite(value) || !canSetScalar(core, id)) return;
-    core.commit((t) => t.setScalar(id, value));
+  setValue(core: Core, id: ItemId, value: number): void {
+    if (!Number.isFinite(value) || !canSetValue(core, id)) return;
+    core.commit((t) => t.setValue(id, value));
   },
 
-  nudgeScalarValue(
+  nudgeValue(
     core: Core,
     id: ItemId,
     deltaSteps: number,
     opts: SliderResolvedOpts,
   ): void {
-    if (!canSetScalar(core, id)) return;
-    const cur = getScalarOr(core, id, opts.min);
+    if (!canSetValue(core, id)) return;
+    const cur = getValueOr(core, id, opts.min);
     const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
-    sliderCommands.setScalarValue(core, id, next);
+    sliderCommands.setValue(core, id, next);
   },
 } as const;
 
@@ -105,7 +105,7 @@ function mountSliderBody({ core, id, opts }: SliderMountCtx): Component {
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
-      sliderCommands.setScalarValue(core, id, next);
+      sliderCommands.setValue(core, id, next);
     };
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
@@ -118,7 +118,7 @@ function mountSliderBody({ core, id, opts }: SliderMountCtx): Component {
     });
 
     ctx.effect(() => {
-      const cur = getScalarOr(core, id, opts.min);
+      const cur = getValueOr(core, id, opts.min);
       const clamped0 = clamp(cur, opts.min, opts.max);
       const str = formatNumberForStep(clamped0, opts.step);
 
@@ -127,7 +127,7 @@ function mountSliderBody({ core, id, opts }: SliderMountCtx): Component {
     });
 
     ctx.effect(() => {
-      const shouldDisable = !canSetScalar(core, id);
+      const shouldDisable = !canSetValue(core, id);
       if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
     });
 
@@ -161,7 +161,7 @@ export function createSliderView(args: {
       case "NAV": {
         const mul = intent.mode === "jump" ? 10 : 1;
         const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-        sliderCommands.nudgeScalarValue(core, id, dir * mul, resolved);
+        sliderCommands.nudgeValue(core, id, dir * mul, resolved);
         return;
       }
 

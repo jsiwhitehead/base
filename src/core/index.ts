@@ -1,14 +1,14 @@
 import type { ReadonlySignal } from "@preact/signals-core";
 import { batch, computed } from "@preact/signals-core";
 
-import type { Value } from "./eval";
+import type { Result } from "./eval";
 import {
   createEvaluator,
-  isBlankValue,
-  isEntryGroupValue,
-  isIssueValue,
-  isScalarValue,
-  isValueGroupValue,
+  isBlankResult,
+  isEntryGroupResult,
+  isIssueResult,
+  isScalarResult,
+  isResultGroupResult,
 } from "./eval";
 import { interpretExpr } from "./lang";
 import type {
@@ -45,11 +45,11 @@ import { createShapeSyncGroup } from "./sync";
 
 export type ItemId = string;
 
-export type Scalar = true | number | string;
-export type ScalarOrBlank = Scalar | null;
+export type Value = true | number | string;
+export type ValueOrBlank = Value | null;
 
 export type Content =
-  | { kind: "scalar"; value: ScalarOrBlank }
+  | { kind: "value"; value: ValueOrBlank }
   | { kind: "issue"; message: string }
   | { kind: "group"; children: readonly ItemId[] };
 
@@ -107,9 +107,11 @@ const entryIdFromItemId = (id: ItemId): EntryId | null => {
   return r && r.path.length === 0 ? r.entryId : null;
 };
 
-function storedFromScalar(v: ScalarOrBlank): EntryContent {
+function storedFromValue(v: ValueOrBlank): EntryContent {
   return v === null ? { kind: "blank" } : { kind: "scalar", value: v };
 }
+
+export const parseValue: (text: string) => ValueOrBlank = parseScalar;
 
 function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
   if (ref.path.length) return { kind: "readonly" };
@@ -143,7 +145,7 @@ type Tx = {
   setLabel(id: ItemId, label: string): void;
   setView(id: ItemId, view: ViewKind): void;
 
-  setScalar(id: ItemId, value: ScalarOrBlank): void;
+  setValue(id: ItemId, value: ValueOrBlank): void;
   setSource(id: ItemId, source: Source): void;
   setGroup(id: ItemId): void;
 
@@ -282,39 +284,39 @@ export function createCore(opts: {
     runtime.setSelection(runtime.selectionSignal.peek());
   };
 
-  const childrenOfResolved = (base: ItemRef, v: Value): readonly ItemId[] => {
-    if (isEntryGroupValue(v)) return v.entryIds.map((eid) => itemIdOf(eid, []));
-    if (isValueGroupValue(v))
+  const childrenOfResolved = (base: ItemRef, v: Result): readonly ItemId[] => {
+    if (isEntryGroupResult(v)) return v.entryIds.map((eid) => itemIdOf(eid, []));
+    if (isResultGroupResult(v))
       return v.items.map((_it, i) => itemIdOf(base.entryId, [...base.path, i]));
     return [];
   };
 
-  const resolve = (ref: ItemRef): { value: Value; label?: string } => {
-    let cur: Value = evaluator.value(ref.entryId);
+  const resolve = (ref: ItemRef): { result: Result; label?: string } => {
+    let cur: Result = evaluator.result(ref.entryId);
     let label: string | undefined =
       model.readEntry(ref.entryId).label.trim() || undefined;
 
     for (let i = 0; i < ref.path.length; i++) {
       const idx = ref.path[i]!;
-      if (!isValueGroupValue(cur))
-        return { value: { kind: "issue", message: "Invalid path" } as any };
+      if (!isResultGroupResult(cur))
+        return { result: { kind: "issue", message: "Invalid path" } as any };
       const it = cur.items[idx];
       if (!it)
-        return { value: { kind: "issue", message: "Invalid path" } as any };
+        return { result: { kind: "issue", message: "Invalid path" } as any };
       label = it.label?.trim() || undefined;
-      cur = it.value;
+      cur = it.result;
     }
 
-    return { value: cur, ...(label ? { label } : {}) };
+    return { result: cur, ...(label ? { label } : {}) };
   };
 
-  const toContent = (ref: ItemRef, v: Value): Content => {
-    if (isBlankValue(v)) return { kind: "scalar", value: null };
-    if (isIssueValue(v)) return { kind: "issue", message: v.message };
-    if (isScalarValue(v)) {
-      const x = v.value;
+  const toContent = (ref: ItemRef, v: Result): Content => {
+    if (isBlankResult(v)) return { kind: "value", value: null };
+    if (isIssueResult(v)) return { kind: "issue", message: v.message };
+    if (isScalarResult(v)) {
+      const x = v.result;
       return {
-        kind: "scalar",
+        kind: "value",
         value:
           x === true || typeof x === "number" || typeof x === "string"
             ? x
@@ -328,7 +330,7 @@ export function createCore(opts: {
     try {
       const ref = refFromItemId(id);
       const r = resolve(ref);
-      const c = toContent(ref, r.value);
+      const c = toContent(ref, r.result);
 
       let mode: Mode = { kind: "readonly" };
       if (!ref.path.length) {
@@ -756,10 +758,10 @@ export function createCore(opts: {
         ops.push(model.ops.patch(eid, { view: view0 }));
       },
 
-      setScalar: (id, value) => {
+      setValue: (id, value) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patch(eid, { content: storedFromScalar(value) }));
+        ops.push(model.ops.patch(eid, { content: storedFromValue(value) }));
       },
 
       setSource: (id, source) => {
@@ -955,4 +957,4 @@ export type {
   ViewKind,
   ViewName,
 };
-export { DEFAULT_TARGET, defaultTextCaret, parseScalar };
+export { DEFAULT_TARGET, defaultTextCaret };

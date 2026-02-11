@@ -7,10 +7,10 @@ import type {
   DomView,
   Focus,
   ItemId,
-  ScalarOrBlank,
+  ValueOrBlank,
   Selection,
 } from "../core";
-import { DEFAULT_TARGET, parseScalar } from "../core";
+import { DEFAULT_TARGET, parseValue } from "../core";
 import type { Intent, NavDir } from "../dom";
 import {
   LABEL_TARGET,
@@ -31,7 +31,7 @@ import {
   textField,
 } from "../dom";
 
-function scalarToText(v: ScalarOrBlank): string {
+function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
 }
 
@@ -95,7 +95,7 @@ function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
 function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
   const it = core.item(id);
   if (it.mode.kind === "source") return true;
-  return it.mode.kind === "direct" && it.content.kind === "scalar";
+  return it.mode.kind === "direct" && it.content.kind === "value";
 }
 
 function editStopsForItem(core: Core, id: ItemId): string[] {
@@ -103,7 +103,7 @@ function editStopsForItem(core: Core, id: ItemId): string[] {
   if (it.mode.kind === "source") {
     return fieldsFromSource(it.mode.source).map((f) => sourceTarget(f.key));
   }
-  if (it.mode.kind === "direct" && it.content.kind === "scalar")
+  if (it.mode.kind === "direct" && it.content.kind === "value")
     return [VALUE_TARGET];
   return [];
 }
@@ -115,7 +115,7 @@ function primaryEditTarget(core: Core, id: ItemId): string | null {
 function textForTarget(core: Core, id: ItemId, target: string): string {
   const it = core.item(id);
   if (target === VALUE_TARGET) {
-    return it.content.kind === "scalar" ? scalarToText(it.content.value) : "";
+    return it.content.kind === "value" ? valueToText(it.content.value) : "";
   }
   if (target.startsWith("source:")) {
     if (it.mode.kind !== "source") return "";
@@ -199,7 +199,7 @@ const outlineCommands = {
   },
 
   setText(core: Core, id: ItemId, text: string): void {
-    core.commit((t) => t.setScalar(id, parseScalar(text)));
+    core.commit((t) => t.setValue(id, parseValue(text)));
   },
 
   setDerived(core: Core, id: ItemId): void {
@@ -246,11 +246,11 @@ const outlineCommands = {
 
     const { ownerId: containerId, index: idx } = loc;
 
-    if (!(snap.mode.kind === "direct" && snap.content.kind === "scalar")) {
+    if (!(snap.mode.kind === "direct" && snap.content.kind === "value")) {
       return outlineCommands.insertSibling(core, sel, "after");
     }
 
-    const curText = scalarToText(snap.content.value);
+    const curText = valueToText(snap.content.value);
     const len = curText.length;
 
     const start = Math.max(0, Math.min(caretStart, len));
@@ -262,9 +262,9 @@ const outlineCommands = {
     let rightId: ItemId = "";
 
     core.commit((t) => {
-      t.setScalar(id, parseScalar(left));
+      t.setValue(id, parseValue(left));
       rightId = t.insertChild(containerId, { at: idx + 1 });
-      t.setScalar(rightId, parseScalar(right));
+      t.setValue(rightId, parseValue(right));
     });
 
     return rightId || null;
@@ -292,14 +292,14 @@ const outlineCommands = {
     const a = core.item(leftId);
     const b = core.item(rightId);
 
-    if (!(a.mode.kind === "direct" && a.content.kind === "scalar")) return null;
-    if (!(b.mode.kind === "direct" && b.content.kind === "scalar")) return null;
+    if (!(a.mode.kind === "direct" && a.content.kind === "value")) return null;
+    if (!(b.mode.kind === "direct" && b.content.kind === "value")) return null;
 
-    const leftText = scalarToText(a.content.value);
-    const rightText = scalarToText(b.content.value);
+    const leftText = valueToText(a.content.value);
+    const rightText = valueToText(b.content.value);
 
     core.commit((t) => {
-      t.setScalar(leftId, parseScalar(leftText + rightText));
+      t.setValue(leftId, parseValue(leftText + rightText));
       t.remove(rightId);
     });
 
@@ -488,10 +488,10 @@ function mountOutlineScalarBody(
           return { text: c.message ?? "", readOnly: true, isIssue: true };
         }
 
-        if (c.kind === "scalar") {
+        if (c.kind === "value") {
           const editable = snap.mode.kind === "direct";
           return {
-            text: scalarToText(c.value),
+            text: valueToText(c.value),
             readOnly: !editable,
             isIssue: false,
           };
@@ -517,11 +517,11 @@ function mountOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     const slot = ctx.slot(root);
 
-    let curKind: "group" | "scalar" | null = null;
+    let curKind: "group" | "value" | null = null;
 
     ctx.effect(() => {
       const snap = core.item(id);
-      const nextKind = snap.content.kind === "group" ? "group" : "scalar";
+      const nextKind = snap.content.kind === "group" ? "group" : "value";
       if (curKind === nextKind) return;
       curKind = nextKind;
 
@@ -636,8 +636,8 @@ export function createOutlineView(args: {
           intent.char === "=" &&
           (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
           it.mode.kind === "direct" &&
-          it.content.kind === "scalar" &&
-          scalarToText(it.content.value).trim() === ""
+          it.content.kind === "value" &&
+          valueToText(it.content.value).trim() === ""
         ) {
           outlineCommands.setDerived(core, id);
           core.focus(focusFor(core, rootId, id), sourceTarget("expr"), {
@@ -701,7 +701,7 @@ export function createOutlineView(args: {
         const prefer = intent.dir === "backward" ? "prev" : "next";
         const it = core.item(sel.focus.item);
 
-        if (!(it.mode.kind === "direct" && it.content.kind === "scalar")) {
+        if (!(it.mode.kind === "direct" && it.content.kind === "value")) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();
@@ -713,7 +713,7 @@ export function createOutlineView(args: {
           return;
         }
 
-        if (scalarToText(it.content.value).length === 0) {
+        if (valueToText(it.content.value).length === 0) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();

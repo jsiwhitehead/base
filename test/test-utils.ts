@@ -34,7 +34,7 @@ export function makeCoreRuntime(): { core: Core; rootId: ItemId } {
 
 export function scalarOf(content: Content): true | number | string | null {
   if (content.kind === "issue") throw new Error(content.message);
-  if (content.kind === "group") throw new Error("Expected scalar content");
+  if (content.kind === "group") throw new Error("Expected value content");
   return content.value;
 }
 
@@ -60,7 +60,7 @@ type TreeShape =
   | {
       label: string;
       mode: string;
-      kind: "scalar";
+      kind: "value";
       value: true | number | string | null;
     }
   | { label: string; mode: string; kind: "issue"; message: string }
@@ -72,8 +72,8 @@ export function tree(core: Core, id: ItemId): TreeShape {
   const mode = it.mode.kind;
   const c = it.content;
 
-  if (c.kind === "scalar")
-    return { label, mode, kind: "scalar", value: c.value };
+  if (c.kind === "value")
+    return { label, mode, kind: "value", value: c.value };
   if (c.kind === "issue")
     return { label, mode, kind: "issue", message: c.message };
 
@@ -118,7 +118,7 @@ export function mkBlank(
   core.commit((t) => {
     id = t.insertChild(ownerId, args?.at != null ? { at: args.at } : undefined);
     if (args?.label != null) t.setLabel(id, args.label);
-    if (args?.value !== undefined) t.setScalar(id, args.value);
+    if (args?.value !== undefined) t.setValue(id, args.value);
   });
   return id;
 }

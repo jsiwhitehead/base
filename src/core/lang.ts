@@ -1,15 +1,15 @@
 import * as ohm from "ohm-js";
 
-import type { EvalEnv, Value } from "./eval";
+import type { EvalEnv, Result } from "./eval";
 import {
-  V,
-  isBlankValue,
-  isEntryGroupValue,
-  isIssueValue,
+  Results,
+  isBlankResult,
+  isEntryGroupResult,
+  isIssueResult,
   isPresent,
-  isScalarValue,
+  isScalarResult,
   isTrue,
-  isValueGroupValue,
+  isResultGroupResult,
 } from "./eval";
 
 const ISSUE = {
@@ -29,8 +29,8 @@ const ISSUE = {
     `Position ${position} is out of range (length ${len})`,
   selectPosNonEntryGroup:
     "Cannot select a position from non-entry-group content",
-  selectPosNonValueGroup:
-    "Cannot select a position from non-value-group content",
+  selectPosNonResultGroup:
+    "Cannot select a position from non-result-group content",
   selectPosNonGroup: "Cannot select a position from non-group content",
   fnName: "Expected function name",
 } as const;
@@ -306,29 +306,29 @@ const semantics = grammar.createSemantics().addAttribute("ast", {
   },
 });
 
-type IssueValue = Extract<Value, { kind: "issue" }>;
+type IssueResult = Extract<Result, { kind: "issue" }>;
 
-function firstIssue(...vs: Value[]): IssueValue | null {
-  for (const v of vs) if (isIssueValue(v)) return v;
+function firstIssue(...vs: Result[]): IssueResult | null {
+  for (const v of vs) if (isIssueResult(v)) return v;
   return null;
 }
 
-function ensureNotIssue(v: Value): Value {
-  if (isIssueValue(v)) throw new TypeError(v.message);
+function ensureNotIssue(v: Result): Result {
+  if (isIssueResult(v)) throw new TypeError(v.message);
   return v;
 }
 
-function primExpect(v: Value): true | number | string {
-  if (isScalarValue(v)) return v.value;
+function primExpect(v: Result): true | number | string {
+  if (isScalarResult(v)) return v.result;
   throw new TypeError(ISSUE.literal);
 }
 
-function numOpt(v: Value): number | null {
-  if (isBlankValue(v)) return null;
-  if (isIssueValue(v)) throw new TypeError(v.message);
+function numOpt(v: Result): number | null {
+  if (isBlankResult(v)) return null;
+  if (isIssueResult(v)) throw new TypeError(v.message);
 
-  if (isScalarValue(v)) {
-    const x = v.value;
+  if (isScalarResult(v)) {
+    const x = v.result;
     if (typeof x === "number") return x;
     if (x === true) return 1;
     if (typeof x === "string") {
@@ -340,25 +340,25 @@ function numOpt(v: Value): number | null {
   throw new TypeError(ISSUE.numOrBlank);
 }
 
-function textOpt(v: Value): string | null {
-  if (isBlankValue(v)) return null;
-  if (isIssueValue(v)) throw new TypeError(v.message);
-  if (isScalarValue(v) && typeof v.value === "string") return v.value;
+function textOpt(v: Result): string | null {
+  if (isBlankResult(v)) return null;
+  if (isIssueResult(v)) throw new TypeError(v.message);
+  if (isScalarResult(v) && typeof v.result === "string") return v.result;
   throw new TypeError(ISSUE.textOrBlank);
 }
 
-function numExpect(v: Value): number {
-  if (isIssueValue(v)) throw new TypeError(v.message);
-  if (isScalarValue(v) && typeof v.value === "number") return v.value;
+function numExpect(v: Result): number {
+  if (isIssueResult(v)) throw new TypeError(v.message);
+  if (isScalarResult(v) && typeof v.result === "number") return v.result;
   throw new TypeError(ISSUE.number);
 }
 
-function toNumber(v: Value): number | null {
-  if (isBlankValue(v)) return null;
-  if (isIssueValue(v)) throw new TypeError(v.message);
+function toNumber(v: Result): number | null {
+  if (isBlankResult(v)) return null;
+  if (isIssueResult(v)) throw new TypeError(v.message);
 
-  if (isScalarValue(v)) {
-    const x = v.value;
+  if (isScalarResult(v)) {
+    const x = v.result;
     if (typeof x === "number") return x;
     if (x === true) return 1;
     if (typeof x === "string") {
@@ -369,22 +369,22 @@ function toNumber(v: Value): number | null {
   return null;
 }
 
-function toText(v: Value): string | null {
-  if (isBlankValue(v)) return null;
-  if (isIssueValue(v)) throw new TypeError(v.message);
-  if (isScalarValue(v)) return String(v.value);
+function toText(v: Result): string | null {
+  if (isBlankResult(v)) return null;
+  if (isIssueResult(v)) throw new TypeError(v.message);
+  if (isScalarResult(v)) return String(v.result);
   return null;
 }
 
-function primitiveToValue(x: boolean | number | string | null): Value {
-  if (x === null || x === false) return V.blank();
-  if (x === true) return V.scalar(true);
-  return V.scalar(x);
+function primitiveToResult(x: boolean | number | string | null): Result {
+  if (x === null || x === false) return Results.blank();
+  if (x === true) return Results.scalar(true);
+  return Results.scalar(x);
 }
 
 function numericOp(
   map: (...nums: number[]) => number,
-  ...args: Value[]
+  ...args: Result[]
 ): number | null {
   const issue = firstIssue(...args);
   if (issue) throw new TypeError(issue.message);
@@ -395,80 +395,80 @@ function numericOp(
 }
 
 function getEntryGroupByLabel(
-  group: Value,
+  group: Result,
   label: string,
   env: EvalEnv,
-): Value {
-  if (isIssueValue(group)) return group;
-  if (!isEntryGroupValue(group))
-    return V.issue(ISSUE.labelOnNonEntryGroup(label));
+): Result {
+  if (isIssueResult(group)) return group;
+  if (!isEntryGroupResult(group))
+    return Results.issue(ISSUE.labelOnNonEntryGroup(label));
 
   const want = label.trim();
   const id = group.entryIds.find((cid) => env.getLabel(cid) === want);
-  if (id == null) return V.issue(ISSUE.unknownLabel(want));
+  if (id == null) return Results.issue(ISSUE.unknownLabel(want));
   return env.resolve(id);
 }
 
-function normalizePosition(position: number): { index: number } | Value {
-  if (!Number.isFinite(position)) return V.issue(ISSUE.positionFinite);
+function normalizePosition(position: number): { index: number } | Result {
+  if (!Number.isFinite(position)) return Results.issue(ISSUE.positionFinite);
   const index = Math.trunc(position) - 1;
-  if (index < 0) return V.issue(ISSUE.positionOneBased);
+  if (index < 0) return Results.issue(ISSUE.positionOneBased);
   return { index };
 }
 
 function getEntryGroupByPosition(
-  group: Value,
+  group: Result,
   position: number,
   env: EvalEnv,
-): Value {
-  if (isIssueValue(group)) return group;
+): Result {
+  if (isIssueResult(group)) return group;
 
   const norm = normalizePosition(position);
   if ("kind" in norm) return norm;
 
-  if (!isEntryGroupValue(group)) return V.issue(ISSUE.selectPosNonEntryGroup);
+  if (!isEntryGroupResult(group)) return Results.issue(ISSUE.selectPosNonEntryGroup);
 
   const id = group.entryIds[norm.index];
   if (id == null)
-    return V.issue(ISSUE.positionOutOfRange(position, group.entryIds.length));
+    return Results.issue(ISSUE.positionOutOfRange(position, group.entryIds.length));
   return env.resolve(id);
 }
 
-function getValueGroupByPosition(group: Value, position: number): Value {
-  if (isIssueValue(group)) return group;
+function getValueGroupByPosition(group: Result, position: number): Result {
+  if (isIssueResult(group)) return group;
 
   const norm = normalizePosition(position);
   if ("kind" in norm) return norm;
 
-  if (!isValueGroupValue(group)) return V.issue(ISSUE.selectPosNonValueGroup);
+  if (!isResultGroupResult(group)) return Results.issue(ISSUE.selectPosNonResultGroup);
 
   const it = group.items[norm.index];
   if (it == null)
-    return V.issue(ISSUE.positionOutOfRange(position, group.items.length));
-  return it.value;
+    return Results.issue(ISSUE.positionOutOfRange(position, group.items.length));
+  return it.result;
 }
 
-function getByPositionOrLabel(group: Value, selV: Value, env: EvalEnv): Value {
-  if (isIssueValue(group)) return group;
-  if (isIssueValue(selV)) return selV;
+function getByPositionOrLabel(group: Result, selV: Result, env: EvalEnv): Result {
+  if (isIssueResult(group)) return group;
+  if (isIssueResult(selV)) return selV;
 
-  if (isScalarValue(selV)) {
-    const lit = selV.value;
+  if (isScalarResult(selV)) {
+    const lit = selV.result;
     if (typeof lit === "number") {
-      if (isEntryGroupValue(group))
+      if (isEntryGroupResult(group))
         return getEntryGroupByPosition(group, lit, env);
-      if (isValueGroupValue(group)) return getValueGroupByPosition(group, lit);
-      return V.issue(ISSUE.selectPosNonGroup);
+      if (isResultGroupResult(group)) return getValueGroupByPosition(group, lit);
+      return Results.issue(ISSUE.selectPosNonGroup);
     }
     if (typeof lit === "string") return getEntryGroupByLabel(group, lit, env);
   }
 
-  return V.issue(ISSUE.posLabelMustBeTextOrNumber);
+  return Results.issue(ISSUE.posLabelMustBeTextOrNumber);
 }
 
 const BINARY_OPS: Record<
   PrimitiveBinaryOp,
-  (a: Value, b: Value) => boolean | number | string | null
+  (a: Result, b: Result) => boolean | number | string | null
 > = {
   "!=": (a, b) => primExpect(a) !== primExpect(b),
   "=": (a, b) => primExpect(a) === primExpect(b),
@@ -490,26 +490,26 @@ function isPrimitiveBinaryOp(op: Binary["op"]): op is PrimitiveBinaryOp {
 
 const UNARY_OPS: Record<
   Unary["op"],
-  (v: Value) => boolean | number | string | null
+  (v: Result) => boolean | number | string | null
 > = {
   "!": (v) => !isTrue(ensureNotIssue(v)),
   "-": (v) => numericOp((x) => -x, v),
   "+": (v) => numericOp((x) => +x, v),
 };
 
-type Builtin = (env: EvalEnv, ...args: Value[]) => Value;
+type Builtin = (env: EvalEnv, ...args: Result[]) => Result;
 
-function contentFn(op: (env: EvalEnv, ...args: Value[]) => Value): Builtin {
+function contentFn(op: (env: EvalEnv, ...args: Result[]) => Result): Builtin {
   return (env, ...args) => {
     const want = Math.max(0, op.length - 1);
-    const filled = Array.from({ length: want }, (_, i) => args[i] ?? V.blank());
+    const filled = Array.from({ length: want }, (_, i) => args[i] ?? Results.blank());
     return op(env, ...filled);
   };
 }
 
 type ArgSpec<T> =
-  | { kind: "req"; convert: (v: Value) => T | null }
-  | { kind: "opt"; convert: (v: Value) => T | null; fallback: T };
+  | { kind: "req"; convert: (v: Result) => T | null }
+  | { kind: "opt"; convert: (v: Result) => T | null; fallback: T };
 
 const reqNum = { kind: "req", convert: numOpt } as const;
 const optNum = (d: number) =>
@@ -521,7 +521,7 @@ const optText = (d: string) =>
 
 function typedFn<A extends unknown[]>(
   specs: { [K in keyof A]: ArgSpec<A[K]> },
-  impl: (env: EvalEnv, ...args: A) => Value,
+  impl: (env: EvalEnv, ...args: A) => Result,
 ): Builtin {
   return (env, ...args) => {
     const issue = firstIssue(...args);
@@ -529,7 +529,7 @@ function typedFn<A extends unknown[]>(
 
     const inputs = Array.from(
       { length: specs.length },
-      (_, i) => args[i] ?? V.blank(),
+      (_, i) => args[i] ?? Results.blank(),
     );
 
     const resolved: unknown[] = [];
@@ -537,7 +537,7 @@ function typedFn<A extends unknown[]>(
       const spec = specs[i]!;
       const v = spec.convert(inputs[i]!);
       if (spec.kind === "req") {
-        if (v === null) return V.blank();
+        if (v === null) return Results.blank();
         resolved.push(v);
       } else {
         resolved.push(v ?? spec.fallback);
@@ -547,37 +547,37 @@ function typedFn<A extends unknown[]>(
   };
 }
 
-function iterGroupValues(g: Value, env: EvalEnv): Value[] {
-  if (isIssueValue(g)) throw new TypeError(g.message);
-  if (isEntryGroupValue(g)) return g.entryIds.map((id) => env.resolve(id));
-  if (isValueGroupValue(g)) return g.items.map((it) => it.value);
+function iterGroupValues(g: Result, env: EvalEnv): Result[] {
+  if (isIssueResult(g)) throw new TypeError(g.message);
+  if (isEntryGroupResult(g)) return g.entryIds.map((id) => env.resolve(id));
+  if (isResultGroupResult(g)) return g.items.map((it) => it.result);
   throw new TypeError(ISSUE.group);
 }
 
-function groupNumbersOpt(g: Value, env: EvalEnv): number[] {
+function groupNumbersOpt(g: Result, env: EvalEnv): number[] {
   const out: number[] = [];
   for (const v of iterGroupValues(g, env)) {
-    if (isIssueValue(v)) throw new TypeError(v.message);
-    if (isBlankValue(v)) continue;
-    if (isScalarValue(v) && typeof v.value === "number") out.push(v.value);
+    if (isIssueResult(v)) throw new TypeError(v.message);
+    if (isBlankResult(v)) continue;
+    if (isScalarResult(v) && typeof v.result === "number") out.push(v.result);
     else throw new TypeError(ISSUE.numOrBlank);
   }
   return out;
 }
 
-function groupTextsOpt(g: Value, env: EvalEnv): string[] {
+function groupTextsOpt(g: Result, env: EvalEnv): string[] {
   const out: string[] = [];
   for (const v of iterGroupValues(g, env)) {
-    if (isIssueValue(v)) throw new TypeError(v.message);
-    if (isBlankValue(v)) continue;
-    if (isScalarValue(v) && typeof v.value === "string") out.push(v.value);
+    if (isIssueResult(v)) throw new TypeError(v.message);
+    if (isBlankResult(v)) continue;
+    if (isScalarResult(v) && typeof v.result === "string") out.push(v.result);
     else throw new TypeError(ISSUE.textOrBlank);
   }
   return out;
 }
 
 function reduceNumbers(
-  g: Value,
+  g: Result,
   env: EvalEnv,
   op: (ns: number[]) => number | null,
 ): number | null {
@@ -587,86 +587,86 @@ function reduceNumbers(
 
 const groupSpec = {
   kind: "req",
-  convert: (v: Value) =>
-    isEntryGroupValue(v) || isValueGroupValue(v) ? v : null,
+  convert: (v: Result) =>
+    isEntryGroupResult(v) || isResultGroupResult(v) ? v : null,
 } as const;
 
 const builtins: Record<string, Builtin> = {
-  is_blank: contentFn((_env, v) => primitiveToValue(isBlankValue(v))),
-  is_present: contentFn((_env, v) => primitiveToValue(isPresent(v))),
-  is_true: contentFn((_env, v) => primitiveToValue(isTrue(v))),
-  to_number: contentFn((_env, v) => primitiveToValue(toNumber(v))),
-  to_text: contentFn((_env, v) => primitiveToValue(toText(v))),
+  is_blank: contentFn((_env, v) => primitiveToResult(isBlankResult(v))),
+  is_present: contentFn((_env, v) => primitiveToResult(isPresent(v))),
+  is_true: contentFn((_env, v) => primitiveToResult(isTrue(v))),
+  to_number: contentFn((_env, v) => primitiveToResult(toNumber(v))),
+  to_text: contentFn((_env, v) => primitiveToResult(toText(v))),
 
   number_or: contentFn((_env, content, fallback) => {
-    if (isIssueValue(content)) return content;
+    if (isIssueResult(content)) return content;
     const n = numOpt(content);
-    if (n !== null) return V.scalar(n);
+    if (n !== null) return Results.scalar(n);
 
-    if (isIssueValue(fallback)) return fallback;
+    if (isIssueResult(fallback)) return fallback;
     const fb = numOpt(fallback);
-    return fb !== null ? V.scalar(fb) : V.blank();
+    return fb !== null ? Results.scalar(fb) : Results.blank();
   }),
 
   text_or: contentFn((_env, content, fallback) => {
-    if (isIssueValue(content)) return content;
+    if (isIssueResult(content)) return content;
     const t = textOpt(content);
-    if (t !== null) return V.scalar(t);
+    if (t !== null) return Results.scalar(t);
 
-    if (isIssueValue(fallback)) return fallback;
+    if (isIssueResult(fallback)) return fallback;
     const fb = textOpt(fallback);
-    return fb !== null ? V.scalar(fb) : V.blank();
+    return fb !== null ? Results.scalar(fb) : Results.blank();
   }),
 
   if_blank: contentFn((_env, content, fallback) => {
-    if (isIssueValue(content)) return content;
-    return isBlankValue(content) ? (fallback ?? V.blank()) : content;
+    if (isIssueResult(content)) return content;
+    return isBlankResult(content) ? (fallback ?? Results.blank()) : content;
   }),
 
   if_issue: contentFn((_env, content, fallback) =>
-    isIssueValue(content) ? (fallback ?? V.blank()) : content,
+    isIssueResult(content) ? (fallback ?? Results.blank()) : content,
   ),
 
   first_present: (_env, ...contents) => {
     for (const v of contents) {
-      if (isIssueValue(v)) return v;
+      if (isIssueResult(v)) return v;
       if (isPresent(v)) return v;
     }
-    return V.blank();
+    return Results.blank();
   },
 
   not: contentFn((_env, v) => {
-    if (isIssueValue(v)) return v;
-    return isTrue(v) ? V.blank() : V.scalar(true);
+    if (isIssueResult(v)) return v;
+    return isTrue(v) ? Results.blank() : Results.scalar(true);
   }),
 
   and: contentFn((_env, l, r) => {
-    if (isIssueValue(l)) return l;
-    if (isIssueValue(r)) return r;
-    return isTrue(l) && isTrue(r) ? V.scalar(true) : V.blank();
+    if (isIssueResult(l)) return l;
+    if (isIssueResult(r)) return r;
+    return isTrue(l) && isTrue(r) ? Results.scalar(true) : Results.blank();
   }),
 
   or: contentFn((_env, l, r) => {
-    if (isIssueValue(l)) return l;
-    if (isIssueValue(r)) return r;
-    return isTrue(l) || isTrue(r) ? V.scalar(true) : V.blank();
+    if (isIssueResult(l)) return l;
+    if (isIssueResult(r)) return r;
+    return isTrue(l) || isTrue(r) ? Results.scalar(true) : Results.blank();
   }),
 
   if: contentFn((_env, cond, thenV, elseV) => {
-    if (isIssueValue(cond)) return cond;
+    if (isIssueResult(cond)) return cond;
     return isTrue(cond) ? thenV : elseV;
   }),
 
-  abs: typedFn([reqNum], (_env, n) => V.scalar(Math.abs(n))),
+  abs: typedFn([reqNum], (_env, n) => Results.scalar(Math.abs(n))),
 
   round: typedFn([reqNum, optNum(0)], (_env, n, p) => {
     const f = 10 ** p;
-    return V.scalar(Math.round(n * f) / f);
+    return Results.scalar(Math.round(n * f) / f);
   }),
 
-  ceil: typedFn([reqNum], (_env, n) => V.scalar(Math.ceil(n))),
+  ceil: typedFn([reqNum], (_env, n) => Results.scalar(Math.ceil(n))),
 
-  floor: typedFn([reqNum], (_env, n) => V.scalar(Math.floor(n))),
+  floor: typedFn([reqNum], (_env, n) => Results.scalar(Math.floor(n))),
 
   clamp: typedFn(
     [
@@ -674,63 +674,63 @@ const builtins: Record<string, Builtin> = {
       optNum(Number.NEGATIVE_INFINITY),
       optNum(Number.POSITIVE_INFINITY),
     ],
-    (_env, n, lo, hi) => V.scalar(Math.min(Math.max(n, lo), hi)),
+    (_env, n, lo, hi) => Results.scalar(Math.min(Math.max(n, lo), hi)),
   ),
 
   mod: typedFn([reqNum, optNum(1)], (_env, d, m) =>
-    V.scalar(((d % m) + m) % m),
+    Results.scalar(((d % m) + m) % m),
   ),
 
-  trim: typedFn([reqText], (_env, t) => V.scalar(t.trim())),
+  trim: typedFn([reqText], (_env, t) => Results.scalar(t.trim())),
 
   contains: typedFn([reqText, reqText], (_env, t, s) =>
-    t.includes(s) ? V.scalar(true) : V.blank(),
+    t.includes(s) ? Results.scalar(true) : Results.blank(),
   ),
 
-  lower: typedFn([reqText], (_env, t) => V.scalar(t.toLowerCase())),
+  lower: typedFn([reqText], (_env, t) => Results.scalar(t.toLowerCase())),
 
-  upper: typedFn([reqText], (_env, t) => V.scalar(t.toUpperCase())),
+  upper: typedFn([reqText], (_env, t) => Results.scalar(t.toUpperCase())),
 
   pad_start: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (_env, t, targetLen, padText) => V.scalar(t.padStart(targetLen, padText)),
+    (_env, t, targetLen, padText) => Results.scalar(t.padStart(targetLen, padText)),
   ),
 
   pad_end: typedFn(
     [reqText, optNum(0), optText(" ")],
-    (_env, t, targetLen, padText) => V.scalar(t.padEnd(targetLen, padText)),
+    (_env, t, targetLen, padText) => Results.scalar(t.padEnd(targetLen, padText)),
   ),
 
   split: typedFn([reqText, optText("")], (_env, t, sep) =>
-    V.valueGroup(t.split(sep).map((p) => ({ value: V.scalar(p) }))),
+    Results.resultGroup(t.split(sep).map((p) => ({ result: Results.scalar(p) }))),
   ),
 
   join: typedFn(
     [groupSpec, optText(",")],
-    (env, groupV: Value, sep: string) => {
+    (env, groupV: Result, sep: string) => {
       const parts = groupTextsOpt(groupV, env);
-      return parts.length ? V.scalar(parts.join(sep)) : V.blank();
+      return parts.length ? Results.scalar(parts.join(sep)) : Results.blank();
     },
   ),
 
-  count: typedFn([groupSpec], (env, source: Value) => {
+  count: typedFn([groupSpec], (env, source: Result) => {
     const vs = iterGroupValues(source, env);
-    return V.scalar(vs.filter((c) => !isBlankValue(c)).length);
+    return Results.scalar(vs.filter((c) => !isBlankResult(c)).length);
   }),
 
-  count_blank: typedFn([groupSpec], (env, source: Value) => {
+  count_blank: typedFn([groupSpec], (env, source: Result) => {
     const vs = iterGroupValues(source, env);
-    return V.scalar(vs.filter((c) => isBlankValue(c)).length);
+    return Results.scalar(vs.filter((c) => isBlankResult(c)).length);
   }),
 
-  sum: typedFn([groupSpec], (env, source: Value) =>
-    primitiveToValue(
+  sum: typedFn([groupSpec], (env, source: Result) =>
+    primitiveToResult(
       reduceNumbers(source, env, (ns) => ns.reduce((a, b) => a + b, 0)),
     ),
   ),
 
-  avg: typedFn([groupSpec], (env, source: Value) =>
-    primitiveToValue(
+  avg: typedFn([groupSpec], (env, source: Result) =>
+    primitiveToResult(
       reduceNumbers(
         source,
         env,
@@ -739,41 +739,41 @@ const builtins: Record<string, Builtin> = {
     ),
   ),
 
-  min: typedFn([groupSpec], (env, source: Value) =>
-    primitiveToValue(reduceNumbers(source, env, (ns) => Math.min(...ns))),
+  min: typedFn([groupSpec], (env, source: Result) =>
+    primitiveToResult(reduceNumbers(source, env, (ns) => Math.min(...ns))),
   ),
 
-  max: typedFn([groupSpec], (env, source: Value) =>
-    primitiveToValue(reduceNumbers(source, env, (ns) => Math.max(...ns))),
+  max: typedFn([groupSpec], (env, source: Result) =>
+    primitiveToResult(reduceNumbers(source, env, (ns) => Math.max(...ns))),
   ),
 };
 
-function callBuiltin(env: EvalEnv, name: string, args: Value[]): Value {
+function callBuiltin(env: EvalEnv, name: string, args: Result[]): Result {
   const fn = builtins[name] ?? builtins[name.toLowerCase()];
   if (!fn) throw new TypeError(`Unknown function: ${name}`);
   return fn(env, ...args);
 }
 
-function interpretAst(e: Expr, env: EvalEnv): Value {
+function interpretAst(e: Expr, env: EvalEnv): Result {
   try {
     switch (e.type) {
       case "Binary": {
         if (e.op === "and" || e.op === "or") {
           const l = interpretAst(e.left, env);
-          if (isIssueValue(l)) return l;
+          if (isIssueResult(l)) return l;
 
           const lTrue = isTrue(l);
           if (e.op === "and") {
-            if (!lTrue) return V.blank();
+            if (!lTrue) return Results.blank();
             const r = interpretAst(e.right, env);
-            if (isIssueValue(r)) return r;
-            return isTrue(r) ? V.scalar(true) : V.blank();
+            if (isIssueResult(r)) return r;
+            return isTrue(r) ? Results.scalar(true) : Results.blank();
           }
 
-          if (lTrue) return V.scalar(true);
+          if (lTrue) return Results.scalar(true);
           const r = interpretAst(e.right, env);
-          if (isIssueValue(r)) return r;
-          return isTrue(r) ? V.scalar(true) : V.blank();
+          if (isIssueResult(r)) return r;
+          return isTrue(r) ? Results.scalar(true) : Results.blank();
         }
 
         if (!isPrimitiveBinaryOp(e.op)) {
@@ -781,18 +781,18 @@ function interpretAst(e: Expr, env: EvalEnv): Value {
         }
 
         const l = interpretAst(e.left, env);
-        if (isIssueValue(l)) return l;
+        if (isIssueResult(l)) return l;
 
         const r = interpretAst(e.right, env);
-        if (isIssueValue(r)) return r;
+        if (isIssueResult(r)) return r;
 
-        return primitiveToValue(BINARY_OPS[e.op](l, r));
+        return primitiveToResult(BINARY_OPS[e.op](l, r));
       }
 
       case "Unary": {
         const v = interpretAst(e.argument, env);
-        if (isIssueValue(v)) return v;
-        return primitiveToValue(UNARY_OPS[e.op](v));
+        if (isIssueResult(v)) return v;
+        return primitiveToResult(UNARY_OPS[e.op](v));
       }
 
       case "Call": {
@@ -808,37 +808,37 @@ function interpretAst(e: Expr, env: EvalEnv): Value {
 
       case "Select": {
         const target = interpretAst(e.group, env);
-        if (isIssueValue(target)) return target;
+        if (isIssueResult(target)) return target;
 
         const selV = interpretAst(e.select, env);
-        if (isIssueValue(selV)) return selV;
+        if (isIssueResult(selV)) return selV;
 
         return getByPositionOrLabel(target, selV, env);
       }
 
       case "Member": {
         const target = interpretAst(e.group, env);
-        if (isIssueValue(target)) return target;
+        if (isIssueResult(target)) return target;
         return getEntryGroupByLabel(target, e.label.label, env);
       }
 
       case "Lit":
-        return V.scalar(e.value);
+        return Results.scalar(e.value);
 
       case "Blank":
-        return V.blank();
+        return Results.blank();
 
       case "Ident":
         return env.lookup(e.label);
     }
   } catch (err) {
-    return V.issue(err instanceof Error ? err.message : String(err));
+    return Results.issue(err instanceof Error ? err.message : String(err));
   }
 }
 
-export function interpretExpr(code: string, env: EvalEnv): Value {
-  if (!code.trim()) return V.blank();
+export function interpretExpr(code: string, env: EvalEnv): Result {
+  if (!code.trim()) return Results.blank();
   const match = grammar.match(code, "Start");
-  if (match.failed()) return V.issue(match.message ?? "Parse error");
+  if (match.failed()) return Results.issue(match.message ?? "Parse error");
   return interpretAst(semantics(match).ast, env);
 }

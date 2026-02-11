@@ -344,15 +344,15 @@ describe("views", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     expect(scalarOfId(core, sliderId)).toBe(42);
 
-    core.commit((t) => t.setScalar(sliderId, 100));
+    core.commit((t) => t.setValue(sliderId, 100));
     fireViewKey(view, "ArrowRight");
     expect(scalarOfId(core, sliderId)).toBe(100);
 
-    core.commit((t) => t.setScalar(sliderId, 50));
+    core.commit((t) => t.setValue(sliderId, 50));
     fireViewKey(view, "ArrowRight", { ctrlKey: true });
     expect(scalarOfId(core, sliderId)).toBe(60);
 
-    core.commit((t) => t.setScalar(sliderId, 50));
+    core.commit((t) => t.setValue(sliderId, 50));
     fireViewKey(view, "ArrowLeft", { metaKey: true });
     expect(scalarOfId(core, sliderId)).toBe(40);
   });

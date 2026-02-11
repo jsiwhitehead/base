@@ -78,7 +78,7 @@ describe("core/eval", () => {
 
     expect(scalarOf(core.item(y).content)).toBe(12);
 
-    core.commit((t) => t.setScalar(x, 40));
+    core.commit((t) => t.setValue(x, 40));
     expect(scalarOf(core.item(y).content)).toBe(42);
   });
 
@@ -185,10 +185,10 @@ describe("core/eval", () => {
     ) => {
       const row = mkGroup(core, rows, { label });
       const key = mkBlank(core, row, { label: "key" });
-      if (keyKind === "num") core.commit((t) => t.setScalar(key, v));
-      else if (keyKind === "text") core.commit((t) => t.setScalar(key, v));
-      else if (keyKind === "true") core.commit((t) => t.setScalar(key, true));
-      else if (keyKind === "blank") core.commit((t) => t.setScalar(key, null));
+      if (keyKind === "num") core.commit((t) => t.setValue(key, v));
+      else if (keyKind === "text") core.commit((t) => t.setValue(key, v));
+      else if (keyKind === "true") core.commit((t) => t.setValue(key, true));
+      else if (keyKind === "blank") core.commit((t) => t.setValue(key, null));
       else if (keyKind === "issue") setDerived(core, key, "unknown_name");
       return row;
     };
@@ -222,7 +222,7 @@ describe("core/history", () => {
     const before = tree(core, rootId);
 
     core.commit((t) => {
-      t.setScalar(a, 10);
+      t.setValue(a, 10);
       t.remove(g);
     });
 
@@ -239,7 +239,7 @@ describe("core/history", () => {
     expect(tree(core, rootId)).toEqual(before);
 
     core.commit((t) => {
-      t.setScalar(b, 99);
+      t.setValue(b, 99);
     });
 
     core.redo();
@@ -253,13 +253,13 @@ describe("core/history", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x", value: 1 });
-    core.commit((t) => t.setScalar(x, 2));
+    core.commit((t) => t.setValue(x, 2));
     expect(scalarOf(core.item(x).content)).toBe(2);
 
     core.undo();
     expect(scalarOf(core.item(x).content)).toBe(1);
 
-    core.commit((t) => t.setScalar(x, 7));
+    core.commit((t) => t.setValue(x, 7));
     expect(scalarOf(core.item(x).content)).toBe(7);
 
     core.redo();
@@ -371,16 +371,16 @@ describe("core/collab", () => {
     core.commit((t) => {
       x = t.insertChild(rootId);
       t.setLabel(x, "x");
-      t.setScalar(x, 1);
+      t.setValue(x, 1);
     });
 
-    core.commit((t) => t.setScalar(x, 2));
+    core.commit((t) => t.setValue(x, 2));
     expect(scalarOf(core.item(x).content)).toBe(2);
 
     core.undo();
     expect(scalarOf(core.item(x).content)).toBe(1);
 
-    core.commit((t) => t.setScalar(x, 3));
+    core.commit((t) => t.setValue(x, 3));
     expect(scalarOf(core.item(x).content)).toBe(3);
 
     const localLast = sent.at(-1);

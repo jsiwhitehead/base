@@ -1,4 +1,4 @@
-import type { Core, ItemId, Scalar, ViewKind, ViewName } from "./core";
+import type { Core, ItemId, Value, ViewKind, ViewName } from "./core";
 import { createCore } from "./core";
 import { createDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV, devAssert, devWarn } from "./dev";
@@ -128,12 +128,12 @@ function seedDemo(app: App) {
     return id;
   };
 
-  const mkScalar = (ownerId: ItemId, label: string, value: Scalar) => {
+  const mkValue = (ownerId: ItemId, label: string, value: Value) => {
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(ownerId);
       t.setLabel(id, label);
-      t.setScalar(id, value);
+      t.setValue(id, value);
     });
     return id;
   };
@@ -169,8 +169,8 @@ function seedDemo(app: App) {
 
   const demo = mkGroup(rootId, "Demo", "outline");
 
-  mkScalar(demo, "x", 10);
-  mkScalar(demo, "y", 2);
+  mkValue(demo, "x", 10);
+  mkValue(demo, "y", 2);
 
   void mkDerived;
   void mkLens;
