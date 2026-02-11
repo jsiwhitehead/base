@@ -1,15 +1,15 @@
 import * as ohm from "ohm-js";
+
+import type { EvalEnv, Value } from "./eval";
 import {
-  type Value,
   V,
-  isPresent,
-  isTrue,
   isBlankValue,
-  isIssueValue,
-  isScalarValue,
   isEntryGroupValue,
+  isIssueValue,
+  isPresent,
+  isScalarValue,
+  isTrue,
   isValueGroupValue,
-  type EvalEnv,
 } from "./eval";
 
 const ISSUE = {
@@ -98,15 +98,7 @@ Script {
 }
 `);
 
-export type Expr =
-  | Binary
-  | Unary
-  | Call
-  | Select
-  | Member
-  | Lit
-  | Blank
-  | Ident;
+type Expr = Binary | Unary | Call | Select | Member | Lit | Blank | Ident;
 
 type PrimitiveBinaryOp =
   | "!="
@@ -122,47 +114,47 @@ type PrimitiveBinaryOp =
 
 type LogicalBinaryOp = "and" | "or";
 
-export interface Binary {
+interface Binary {
   type: "Binary";
   op: PrimitiveBinaryOp | LogicalBinaryOp;
   left: Expr;
   right: Expr;
 }
 
-export interface Unary {
+interface Unary {
   type: "Unary";
   op: "!" | "-" | "+";
   argument: Expr;
 }
 
-export interface Call {
+interface Call {
   type: "Call";
   callee: Expr;
   args: Expr[];
 }
 
-export interface Select {
+interface Select {
   type: "Select";
   group: Expr;
   select: Expr;
 }
 
-export interface Member {
+interface Member {
   type: "Member";
   group: Expr;
   label: Ident;
 }
 
-export interface Lit {
+interface Lit {
   type: "Lit";
   value: true | number | string;
 }
 
-export interface Blank {
+interface Blank {
   type: "Blank";
 }
 
-export interface Ident {
+interface Ident {
   type: "Ident";
   label: string;
 }

@@ -1,34 +1,34 @@
 import { computed } from "@preact/signals-core";
+
 import type {
-  ItemId,
-  Core,
-  Component,
-  Focus,
   Caret,
-  Selection,
+  Component,
+  Core,
   DomView,
+  Focus,
+  ItemId,
   ScalarOrBlank,
+  Selection,
 } from "../core";
-import { parseScalar, DEFAULT_TARGET } from "../core";
+import { DEFAULT_TARGET, parseScalar } from "../core";
+import type { Intent, NavDir } from "../dom";
 import {
-  type NavDir,
-  type Intent,
   LABEL_TARGET,
-  VALUE_TARGET,
-  sourceTarget,
-  fieldsFromSource,
-  patchSource,
-  mountItemMeta,
-  el,
-  createComponent,
-  bindUiItemShell,
-  textField,
   SELECT_ALL,
+  VALUE_TARGET,
+  bindUiItemShell,
   caret0,
   caretAt,
-  insertTextIntoActiveEditor,
+  createComponent,
+  el,
   escapeLadder,
+  fieldsFromSource,
+  insertTextIntoActiveEditor,
+  mountItemMeta,
+  patchSource,
+  sourceTarget,
   stampBody,
+  textField,
 } from "../dom";
 
 function scalarToText(v: ScalarOrBlank): string {
@@ -193,7 +193,7 @@ function clampCaretToText(c: Caret, text: string): Caret {
   return { start: s, end: e };
 }
 
-export const outlineCommands = {
+const outlineCommands = {
   setLabel(core: Core, id: ItemId, text: string): void {
     core.commit((t) => t.setLabel(id, text));
   },

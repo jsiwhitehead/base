@@ -1,8 +1,9 @@
 import { computed, effect } from "@preact/signals-core";
-import type { Core, Focus, Component, Caret, ViewName } from "../core";
+
+import type { Caret, Component, Core, Focus, ViewName } from "../core";
 import { DEFAULT_TARGET } from "../core";
 
-export class Disposer {
+class Disposer {
   private fns: (() => void)[] = [];
 
   add(fn: (() => void) | null | undefined): (() => void) | undefined {
@@ -123,7 +124,7 @@ export function caretFromTarget(el0: EventTarget | null): Caret {
   return { start: 0, end: 0 };
 }
 
-export type Ctx = {
+type Ctx = {
   cleanup(fn: (() => void) | null | undefined): void;
 
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
@@ -243,7 +244,7 @@ export function createComponent(
   };
 }
 
-export type ShellSpec = {
+type ShellSpec = {
   core: Core;
   focus: Focus;
 };

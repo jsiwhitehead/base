@@ -1,25 +1,9 @@
-import { batch, computed, type ReadonlySignal } from "@preact/signals-core";
-import {
-  createModel,
-  type ApplyResult as ModelApplyResult,
-  type Entry,
-  type EntryContent,
-  type EntryId,
-  type Op,
-  type Transaction,
-  type TransactionMeta,
-  type ViewKind,
-  type ViewName,
-  isDerivedContent,
-  isLensContent,
-  isGroupContent,
-  makeBlankEntry,
-  makeGroupEntry,
-  parseScalar,
-} from "./model";
+import type { ReadonlySignal } from "@preact/signals-core";
+import { batch, computed } from "@preact/signals-core";
+
+import type { Value } from "./eval";
 import {
   createEvaluator,
-  type Value,
   isBlankValue,
   isEntryGroupValue,
   isIssueValue,
@@ -27,21 +11,37 @@ import {
   isValueGroupValue,
 } from "./eval";
 import { interpretExpr } from "./lang";
+import type {
+  ApplyResult as ModelApplyResult,
+  Entry,
+  EntryContent,
+  EntryId,
+  Op,
+  Transaction,
+  TransactionMeta,
+  ViewKind,
+  ViewName,
+} from "./model";
 import {
-  createRuntime,
-  type Caret,
-  type Component,
-  type DomView,
-  type Focus,
-  type Selection,
-  type TextCaret,
-  type ViewFactory,
-  DEFAULT_TARGET,
-  clamp,
-  defaultTextCaret,
-  isTextInput,
+  createModel,
+  isDerivedContent,
+  isGroupContent,
+  isLensContent,
+  makeBlankEntry,
+  makeGroupEntry,
+  parseScalar,
+} from "./model";
+import type {
+  Caret,
+  Component,
+  DomView,
+  Focus,
+  Selection,
+  ViewFactory,
 } from "./runtime";
-import { createShapeSyncGroup, type Rule as SyncRule } from "./sync";
+import { DEFAULT_TARGET, createRuntime, defaultTextCaret } from "./runtime";
+import type { Rule as SyncRule } from "./sync";
+import { createShapeSyncGroup } from "./sync";
 
 export type ItemId = string;
 
@@ -57,26 +57,24 @@ export type Source =
   | { type: "derived"; expr: string }
   | { type: "lens"; from: string; where: string; orderBy: string };
 
-export type Mode =
+type Mode =
   | { kind: "readonly" }
   | { kind: "direct" }
   | { kind: "source"; source: Source };
 
-export type Item = {
+type Item = {
   id: ItemId;
   label?: string;
   content: Content;
   mode: Mode;
 };
 
-export type ItemRef = { entryId: EntryId; path: readonly number[] };
+type ItemRef = { entryId: EntryId; path: readonly number[] };
 
-export const itemIdOf = (
-  entryId: EntryId,
-  path: readonly number[] = [],
-): ItemId => `${String(entryId)}:${path.length ? path.join(",") : ""}`;
+const itemIdOf = (entryId: EntryId, path: readonly number[] = []): ItemId =>
+  `${String(entryId)}:${path.length ? path.join(",") : ""}`;
 
-export const parseItemId = (id: ItemId): ItemRef | null => {
+const parseItemId = (id: ItemId): ItemRef | null => {
   const i = id.indexOf(":");
   if (i === -1) return null;
 
@@ -98,18 +96,13 @@ export const parseItemId = (id: ItemId): ItemRef | null => {
   return { entryId: entryId as EntryId, path };
 };
 
-export const refFromItemId = (id: ItemId): ItemRef => {
+const refFromItemId = (id: ItemId): ItemRef => {
   const r = parseItemId(id);
   if (!r) throw new Error("Invalid item id");
   return r;
 };
 
-export const isEntryItemId = (id: ItemId): boolean => {
-  const r = parseItemId(id);
-  return !!r && r.path.length === 0;
-};
-
-export const entryIdFromItemId = (id: ItemId): EntryId | null => {
+const entryIdFromItemId = (id: ItemId): EntryId | null => {
   const r = parseItemId(id);
   return r && r.path.length === 0 ? r.entryId : null;
 };
@@ -146,7 +139,7 @@ export type ApplyResult = {
   }[];
 };
 
-export type Tx = {
+type Tx = {
   setLabel(id: ItemId, label: string): void;
   setView(id: ItemId, view: ViewKind): void;
 
@@ -162,7 +155,7 @@ export type Tx = {
   remove(id: ItemId): void;
 };
 
-export type LocateResult = {
+type LocateResult = {
   ownerId: ItemId;
   index: number;
   siblings: readonly ItemId[];
@@ -198,14 +191,10 @@ export type Core = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: {
-    id: ItemId;
-    focus?: Focus;
-    view: ViewName;
-  }): Component;
+  mountView(opts: { id: ItemId; focus?: Focus; view: ViewName }): Component;
 };
 
-export type CollabWire = {
+type CollabWire = {
   origin: string;
   send(txn: Transaction): void;
   subscribe(onTxn: (txn: Transaction) => void): () => void;
@@ -953,8 +942,15 @@ export function createCore(opts: {
   return { core, rootId };
 }
 
-export type { Component, Selection, Focus, Caret, DomView, ViewFactory };
-export type { TextCaret };
-export type { Transaction, ViewName, ViewKind };
-export { DEFAULT_TARGET };
-export { parseScalar, clamp, isTextInput, defaultTextCaret };
+export type {
+  Caret,
+  Component,
+  DomView,
+  Focus,
+  Selection,
+  Transaction,
+  ViewFactory,
+  ViewKind,
+  ViewName,
+};
+export { DEFAULT_TARGET, defaultTextCaret, parseScalar };

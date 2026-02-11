@@ -1,4 +1,5 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+
 import { DEFAULT_TARGET } from "../src/core";
 import { viewFactories } from "../src/views";
 import {
@@ -227,7 +228,9 @@ describe("views", () => {
 
     const beforeRows = core.item(tableId);
     const beforeCount =
-      beforeRows.content.kind === "group" ? beforeRows.content.children.length : 0;
+      beforeRows.content.kind === "group"
+        ? beforeRows.content.children.length
+        : 0;
     fireViewKey(view, "Enter");
     await flushDomEffects();
     const sel = core.selection();
@@ -240,7 +243,9 @@ describe("views", () => {
 
     const afterRows = core.item(tableId);
     const afterCount =
-      afterRows.content.kind === "group" ? afterRows.content.children.length : 0;
+      afterRows.content.kind === "group"
+        ? afterRows.content.children.length
+        : 0;
     expect(afterCount).toBe(beforeCount + 1);
 
     const rowAEl1 = requireItemEl(view.root, rowA);

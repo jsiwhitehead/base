@@ -1,10 +1,6 @@
-import {
-  batch,
-  computed,
-  signal,
-  type ReadonlySignal,
-  type Signal,
-} from "@preact/signals-core";
+import { batch, computed, signal } from "@preact/signals-core";
+import type { ReadonlySignal, Signal } from "@preact/signals-core";
+
 import { DEV, devAssert } from "../dev";
 
 export type EntryId = number;
@@ -37,7 +33,7 @@ type LensContent = {
   orderBy: string;
 };
 
-export type EntryContentSettable = BlankContent | ScalarContent | GroupContent;
+type EntryContentSettable = BlankContent | ScalarContent | GroupContent;
 export type EntryContent = EntryContentSettable | DerivedContent | LensContent;
 
 export type Entry = {
@@ -50,13 +46,11 @@ export type Entry = {
 
 type GroupEntry = Entry & { content: GroupContent };
 
-export function isBlankContent(content: EntryContent): content is BlankContent {
+function isBlankContent(content: EntryContent): content is BlankContent {
   return content.kind === "blank";
 }
 
-export function isScalarContent(
-  content: EntryContent,
-): content is ScalarContent {
+function isScalarContent(content: EntryContent): content is ScalarContent {
   return content.kind === "scalar";
 }
 
@@ -74,37 +68,37 @@ export function isLensContent(content: EntryContent): content is LensContent {
   return content.kind === "lens";
 }
 
-export function isGroupEntry(entry: Entry): entry is GroupEntry {
+function isGroupEntry(entry: Entry): entry is GroupEntry {
   return isGroupContent(entry.content);
 }
 
-export type SnapshotContent =
+type SnapshotContent =
   | { kind: "blank" }
   | { kind: "scalar"; value: Scalar }
   | { kind: "group"; childIds: SnapshotEntry[] }
   | { kind: "derived"; expr: string }
   | { kind: "lens"; from: string; where: string; orderBy: string };
 
-export type SnapshotEntry = {
+type SnapshotEntry = {
   label?: string;
   view?: ViewName;
   content: SnapshotContent;
 };
 
-export type MoveSpec = {
+type MoveSpec = {
   childId: EntryId;
   toOwnerId: EntryId | null;
   toIndex?: number;
 };
 
-export type MoveResult = {
+type MoveResult = {
   fromOwnerId: EntryId | null;
   toOwnerId: EntryId | null;
   fromIndex: number | null;
   toIndex: number | null;
 };
 
-export type EntryPatch = {
+type EntryPatch = {
   label?: string;
   view?: ViewKind;
   content?: EntryContent;
@@ -134,7 +128,7 @@ export type ApplyResult = {
   readonly moved: readonly MoveResult[];
 };
 
-export type LocateInOwnerResult = {
+type LocateInOwnerResult = {
   readonly ownerId: EntryId;
   readonly index: number;
   readonly childIds: EntryId[];

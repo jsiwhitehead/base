@@ -1,30 +1,30 @@
 import { computed } from "@preact/signals-core";
+
 import type {
-  ItemId,
-  Core,
-  Component,
-  Focus,
   Caret,
-  Selection,
+  Component,
+  Core,
   DomView,
+  Focus,
+  ItemId,
+  Selection,
 } from "../core";
 import { DEFAULT_TARGET } from "../core";
+import type { Intent, NavDir } from "../dom";
 import {
-  type Intent,
-  type NavDir,
+  SELECT_ALL,
   VALUE_TARGET,
-  mountItemMeta,
-  patchSource,
-  el,
-  createComponent,
   bindUiItemShell,
   caret0,
   caretAt,
-  SELECT_ALL,
-  insertTextIntoActiveEditor,
+  createComponent,
+  el,
   escapeLadder,
-  stampBody,
+  insertTextIntoActiveEditor,
+  mountItemMeta,
+  patchSource,
   reconcileChildren,
+  stampBody,
 } from "../dom";
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
@@ -105,7 +105,7 @@ function focusCellContainer(
   };
 }
 
-export const tableCommands = {
+const tableCommands = {
   addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {
     const rows = rowIds(core, tableId);
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;

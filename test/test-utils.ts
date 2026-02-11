@@ -1,18 +1,18 @@
-import { beforeAll, afterEach, expect } from "bun:test";
+import { afterEach, beforeAll, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import {
-  type Core,
-  type ItemId,
-  type Focus,
-  type Selection,
-  type DomView,
-  type Content,
-  type ViewKind,
-  createCore,
-  DEFAULT_TARGET,
+
+import type {
+  Content,
+  Core,
+  DomView,
+  Focus,
+  ItemId,
+  Selection,
+  ViewKind,
 } from "../src/core";
-import { viewFactories } from "../src/views";
+import { DEFAULT_TARGET, createCore } from "../src/core";
 import { parseKeydownIntent } from "../src/dom";
+import { viewFactories } from "../src/views";
 
 const cleanups: Array<() => void> = [];
 

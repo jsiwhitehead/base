@@ -1,16 +1,18 @@
-import { signal, type ReadonlySignal } from "@preact/signals-core";
-import type {
-  Core,
-  ItemId,
-  ApplyResult,
-  Selection,
-  Focus,
-  Caret,
-} from "./core";
-import { createComponent, el, setData } from "./dom";
-import { DEFAULT_TARGET } from "./core/runtime";
+import type { ReadonlySignal } from "@preact/signals-core";
+import { signal } from "@preact/signals-core";
 
-export type DebugLast =
+import type {
+  ApplyResult,
+  Caret,
+  Core,
+  Focus,
+  ItemId,
+  Selection,
+} from "./core";
+import { DEFAULT_TARGET } from "./core";
+import { createComponent, el, setData } from "./dom";
+
+type DebugLast =
   | {
       kind: "commit" | "undo" | "redo";
       selectionBefore: Selection;
@@ -32,7 +34,7 @@ export type DebugLast =
     }
   | { kind: "dispose" };
 
-export type DebugState = {
+type DebugState = {
   lastSignal: ReadonlySignal<DebugLast | null>;
   setLast(next: DebugLast | null): void;
 };
@@ -111,7 +113,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
   return core;
 }
 
-export type DebugPanelOpts = {
+type DebugPanelOpts = {
   core: Core;
   debug: DebugState;
   probeRoot: HTMLElement;

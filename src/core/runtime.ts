@@ -1,9 +1,11 @@
-import { signal, type Signal } from "@preact/signals-core";
+import type { Signal } from "@preact/signals-core";
+import { signal } from "@preact/signals-core";
+
 import type { EntryId, Model, ViewName } from "./model";
 
 export const DEFAULT_TARGET = "default" as const;
 
-export type ItemId = string;
+type ItemId = string;
 
 export type Focus = { container: ItemId; item: ItemId };
 export type Caret = { start: number; end: number };
@@ -12,14 +14,18 @@ export type Selection =
   | { kind: "idle" }
   | { kind: "focused"; focus: Focus; target: string; caret?: Caret };
 
-export type Anchor = "top" | "bottom";
+type Anchor = "top" | "bottom";
 
-export type RuntimeEffect =
+type RuntimeEffect =
   | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
   | { type: "CLEAR_FOCUS" };
 
-export type KeyIntent =
-  | { type: "NAV"; dir: "left" | "right" | "up" | "down"; mode: "step" | "jump" }
+type KeyIntent =
+  | {
+      type: "NAV";
+      dir: "left" | "right" | "up" | "down";
+      mode: "step" | "jump";
+    }
   | { type: "CONFIRM"; caret?: Caret }
   | { type: "CANCEL" }
   | { type: "TAB"; shift: boolean }
@@ -27,7 +33,7 @@ export type KeyIntent =
   | { type: "DELETE"; dir: "backward" | "forward" }
   | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
 
-export type ViewHandle = {
+type ViewHandle = {
   root: HTMLElement;
   onIntent?: (intent: KeyIntent) => void;
 };
@@ -41,23 +47,23 @@ export type DomView = {
   dispose(): void;
 };
 
-export type ViewFactoryArgs<C> = { core: C; id: ItemId; focus?: Focus };
+type ViewFactoryArgs<C> = { core: C; id: ItemId; focus?: Focus };
 export type ViewFactory<C> = (args: ViewFactoryArgs<C>) => DomView;
 
 const itemKey = (id: ItemId): string => id;
 const keyOf = (f: Focus): string =>
   `${itemKey(f.container)}::${itemKey(f.item)}`;
 
-export const clamp = (n: number, lo: number, hi: number): number =>
+const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
 
-export const isTextInput = (
+const isTextInput = (
   el: HTMLElement,
 ): el is HTMLInputElement | HTMLTextAreaElement =>
   (el instanceof HTMLInputElement && el.type === "text") ||
   el instanceof HTMLTextAreaElement;
 
-export type TextCaret = {
+type TextCaret = {
   read(): Caret;
   set(pos: number): void;
   getLength(): number;
@@ -196,10 +202,9 @@ function computeAnchoredPos(
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
 
-export const itemIdFromEntryId = (entryId: EntryId): ItemId =>
-  `${String(entryId)}:`;
+const itemIdFromEntryId = (entryId: EntryId): ItemId => `${String(entryId)}:`;
 
-export const entryIdFromItemId = (id: ItemId): EntryId | null => {
+const entryIdFromItemId = (id: ItemId): EntryId | null => {
   const i = id.indexOf(":");
   const head = i === -1 ? id : id.slice(0, i);
   const n = Number(head);
@@ -216,7 +221,7 @@ type TargetBindingRec = {
   token: number;
 };
 
-export type Runtime<C> = {
+type Runtime = {
   selectionSignal: Signal<Selection>;
 
   selection(): Selection;
@@ -230,11 +235,7 @@ export type Runtime<C> = {
     caret?: { set(pos: number): void; getLength(): number };
   }): () => void;
 
-  mountView(opts: {
-    id: ItemId;
-    focus?: Focus;
-    view: ViewName;
-  }): Component;
+  mountView(opts: { id: ItemId; focus?: Focus; view: ViewName }): Component;
 
   installGlobalListeners(win?: Window): () => void;
 
@@ -246,7 +247,7 @@ export function createRuntime<C>(opts: {
   getCore: () => C;
   views: Partial<Record<ViewName, ViewFactory<C>>>;
   initialSelection?: Selection;
-}): Runtime<C> {
+}): Runtime {
   const { model } = opts;
   const views = opts.views;
 

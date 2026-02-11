@@ -1,23 +1,23 @@
-import { DEV, devAssert, devWarn } from "./dev";
-import type { Core, ItemId, ViewKind, ViewName, Scalar } from "./core";
+import type { Core, ItemId, Scalar, ViewKind, ViewName } from "./core";
 import { createCore } from "./core";
-import { viewFactories } from "./views";
-import { el, createComponent, bindUiItemShell } from "./dom";
 import { createDebugPanel, createDebugState, instrumentCore } from "./debug";
+import { DEV, devAssert, devWarn } from "./dev";
+import { bindUiItemShell, createComponent, el } from "./dom";
+import { viewFactories } from "./views";
 
-export type App = {
+type App = {
   core: Core;
   rootId: ItemId;
   dispose(): void;
 };
 
-export type CreateAppOpts = {
+type CreateAppOpts = {
   host?: HTMLElement;
   rootView?: ViewName;
   demo?: boolean;
 };
 
-export function createApp(opts: CreateAppOpts = {}): App {
+function createApp(opts: CreateAppOpts = {}): App {
   const rootView = opts.rootView ?? "outline";
   const demo = opts.demo ?? DEV;
 
@@ -114,7 +114,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
   return app;
 }
 
-export function seedDemo(app: App) {
+function seedDemo(app: App) {
   const { core, rootId } = app;
 
   const mkGroup = (ownerId: ItemId, label: string, view: ViewKind = null) => {

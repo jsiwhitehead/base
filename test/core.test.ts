@@ -1,5 +1,7 @@
-import { describe, test, expect } from "bun:test";
-import { DEFAULT_TARGET, createCore, type Transaction } from "../src/core";
+import { describe, expect, test } from "bun:test";
+
+import type { Transaction } from "../src/core";
+import { DEFAULT_TARGET, createCore } from "../src/core";
 import {
   makeCoreRuntime,
   scalarOf,

@@ -14,7 +14,7 @@ export type Rule = (
   meta?: Transaction["meta"],
 ) => readonly Op[];
 
-export type SyncGroup = {
+type SyncGroup = {
   add(id: EntryId): void;
   remove(id: EntryId): void;
   has(id: EntryId): boolean;

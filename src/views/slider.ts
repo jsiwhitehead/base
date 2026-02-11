@@ -1,21 +1,15 @@
 import type {
+  Component,
   Core,
+  DomView,
+  Focus,
   ItemId,
   ScalarOrBlank,
-  Component,
-  Focus,
-  DomView,
 } from "../core";
-import { clamp } from "../core/runtime";
-import {
-  el,
-  createComponent,
-  escapeLadder,
-  type Intent,
-  stampBody,
-} from "../dom";
+import type { Intent } from "../dom";
+import { createComponent, el, escapeLadder, stampBody } from "../dom";
 
-export type SliderOpts = { min?: number; max?: number; step?: number };
+type SliderOpts = { min?: number; max?: number; step?: number };
 
 type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
 
@@ -24,6 +18,9 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
   max: 100,
   step: 1,
 };
+
+const clamp = (n: number, lo: number, hi: number): number =>
+  Math.max(lo, Math.min(hi, n));
 
 function toNumberOr(v: ScalarOrBlank, fallback: number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
@@ -65,7 +62,7 @@ const getScalarOr = (core: Core, id: ItemId, fallback: number): number => {
   return fallback;
 };
 
-export const sliderCommands = {
+const sliderCommands = {
   setScalarValue(core: Core, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetScalar(core, id)) return;
     core.commit((t) => t.setScalar(id, value));

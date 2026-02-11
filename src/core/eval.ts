@@ -1,8 +1,10 @@
-import { computed, type ReadonlySignal } from "@preact/signals-core";
-import type { EntryId, Scalar, EntryContent, Model } from "./model";
+import type { ReadonlySignal } from "@preact/signals-core";
+import { computed } from "@preact/signals-core";
+
+import type { EntryContent, EntryId, Model, Scalar } from "./model";
 import { normalizeLabel } from "./model";
 
-export type LabeledValue = { label?: string; value: Value };
+type LabeledValue = { label?: string; value: Value };
 
 type BlankValue = { kind: "blank" };
 type IssueValue = { kind: "issue"; message: string };
@@ -62,7 +64,7 @@ export type EvalEnv = {
   getLabel(id: EntryId): string;
 };
 
-export type Interpreter = (expr: string, env: EvalEnv) => Value;
+type Interpreter = (expr: string, env: EvalEnv) => Value;
 
 type EvalCtx = { visiting: Set<EntryId> };
 const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<EntryId>() });
@@ -109,7 +111,7 @@ const compareSortKey = (a: Value, b: Value): number => {
 
 type CacheRec = { valueSignal?: ReadonlySignal<Value> };
 
-export type Evaluator = {
+type Evaluator = {
   valueSignal(id: EntryId): ReadonlySignal<Value>;
   value(id: EntryId): Value;
   entryIds(id: EntryId): EntryId[];

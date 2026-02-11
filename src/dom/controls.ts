@@ -1,23 +1,24 @@
 import { computed } from "@preact/signals-core";
-import type { Core, Focus, Caret, Component, Source, ItemId } from "../core";
+
+import type { Caret, Component, Core, Focus, ItemId, Source } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import {
+  caretFromTarget,
   createComponent,
   el,
   on,
-  caretFromTarget,
   setData,
   setDataBool,
 } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
-export type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
+type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
 };
 
 export type NavDir = "left" | "right" | "up" | "down";
-export type NavMode = "step" | "jump";
+type NavMode = "step" | "jump";
 
 export type Intent =
   | { type: "NAV"; dir: NavDir; mode: NavMode }
@@ -35,25 +36,22 @@ export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 export const LABEL_TARGET = "label";
 export const VALUE_TARGET = "value";
 export const sourceTarget = (key: string): string => `source:${key}`;
-export const isSourceTarget = (t: string): boolean => t.startsWith("source:");
-export const sourceKeyFromTarget = (t: string): string =>
-  t.slice("source:".length);
 
-export function consume(e: Event): void {
+function consume(e: Event): void {
   e.preventDefault?.();
   e.stopPropagation?.();
 }
 
-export function isPrintableKeydown(e: KeyboardEvent): boolean {
+function isPrintableKeydown(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   return e.key.length === 1;
 }
 
-export function keyNavMode(e: KeyboardEvent): NavMode {
+function keyNavMode(e: KeyboardEvent): NavMode {
   return e.metaKey || e.ctrlKey ? "jump" : "step";
 }
 
-export function keyToNavDir(key: string): NavDir | null {
+function keyToNavDir(key: string): NavDir | null {
   switch (key) {
     case "ArrowLeft":
       return "left";
@@ -110,7 +108,7 @@ export function escapeLadder(core: Core): void {
   core.blur();
 }
 
-export function textInput(multiline: boolean): TextInputElement {
+function textInput(multiline: boolean): TextInputElement {
   const n = document.createElement(multiline ? "textarea" : "input") as
     | HTMLInputElement
     | HTMLTextAreaElement;
@@ -125,7 +123,7 @@ export function textInput(multiline: boolean): TextInputElement {
   return n;
 }
 
-export function syncValue(inp: TextInputElement, next: string) {
+function syncValue(inp: TextInputElement, next: string) {
   if (inp.value === next) return;
 
   if (document.activeElement !== inp) {
@@ -152,7 +150,7 @@ function isLastLine(inp: HTMLTextAreaElement): boolean {
   return inp.value.indexOf("\n", pos) < 0;
 }
 
-export function bindTextEditorYield(
+function bindTextEditorYield(
   inp: TextInputElement,
   onIntent: (i: Intent) => void,
 ): () => void {
@@ -232,15 +230,15 @@ function bindEditorPointerSelect(
   });
 }
 
-export type TextFieldState = {
+type TextFieldState = {
   text: string;
   readOnly: boolean;
   isIssue: boolean;
 };
 
-export type TextFieldEditModel = "live" | "draft";
+type TextFieldEditModel = "live" | "draft";
 
-export type TextFieldOpts = {
+type TextFieldOpts = {
   focus: Focus;
   target: string;
   multiline: boolean;
@@ -412,17 +410,14 @@ export function textField(
   return { ...c, focusEl: c.el as TextInputElement };
 }
 
-export type AutosizeTextFieldOpts = Omit<
-  TextFieldOpts,
-  "multiline" | "className"
-> & {
+type AutosizeTextFieldOpts = Omit<TextFieldOpts, "multiline" | "className"> & {
   className?: string;
   inputClassName?: string;
   mirrorClassName?: string;
   wrapClassName?: string;
 };
 
-export function autosizeTextField(
+function autosizeTextField(
   core: Core,
   opts: AutosizeTextFieldOpts,
 ): FocusComponent<HTMLInputElement> {
@@ -600,7 +595,7 @@ export function autosizeTextField(
   return { ...c, focusEl };
 }
 
-export type SourceField = {
+type SourceField = {
   key: string;
   label: string;
   multiline: boolean;
@@ -641,9 +636,9 @@ export function patchSource(source: Source, key: string, text: string): Source {
   return source;
 }
 
-export type ItemMetaVisibility = "auto" | "always";
+type ItemMetaVisibility = "auto" | "always";
 
-export type MountItemMetaOpts = {
+type MountItemMetaOpts = {
   visibility?: ItemMetaVisibility;
 };
 
