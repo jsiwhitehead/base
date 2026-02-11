@@ -18,9 +18,18 @@ export type RuntimeEffect =
   | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
   | { type: "CLEAR_FOCUS" };
 
+export type KeyIntent =
+  | { type: "NAV"; dir: "left" | "right" | "up" | "down"; mode: "step" | "jump" }
+  | { type: "CONFIRM"; caret?: Caret }
+  | { type: "CANCEL" }
+  | { type: "TAB"; shift: boolean }
+  | { type: "TYPE"; char: string }
+  | { type: "DELETE"; dir: "backward" | "forward" }
+  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
+
 export type ViewHandle = {
   root: HTMLElement;
-  onKeyDown?: (e: KeyboardEvent) => void;
+  onIntent?: (intent: KeyIntent) => void;
 };
 
 export type Component = { el: HTMLElement; dispose(): void };
@@ -28,7 +37,7 @@ export type Component = { el: HTMLElement; dispose(): void };
 export type DomView = {
   id: string;
   root: HTMLElement;
-  onKeyDown?: (e: KeyboardEvent) => void;
+  onIntent?: (intent: KeyIntent) => void;
   dispose(): void;
 };
 
@@ -84,15 +93,65 @@ export function defaultTextCaret(
   };
 }
 
-function shouldBypassGlobalKeydown(): boolean {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return false;
-  if (active.isContentEditable) return true;
-  return (
-    active instanceof HTMLTextAreaElement ||
-    active instanceof HTMLInputElement ||
-    active instanceof HTMLSelectElement
-  );
+function isNativeEditorTarget(target: EventTarget | null): boolean {
+  for (
+    let el0 = target instanceof HTMLElement ? target : null;
+    el0;
+    el0 = el0.parentElement
+  ) {
+    if (el0.isContentEditable) return true;
+    if (
+      el0 instanceof HTMLTextAreaElement ||
+      el0 instanceof HTMLInputElement ||
+      el0 instanceof HTMLSelectElement
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function consumeEvent(e: KeyboardEvent): void {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function parseKeydownIntent(e: KeyboardEvent): KeyIntent | null {
+  if (e.key === "Escape") return { type: "CANCEL" };
+  if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
+  if (e.key === "Enter") return { type: "CONFIRM" };
+
+  if (e.key === "Backspace") return { type: "DELETE", dir: "backward" };
+  if (e.key === "Delete") return { type: "DELETE", dir: "forward" };
+
+  let dir: "left" | "right" | "up" | "down" | null = null;
+  switch (e.key) {
+    case "ArrowLeft":
+      dir = "left";
+      break;
+    case "ArrowRight":
+      dir = "right";
+      break;
+    case "ArrowUp":
+      dir = "up";
+      break;
+    case "ArrowDown":
+      dir = "down";
+      break;
+  }
+  if (dir) {
+    return {
+      type: "NAV",
+      dir,
+      mode: e.metaKey || e.ctrlKey ? "jump" : "step",
+    };
+  }
+
+  if (!(e.ctrlKey || e.metaKey || e.altKey) && e.key.length === 1) {
+    return { type: "TYPE", char: e.key };
+  }
+
+  return null;
 }
 
 function normalizeEffectsForSelection(
@@ -344,9 +403,9 @@ export function createRuntime<C>(opts: {
 
   const registerViewRoot = (v: {
     root: HTMLElement;
-    onKeyDown?: (e: KeyboardEvent) => void;
+    onIntent?: (intent: KeyIntent) => void;
   }): (() => void) => {
-    const handle: ViewHandle = { root: v.root, onKeyDown: v.onKeyDown };
+    const handle: ViewHandle = { root: v.root, onIntent: v.onIntent };
     viewRoots.set(handle.root, handle);
     viewsSet.add(handle);
 
@@ -395,12 +454,47 @@ export function createRuntime<C>(opts: {
     };
   };
 
+  const runGlobalCommand = (intent: KeyIntent): boolean => {
+    if (intent.type !== "CANCEL") return false;
+    const sel = selectionSignal.peek();
+    if (sel.kind !== "focused") {
+      setSelection({ kind: "idle" });
+      return true;
+    }
+    if (sel.target !== DEFAULT_TARGET) {
+      setSelection({
+        kind: "focused",
+        focus: sel.focus,
+        target: DEFAULT_TARGET,
+        caret: { start: 0, end: 0 },
+      });
+      return true;
+    }
+    setSelection({ kind: "idle" });
+    return true;
+  };
+
   const dispatchKeyDown = (e: KeyboardEvent) => {
-    if (shouldBypassGlobalKeydown()) return;
+    if (e.defaultPrevented) return;
+
+    const intent = parseKeydownIntent(e);
+    if (!intent) return;
+
+    if (isNativeEditorTarget(e.target)) {
+      if (!runGlobalCommand(intent)) return;
+      consumeEvent(e);
+      return;
+    }
+
+    if (runGlobalCommand(intent)) {
+      consumeEvent(e);
+      return;
+    }
 
     const v = getActiveView();
-    if (!v?.onKeyDown) return;
-    v.onKeyDown(e);
+    if (!v?.onIntent) return;
+    consumeEvent(e);
+    v.onIntent(intent);
   };
 
   const installGlobalListeners = (win: Window = window): (() => void) => {
@@ -436,7 +530,7 @@ export function createRuntime<C>(opts: {
 
     const unreg = registerViewRoot({
       root: view.root,
-      onKeyDown: view.onKeyDown,
+      onIntent: view.onIntent,
     });
 
     return {

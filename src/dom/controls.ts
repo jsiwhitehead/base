@@ -1,4 +1,5 @@
-import type { Core, Focus, Caret, Component } from "../core";
+import { computed } from "@preact/signals-core";
+import type { Core, Focus, Caret, Component, Source, ItemId } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import {
   createComponent,
@@ -30,6 +31,13 @@ export type Intent =
 export const SELECT_ALL: Caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
 export const caret0 = (): Caret => ({ start: 0, end: 0 });
 export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+
+export const LABEL_TARGET = "label";
+export const VALUE_TARGET = "value";
+export const sourceTarget = (key: string): string => `source:${key}`;
+export const isSourceTarget = (t: string): boolean => t.startsWith("source:");
+export const sourceKeyFromTarget = (t: string): string =>
+  t.slice("source:".length);
 
 export function consume(e: Event): void {
   e.preventDefault?.();
@@ -590,4 +598,179 @@ export function autosizeTextField(
   });
 
   return { ...c, focusEl };
+}
+
+export type SourceField = {
+  key: string;
+  label: string;
+  multiline: boolean;
+  text: string;
+};
+
+export function fieldsFromSource(source: Source): SourceField[] {
+  if (source.type === "derived") {
+    return [
+      { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
+    ];
+  }
+  return [
+    { key: "from", label: "~", multiline: false, text: source.from ?? "" },
+    {
+      key: "where",
+      label: "where:",
+      multiline: true,
+      text: source.where ?? "",
+    },
+    {
+      key: "orderBy",
+      label: "orderBy:",
+      multiline: true,
+      text: source.orderBy ?? "",
+    },
+  ];
+}
+
+export function patchSource(source: Source, key: string, text: string): Source {
+  if (source.type === "derived") {
+    if (key === "expr") return { type: "derived", expr: text };
+    return source;
+  }
+  if (key === "from") return { ...source, from: text };
+  if (key === "where") return { ...source, where: text };
+  if (key === "orderBy") return { ...source, orderBy: text };
+  return source;
+}
+
+export type ItemMetaVisibility = "auto" | "always";
+
+export type MountItemMetaOpts = {
+  visibility?: ItemMetaVisibility;
+};
+
+export function mountItemMeta(
+  core: Core,
+  args: {
+    focus: Focus;
+    id: ItemId;
+    dispatch: (i: Intent) => void;
+    commitLabel: (text: string) => void;
+    canEditLabel: () => boolean;
+    commitSourceField: (key: string, text: string) => void;
+  },
+  opts: MountItemMetaOpts = {},
+): Component {
+  const visibility: ItemMetaVisibility = opts.visibility ?? "always";
+  const id = args.id;
+
+  return createComponent(core, (ctx) => {
+    const meta = el("div", "ui-meta");
+
+    const labelWrap = el("div", "ui-meta-label");
+    const sourceWrap = el("div", "ui-meta-source");
+    meta.append(labelWrap, sourceWrap);
+
+    const labelComp = autosizeTextField(core, {
+      focus: args.focus,
+      target: LABEL_TARGET,
+      yieldNav: false,
+      commit: args.commitLabel,
+      getState: () => {
+        const snap = core.item(id);
+        return {
+          text: snap.label ?? "",
+          readOnly: !args.canEditLabel(),
+          isIssue: false,
+        };
+      },
+      onIntent: args.dispatch,
+    });
+
+    labelWrap.replaceChildren(labelComp.el);
+    ctx.cleanup(() => labelComp.dispose());
+
+    const rows = ctx.list<string>(sourceWrap, (key) =>
+      createComponent(core, (ctx2) => {
+        const row = el("div", "ui-meta-source-row");
+        const keyEl = el("div", "ui-meta-source-key");
+        const valEl = el("div", "ui-meta-source-val");
+        row.append(keyEl, valEl);
+
+        const tkey = sourceTarget(key);
+
+        const specForKey = (): SourceField | null => {
+          const snap = core.item(id);
+          if (snap.mode.kind !== "source") return null;
+          return (
+            fieldsFromSource(snap.mode.source).find((f) => f.key === key) ??
+            null
+          );
+        };
+
+        const multilineForKey = (): boolean => specForKey()?.multiline ?? true;
+        const labelForKey = (): string => specForKey()?.label ?? "";
+
+        const fc = textField(core, {
+          focus: args.focus,
+          target: tkey,
+          multiline: multilineForKey(),
+          commit: (text) => args.commitSourceField(key, text),
+          getState: () => {
+            const snap = core.item(id);
+            if (snap.mode.kind !== "source")
+              return { text: "", readOnly: true, isIssue: false };
+            const txt =
+              fieldsFromSource(snap.mode.source).find((x) => x.key === key)
+                ?.text ?? "";
+            return { text: txt, readOnly: false, isIssue: false };
+          },
+          onIntent: args.dispatch,
+        });
+
+        valEl.replaceChildren(fc.el);
+        ctx2.cleanup(() => fc.dispose());
+
+        ctx2.effect(() => {
+          const lbl = labelForKey();
+          if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
+        });
+
+        return row;
+      }),
+    );
+
+    const labelFocused = computed(() => {
+      const sel = core.selection();
+      return (
+        sel.kind === "focused" &&
+        sel.focus.item === args.focus.item &&
+        sel.focus.container === args.focus.container &&
+        sel.target === LABEL_TARGET
+      );
+    });
+
+    const hasLabel = computed(() => (core.item(id).label ?? "").trim() !== "");
+
+    const fieldsSignal = computed(() => {
+      const snap = core.item(id);
+      return snap.mode.kind === "source"
+        ? fieldsFromSource(snap.mode.source)
+        : [];
+    });
+
+    const hasFields = computed(() => fieldsSignal.value.length > 0);
+
+    ctx.effect(() => {
+      rows.update(fieldsSignal.value.map((f) => f.key));
+    });
+
+    ctx.effect(() => {
+      const shouldHide =
+        visibility === "auto"
+          ? !(hasLabel.value || hasFields.value || labelFocused.value)
+          : false;
+      meta.classList.toggle("hidden", shouldHide);
+    });
+
+    return meta;
+  });
 }

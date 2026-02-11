@@ -12,6 +12,7 @@ import {
   DEFAULT_TARGET,
 } from "../src/core";
 import { viewFactories } from "../src/views";
+import { parseKeydownIntent } from "../src/dom";
 
 const cleanups: Array<() => void> = [];
 
@@ -196,7 +197,9 @@ export function fireViewKey(
   key: string,
   opts?: Partial<KeyboardEventInit>,
 ): void {
-  view.onKeyDown?.(keyEvent(key, opts));
+  const intent = parseKeydownIntent(keyEvent(key, opts));
+  if (!intent) return;
+  view.onIntent?.(intent);
 }
 
 export function fireWindowKey(

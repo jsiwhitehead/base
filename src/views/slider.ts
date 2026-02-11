@@ -11,8 +11,6 @@ import {
   el,
   createComponent,
   escapeLadder,
-  consume,
-  parseKeydownIntent,
   type Intent,
   stampBody,
 } from "../dom";
@@ -179,17 +177,10 @@ export function createSliderView(args: {
     }
   };
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    const intent = parseKeydownIntent(e);
-    if (!intent) return;
-    consume(e);
-    dispatch(intent);
-  };
-
   return {
     id: `slider:${String(id)}`,
     root: content.el,
-    onKeyDown,
+    onIntent: dispatch,
     dispose() {
       content.dispose();
     },

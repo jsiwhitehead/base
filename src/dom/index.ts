@@ -16,6 +16,16 @@ export {
 } from "./base";
 
 export {
+  LABEL_TARGET,
+  VALUE_TARGET,
+  sourceTarget,
+  isSourceTarget,
+  sourceKeyFromTarget,
+  fieldsFromSource,
+  patchSource,
+  mountItemMeta,
+  type ItemMetaVisibility,
+  type MountItemMetaOpts,
   SELECT_ALL,
   caret0,
   caretAt,
@@ -34,4 +44,5 @@ export {
   type TextFieldEditModel,
   type TextFieldOpts,
   type AutosizeTextFieldOpts,
+  type SourceField,
 } from "./controls";

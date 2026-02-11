@@ -200,9 +200,9 @@ describe("views", () => {
     fireViewKey(view, "ArrowRight");
     await flushDomEffects();
     expectSel(core, {
-      container: tableId,
-      item: rowA,
-      target: "label",
+      container: rowA,
+      item: aScoreId,
+      target: DEFAULT_TARGET,
     });
 
     fireViewKey(view, "ArrowRight");
@@ -223,11 +223,25 @@ describe("views", () => {
 
     fireViewKey(view, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: rowB, target: "label" });
+    expectSel(core, { container: tableId, item: rowB, target: DEFAULT_TARGET });
 
+    const beforeRows = core.item(tableId);
+    const beforeCount =
+      beforeRows.content.kind === "group" ? beforeRows.content.children.length : 0;
     fireViewKey(view, "Enter");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: rowB, target: DEFAULT_TARGET });
+    const sel = core.selection();
+    expect(sel.kind).toBe("focused");
+    if (sel.kind === "focused") {
+      expect(sel.focus.container).toBe(tableId);
+      expect(sel.focus.item).not.toBe(rowB);
+      expect(sel.target).toBe(DEFAULT_TARGET);
+    }
+
+    const afterRows = core.item(tableId);
+    const afterCount =
+      afterRows.content.kind === "group" ? afterRows.content.children.length : 0;
+    expect(afterCount).toBe(beforeCount + 1);
 
     const rowAEl1 = requireItemEl(view.root, rowA);
     const rowBEl1 = requireItemEl(view.root, rowB);

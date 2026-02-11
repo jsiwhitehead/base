@@ -360,8 +360,9 @@ When `core.focus(...)` updates selection, Core sets the active view from the foc
 - Active view is derived from the element focused via the `(focus, target)` binding (`getEl()`), not from pointer event targets.
 - The active view is the closest mounted view root that contains the focused element.
 - View routing therefore depends on bindings targeting an element inside the intended mounted view root.
-- Global keyboard input is routed to `activeView.onKeyDown(...)` when the focused element is not a native text editor.
-- Native text editors (`input`, `textarea`, `contenteditable`) handle text editing locally and may explicitly yield navigation intents to the view.
+- Global keyboard input is parsed and routed by Core to the active view intent handler.
+- Native text editors (`input`, `textarea`, `contenteditable`) handle text editing locally first; Core may still handle explicit global commands (for example, Escape).
+- Native text editors may explicitly yield navigation intents to the view.
 
 #### Table view
 

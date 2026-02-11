@@ -422,13 +422,14 @@ Keyboard routing happens at two levels.
 
 ### Global routing
 
-The app root receives keydown events and forwards them to the currently mounted root `DomView.onKeyDown`.
+Core owns the global `keydown` listener (attached once for the app).
 
-That root view:
+Core:
 
 - parses the event into an intent
-- consumes the event
-- dispatches the intent based on Core selection
+- consumes the DOM event when it routes an intent
+- handles global commands (for example, Escape ladder)
+- routes view intents to the active view intent handler
 
 ---
 
@@ -440,6 +441,7 @@ Editors implement “yielding” via:
 
 Yielding is semantic, not bubbling.
 It applies to text edit targets (`source:*`, `value`), not to `label`.
+This is local editor behavior and is independent of Core global keydown routing.
 
 Instead of letting arrow keys bubble, editors detect boundary conditions and emit intents like:
 
@@ -995,7 +997,7 @@ Value display formatting depends on step precision.
 - Selection-driven updates must be styling-only.
 - One tabbable element total (app root).
 - Tab/Shift+Tab are always app commands.
-- Tab is delivered to the current view (outer -> parent/context view; inner -> child view).
+- Tab is routed by Core and delivered to the active view intent handler (outer -> parent/context view; inner -> child view).
 - Interaction is routed via intents.
 - Editors yield semantically (they emit intents rather than bubbling raw events).
 - Label editing is pointer-only and does not yield navigation.

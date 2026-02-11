@@ -8,73 +8,31 @@ import type {
   Selection,
   DomView,
   ScalarOrBlank,
-  Source,
 } from "../core";
 import { parseScalar, DEFAULT_TARGET } from "../core";
 import {
   type NavDir,
   type Intent,
+  LABEL_TARGET,
+  VALUE_TARGET,
+  sourceTarget,
+  fieldsFromSource,
+  patchSource,
+  mountItemMeta,
   el,
   createComponent,
   bindUiItemShell,
-  autosizeTextField,
   textField,
   SELECT_ALL,
   caret0,
   caretAt,
-  consume,
-  parseKeydownIntent,
   insertTextIntoActiveEditor,
   escapeLadder,
   stampBody,
 } from "../dom";
 
-type SourceField = {
-  key: string;
-  label: string;
-  multiline: boolean;
-  text: string;
-};
-
-const VALUE_TARGET = "value";
-const LABEL_TARGET = "label";
-
 function scalarToText(v: ScalarOrBlank): string {
   return v == null ? "" : String(v);
-}
-
-function fieldsFromSource(source: Source): SourceField[] {
-  if (source.type === "derived") {
-    return [
-      { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
-    ];
-  }
-  return [
-    { key: "from", label: "~", multiline: false, text: source.from ?? "" },
-    {
-      key: "where",
-      label: "where:",
-      multiline: true,
-      text: source.where ?? "",
-    },
-    {
-      key: "orderBy",
-      label: "orderBy:",
-      multiline: true,
-      text: source.orderBy ?? "",
-    },
-  ];
-}
-
-function patchSource(source: Source, key: string, text: string): Source {
-  if (source.type === "derived") {
-    if (key === "expr") return { type: "derived", expr: text };
-    return source;
-  }
-  if (key === "from") return { ...source, from: text };
-  if (key === "where") return { ...source, where: text };
-  if (key === "orderBy") return { ...source, orderBy: text };
-  return source;
 }
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
@@ -143,7 +101,7 @@ function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
 function editStopsForItem(core: Core, id: ItemId): string[] {
   const it = core.item(id);
   if (it.mode.kind === "source") {
-    return fieldsFromSource(it.mode.source).map((f) => `source:${f.key}`);
+    return fieldsFromSource(it.mode.source).map((f) => sourceTarget(f.key));
   }
   if (it.mode.kind === "direct" && it.content.kind === "scalar")
     return [VALUE_TARGET];
@@ -430,133 +388,6 @@ type OutlineMountCtx = {
   dispatch: (intent: Intent) => void;
 };
 
-function mountMeta(mountCtx: OutlineMountCtx, focus: Focus): Component {
-  const { core, dispatch } = mountCtx;
-  const id = focus.item;
-
-  return createComponent(core, (ctx) => {
-    const meta = el("div", "ui-meta");
-
-    const labelWrap = el("div", "ui-meta-label");
-    const sourceWrap = el("div", "ui-meta-source");
-    meta.append(labelWrap, sourceWrap);
-
-    const canEditLabel = () => core.item(id).mode.kind !== "readonly";
-
-    const commitLabel = (text: string) => {
-      if (!canEditLabel()) return;
-      const cur = core.item(id).label ?? "";
-      if (cur === text) return;
-      outlineCommands.setLabel(core, id, text);
-    };
-
-    const labelComp = autosizeTextField(core, {
-      focus,
-      target: LABEL_TARGET,
-      yieldNav: false,
-      commit: commitLabel,
-      getState: () => {
-        const snap = core.item(id);
-        return {
-          text: snap.label ?? "",
-          readOnly: !canEditLabel(),
-          isIssue: false,
-        };
-      },
-      onIntent: dispatch,
-    });
-
-    labelWrap.replaceChildren(labelComp.el);
-    ctx.cleanup(() => labelComp.dispose());
-
-    const rows = ctx.list(sourceWrap, (key: string) =>
-      createComponent(core, (ctx2) => {
-        const row = el("div", "ui-meta-source-row");
-        const keyEl = el("div", "ui-meta-source-key");
-        const valEl = el("div", "ui-meta-source-val");
-        row.append(keyEl, valEl);
-
-        const tkey = `source:${key}`;
-
-        const specForKey = (): SourceField | null => {
-          const snap = core.item(id);
-          if (snap.mode.kind !== "source") return null;
-          return (
-            fieldsFromSource(snap.mode.source).find((f) => f.key === key) ??
-            null
-          );
-        };
-
-        const multilineForKey = (): boolean => specForKey()?.multiline ?? true;
-        const labelForKey = (): string => specForKey()?.label ?? "";
-
-        const fc = textField(core, {
-          focus,
-          target: tkey,
-          multiline: multilineForKey(),
-          commit: (text) =>
-            outlineCommands.commitSourceField(core, id, key, text),
-          getState: () => {
-            const snap = core.item(id);
-            if (snap.mode.kind !== "source")
-              return { text: "", readOnly: true, isIssue: false };
-            const txt =
-              fieldsFromSource(snap.mode.source).find((x) => x.key === key)
-                ?.text ?? "";
-            return { text: txt, readOnly: false, isIssue: false };
-          },
-          onIntent: dispatch,
-        });
-
-        valEl.replaceChildren(fc.el);
-        ctx2.cleanup(() => fc.dispose());
-
-        ctx2.effect(() => {
-          const lbl = labelForKey();
-          if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
-        });
-
-        return row;
-      }),
-    );
-
-    const labelFocused = computed(() => {
-      const sel = core.selection();
-      return (
-        sel.kind === "focused" &&
-        sel.focus.item === focus.item &&
-        sel.focus.container === focus.container &&
-        sel.target === LABEL_TARGET
-      );
-    });
-
-    const hasLabel = computed(() => (core.item(id).label ?? "").trim() !== "");
-
-    const fieldsSignal = computed(() => {
-      const snap = core.item(id);
-      return snap.mode.kind === "source"
-        ? fieldsFromSource(snap.mode.source)
-        : [];
-    });
-
-    const hasFields = computed(() => fieldsSignal.value.length > 0);
-
-    const needMeta = computed(
-      () => hasLabel.value || hasFields.value || labelFocused.value,
-    );
-
-    ctx.effect(() => {
-      rows.update(fieldsSignal.value.map((f) => f.key));
-    });
-
-    ctx.effect(() => {
-      meta.classList.toggle("hidden", !needMeta.value);
-    });
-
-    return meta;
-  });
-}
-
 function mountOutlineNodeShell(
   mountCtx: OutlineMountCtx,
   focus: Focus,
@@ -570,7 +401,32 @@ function mountOutlineNodeShell(
     bindUiItemShell(ctx, { core, focus }, shell);
 
     if (showMeta) {
-      const meta = mountMeta(mountCtx, focus);
+      const canEditLabel = () => core.item(id).mode.kind !== "readonly";
+
+      const commitLabel = (text: string) => {
+        if (!canEditLabel()) return;
+        const cur = core.item(id).label ?? "";
+        if (cur === text) return;
+        outlineCommands.setLabel(core, id, text);
+      };
+
+      const commitSourceField = (key: string, text: string) => {
+        outlineCommands.commitSourceField(core, id, key, text);
+      };
+
+      const meta = mountItemMeta(
+        core,
+        {
+          focus,
+          id,
+          dispatch: mountCtx.dispatch,
+          canEditLabel,
+          commitLabel,
+          commitSourceField,
+        },
+        { visibility: "auto" },
+      );
+
       shell.append(meta.el);
       ctx.cleanup(() => meta.dispose());
     }
@@ -783,7 +639,7 @@ export function createOutlineView(args: {
           scalarToText(it.content.value).trim() === ""
         ) {
           outlineCommands.setDerived(core, id);
-          core.focus(focusFor(core, rootId, id), "source:expr", {
+          core.focus(focusFor(core, rootId, id), sourceTarget("expr"), {
             caret: caret0(),
           });
           return;
@@ -896,17 +752,10 @@ export function createOutlineView(args: {
     viewFocus,
   );
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    const intent = parseKeydownIntent(e);
-    if (!intent) return;
-    consume(e);
-    dispatch(intent);
-  };
-
   return {
     id: `outline:${String(rootId)}`,
     root: body.el,
-    onKeyDown,
+    onIntent: dispatch,
     dispose() {
       body.dispose();
     },

@@ -1,12 +1,5 @@
 import { DEV, devAssert, devWarn } from "./dev";
-import type {
-  Core,
-  ItemId,
-  ViewKind,
-  ViewName,
-  Scalar,
-  Component,
-} from "./core";
+import type { Core, ItemId, ViewKind, ViewName, Scalar } from "./core";
 import { createCore } from "./core";
 import { viewFactories } from "./views";
 import { el, createComponent, bindUiItemShell } from "./dom";
@@ -47,10 +40,6 @@ export function createApp(opts: CreateAppOpts = {}): App {
 
   const focus = { container: rootId, item: rootId };
 
-  let currentRootView:
-    | (Component & { onKeyDown?(e: KeyboardEvent): void })
-    | null = null;
-
   const appRoot = createComponent(core, (ctx) => {
     const rootShell = el("div", "ui-app");
     const bodyHost = el("div", "ui-app-body");
@@ -63,12 +52,7 @@ export function createApp(opts: CreateAppOpts = {}): App {
     ctx.effect(() => {
       const wanted = core.view(rootId);
       const mounted = core.mountView({ id: rootId, focus, view: wanted });
-      currentRootView = mounted;
       slot.set(mounted);
-    });
-
-    ctx.cleanup(() => {
-      currentRootView = null;
     });
 
     return rootShell;
@@ -89,10 +73,6 @@ export function createApp(opts: CreateAppOpts = {}): App {
     },
     { capture: true },
   );
-
-  main.addEventListener("keydown", (e: KeyboardEvent) => {
-    currentRootView?.onKeyDown?.(e);
-  });
 
   main.append(appRoot.el);
   shell.append(main);
@@ -134,29 +114,8 @@ export function createApp(opts: CreateAppOpts = {}): App {
   return app;
 }
 
-function findChildByLabel(
-  core: App["core"],
-  ownerId: ItemId,
-  label: string,
-): ItemId | null {
-  const want = label.trim();
-  if (!want) return null;
-
-  const snap = core.item(ownerId);
-  if (snap.content.kind !== "group") return null;
-
-  for (const childId of snap.content.children) {
-    const c = core.item(childId);
-    if ((c.label ?? "").trim() === want) return childId;
-  }
-
-  return null;
-}
-
 export function seedDemo(app: App) {
   const { core, rootId } = app;
-
-  if (findChildByLabel(core, rootId, "Demo")) return;
 
   const mkGroup = (ownerId: ItemId, label: string, view: ViewKind = null) => {
     let id: ItemId = "";
