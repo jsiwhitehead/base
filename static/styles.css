@@ -56,17 +56,57 @@
   min-width: 0;
 }
 
+.ui-textfield {
+  position: relative;
+  display: inline-grid;
+  grid-template-areas: "field";
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ui-textfield-input {
+  grid-area: field;
+  width: auto;
+  height: 100%;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  min-width: 0;
+}
+
+.ui-textfield-mirror {
+  grid-area: field;
+  visibility: hidden;
+  font: inherit;
+  color: transparent;
+  white-space: pre-wrap;
+  min-width: 0;
+}
+
+.ui-body .ui-textfield {
+  width: 100%;
+}
+
+.ui-body .ui-textfield-input {
+  width: 100%;
+}
+
 .ui-item {
   position: relative;
   --chrome-color: var(--chrome);
 }
 
-.ui-item.is-issue {
-  --chrome-color: var(--issue);
-}
-
 .ui-item.is-focused {
   --chrome-color: var(--focus);
+}
+
+.ui-item.is-issue {
+  --chrome-color: var(--issue);
 }
 
 .ui-meta {
@@ -76,12 +116,17 @@
   padding: var(--inset) var(--pad);
   background: var(--chrome-color);
   border-radius: var(--radius);
+  color: var(--text);
 }
 
 .ui-meta-label {
   display: inline-block;
   width: fit-content;
   max-width: 100%;
+  font-size: var(--meta-size);
+  line-height: var(--meta-leading);
+  font-weight: var(--weight-strong);
+  color: var(--text-muted);
 }
 
 .ui-meta-conn {
@@ -106,40 +151,25 @@
   white-space: nowrap;
 }
 
-.ui-meta-label .ui-textfield-input {
-  font-size: var(--meta-size);
-  line-height: var(--meta-leading);
-  font-weight: var(--weight-strong);
-  color: var(--text-muted);
-  width: auto;
-}
-
 .ui-meta-conn-val {
   flex: 1;
   min-width: 0;
-}
-
-.ui-meta-conn-val .ui-textfield-input {
   font-family: var(--font-mono);
   font-size: var(--meta-size);
   line-height: var(--meta-leading);
   font-weight: var(--weight-mono);
   color: var(--text);
-  width: auto;
 }
 
-.ui-item.is-focused > .ui-meta .ui-meta-conn-key,
-.ui-item.is-focused > .ui-meta .ui-meta-label .ui-textfield-input {
+.ui-item.is-focused > .ui-meta .ui-meta-label,
+.ui-item.is-focused > .ui-meta .ui-meta-conn-key {
   color: var(--text);
-}
-
-.ui-item.is-issue > .ui-meta .ui-meta-conn-key {
-  color: var(--issue);
 }
 
 .ui-body.ui-outline .ui-outline-node {
   position: relative;
-  padding-left: calc(var(--rail) + var(--pad));
+  --outline-indent: calc(var(--rail) + var(--pad));
+  padding-left: var(--outline-indent);
   padding-block: 0;
   margin-block: 0;
 }
@@ -158,8 +188,8 @@
 
 .ui-body.ui-outline .ui-outline-node > .ui-meta {
   margin-bottom: var(--gap);
-  margin-left: calc(-1 * var(--pad));
-  padding-left: calc(var(--pad) + var(--pad));
+  margin-left: calc(-1 * var(--outline-indent));
+  padding-left: calc(var(--pad) + var(--outline-indent));
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
@@ -193,7 +223,7 @@
 
 .ui-body.ui-table .ui-table-col {
   padding: var(--pad);
-  border: 1px solid var(--chrome);
+  background: var(--chrome);
   border-radius: var(--radius);
 }
 
@@ -222,20 +252,15 @@
 }
 
 .ui-body.ui-table .ui-table-cell.ui-table-meta-col {
-  padding-left: calc(var(--rail) + var(--pad));
+  padding-left: var(--pad);
   padding-block: 0;
-}
-
-.ui-body.ui-table .ui-table-cell.ui-table-meta-col::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: var(--rail);
   background: var(--chrome-color);
   border-top-left-radius: var(--radius);
   border-bottom-left-radius: var(--radius);
+}
+
+.ui-body.ui-table .ui-table-cell.ui-table-meta-col::before {
+  content: none;
 }
 
 .ui-body.ui-slider {
@@ -254,44 +279,4 @@
   line-height: var(--meta-leading);
   font-weight: var(--weight-strong);
   color: var(--text-muted);
-}
-
-.ui-textfield {
-  position: relative;
-  display: inline-grid;
-  grid-template-areas: "field";
-  min-width: 0;
-  max-width: 100%;
-  width: fit-content;
-}
-
-.ui-textfield-input {
-  grid-area: field;
-  width: auto;
-  height: 100%;
-  font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  resize: none;
-  min-width: 0;
-}
-
-.ui-textfield-mirror {
-  grid-area: field;
-  visibility: hidden;
-  font: inherit;
-  color: transparent;
-  white-space: pre-wrap;
-  min-width: 0;
-}
-
-.ui-body .ui-textfield {
-  width: 100%;
-}
-
-.ui-body .ui-textfield-input {
-  width: 100%;
 }

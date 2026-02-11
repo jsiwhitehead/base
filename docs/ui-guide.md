@@ -1048,11 +1048,27 @@ Value display formatting depends on step precision.
 
 # 4) Styling & Visual Language
 
-This chapter defines the styling contract for the UI. It describes the minimal visual system (chrome + body), the universal state classes, and layout-specific rail rules. It is intentionally small: the purpose is to keep CSS consistent and composable across views.
+This chapter defines the styling contract for the UI. It describes the minimal visual system (chrome + body), the universal state classes, and layout-specific rail rules.
+
+It is intentionally small: the purpose is to keep CSS consistent and composable across all views, and to preserve one recognizable visual language throughout.
 
 ---
 
-## 4.1 Two layers visually: Item chrome vs Item content
+## 4.1 Visual foundations (tokens)
+
+The UI is driven by a small set of global tokens. These tokens define the visual identity and should be treated as the canonical defaults.
+
+Token categories:
+
+- Typography (fonts, sizes, weights, line-height)
+- Geometry (gap, padding, inset, rail thickness, radius)
+- Colors (text, muted text, background, chrome fill, focus, issue)
+
+Tokens should be defined at `:root` and referenced everywhere else. View styles should not hardcode raw values unless unavoidable.
+
+---
+
+## 4.2 Two layers visually: Item chrome vs Item content
 
 Styling assumes a two-layer presentation everywhere.
 
@@ -1083,7 +1099,7 @@ Content is styled neutrally by default. View-specific styling should not redefin
 
 ---
 
-## 4.2 Universal state classes (hard contract)
+## 4.3 Universal state classes (hard contract)
 
 The UI uses a minimal, shared set of state classes:
 
@@ -1092,17 +1108,35 @@ The UI uses a minimal, shared set of state classes:
 
 These classes are applied to `.ui-item` shells (and optionally on child shells where relevant).
 
-Styling rules:
+State styling rules:
 
 - default: rails + meta share a single neutral chrome fill
-- focused: rails + meta share the focus fill
-- issue: rails + meta share the issue fill
+- focused: rails + meta share the focus chrome fill
+- issue: rails + meta share the issue chrome fill
+- state priority is a stack: `issue` overrides `focus`
+- focus is indicated by chrome fill only (no focus ring)
 
 Bodies should remain readable and neutral; state is expressed primarily through chrome.
 
 ---
 
-## 4.3 Rails: signature + grouping language
+## 4.4 Chrome fill derivation
+
+Chrome styling is driven through a single derived value on `.ui-item`:
+
+- `.ui-item` defines one derived chrome fill: `--chrome-color`
+- `.is-focused` and `.is-issue` override that derived fill according to the state priority stack
+- rails and meta use the derived fill, not raw state tokens
+
+This keeps:
+
+- rails and meta always match
+- state styling is centralized
+- chrome does not depend on body structure
+
+---
+
+## 4.5 Rails: signature + grouping language
 
 Rails are the primary structural marker.
 
@@ -1117,28 +1151,52 @@ Principles:
    - rails do not require divider lines
    - spacing between rail segments is the main grouping cue
 
-Rails are drawn using pseudo-elements on the chrome elements that own layout geometry (not inside mounted body content).
+Rails are drawn on chrome elements that own layout geometry (not inside mounted body content).
 
 ---
 
-## 4.4 Meta styling rules
+### Rail implementation contract
+
+- Start by choosing a rail owner: the chrome/layout element that defines the rail segment.
+- Rail owners live in chrome/layout (`.ui-outline-node`, `.ui-table-cell`, `.ui-table-cell.ui-table-meta-col`), never inside mounted body content.
+- Render rails either as an owner `::before` (absolute in a `position: relative` owner) or as the owner surface fill.
+- Rails always use `--chrome-color` and never read raw state tokens directly.
+- Rails must not change layout sizing (no rail via `border-left`/`border-top` substitutions).
+- Rail grouping/segmentation comes from layout gaps (`gap`/`border-spacing`), not divider lines.
+
+---
+
+### Rail geometry (identity-defining)
+
+Rails should be driven by tokens:
+
+- rail thickness (`--rail`)
+- rail end radius
+- rail inset rules
+
+These values are part of the UI's visual identity and should not vary between views except where explicitly called out.
+
+---
+
+## 4.6 Meta styling rules
 
 Meta is chrome, not content.
 
-- `.ui-meta` is chrome, not a pill.
-- When present, meta and rail must read as one continuous block (shared fill, no seam or gap).
-- Meta fill uses the same state color as the rail, derived from state classes on the owning `.ui-item`.
-- In autosized editor contexts, meta should size to content (`fit-content`); body value editors may remain full-width.
+- `.ui-meta` is chrome, not a separate control surface.
+- When present, meta and rail must read as one continuous block (shared fill, no seam).
+- Meta fill uses the same derived chrome fill as rails.
+- Meta should size to content (`fit-content`) and clamp to container width.
+- Body value editors may remain full-width.
 
-Meta text styling is intentionally restrained:
+Meta typography is intentionally restrained:
 
-- label: small, slightly stronger weight
-- connection keys: small and muted
-- connection values: monospaced (optional but recommended)
+- label: smaller size, slightly stronger weight
+- connection keys: smallest size, muted
+- connection values: monospaced
 
 ---
 
-## 4.5 Layout-specific chrome rules
+## 4.7 Layout-specific chrome rules
 
 ### Outline
 
@@ -1149,6 +1207,7 @@ Chrome rules:
 - `.ui-outline-node` renders the vertical rail segment at its left edge.
 - Meta (if present) sits at the top of the node, above the mounted body.
 - The outline group effect is created by stacked segments with small vertical gaps.
+- Meta and rail should visually merge into a single block.
 
 Canonical styling targets:
 
@@ -1176,15 +1235,15 @@ Structural rules:
 Rails:
 
 - Each data cell (`.ui-table-cell.ui-item`) renders a horizontal top rail.
-- The row meta column cell (`.ui-table-cell.ui-table-meta-col`) renders a vertical left rail segment for the row.
+- The row meta column cell (`.ui-table-cell.ui-table-meta-col`) uses the cell surface itself as the row's vertical left rail segment.
 - Rails are segmented naturally by `border-spacing`.
 
 Header:
 
-- Header styling is a separate component language.
-- Header uses neutral strip styling and does not use rails.
-- Header may contain schema meta UI for columns (`.ui-meta` mounted for schema cells).
-- Schema meta in headers follows meta styling rules, while header containers remain neutral and rail-free.
+- Header containers do not use rails.
+- Header cells use a neutral "header surface" styling (separate from chrome rails).
+- Header may contain schema meta UI for columns.
+- Schema meta in headers is rendered using the same meta DOM, but is visually "unstyled" (transparent background, no chrome padding). The header cell provides the container styling.
 
 Canonical styling targets:
 
@@ -1204,7 +1263,7 @@ Slider has no nested chrome composition.
 
 ---
 
-## 4.6 Styling boundaries and invariants
+## 4.8 Styling boundaries and invariants
 
 To keep styling predictable:
 
@@ -1212,10 +1271,11 @@ To keep styling predictable:
 - Body styling must not restyle chrome primitives (`.ui-meta`, rails).
 - Selection-driven changes should be class toggles only (`.is-focused`, `.is-issue`).
 - Avoid view-specific state classes unless a new view introduces a new semantic concept.
+- Prefer token-driven values over hardcoded per-view numbers.
 
 ---
 
-## 4.7 Recommended CSS structure
+## 4.9 Recommended CSS structure
 
 To keep CSS minimal and maintainable, organize stylesheets as:
 
