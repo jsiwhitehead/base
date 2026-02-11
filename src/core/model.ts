@@ -25,16 +25,16 @@ export type ViewKind = ViewName | null;
 type BlankContent = { kind: "blank" };
 type ScalarContent = { kind: "scalar"; value: Scalar };
 type GroupContent = { kind: "group"; childIds: readonly EntryId[] };
-type DerivedContent = { kind: "derived"; expr: string };
-type LensContent = {
-  kind: "lens";
+type FormulaContent = { kind: "formula"; expr: string };
+type QueryContent = {
+  kind: "query";
   from: string;
   where: string;
   orderBy: string;
 };
 
 type EntryContentSettable = BlankContent | ScalarContent | GroupContent;
-export type EntryContent = EntryContentSettable | DerivedContent | LensContent;
+export type EntryContent = EntryContentSettable | FormulaContent | QueryContent;
 
 export type Entry = {
   readonly id: EntryId;
@@ -58,14 +58,14 @@ export function isGroupContent(content: EntryContent): content is GroupContent {
   return content.kind === "group";
 }
 
-export function isDerivedContent(
+export function isFormulaContent(
   content: EntryContent,
-): content is DerivedContent {
-  return content.kind === "derived";
+): content is FormulaContent {
+  return content.kind === "formula";
 }
 
-export function isLensContent(content: EntryContent): content is LensContent {
-  return content.kind === "lens";
+export function isQueryContent(content: EntryContent): content is QueryContent {
+  return content.kind === "query";
 }
 
 function isGroupEntry(entry: Entry): entry is GroupEntry {
@@ -76,8 +76,8 @@ type SnapshotContent =
   | { kind: "blank" }
   | { kind: "scalar"; value: Scalar }
   | { kind: "group"; childIds: SnapshotEntry[] }
-  | { kind: "derived"; expr: string }
-  | { kind: "lens"; from: string; where: string; orderBy: string };
+  | { kind: "formula"; expr: string }
+  | { kind: "query"; from: string; where: string; orderBy: string };
 
 type SnapshotEntry = {
   label?: string;
@@ -694,11 +694,11 @@ export function createModel(): Model {
     if (isBlankContent(content)) return { kind: "blank" };
     if (isScalarContent(content))
       return { kind: "scalar", value: content.value };
-    if (isDerivedContent(content))
-      return { kind: "derived", expr: content.expr };
-    if (isLensContent(content)) {
+    if (isFormulaContent(content))
+      return { kind: "formula", expr: content.expr };
+    if (isQueryContent(content)) {
       return {
-        kind: "lens",
+        kind: "query",
         from: content.from,
         where: content.where,
         orderBy: content.orderBy,

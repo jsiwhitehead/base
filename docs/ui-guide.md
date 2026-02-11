@@ -57,7 +57,7 @@ A shell is responsible for:
 - attaching `DEFAULT_TARGET`
 - handling pointer selection on the item
 - applying selection-driven state classes (e.g. `.is-focused`)
-- optionally rendering **meta chrome** (label + source fields)
+- optionally rendering **meta chrome** (label + connected fields)
 
 Shell logic is shared and implemented by:
 
@@ -74,11 +74,11 @@ Meta is item chrome rendered by the parent/context.
 Meta includes:
 
 - label editor (`target = "label"`)
-- source field editors (`target = "source:*"`)
+- connected field editors (`target = "conn:*"`)
 
 Meta is not view-specific. It is item-specific.
 
-Meta may be conditionally shown/hidden based on item state (label exists, item is in source mode, etc.), but the ownership boundary remains the same.
+Meta may be conditionally shown/hidden based on item state (label exists, item is in connected mode, etc.), but the ownership boundary remains the same.
 
 ---
 
@@ -110,14 +110,14 @@ This is a core UI invariant.
 
 - `DEFAULT_TARGET`
 - `label`
-- `source:<fieldKey>`
+- `conn:<fieldKey>`
 
 **Body owns these targets:**
 
 - `value`
 - any future body-specific targets
 
-Bodies must not attach `label` or `source:*`.
+Bodies must not attach `label` or `conn:*`.
 Shell/meta must not attach `value`.
 
 This keeps:
@@ -133,9 +133,9 @@ This keeps:
 Editability is mode-driven:
 
 - `readonly` is a hard stop for editing
-- `direct` vs `source` determines which edit targets exist (`value` vs `source:*`)
+- `plain` vs `connected` determines which edit targets exist (`value` vs `conn:*`)
 
-The UI may convert modes (`direct` <-> `source`), but conversion must be explicit.
+The UI may convert modes (`plain` <-> `connected`), but conversion must be explicit.
 
 ---
 
@@ -327,13 +327,13 @@ The UI treats targets as named focus surfaces:
 
 - `DEFAULT_TARGET` — item container focus (shell)
 - `label` — label editor (shell/meta)
-- `source:*` — source editors (shell/meta)
+- `conn:*` — connected editors (shell/meta)
 - `value` — primary content editor (body)
 
 Universal item edit targets are:
 
-- `source:*` fields (in source mode)
-- `value` (in direct scalar mode)
+- `conn:*` fields (in connected mode)
+- `value` (in plain scalar mode)
 
 `label` is a valid target but is not part of standard keyboard edit-entry flow.
 
@@ -440,7 +440,7 @@ Editors implement “yielding” via:
 - `bindTextEditorYield(inp, onIntent)`
 
 Yielding is semantic, not bubbling.
-It applies to text edit targets (`source:*`, `value`), not to `label`.
+It applies to text edit targets (`conn:*`, `value`), not to `label`.
 This is local editor behavior and is independent of Core global keydown routing.
 
 Instead of letting arrow keys bubble, editors detect boundary conditions and emit intents like:
@@ -631,7 +631,7 @@ Outline renders:
 - a body stamped as `.ui-body.ui-outline`
 - for each presented item:
   - a `.ui-outline-node` shell (`.ui-item`)
-  - optional `.ui-meta` in the shell (label + source)
+  - optional `.ui-meta` in the shell (label + connected fields)
   - the mounted body for that item’s view
 
 Group items render children recursively.
@@ -645,13 +645,13 @@ Canonical structure:
   .ui-outline-node.ui-item                       (target: DEFAULT_TARGET)
     .ui-meta                                     (optional shell/meta chrome)
       [label editor]                             (target: label)
-      [source editor(s)]                         (target: source:*)
+      [connected editor(s)]                      (target: conn:*)
     .ui-body...                                  (mounted child view body)
   .ui-outline-node.ui-item
     ...
 ```
 
-Scalar item body (direct scalar):
+Scalar item body (plain scalar):
 
 ```text
 .ui-body.ui-outline
@@ -668,7 +668,7 @@ Shell/meta targets:
 
 - `DEFAULT_TARGET`
 - `label` (see universal label policy)
-- `source:*`
+- `conn:*`
 
 Body targets:
 
@@ -690,15 +690,15 @@ Arrow navigation is structural:
 
 #### Edit focus (non-default targets)
 
-When focused on an edit target (`value` or `source:*`):
+When focused on an edit target (`value` or `conn:*`):
 
 - arrow keys traverse the edit-flow space
 - traversal moves between edit stops (not structural shells)
 
 Edit stops include:
 
-- `source:*` fields for source-mode leaf items
-- `value` for direct scalar leaf items
+- `conn:*` fields for connected-mode leaf items
+- `value` for plain scalar leaf items
 
 Label is excluded for now.
 
@@ -713,16 +713,16 @@ Caret policy:
 
 #### Primary edit target
 
-Outline follows the universal first-edit-target rule (`source:*` then `value`).
+Outline follows the universal first-edit-target rule (`conn:*` then `value`).
 
 ---
 
 #### `=` shortcut
 
-If the user types `=` on an empty direct scalar:
+If the user types `=` on an empty plain scalar:
 
-- the item is converted to derived source mode
-- focus moves to `source:expr`
+- the item is converted to formula connected mode
+- focus moves to `conn:expr`
 
 ---
 
@@ -734,7 +734,7 @@ Enter behavior (outline-specific cases):
   - split the scalar at caret selection into two sibling items
   - focus the new right item’s `value`
 
-- If editing a `source:*` field:
+- If editing a `conn:*` field:
   - exit to `DEFAULT_TARGET`
 
 ---
@@ -800,7 +800,7 @@ Each row contains:
 - a meta-column cell (`.ui-table-meta-col`) for row item meta
 - a set of cell shells for each cell item
 
-The header renders schema cell meta (label/source) by mounting the schema-row cell items’ meta UI.
+The header renders schema cell meta (label/connected fields) by mounting the schema-row cell items’ meta UI.
 
 Canonical structure:
 
@@ -809,13 +809,13 @@ Canonical structure:
   .ui-table-header
     .ui-table-col.ui-table-meta-col
     .ui-table-col
-      .ui-meta                                   (schema cell meta: label/source targets)
+      .ui-meta                                   (schema cell meta: label/conn targets)
     ...
   .ui-table-body
     .ui-table-rows
       .ui-table-row.ui-item                      (row target: DEFAULT_TARGET)
         .ui-table-cell.ui-table-meta-col
-          .ui-meta                               (row meta: label/source targets)
+          .ui-meta                               (row meta: label/conn targets)
         .ui-table-cells
           .ui-table-cell.ui-item                 (cell target: DEFAULT_TARGET)
             .ui-body...                          (mounted cell view body; value target when scalar)
@@ -834,7 +834,7 @@ Row shells:
 Row meta targets:
 
 - `label` (see universal label policy)
-- `source:*`
+- `conn:*`
 
 Cell shells:
 
@@ -851,7 +851,7 @@ Cell body targets:
 - row container focus
 - cell container focus
 - cell edit targets (`value`)
-- source edit stops where applicable
+- connected edit stops where applicable
 
 ---
 
@@ -981,7 +981,7 @@ Jump vs step:
 
 Slider commits only when:
 
-- the item is a direct scalar
+- the item is a plain scalar
 - the value is numeric/coercible
 
 Value display formatting depends on step precision.
@@ -991,7 +991,7 @@ Value display formatting depends on step precision.
 # Summary of invariants
 
 - One item presentation → exactly one `.ui-item` shell.
-- Shell owns: `DEFAULT_TARGET`, label, and source targets.
+- Shell owns: `DEFAULT_TARGET`, label, and conn targets.
 - Body owns: value targets.
 - Shell identity is stable across selection changes.
 - Selection-driven updates must be styling-only.

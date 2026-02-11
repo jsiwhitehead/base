@@ -103,8 +103,8 @@ type Content =
 ```ts
 type Mode =
   | { kind: "readonly" }
-  | { kind: "direct" }
-  | { kind: "source", source: Source }
+  | { kind: "plain" }
+  | { kind: "connected", conn: Connected }
 ```
 
 ### Editability rule
@@ -124,36 +124,36 @@ Modes describe what kind of content an item currently has and what editing UI sh
 ### Readonly
 
 - Item cannot be edited.
-- Content is derived, computed, or invalid.
+- Content is computed or invalid.
 
-### Direct
+### Plain
 
 - Item currently stores content directly.
-- UI may present direct editing controls.
+- UI may present plain editing controls.
 - Any edit may replace the item’s content.
 - Group/non-group conversion follows the group conversion rule.
 
-### Source
+### Connected
 
-- Item’s content is currently generated from a source.
-- Source fields are editable.
-- Any edit may replace the item’s content, including replacing the source with direct content.
+- Item’s content is currently generated from a connected definition.
+- Connected fields are editable.
+- Any edit may replace the item’s content, including replacing the connected definition with plain content.
 - Group/non-group conversion follows the group conversion rule.
 
 ## Sources
 
 ```ts
-type Source =
-  | { kind: "derived", expr: string }
-  | { kind: "lens", from: string, where: string, orderBy: string }
+type Connected =
+  | { kind: "formula", expr: string }
+  | { kind: "query", from: string, where: string, orderBy: string }
 ```
 
-Sources define how an item’s content is computed.
+Connected definitions describe how an item’s content is computed.
 
-- `derived`: produces content from an expression.
-- `lens`: selects and transforms items from a group.
+- `formula`: produces content from an expression.
+- `query`: selects and transforms items from a group.
 
-The result of a source determines the item’s visible content kind (value or group).
+The result of a connected definition determines the item’s visible content kind (value or group).
 
 ## Editing
 
@@ -179,7 +179,7 @@ If a commit produces no ops, undo history is not extended.
 tx.setLabel(id, label)
 tx.setView(id, view)
 tx.setValue(id, value)
-tx.setSource(id, source)
+tx.setConnected(id, conn)
 tx.setGroup(id)
 tx.insertChild(ownerId, opts)
 tx.move(id, toOwnerId, opts)
@@ -188,7 +188,7 @@ tx.remove(id)
 
 ### Group conversion rule
 
-Content may switch between `group` and non-group (`value`/`source`) only when the group is empty.
+Content may switch between `group` and non-group (`value`/`connected`) only when the group is empty.
 If an operation would convert a non-empty group to non-group, the commit throws.
 
 `setLabel`:
@@ -206,9 +206,9 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 - Replaces the item’s content with a value or blank.
 - Subject to the group conversion rule.
 
-`setSource`:
+`setConnected`:
 
-- Replaces the item’s content with a source definition.
+- Replaces the item’s content with a connected definition.
 - Subject to the group conversion rule.
 
 `setGroup`:
@@ -445,7 +445,7 @@ Types:
 - `Item`
 - `Content`
 - `Mode`
-- `Source`
+- `Connected`
 - `Selection`
 - `Focus`
 - `Caret`

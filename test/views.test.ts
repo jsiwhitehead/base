@@ -103,7 +103,7 @@ describe("views", () => {
     expect(text.includes("A")).toBe(true);
   });
 
-  test("outline: '=' in empty value editor switches to derived and focuses expr without replacing item root", async () => {
+  test("outline: '=' in empty value editor switches to formula and focuses expr without replacing item root", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x" });
@@ -125,13 +125,13 @@ describe("views", () => {
     fireViewKey(view, "=");
     await flushDomEffects();
 
-    expect(core.item(x).mode.kind).toBe("source");
-    expectSel(core, { container: rootId, item: x, target: "source:expr" });
+    expect(core.item(x).mode.kind).toBe("connected");
+    expectSel(core, { container: rootId, item: x, target: "conn:expr" });
 
     const itemEl1 = requireItemEl(view.root, x);
     expectSnapshotSame(snap0, itemEl1);
 
-    const exprEl = requireTargetInput(itemEl1, "source:expr");
+    const exprEl = requireTargetInput(itemEl1, "conn:expr");
     expect(exprEl).toBeTruthy();
   });
 

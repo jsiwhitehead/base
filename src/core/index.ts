@@ -24,9 +24,9 @@ import type {
 } from "./model";
 import {
   createModel,
-  isDerivedContent,
+  isFormulaContent,
   isGroupContent,
-  isLensContent,
+  isQueryContent,
   makeBlankEntry,
   makeGroupEntry,
   parseScalar,
@@ -53,14 +53,14 @@ export type Content =
   | { kind: "issue"; message: string }
   | { kind: "group"; children: readonly ItemId[] };
 
-export type Source =
-  | { kind: "derived"; expr: string }
-  | { kind: "lens"; from: string; where: string; orderBy: string };
+export type Connected =
+  | { kind: "formula"; expr: string }
+  | { kind: "query"; from: string; where: string; orderBy: string };
 
 type Mode =
   | { kind: "readonly" }
-  | { kind: "direct" }
-  | { kind: "source"; source: Source };
+  | { kind: "plain" }
+  | { kind: "connected"; conn: Connected };
 
 type Item = {
   id: ItemId;
@@ -115,19 +115,19 @@ export const parseValue: (text: string) => ValueOrBlank = parseScalar;
 
 function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
   if (ref.path.length) return { kind: "readonly" };
-  if (isDerivedContent(c))
-    return { kind: "source", source: { kind: "derived", expr: c.expr } };
-  if (isLensContent(c))
+  if (isFormulaContent(c))
+    return { kind: "connected", conn: { kind: "formula", expr: c.expr } };
+  if (isQueryContent(c))
     return {
-      kind: "source",
-      source: {
-        kind: "lens",
+      kind: "connected",
+      conn: {
+        kind: "query",
         from: c.from,
         where: c.where,
         orderBy: c.orderBy,
       },
     };
-  return { kind: "direct" };
+  return { kind: "plain" };
 }
 
 export type ApplyResult = {
@@ -146,7 +146,7 @@ type Tx = {
   setView(id: ItemId, view: ViewKind): void;
 
   setValue(id: ItemId, value: ValueOrBlank): void;
-  setSource(id: ItemId, source: Source): void;
+  setConnected(id: ItemId, conn: Connected): void;
   setGroup(id: ItemId): void;
 
   insertChild(ownerId: ItemId, opts?: { at?: number }): ItemId;
@@ -764,14 +764,14 @@ export function createCore(opts: {
         ops.push(model.ops.patch(eid, { content: storedFromValue(value) }));
       },
 
-      setSource: (id, source) => {
+      setConnected: (id, conn) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
 
-        if (source.kind === "derived") {
+        if (conn.kind === "formula") {
           ops.push(
             model.ops.patch(eid, {
-              content: { kind: "derived", expr: source.expr },
+              content: { kind: "formula", expr: conn.expr },
             }),
           );
           return;
@@ -780,10 +780,10 @@ export function createCore(opts: {
         ops.push(
           model.ops.patch(eid, {
             content: {
-              kind: "lens",
-              from: source.from,
-              where: source.where,
-              orderBy: source.orderBy,
+              kind: "query",
+              from: conn.from,
+              where: conn.where,
+              orderBy: conn.orderBy,
             },
           }),
         );

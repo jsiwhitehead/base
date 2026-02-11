@@ -22,7 +22,7 @@ import {
   escapeLadder,
   insertTextIntoActiveEditor,
   mountItemMeta,
-  patchSource,
+  patchConn,
   reconcileChildren,
   stampBody,
 } from "../dom";
@@ -210,11 +210,11 @@ function mountHeader(mountCtx: TableMountCtx): Component {
                 core.commit((t) => t.setLabel(cid, text));
               };
 
-              const commitSourceField = (key: string, text: string) => {
+              const commitConnField = (key: string, text: string) => {
                 const snap = core.item(cid);
-                if (snap.mode.kind !== "source") return;
-                const next = patchSource(snap.mode.source, key, text);
-                core.commit((t) => t.setSource(cid, next));
+                if (snap.mode.kind !== "connected") return;
+                const next = patchConn(snap.mode.conn, key, text);
+                core.commit((t) => t.setConnected(cid, next));
               };
 
               slot.set(
@@ -226,7 +226,7 @@ function mountHeader(mountCtx: TableMountCtx): Component {
                     dispatch,
                     canEditLabel,
                     commitLabel,
-                    commitSourceField,
+                    commitConnField,
                   },
                   { visibility: "always" },
                 ),
@@ -296,11 +296,11 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
       core.commit((t) => t.setLabel(rowId, text));
     };
 
-    const commitSourceField = (key: string, text: string) => {
+    const commitConnField = (key: string, text: string) => {
       const snap = core.item(rowId);
-      if (snap.mode.kind !== "source") return;
-      const next = patchSource(snap.mode.source, key, text);
-      core.commit((t) => t.setSource(rowId, next));
+      if (snap.mode.kind !== "connected") return;
+      const next = patchConn(snap.mode.conn, key, text);
+      core.commit((t) => t.setConnected(rowId, next));
     };
 
     const meta = mountItemMeta(
@@ -311,7 +311,7 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         dispatch,
         canEditLabel,
         commitLabel,
-        commitSourceField,
+        commitConnField,
       },
       { visibility: "always" },
     );

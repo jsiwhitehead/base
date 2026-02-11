@@ -22,11 +22,11 @@ import {
   createComponent,
   el,
   escapeLadder,
-  fieldsFromSource,
+  fieldsFromConn,
   insertTextIntoActiveEditor,
   mountItemMeta,
-  patchSource,
-  sourceTarget,
+  patchConn,
+  connTarget,
   stampBody,
   textField,
 } from "../dom";
@@ -94,16 +94,16 @@ function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
 
 function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
   const it = core.item(id);
-  if (it.mode.kind === "source") return true;
-  return it.mode.kind === "direct" && it.content.kind === "value";
+  if (it.mode.kind === "connected") return true;
+  return it.mode.kind === "plain" && it.content.kind === "value";
 }
 
 function editStopsForItem(core: Core, id: ItemId): string[] {
   const it = core.item(id);
-  if (it.mode.kind === "source") {
-    return fieldsFromSource(it.mode.source).map((f) => sourceTarget(f.key));
+  if (it.mode.kind === "connected") {
+    return fieldsFromConn(it.mode.conn).map((f) => connTarget(f.key));
   }
-  if (it.mode.kind === "direct" && it.content.kind === "value")
+  if (it.mode.kind === "plain" && it.content.kind === "value")
     return [VALUE_TARGET];
   return [];
 }
@@ -117,11 +117,11 @@ function textForTarget(core: Core, id: ItemId, target: string): string {
   if (target === VALUE_TARGET) {
     return it.content.kind === "value" ? valueToText(it.content.value) : "";
   }
-  if (target.startsWith("source:")) {
-    if (it.mode.kind !== "source") return "";
-    const key = target.slice("source:".length);
+  if (target.startsWith("conn:")) {
+    if (it.mode.kind !== "connected") return "";
+    const key = target.slice("conn:".length);
     return (
-      fieldsFromSource(it.mode.source).find((f) => f.key === key)?.text ?? ""
+      fieldsFromConn(it.mode.conn).find((f) => f.key === key)?.text ?? ""
     );
   }
   if (target === LABEL_TARGET) return it.label ?? "";
@@ -202,15 +202,15 @@ const outlineCommands = {
     core.commit((t) => t.setValue(id, parseValue(text)));
   },
 
-  setDerived(core: Core, id: ItemId): void {
-    core.commit((t) => t.setSource(id, { kind: "derived", expr: "" }));
+  setFormula(core: Core, id: ItemId): void {
+    core.commit((t) => t.setConnected(id, { kind: "formula", expr: "" }));
   },
 
-  commitSourceField(core: Core, id: ItemId, key: string, text: string): void {
+  commitConnField(core: Core, id: ItemId, key: string, text: string): void {
     const it = core.item(id);
-    if (it.mode.kind !== "source") return;
-    const next = patchSource(it.mode.source, key, text);
-    core.commit((t) => t.setSource(id, next));
+    if (it.mode.kind !== "connected") return;
+    const next = patchConn(it.mode.conn, key, text);
+    core.commit((t) => t.setConnected(id, next));
   },
 
   insertSibling(
@@ -246,7 +246,7 @@ const outlineCommands = {
 
     const { ownerId: containerId, index: idx } = loc;
 
-    if (!(snap.mode.kind === "direct" && snap.content.kind === "value")) {
+    if (!(snap.mode.kind === "plain" && snap.content.kind === "value")) {
       return outlineCommands.insertSibling(core, sel, "after");
     }
 
@@ -292,8 +292,8 @@ const outlineCommands = {
     const a = core.item(leftId);
     const b = core.item(rightId);
 
-    if (!(a.mode.kind === "direct" && a.content.kind === "value")) return null;
-    if (!(b.mode.kind === "direct" && b.content.kind === "value")) return null;
+    if (!(a.mode.kind === "plain" && a.content.kind === "value")) return null;
+    if (!(b.mode.kind === "plain" && b.content.kind === "value")) return null;
 
     const leftText = valueToText(a.content.value);
     const rightText = valueToText(b.content.value);
@@ -411,8 +411,8 @@ function mountOutlineNodeShell(
         outlineCommands.setLabel(core, id, text);
       };
 
-      const commitSourceField = (key: string, text: string) => {
-        outlineCommands.commitSourceField(core, id, key, text);
+      const commitConnField = (key: string, text: string) => {
+        outlineCommands.commitConnField(core, id, key, text);
       };
 
       const meta = mountItemMeta(
@@ -423,7 +423,7 @@ function mountOutlineNodeShell(
           dispatch: mountCtx.dispatch,
           canEditLabel,
           commitLabel,
-          commitSourceField,
+          commitConnField,
         },
         { visibility: "auto" },
       );
@@ -489,7 +489,7 @@ function mountOutlineScalarBody(
         }
 
         if (c.kind === "value") {
-          const editable = snap.mode.kind === "direct";
+          const editable = snap.mode.kind === "plain";
           return {
             text: valueToText(c.value),
             readOnly: !editable,
@@ -635,12 +635,12 @@ export function createOutlineView(args: {
         if (
           intent.char === "=" &&
           (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
-          it.mode.kind === "direct" &&
+          it.mode.kind === "plain" &&
           it.content.kind === "value" &&
           valueToText(it.content.value).trim() === ""
         ) {
-          outlineCommands.setDerived(core, id);
-          core.focus(focusFor(core, rootId, id), sourceTarget("expr"), {
+          outlineCommands.setFormula(core, id);
+          core.focus(focusFor(core, rootId, id), connTarget("expr"), {
             caret: caret0(),
           });
           return;
@@ -701,7 +701,7 @@ export function createOutlineView(args: {
         const prefer = intent.dir === "backward" ? "prev" : "next";
         const it = core.item(sel.focus.item);
 
-        if (!(it.mode.kind === "direct" && it.content.kind === "value")) {
+        if (!(it.mode.kind === "plain" && it.content.kind === "value")) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();

@@ -1,6 +1,6 @@
 import { computed } from "@preact/signals-core";
 
-import type { Caret, Component, Core, Focus, ItemId, Source } from "../core";
+import type { Caret, Component, Core, Focus, ItemId, Connected } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import {
   caretFromTarget,
@@ -35,7 +35,7 @@ export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
 
 export const LABEL_TARGET = "label";
 export const VALUE_TARGET = "value";
-export const sourceTarget = (key: string): string => `source:${key}`;
+export const connTarget = (key: string): string => `conn:${key}`;
 
 function consume(e: Event): void {
   e.preventDefault?.();
@@ -595,45 +595,45 @@ function autosizeTextField(
   return { ...c, focusEl };
 }
 
-type SourceField = {
+type ConnField = {
   key: string;
   label: string;
   multiline: boolean;
   text: string;
 };
 
-export function fieldsFromSource(source: Source): SourceField[] {
-  if (source.kind === "derived") {
+export function fieldsFromConn(conn: Connected): ConnField[] {
+  if (conn.kind === "formula") {
     return [
-      { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
+      { key: "expr", label: "=", multiline: true, text: conn.expr ?? "" },
     ];
   }
   return [
-    { key: "from", label: "~", multiline: false, text: source.from ?? "" },
+    { key: "from", label: "~", multiline: false, text: conn.from ?? "" },
     {
       key: "where",
       label: "where:",
       multiline: true,
-      text: source.where ?? "",
+      text: conn.where ?? "",
     },
     {
       key: "orderBy",
       label: "orderBy:",
       multiline: true,
-      text: source.orderBy ?? "",
+      text: conn.orderBy ?? "",
     },
   ];
 }
 
-export function patchSource(source: Source, key: string, text: string): Source {
-  if (source.kind === "derived") {
-    if (key === "expr") return { kind: "derived", expr: text };
-    return source;
+export function patchConn(conn: Connected, key: string, text: string): Connected {
+  if (conn.kind === "formula") {
+    if (key === "expr") return { kind: "formula", expr: text };
+    return conn;
   }
-  if (key === "from") return { ...source, from: text };
-  if (key === "where") return { ...source, where: text };
-  if (key === "orderBy") return { ...source, orderBy: text };
-  return source;
+  if (key === "from") return { ...conn, from: text };
+  if (key === "where") return { ...conn, where: text };
+  if (key === "orderBy") return { ...conn, orderBy: text };
+  return conn;
 }
 
 type ItemMetaVisibility = "auto" | "always";
@@ -650,7 +650,7 @@ export function mountItemMeta(
     dispatch: (i: Intent) => void;
     commitLabel: (text: string) => void;
     canEditLabel: () => boolean;
-    commitSourceField: (key: string, text: string) => void;
+    commitConnField: (key: string, text: string) => void;
   },
   opts: MountItemMetaOpts = {},
 ): Component {
@@ -661,8 +661,8 @@ export function mountItemMeta(
     const meta = el("div", "ui-meta");
 
     const labelWrap = el("div", "ui-meta-label");
-    const sourceWrap = el("div", "ui-meta-source");
-    meta.append(labelWrap, sourceWrap);
+    const connWrap = el("div", "ui-meta-conn");
+    meta.append(labelWrap, connWrap);
 
     const labelComp = autosizeTextField(core, {
       focus: args.focus,
@@ -683,20 +683,20 @@ export function mountItemMeta(
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    const rows = ctx.list<string>(sourceWrap, (key) =>
+    const rows = ctx.list<string>(connWrap, (key) =>
       createComponent(core, (ctx2) => {
-        const row = el("div", "ui-meta-source-row");
-        const keyEl = el("div", "ui-meta-source-key");
-        const valEl = el("div", "ui-meta-source-val");
+        const row = el("div", "ui-meta-conn-row");
+        const keyEl = el("div", "ui-meta-conn-key");
+        const valEl = el("div", "ui-meta-conn-val");
         row.append(keyEl, valEl);
 
-        const tkey = sourceTarget(key);
+        const tkey = connTarget(key);
 
-        const specForKey = (): SourceField | null => {
+        const specForKey = (): ConnField | null => {
           const snap = core.item(id);
-          if (snap.mode.kind !== "source") return null;
+          if (snap.mode.kind !== "connected") return null;
           return (
-            fieldsFromSource(snap.mode.source).find((f) => f.key === key) ??
+            fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ??
             null
           );
         };
@@ -708,13 +708,13 @@ export function mountItemMeta(
           focus: args.focus,
           target: tkey,
           multiline: multilineForKey(),
-          commit: (text) => args.commitSourceField(key, text),
+          commit: (text) => args.commitConnField(key, text),
           getState: () => {
             const snap = core.item(id);
-            if (snap.mode.kind !== "source")
+            if (snap.mode.kind !== "connected")
               return { text: "", readOnly: true, isIssue: false };
             const txt =
-              fieldsFromSource(snap.mode.source).find((x) => x.key === key)
+              fieldsFromConn(snap.mode.conn).find((x) => x.key === key)
                 ?.text ?? "";
             return { text: txt, readOnly: false, isIssue: false };
           },
@@ -747,8 +747,8 @@ export function mountItemMeta(
 
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
-      return snap.mode.kind === "source"
-        ? fieldsFromSource(snap.mode.source)
+      return snap.mode.kind === "connected"
+        ? fieldsFromConn(snap.mode.conn)
         : [];
     });
 

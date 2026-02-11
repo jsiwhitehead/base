@@ -8,8 +8,8 @@ import {
   childrenOf,
   mkBlank,
   mkGroup,
-  setDerived,
-  setLens,
+  setFormula,
+  setQuery,
   setView,
   expectFocused,
   expectSel,
@@ -69,12 +69,12 @@ describe("core/model", () => {
 });
 
 describe("core/eval", () => {
-  test("derived reactivity updates content synchronously on commit", () => {
+  test("formula reactivity updates content synchronously on commit", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x", value: 10 });
     const y = mkBlank(core, rootId, { label: "y" });
-    setDerived(core, y, "x + 2");
+    setFormula(core, y, "x + 2");
 
     expect(scalarOf(core.item(y).content)).toBe(12);
 
@@ -88,14 +88,14 @@ describe("core/eval", () => {
     const a = mkBlank(core, rootId, { label: "a" });
     const b = mkBlank(core, rootId, { label: "b" });
 
-    setDerived(core, a, "b");
-    setDerived(core, b, "a");
+    setFormula(core, a, "b");
+    setFormula(core, b, "a");
 
     expect(core.item(a).content.kind).toBe("issue");
     expect(core.item(b).content.kind).toBe("issue");
   });
 
-  test("derived entry-group materializes into readonly value-group children (paths) and cannot be located", () => {
+  test("formula entry-group materializes into readonly value-group children (paths) and cannot be located", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
@@ -103,7 +103,7 @@ describe("core/eval", () => {
     mkBlank(core, rows, { label: "r2", value: 2 });
 
     const d = mkBlank(core, rootId, { label: "d" });
-    setDerived(core, d, "rows");
+    setFormula(core, d, "rows");
 
     const snap = core.item(d);
     expect(snap.content.kind).toBe("group");
@@ -125,7 +125,7 @@ describe("core/eval", () => {
     expect(core.locate(c1)).toBe(null);
   });
 
-  test("lens filters and sorts entry rows; supports label/position vars; returns entry items (not readonly paths)", () => {
+  test("query filters and sorts entry rows; supports label/position vars; returns entry items (not readonly paths)", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
@@ -141,7 +141,7 @@ describe("core/eval", () => {
     const rc = mkRow("c", 3);
 
     const L = mkBlank(core, rootId, { label: "L" });
-    setLens(core, L, { from: "rows", where: "score > 1", orderBy: "score" });
+    setQuery(core, L, { from: "rows", where: "score > 1", orderBy: "score" });
 
     const s1 = core.item(L);
     expect(s1.content.kind).toBe("group");
@@ -155,7 +155,7 @@ describe("core/eval", () => {
       expect(core.locate(cid)).not.toBe(null);
     }
 
-    setLens(core, L, {
+    setQuery(core, L, {
       from: "rows",
       where: "position = 1 or label = 'c'",
       orderBy: "label",
@@ -173,7 +173,7 @@ describe("core/eval", () => {
     expect(core.item(rc).label).toBe("c");
   });
 
-  test("lens orderBy ranks numbers before text before true; blanks/issues sort last; stable tie-break by original order", () => {
+  test("query orderBy ranks numbers before text before true; blanks/issues sort last; stable tie-break by original order", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
@@ -189,7 +189,7 @@ describe("core/eval", () => {
       else if (keyKind === "text") core.commit((t) => t.setValue(key, v));
       else if (keyKind === "true") core.commit((t) => t.setValue(key, true));
       else if (keyKind === "blank") core.commit((t) => t.setValue(key, null));
-      else if (keyKind === "issue") setDerived(core, key, "unknown_name");
+      else if (keyKind === "issue") setFormula(core, key, "unknown_name");
       return row;
     };
 
@@ -202,7 +202,7 @@ describe("core/eval", () => {
     mkRow("t2", "text", "a");
 
     const L = mkBlank(core, rootId, { label: "L" });
-    setLens(core, L, { from: "rows", orderBy: "key" });
+    setQuery(core, L, { from: "rows", orderBy: "key" });
 
     const labels = groupLabels(core, L);
     expect(labels).toEqual(["n1", "n2", "t2", "t1", "u1", "b1", "e1"]);

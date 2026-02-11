@@ -52,7 +52,7 @@ function formatNumberForStep(n: number, step: number): string {
 
 const canSetValue = (core: Core, id: ItemId): boolean => {
   const it = core.item(id);
-  return it.mode.kind === "direct" && it.content.kind === "value";
+  return it.mode.kind === "plain" && it.content.kind === "value";
 };
 
 const getValueOr = (core: Core, id: ItemId, fallback: number): number => {

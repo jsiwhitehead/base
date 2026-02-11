@@ -138,20 +138,20 @@ export function mkGroup(
   return id;
 }
 
-export function setDerived(core: Core, id: ItemId, expr: string): void {
+export function setFormula(core: Core, id: ItemId, expr: string): void {
   core.commit((t) => {
-    t.setSource(id, { kind: "derived", expr });
+    t.setConnected(id, { kind: "formula", expr });
   });
 }
 
-export function setLens(
+export function setQuery(
   core: Core,
   id: ItemId,
   args: { from: string; where?: string; orderBy?: string },
 ): void {
   core.commit((t) => {
-    t.setSource(id, {
-      kind: "lens",
+    t.setConnected(id, {
+      kind: "query",
       from: args.from,
       where: args.where ?? "",
       orderBy: args.orderBy ?? "",

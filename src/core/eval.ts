@@ -205,9 +205,9 @@ export function createEvaluator(opts: {
     visiting: new Set(base.visiting),
   });
 
-  function evaluateLens(
+  function evaluateQuery(
     ownerId: EntryId,
-    spec: Extract<EntryContent, { kind: "lens" }>,
+    spec: Extract<EntryContent, { kind: "query" }>,
     ctx: EvalCtx,
   ): Result {
     const from = spec.from.trim();
@@ -217,7 +217,7 @@ export function createEvaluator(opts: {
     const sourceResult = interpretExpr(from, baseEnv);
     const unwrapped = unwrapEntryGroup(
       sourceResult,
-      "Lens 'from' must evaluate to an entry-group",
+      "Query 'from' must evaluate to an entry-group",
     );
 
     if (unwrapped.kind === "blank") return Results.blank();
@@ -302,14 +302,14 @@ export function createEvaluator(opts: {
           return Results.entryGroup(
             [...it.content.childIds].filter((cid) => model.hasEntry(cid)),
           );
-        case "derived": {
+        case "formula": {
           const expr = it.content.expr.trim();
           if (!expr) return Results.blank();
           const out = interpretExpr(expr, baseEnvFor(id, ctx));
           return materializeEntryGroups(out, ctx);
         }
-        case "lens":
-          return evaluateLens(id, it.content, ctx);
+        case "query":
+          return evaluateQuery(id, it.content, ctx);
       }
     });
   }

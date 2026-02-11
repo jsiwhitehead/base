@@ -138,17 +138,17 @@ function seedDemo(app: App) {
     return id;
   };
 
-  const mkDerived = (ownerId: ItemId, label: string, expr: string) => {
+  const mkFormula = (ownerId: ItemId, label: string, expr: string) => {
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(ownerId);
       t.setLabel(id, label);
-      t.setSource(id, { kind: "derived", expr });
+      t.setConnected(id, { kind: "formula", expr });
     });
     return id;
   };
 
-  const mkLens = (
+  const mkQuery = (
     ownerId: ItemId,
     label: string,
     spec: { from: string; where?: string; orderBy?: string },
@@ -157,8 +157,8 @@ function seedDemo(app: App) {
     core.commit((t) => {
       id = t.insertChild(ownerId);
       t.setLabel(id, label);
-      t.setSource(id, {
-        kind: "lens",
+      t.setConnected(id, {
+        kind: "query",
         from: spec.from,
         where: spec.where ?? "",
         orderBy: spec.orderBy ?? "",
@@ -172,8 +172,8 @@ function seedDemo(app: App) {
   mkValue(demo, "x", 10);
   mkValue(demo, "y", 2);
 
-  void mkDerived;
-  void mkLens;
+  void mkFormula;
+  void mkQuery;
 }
 
 function autoMount(): void {
