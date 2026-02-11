@@ -811,15 +811,13 @@ Canonical structure:
       .ui-meta                                   (schema cell meta: label/conn targets)
     ...
   .ui-table-body
-    .ui-table-rows
-      .ui-table-row.ui-item                      (row target: DEFAULT_TARGET)
-        .ui-table-cell.ui-table-meta-col
-          .ui-meta                               (row meta: label/conn targets)
-        .ui-table-cells
-          .ui-table-cell.ui-item                 (cell target: DEFAULT_TARGET)
-            .ui-body...                          (mounted cell view body; value target when scalar)
-          ...
+    .ui-table-row.ui-item                        (row target: DEFAULT_TARGET)
+      .ui-table-cell.ui-table-meta-col
+        .ui-meta                                 (row meta: label/conn targets)
+      .ui-table-cell.ui-item                     (cell target: DEFAULT_TARGET)
+        .ui-body...                              (mounted cell view body; value target when scalar)
       ...
+    ...
 ```
 
 ---
@@ -984,6 +982,190 @@ Slider commits only when:
 - the value is numeric/coercible
 
 Value display formatting depends on step precision.
+
+---
+
+# 4) Styling & Visual Language
+
+This chapter defines the styling contract for the UI. It describes the minimal visual system (chrome + body), the universal state classes, and layout-specific rail rules. It is intentionally small: the purpose is to keep CSS consistent and composable across views.
+
+---
+
+## 4.1 Two layers visually: Item chrome vs Item content
+
+Styling assumes a two-layer presentation everywhere.
+
+### Chrome (context-owned)
+
+Chrome is rendered by the parent/context and includes:
+
+- item rails (the signature marker)
+- optional meta header (`.ui-meta`)
+
+Chrome is responsible for reflecting universal state:
+
+- focused
+- issue
+
+Chrome must not depend on the mounted body's internal DOM structure.
+
+---
+
+### Content (view-owned)
+
+Content is rendered by the mounted view body:
+
+- `.ui-body` subtree
+- view-specific layout and controls
+
+Content is styled neutrally by default. View-specific styling should not redefine universal chrome language.
+
+---
+
+## 4.2 Universal state classes (hard contract)
+
+The UI uses a minimal, shared set of state classes:
+
+- `.is-focused`
+- `.is-issue`
+
+These classes are applied to `.ui-item` shells (and optionally on child shells where relevant).
+
+Styling rules:
+
+- default: neutral rails and neutral meta (transparent)
+- focused: rails + meta header use accent styling
+- issue: rails + meta header use issue styling
+
+Bodies should remain readable and neutral; state is expressed primarily through chrome.
+
+---
+
+## 4.3 Rails: signature + grouping language
+
+Rails are the primary structural marker.
+
+Principles:
+
+1. Every item has a representative rail (directly or via its chrome context).
+2. Groups are expressed as continuous rails composed of child rails, separated by gaps.
+3. Rail direction matches layout direction:
+   - vertical stacks -> vertical rail at left edge
+   - horizontal stacks -> horizontal rail at top edge
+4. Gaps are the separator language:
+   - rails do not require divider lines
+   - spacing between rail segments is the main grouping cue
+
+Rails are drawn using pseudo-elements on the chrome elements that own layout geometry (not inside mounted body content).
+
+---
+
+## 4.4 Meta header styling rules
+
+Meta is chrome, not content.
+
+- `.ui-meta` is a header block, not a pill.
+- It should visually connect to the rail for the item (no floating-chip treatment).
+- Meta tinting follows state classes on the owning `.ui-item`:
+  - focused -> accent-soft background
+  - issue -> issue-soft background
+
+Meta text styling is intentionally restrained:
+
+- label: small, slightly stronger weight
+- connection keys: small and muted
+- connection values: monospaced (optional but recommended)
+
+---
+
+## 4.5 Layout-specific chrome rules
+
+### Outline
+
+Outline items are vertically stacked.
+
+Chrome rules:
+
+- `.ui-outline-node` renders the vertical rail segment at its left edge.
+- Meta (if present) sits at the top of the node, above the mounted body.
+- The outline group effect is created by stacked segments with small vertical gaps.
+
+Canonical styling targets:
+
+- `.ui-body.ui-outline`
+- `.ui-outline-node` (rail owner)
+- `.ui-outline-node > .ui-meta` (meta header)
+
+---
+
+### Table
+
+Table is a grid. Layout uses CSS table formatting to preserve column alignment.
+
+Structural rules:
+
+- `.ui-body.ui-table` acts as the table.
+- `.ui-table-header` is a table header group.
+- `.ui-table-body` is a row group.
+- `.ui-table-row` is a table row.
+- `.ui-table-col` and `.ui-table-cell` are table cells.
+- Spacing is implemented using:
+  - `border-collapse: separate`
+  - `border-spacing: <col-gap> <row-gap>`
+
+Rails:
+
+- Each data cell (`.ui-table-cell.ui-item`) renders a horizontal top rail.
+- The row meta column cell (`.ui-table-cell.ui-table-meta-col`) renders a vertical left rail segment for the row.
+- Rails are segmented naturally by `border-spacing`.
+
+Header:
+
+- Header styling is a separate component language.
+- Header uses neutral strip styling and does not use rails.
+- Header may contain schema meta UI for columns (`.ui-meta` mounted for schema cells).
+
+Canonical styling targets:
+
+- `.ui-body.ui-table`
+- `.ui-table-col` (header cells)
+- `.ui-table-cell` (body cells)
+- `.ui-table-cell.ui-table-meta-col` (row rail owner)
+
+---
+
+### Slider
+
+Slider has no nested chrome composition.
+
+- `.ui-body.ui-slider` is styled as a single neutral control surface.
+- State is reflected by the owning `.ui-item` chrome, not by slider internals.
+
+---
+
+## 4.6 Styling boundaries and invariants
+
+To keep styling predictable:
+
+- Chrome styling must not rely on body DOM internals.
+- Body styling must not restyle chrome primitives (`.ui-meta`, rails).
+- Selection-driven changes should be class toggles only (`.is-focused`, `.is-issue`).
+- Avoid view-specific state classes unless a new view introduces a new semantic concept.
+
+---
+
+## 4.7 Recommended CSS structure
+
+To keep CSS minimal and maintainable, organize stylesheets as:
+
+1. Tokens (`:root`)
+2. App frame (`#root`, `.ui-shell`, `.ui-app`)
+3. Universal primitives (`.ui-item`, `.ui-meta`, typography)
+4. View chrome/layout blocks:
+   - outline
+   - table
+   - slider
+5. Utilities (`.hidden`, `.autosize`)
 
 ---
 

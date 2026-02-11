@@ -193,7 +193,7 @@ describe("views", () => {
 
     const cellA0 = requireEl(
       rowAEl0.querySelector(
-        `.ui-table-cells .ui-table-cell`,
+        `:scope > .ui-table-cell:not(.ui-table-meta-col)`,
       ) as HTMLElement | null,
       "Missing rowA first data cell",
     );
@@ -256,7 +256,7 @@ describe("views", () => {
 
     const cellA1 = requireEl(
       rowAEl1.querySelector(
-        `.ui-table-cells .ui-table-cell`,
+        `:scope > .ui-table-cell:not(.ui-table-meta-col)`,
       ) as HTMLElement | null,
       "Missing rowA first data cell",
     );
@@ -310,7 +310,7 @@ describe("views", () => {
 
     const nestedCell = requireEl(
       outline.root.querySelector(
-        `.ui-table .ui-table-cells .ui-table-cell`,
+        `.ui-table .ui-table-row > .ui-table-cell:not(.ui-table-meta-col)`,
       ) as HTMLElement | null,
       "Missing nested cell",
     );

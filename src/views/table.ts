@@ -319,17 +319,14 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
     metaCell.replaceChildren(meta.el);
     ctx.cleanup(() => meta.dispose());
 
-    const cellsHost = el("div", "ui-table-cells");
-    row.append(cellsHost);
+    const cache = new Map<string, Component>();
 
-    const cells = ctx.list<string>(cellsHost, (key) => {
-      const idx = key.indexOf("\u001f");
-      const cellId = (idx >= 0 ? key.slice(idx + 1) : "") as ItemId;
-      return mountDataCell(core, rowId, cellId);
-    });
+    const disposeAll = () => {
+      for (const c of cache.values()) c.dispose();
+      cache.clear();
+    };
 
-    ctx.effect(() => {
-      const n = sig.colCount.value;
+    const updateCells = (n: number) => {
       const rowCells = childrenOf(core, rowId);
       const keys: string[] = [];
       for (let i = 0; i < n; i++) {
@@ -337,8 +334,34 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         if (!cid) continue;
         keys.push(`${i}\u001f${cid}`);
       }
-      cells.update(keys);
+
+      const keep = new Set(keys);
+      for (const [k, c] of cache) {
+        if (keep.has(k)) continue;
+        c.dispose();
+        cache.delete(k);
+      }
+
+      const cells: HTMLElement[] = [];
+      for (const key of keys) {
+        let comp = cache.get(key);
+        if (!comp) {
+          const idx = key.indexOf("\u001f");
+          const cellId = (idx >= 0 ? key.slice(idx + 1) : "") as ItemId;
+          comp = mountDataCell(core, rowId, cellId);
+          cache.set(key, comp);
+        }
+        cells.push(comp.el);
+      }
+
+      reconcileChildren(row, [metaCell, ...cells]);
+    };
+
+    ctx.effect(() => {
+      updateCells(sig.colCount.value);
     });
+
+    ctx.cleanup(disposeAll);
 
     return row;
   });
@@ -349,13 +372,7 @@ function mountBody(mountCtx: TableMountCtx): Component {
 
   return createComponent(mountCtx.core, (ctx) => {
     const body = el("div", "ui-table-body");
-
-    const rowsHost = el("div", "ui-table-rows");
-    body.append(rowsHost);
-
-    const rows = ctx.list<ItemId>(rowsHost, (rid) =>
-      mountRowShell(mountCtx, rid),
-    );
+    const rows = ctx.list<ItemId>(body, (rid) => mountRowShell(mountCtx, rid));
 
     ctx.effect(() => {
       rows.update(sig.rows.value);

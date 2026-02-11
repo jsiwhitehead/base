@@ -6,7 +6,6 @@
 
 * {
   margin: 0;
-  outline: none;
 }
 
 html,
@@ -16,10 +15,16 @@ body {
 
 body {
   -webkit-font-smoothing: antialiased;
-  font-size: 16px;
-  line-height: 1.5;
-  font-weight: 400;
-  font-style: normal;
+  text-rendering: optimizeLegibility;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
 }
 
 input,
@@ -27,15 +32,19 @@ button,
 textarea,
 select {
   font: inherit;
+  color: inherit;
   display: block;
   border: 0;
-  outline: none;
   background: transparent;
   padding: 0;
 }
 
 textarea {
   resize: none;
+}
+
+button {
+  cursor: pointer;
 }
 
 a {
