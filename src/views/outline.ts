@@ -120,9 +120,7 @@ function textForTarget(core: Core, id: ItemId, target: string): string {
   if (target.startsWith("conn:")) {
     if (it.mode.kind !== "connected") return "";
     const key = target.slice("conn:".length);
-    return (
-      fieldsFromConn(it.mode.conn).find((f) => f.key === key)?.text ?? ""
-    );
+    return fieldsFromConn(it.mode.conn).find((f) => f.key === key)?.text ?? "";
   }
   if (target === LABEL_TARGET) return it.label ?? "";
   return "";
@@ -392,16 +390,21 @@ type OutlineMountCtx = {
 function mountOutlineNodeShell(
   mountCtx: OutlineMountCtx,
   focus: Focus,
-  showMeta: boolean,
+  withMeta: boolean,
 ): Component {
-  const { core } = mountCtx;
+  const { core, rootId } = mountCtx;
   const id = focus.item;
 
   return createComponent(core, (ctx) => {
     const shell = el("div", "ui-outline-node");
     bindUiItemShell(ctx, { core, focus }, shell);
 
-    if (showMeta) {
+    if (withMeta) {
+      const metaHost = el("div");
+      shell.append(metaHost);
+
+      const metaSlot = ctx.slot(metaHost);
+
       const canEditLabel = () => core.item(id).mode.kind !== "readonly";
 
       const commitLabel = (text: string) => {
@@ -415,21 +418,48 @@ function mountOutlineNodeShell(
         outlineCommands.commitConnField(core, id, key, text);
       };
 
-      const meta = mountItemMeta(
-        core,
-        {
-          focus,
-          id,
-          dispatch: mountCtx.dispatch,
-          canEditLabel,
-          commitLabel,
-          commitConnField,
-        },
-        { visibility: "auto" },
+      const labelFocused = computed(() => {
+        const sel = core.selection();
+        return (
+          sel.kind === "focused" &&
+          sel.focus.item === focus.item &&
+          sel.focus.container === focus.container &&
+          sel.target === LABEL_TARGET
+        );
+      });
+
+      const hasLabel = computed(
+        () => (core.item(id).label ?? "").trim() !== "",
       );
 
-      shell.append(meta.el);
-      ctx.cleanup(() => meta.dispose());
+      const fieldsSignal = computed(() => {
+        const snap = core.item(id);
+        return snap.mode.kind === "connected"
+          ? fieldsFromConn(snap.mode.conn)
+          : [];
+      });
+
+      const hasFields = computed(() => fieldsSignal.value.length > 0);
+
+      ctx.effect(() => {
+        const shouldShow =
+          hasLabel.value || hasFields.value || labelFocused.value;
+        if (!shouldShow) {
+          metaSlot.clear();
+          return;
+        }
+
+        metaSlot.set(
+          mountItemMeta(core, {
+            focus,
+            id,
+            dispatch: mountCtx.dispatch,
+            canEditLabel,
+            commitLabel,
+            commitConnField,
+          }),
+        );
+      });
     }
 
     const wanted = core.view(id);
@@ -478,6 +508,7 @@ function mountOutlineScalarBody(
       focus,
       target: VALUE_TARGET,
       multiline: true,
+      autosize: false,
       editModel: "live",
       commit: (text) => outlineCommands.setText(core, id, text),
       getState: () => {

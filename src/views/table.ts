@@ -218,18 +218,14 @@ function mountHeader(mountCtx: TableMountCtx): Component {
               };
 
               slot.set(
-                mountItemMeta(
-                  core,
-                  {
-                    focus,
-                    id: cid,
-                    dispatch,
-                    canEditLabel,
-                    commitLabel,
-                    commitConnField,
-                  },
-                  { visibility: "always" },
-                ),
+                mountItemMeta(core, {
+                  focus,
+                  id: cid,
+                  dispatch,
+                  canEditLabel,
+                  commitLabel,
+                  commitConnField,
+                }),
               );
             });
 
@@ -303,18 +299,14 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
       core.commit((t) => t.setConnected(rowId, next));
     };
 
-    const meta = mountItemMeta(
-      core,
-      {
-        focus: { container: tableId, item: rowId },
-        id: rowId,
-        dispatch,
-        canEditLabel,
-        commitLabel,
-        commitConnField,
-      },
-      { visibility: "always" },
-    );
+    const meta = mountItemMeta(core, {
+      focus: { container: tableId, item: rowId },
+      id: rowId,
+      dispatch,
+      canEditLabel,
+      commitLabel,
+      commitConnField,
+    });
 
     metaCell.replaceChildren(meta.el);
     ctx.cleanup(() => meta.dispose());

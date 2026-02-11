@@ -2,13 +2,7 @@ import { computed } from "@preact/signals-core";
 
 import type { Caret, Component, Core, Focus, ItemId, Connected } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
-import {
-  caretFromTarget,
-  createComponent,
-  el,
-  on,
-  setData,
-} from "./base";
+import { caretFromTarget, createComponent, el, on, setData } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -241,7 +235,9 @@ type TextFieldOpts = {
   focus: Focus;
   target: string;
   multiline: boolean;
+  autosize?: boolean;
   className?: string;
+  inputClassName?: string;
   editModel?: TextFieldEditModel;
   yieldNav?: boolean;
   commit: (text: string) => void;
@@ -255,186 +251,29 @@ export function textField(
 ): FocusComponent<TextInputElement> {
   const editModel: TextFieldEditModel = opts.editModel ?? "draft";
   const yieldNav = opts.yieldNav ?? true;
+  const autosize = opts.autosize ?? false;
+
+  let focusEl!: TextInputElement;
 
   const c = createComponent(core, (ctx) => {
-    const inp = textInput(opts.multiline);
-    if (opts.className) inp.className = opts.className;
-
-    setData(inp, "target", opts.target);
-
-    let editing = false;
-    let dirty = false;
-    let baseline = "";
-    let draft = "";
-
-    const isThisTargetFocused = (): boolean => {
-      const sel = core.selection();
-      return (
-        sel.kind === "focused" &&
-        sel.focus.item === opts.focus.item &&
-        sel.focus.container === opts.focus.container &&
-        sel.target === opts.target
-      );
-    };
-
-    const beginDraftSession = () => {
-      if (editModel !== "draft") return;
-      if (editing) return;
-
-      const st = opts.getState();
-      if (st.readOnly) return;
-
-      const committed = st.text ?? "";
-      editing = true;
-      dirty = false;
-      baseline = committed;
-      draft = committed;
-      syncValue(inp, draft);
-    };
-
-    const commitDraft = (): void => {
-      if (!editing) return;
-      if (!dirty) return;
-
-      const st = opts.getState();
-      if (st.readOnly) return;
-
-      opts.commit(draft);
-      dirty = false;
-      baseline = draft;
-    };
-
-    const cancelDraft = (): void => {
-      if (!editing) return;
-      draft = baseline;
-      dirty = false;
-      syncValue(inp, baseline);
-    };
-
-    const handleIntent = (i: Intent) => {
-      if (editModel === "draft") {
-        if (i.type === "CANCEL") {
-          cancelDraft();
-          opts.onIntent?.(i);
-          return;
-        }
-
-        if (i.type === "CONFIRM" || i.type === "TAB" || i.type === "NAV") {
-          commitDraft();
-          opts.onIntent?.(i);
-          return;
-        }
-
-        opts.onIntent?.(i);
-        return;
-      }
-
-      opts.onIntent?.(i);
-    };
-
-    if (opts.onIntent && yieldNav)
-      ctx.cleanup(bindTextEditorYield(inp, handleIntent));
-
-    ctx.on(inp, "focus", () => {
-      beginDraftSession();
-    });
-
-    ctx.on(inp, "input", () => {
-      if (editModel === "live") {
-        opts.commit(inp.value);
-        return;
-      }
-
-      if (!editing) beginDraftSession();
-      draft = inp.value;
-      dirty = true;
-    });
-
-    ctx.on(inp, "blur", () => {
-      if (editModel !== "draft") return;
-      if (!editing) return;
-      commitDraft();
-    });
-
-    ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
-    ctx.target(opts.focus, opts.target, () => inp, {
-      caret: defaultTextCaret(),
-    });
-
-    ctx.effect(() => {
-      const st = opts.getState();
-      inp.readOnly = st.readOnly;
-
-      const committed = st.text ?? "";
-      const focused = isThisTargetFocused();
-
-      if (editModel === "live") {
-        syncValue(inp, committed);
-        return;
-      }
-
-      if (!focused) {
-        editing = false;
-        dirty = false;
-        baseline = committed;
-        draft = committed;
-        syncValue(inp, committed);
-        return;
-      }
-
-      if (!editing && !st.readOnly) {
-        editing = true;
-        dirty = false;
-        baseline = committed;
-        draft = committed;
-        syncValue(inp, draft);
-        return;
-      }
-
-      if (!dirty && committed !== baseline) {
-        baseline = committed;
-        draft = committed;
-      }
-
-      syncValue(inp, draft);
-    });
-
-    return inp;
-  });
-
-  return { ...c, focusEl: c.el as TextInputElement };
-}
-
-type AutosizeTextFieldOpts = Omit<TextFieldOpts, "multiline" | "className"> & {
-  className?: string;
-  inputClassName?: string;
-  mirrorClassName?: string;
-  wrapClassName?: string;
-};
-
-function autosizeTextField(
-  core: Core,
-  opts: AutosizeTextFieldOpts,
-): FocusComponent<HTMLInputElement> {
-  const editModel: TextFieldEditModel = opts.editModel ?? "draft";
-  const yieldNav = opts.yieldNav ?? true;
-
-  let focusEl!: HTMLInputElement;
-
-  const c = createComponent(core, (ctx) => {
-    const wrap = el("div", opts.wrapClassName ?? "autosize");
+    const wrap = el("div", "ui-textfield");
     if (opts.className) wrap.classList.add(opts.className);
 
-    const mirror = el("span", opts.mirrorClassName ?? "");
-    mirror.setAttribute("aria-hidden", "true");
-
-    const inp = textInput(false) as HTMLInputElement;
+    const inp = textInput(opts.multiline);
     focusEl = inp;
+    inp.classList.add("ui-textfield-input");
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
     setData(inp, "target", opts.target);
 
-    wrap.append(mirror, inp);
+    const mirror = autosize
+      ? (el("span", "ui-textfield-mirror") as HTMLSpanElement)
+      : null;
+
+    if (mirror) mirror.setAttribute("aria-hidden", "true");
+
+    if (mirror) wrap.append(mirror, inp);
+    else wrap.append(inp);
 
     let editing = false;
     let dirty = false;
@@ -451,6 +290,12 @@ function autosizeTextField(
       );
     };
 
+    const syncMirror = (text: string) => {
+      if (!mirror) return;
+      const next = text.length ? text : " ";
+      if (mirror.textContent !== next) mirror.textContent = next;
+    };
+
     const beginDraftSession = () => {
       if (editModel !== "draft") return;
       if (editing) return;
@@ -464,7 +309,7 @@ function autosizeTextField(
       baseline = committed;
       draft = committed;
       syncValue(inp, draft);
-      mirror.textContent = draft.length ? draft : " ";
+      syncMirror(draft);
     };
 
     const commitDraft = (): void => {
@@ -484,7 +329,7 @@ function autosizeTextField(
       draft = baseline;
       dirty = false;
       syncValue(inp, baseline);
-      mirror.textContent = baseline.length ? baseline : " ";
+      syncMirror(baseline);
     };
 
     const handleIntent = (i: Intent) => {
@@ -518,13 +363,14 @@ function autosizeTextField(
     ctx.on(inp, "input", () => {
       if (editModel === "live") {
         opts.commit(inp.value);
+        syncMirror(inp.value);
         return;
       }
 
       if (!editing) beginDraftSession();
       draft = inp.value;
       dirty = true;
-      mirror.textContent = draft.length ? draft : " ";
+      syncMirror(draft);
     });
 
     ctx.on(inp, "blur", () => {
@@ -547,7 +393,7 @@ function autosizeTextField(
 
       if (editModel === "live") {
         syncValue(inp, committed);
-        mirror.textContent = committed.length ? committed : " ";
+        syncMirror(committed);
         return;
       }
 
@@ -557,7 +403,7 @@ function autosizeTextField(
         baseline = committed;
         draft = committed;
         syncValue(inp, committed);
-        mirror.textContent = committed.length ? committed : " ";
+        syncMirror(committed);
         return;
       }
 
@@ -567,7 +413,7 @@ function autosizeTextField(
         baseline = committed;
         draft = committed;
         syncValue(inp, draft);
-        mirror.textContent = draft.length ? draft : " ";
+        syncMirror(draft);
         return;
       }
 
@@ -577,7 +423,7 @@ function autosizeTextField(
       }
 
       syncValue(inp, draft);
-      mirror.textContent = draft.length ? draft : " ";
+      syncMirror(draft);
     });
 
     return wrap;
@@ -601,12 +447,7 @@ export function fieldsFromConn(conn: Connected): ConnField[] {
   }
   return [
     { key: "from", label: "~", multiline: false, text: conn.from ?? "" },
-    {
-      key: "where",
-      label: "where:",
-      multiline: true,
-      text: conn.where ?? "",
-    },
+    { key: "where", label: "where:", multiline: true, text: conn.where ?? "" },
     {
       key: "orderBy",
       label: "orderBy:",
@@ -616,7 +457,11 @@ export function fieldsFromConn(conn: Connected): ConnField[] {
   ];
 }
 
-export function patchConn(conn: Connected, key: string, text: string): Connected {
+export function patchConn(
+  conn: Connected,
+  key: string,
+  text: string,
+): Connected {
   if (conn.kind === "formula") {
     if (key === "expr") return { kind: "formula", expr: text };
     return conn;
@@ -626,12 +471,6 @@ export function patchConn(conn: Connected, key: string, text: string): Connected
   if (key === "orderBy") return { ...conn, orderBy: text };
   return conn;
 }
-
-type ItemMetaVisibility = "auto" | "always";
-
-type MountItemMetaOpts = {
-  visibility?: ItemMetaVisibility;
-};
 
 export function mountItemMeta(
   core: Core,
@@ -643,9 +482,7 @@ export function mountItemMeta(
     canEditLabel: () => boolean;
     commitConnField: (key: string, text: string) => void;
   },
-  opts: MountItemMetaOpts = {},
 ): Component {
-  const visibility: ItemMetaVisibility = opts.visibility ?? "always";
   const id = args.id;
 
   return createComponent(core, (ctx) => {
@@ -655,9 +492,11 @@ export function mountItemMeta(
     const connWrap = el("div", "ui-meta-conn");
     meta.append(labelWrap, connWrap);
 
-    const labelComp = autosizeTextField(core, {
+    const labelComp = textField(core, {
       focus: args.focus,
       target: LABEL_TARGET,
+      multiline: false,
+      autosize: true,
       yieldNav: false,
       commit: args.commitLabel,
       getState: () => {
@@ -687,8 +526,7 @@ export function mountItemMeta(
           const snap = core.item(id);
           if (snap.mode.kind !== "connected") return null;
           return (
-            fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ??
-            null
+            fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ?? null
           );
         };
 
@@ -699,14 +537,15 @@ export function mountItemMeta(
           focus: args.focus,
           target: tkey,
           multiline: multilineForKey(),
+          autosize: true,
           commit: (text) => args.commitConnField(key, text),
           getState: () => {
             const snap = core.item(id);
             if (snap.mode.kind !== "connected")
               return { text: "", readOnly: true, isIssue: false };
             const txt =
-              fieldsFromConn(snap.mode.conn).find((x) => x.key === key)
-                ?.text ?? "";
+              fieldsFromConn(snap.mode.conn).find((x) => x.key === key)?.text ??
+              "";
             return { text: txt, readOnly: false, isIssue: false };
           },
           onIntent: args.dispatch,
@@ -724,18 +563,6 @@ export function mountItemMeta(
       }),
     );
 
-    const labelFocused = computed(() => {
-      const sel = core.selection();
-      return (
-        sel.kind === "focused" &&
-        sel.focus.item === args.focus.item &&
-        sel.focus.container === args.focus.container &&
-        sel.target === LABEL_TARGET
-      );
-    });
-
-    const hasLabel = computed(() => (core.item(id).label ?? "").trim() !== "");
-
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
       return snap.mode.kind === "connected"
@@ -743,18 +570,8 @@ export function mountItemMeta(
         : [];
     });
 
-    const hasFields = computed(() => fieldsSignal.value.length > 0);
-
     ctx.effect(() => {
       rows.update(fieldsSignal.value.map((f) => f.key));
-    });
-
-    ctx.effect(() => {
-      const shouldHide =
-        visibility === "auto"
-          ? !(hasLabel.value || hasFields.value || labelFocused.value)
-          : false;
-      meta.classList.toggle("hidden", shouldHide);
     });
 
     return meta;

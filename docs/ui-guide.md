@@ -40,6 +40,25 @@ This chapter describes how the DOM is structured, how components are mounted/dis
 
 ---
 
+## 1.0 App frame / shell DOM
+
+Canonical app frame (debug panel omitted):
+
+```text
+#root
+  .ui-shell
+    .ui-shell-main                              (tabIndex=0; only tabbable element)
+      .ui-app.ui-item                           (root item shell; target: DEFAULT_TARGET)
+        .ui-body.ui-<view>                      (mounted root view body)
+```
+
+Tab invariant:
+
+- `.ui-shell-main` is the only tabbable element in the app.
+- All other focus movement is programmatic via Core targets.
+
+---
+
 ## 1.1 Two layers everywhere: Shell vs Body
 
 Every presented item is represented using two conceptual layers:
@@ -78,7 +97,23 @@ Meta includes:
 
 Meta is not view-specific. It is item-specific.
 
-Meta may be conditionally shown/hidden based on item state (label exists, item is in connected mode, etc.), but the ownership boundary remains the same.
+Meta rendering policy:
+
+- parent/context controls meta visibility by mounting/unmounting it.
+- remounting meta starts editors from committed state.
+
+Canonical meta structure:
+
+```text
+.ui-meta
+  .ui-meta-label
+    [.ui-textfield structure]                   (target: label)
+  .ui-meta-conn
+    .ui-meta-conn-row                           (repeated)
+      .ui-meta-conn-key
+      .ui-meta-conn-val
+        [.ui-textfield structure]               (target: conn:<fieldKey>)
+```
 
 ---
 
@@ -355,9 +390,9 @@ These are intentional design choices.
 
 The app uses exactly one tabbable element total:
 
-- the top-level application container
+- `.ui-shell-main` (`tabIndex=0`)
 
-No other element participates in browser tab-order navigation.
+No other element participates in browser tab-order navigation (App frame / shell DOM).
 
 ---
 
@@ -486,12 +521,35 @@ Editors handle pointerdown by:
 
 ## 2.6 Text editing controls
 
-The UI provides two primary text controls:
+The UI provides one text control:
 
-- `textField` — input or textarea
-- `autosizeTextField` — input with mirror span for width
+- `textField` (configured with options, including `autosize: true`)
 
-Both controls:
+`textField` supports:
+
+- `multiline` (`input` vs `textarea`)
+- `autosize` (mirror-driven sizing)
+- `editModel: "live" | "draft"`
+- yielding on/off (`yieldNav`; labels typically disable yielding)
+
+Canonical DOM:
+
+```text
+.ui-textfield
+  .ui-textfield-mirror                          (optional; aria-hidden="true")
+  input.ui-textfield-input | textarea.ui-textfield-input
+```
+
+Autosize semantics (`autosize: true`):
+
+- mirror is hidden but drives autosize layout.
+- input/textarea overlays the mirror in the same slot.
+
+Padding note:
+
+- for autosize fields, apply padding to both `.ui-textfield-input` and `.ui-textfield-mirror` (not `.ui-textfield`).
+
+`textField` instances:
 
 - attach their target via `ctx.target(...)`
 - participate in yielding via `bindTextEditorYield(...)`
@@ -630,7 +688,7 @@ Outline renders:
 - a body stamped as `.ui-body.ui-outline`
 - for each presented item:
   - a `.ui-outline-node` shell (`.ui-item`)
-  - optional `.ui-meta` in the shell (label + connected fields)
+  - optional `[.ui-meta structure]` in the shell
   - the mounted body for that item’s view
 
 Group items render children recursively.
@@ -642,9 +700,7 @@ Canonical structure:
 ```text
 .ui-body.ui-outline
   .ui-outline-node.ui-item                       (target: DEFAULT_TARGET)
-    .ui-meta                                     (optional shell/meta chrome)
-      [label editor]                             (target: label)
-      [connected editor(s)]                      (target: conn:*)
+    [.ui-meta structure]                         (optional shell/meta chrome; targets: label, conn:*)
     .ui-body...                                  (mounted child view body)
   .ui-outline-node.ui-item
     ...
@@ -654,8 +710,12 @@ Scalar item body (plain scalar):
 
 ```text
 .ui-body.ui-outline
-  [value editor]                                 (target: value)
+  [.ui-textfield structure]                      (target: value)
 ```
+
+### Meta visibility (outline)
+
+- meta is shown when label has content, connected fields exist, or the `label` target is focused.
 
 ---
 
@@ -666,7 +726,7 @@ Outline uses:
 Shell/meta targets:
 
 - `DEFAULT_TARGET`
-- `label` (see universal label policy)
+- `label`
 - `conn:*`
 
 Body targets:
@@ -799,7 +859,7 @@ Each row contains:
 - a meta-column cell (`.ui-table-meta-col`) for row item meta
 - a set of cell shells for each cell item
 
-The header renders schema cell meta (label/connected fields) by mounting the schema-row cell items’ meta UI.
+The header renders schema cell meta by mounting `mountItemMeta(...)` for schema-row cells.
 
 Canonical structure:
 
@@ -808,14 +868,15 @@ Canonical structure:
   .ui-table-header
     .ui-table-col.ui-table-meta-col
     .ui-table-col
-      .ui-meta                                   (schema cell meta: label/conn targets)
+      [.ui-meta structure]                       (schema cell meta; targets: label, conn:*)
     ...
   .ui-table-body
     .ui-table-row.ui-item                        (row target: DEFAULT_TARGET)
       .ui-table-cell.ui-table-meta-col
-        .ui-meta                                 (row meta: label/conn targets)
+        [.ui-meta structure]                     (row meta; targets: label, conn:*)
       .ui-table-cell.ui-item                     (cell target: DEFAULT_TARGET)
-        .ui-body...                              (mounted cell view body; value target when scalar)
+        .ui-body...                              (mounted cell view body)
+          [.ui-textfield structure]              (when mounted cell view is scalar `value`)
       ...
     ...
 ```
@@ -830,7 +891,7 @@ Row shells:
 
 Row meta targets:
 
-- `label` (see universal label policy)
+- `label`
 - `conn:*`
 
 Cell shells:
@@ -1159,13 +1220,13 @@ To keep styling predictable:
 To keep CSS minimal and maintainable, organize stylesheets as:
 
 1. Tokens (`:root`)
-2. App frame (`#root`, `.ui-shell`, `.ui-app`)
-3. Universal primitives (`.ui-item`, `.ui-meta`, typography)
+2. App frame (`#root`, `.ui-shell`, `.ui-shell-main`, `.ui-app`)
+3. Universal primitives (`.ui-item`, `.ui-body`, `.ui-meta`, `.is-focused`, `.is-issue`, typography)
 4. View chrome/layout blocks:
    - outline
    - table
    - slider
-5. Utilities (`.hidden`, `.autosize`)
+5. Text field primitive (`.ui-textfield`, `.ui-textfield-input`, `.ui-textfield-mirror`)
 
 ---
 
@@ -1176,7 +1237,7 @@ To keep CSS minimal and maintainable, organize stylesheets as:
 - Body owns: value targets.
 - Shell identity is stable across selection changes.
 - Selection-driven updates must be styling-only.
-- One tabbable element total (app root).
+- One tabbable element total (`.ui-shell-main`).
 - Tab/Shift+Tab are always app commands.
 - Tab is routed by Core and delivered to the active view intent handler (outer -> parent/context view; inner -> child view).
 - Interaction is routed via intents.

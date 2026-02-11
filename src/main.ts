@@ -42,12 +42,10 @@ function createApp(opts: CreateAppOpts = {}): App {
 
   const appRoot = createComponent(core, (ctx) => {
     const rootShell = el("div", "ui-app");
-    const bodyHost = el("div", "ui-app-body");
-    rootShell.append(bodyHost);
 
     bindUiItemShell(ctx, { core, focus }, rootShell);
 
-    const slot = ctx.slot(bodyHost);
+    const slot = ctx.slot(rootShell);
 
     ctx.effect(() => {
       const wanted = core.view(rootId);
