@@ -1,0 +1,51 @@
+.ui-debug {
+  position: sticky;
+  top: 10px;
+  max-height: calc(100vh - 20px);
+  overflow: auto;
+  background: #f5f6f8;
+  border: 1px solid #d6d9de;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.ui-debug-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.ui-debug-last {
+  font-weight: bold;
+  color: #6b7280;
+}
+
+.ui-debug-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ui-debug-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ui-debug-pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #d6d9de;
+  overflow: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

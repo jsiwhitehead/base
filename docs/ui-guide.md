@@ -49,7 +49,7 @@ Canonical app frame (debug panel omitted):
   .ui-shell
     .ui-shell-main                              (tabIndex=0; only tabbable element)
       .ui-app.ui-item                           (root item shell; target: DEFAULT_TARGET)
-        .ui-body.ui-<view>                      (mounted root view body)
+        [.ui-body.<root-view> subtree]        (mounted root view body)
 ```
 
 Tab invariant:
@@ -107,12 +107,12 @@ Canonical meta structure:
 ```text
 .ui-meta
   .ui-meta-label
-    [.ui-textfield structure]                   (target: label)
+    [.ui-textfield subtree]                   (target: label)
   .ui-meta-conn
     .ui-meta-conn-row                           (repeated)
       .ui-meta-conn-key
       .ui-meta-conn-val
-        [.ui-textfield structure]               (target: conn:<fieldKey>)
+        [.ui-textfield subtree]               (target: conn:<fieldKey>)
 ```
 
 ---
@@ -548,6 +548,7 @@ Autosize semantics (`autosize: true`):
 Padding note:
 
 - for autosize fields, apply padding to both `.ui-textfield-input` and `.ui-textfield-mirror` (not `.ui-textfield`).
+- autosize textfields must opt out of global `width: 100%` defaults (for example: wrapper uses `fit-content` and input uses auto width).
 
 `textField` instances:
 
@@ -688,8 +689,8 @@ Outline renders:
 - a body stamped as `.ui-body.ui-outline`
 - for each presented item:
   - a `.ui-outline-node` shell (`.ui-item`)
-  - optional `[.ui-meta structure]` in the shell
-  - the mounted body for that item’s view
+  - optional `[.ui-meta subtree]` in the shell
+  - nested `[.ui-body.<child-view> subtree]` for that item’s mounted view body
 
 Group items render children recursively.
 
@@ -700,8 +701,8 @@ Canonical structure:
 ```text
 .ui-body.ui-outline
   .ui-outline-node.ui-item                       (target: DEFAULT_TARGET)
-    [.ui-meta structure]                         (optional shell/meta chrome; targets: label, conn:*)
-    .ui-body...                                  (mounted child view body)
+    [.ui-meta subtree]                         (optional shell/meta chrome; targets: label, conn:*)
+    [.ui-body.<child-view> subtree]            (mounted child view body)
   .ui-outline-node.ui-item
     ...
 ```
@@ -710,7 +711,7 @@ Scalar item body (plain scalar):
 
 ```text
 .ui-body.ui-outline
-  [.ui-textfield structure]                      (target: value)
+  [.ui-textfield subtree]                      (target: value)
 ```
 
 ### Meta visibility (outline)
@@ -857,7 +858,7 @@ Rows are rendered as `.ui-table-row.ui-item` shells.
 Each row contains:
 
 - a meta-column cell (`.ui-table-meta-col`) for row item meta
-- a set of cell shells for each cell item
+- a set of cell shells for each cell item, each nesting `[.ui-body.<cell-view> subtree]`
 
 The header renders schema cell meta by mounting `mountItemMeta(...)` for schema-row cells.
 
@@ -868,15 +869,14 @@ Canonical structure:
   .ui-table-header
     .ui-table-col.ui-table-meta-col
     .ui-table-col
-      [.ui-meta structure]                       (schema cell meta; targets: label, conn:*)
+      [.ui-meta subtree]                       (schema cell meta; targets: label, conn:*)
     ...
   .ui-table-body
     .ui-table-row.ui-item                        (row target: DEFAULT_TARGET)
       .ui-table-cell.ui-table-meta-col
-        [.ui-meta structure]                     (row meta; targets: label, conn:*)
+        [.ui-meta subtree]                     (row meta; targets: label, conn:*)
       .ui-table-cell.ui-item                     (cell target: DEFAULT_TARGET)
-        .ui-body...                              (mounted cell view body)
-          [.ui-textfield structure]              (when mounted cell view is scalar `value`)
+        [.ui-body.<cell-view> subtree]         (mounted cell view body)
       ...
     ...
 ```
@@ -1094,9 +1094,9 @@ These classes are applied to `.ui-item` shells (and optionally on child shells w
 
 Styling rules:
 
-- default: neutral rails and neutral meta (transparent)
-- focused: rails + meta header use accent styling
-- issue: rails + meta header use issue styling
+- default: rails + meta share a single neutral chrome fill
+- focused: rails + meta share the focus fill
+- issue: rails + meta share the issue fill
 
 Bodies should remain readable and neutral; state is expressed primarily through chrome.
 
@@ -1121,15 +1121,14 @@ Rails are drawn using pseudo-elements on the chrome elements that own layout geo
 
 ---
 
-## 4.4 Meta header styling rules
+## 4.4 Meta styling rules
 
 Meta is chrome, not content.
 
-- `.ui-meta` is a header block, not a pill.
-- It should visually connect to the rail for the item (no floating-chip treatment).
-- Meta tinting follows state classes on the owning `.ui-item`:
-  - focused -> accent-soft background
-  - issue -> issue-soft background
+- `.ui-meta` is chrome, not a pill.
+- When present, meta and rail must read as one continuous block (shared fill, no seam or gap).
+- Meta fill uses the same state color as the rail, derived from state classes on the owning `.ui-item`.
+- In autosized editor contexts, meta should size to content (`fit-content`); body value editors may remain full-width.
 
 Meta text styling is intentionally restrained:
 
@@ -1185,6 +1184,7 @@ Header:
 - Header styling is a separate component language.
 - Header uses neutral strip styling and does not use rails.
 - Header may contain schema meta UI for columns (`.ui-meta` mounted for schema cells).
+- Schema meta in headers follows meta styling rules, while header containers remain neutral and rail-free.
 
 Canonical styling targets:
 

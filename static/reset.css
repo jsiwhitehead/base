@@ -49,6 +49,18 @@ select {
   padding: 0;
 }
 
+input,
+textarea,
+select,
+button {
+  max-width: 100%;
+}
+
+input,
+textarea {
+  width: 100%;
+}
+
 textarea {
   resize: none;
 }
