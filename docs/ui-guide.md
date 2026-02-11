@@ -246,7 +246,6 @@ The UI layer provides small helpers that encode conventions:
 - `el(tag, className?, text?)`
 - `reconcileChildren(parent, desired)`
 - `setData(el, key, value)`
-- `setDataBool(el, key, on)`
 - `caretFromTarget(eventTarget)`
 
 These helpers exist to:
@@ -497,7 +496,7 @@ Both controls:
 - attach their target via `ctx.target(...)`
 - participate in yielding via `bindTextEditorYield(...)`
 - respect readonly state
-- surface issue state via `data-issue`
+- rely on shell-level issue state via `.ui-item.is-issue`
 
 ---
 

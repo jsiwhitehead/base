@@ -8,7 +8,6 @@ import {
   el,
   on,
   setData,
-  setDataBool,
 } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
@@ -371,7 +370,6 @@ export function textField(
 
       if (editModel === "live") {
         syncValue(inp, committed);
-        setDataBool(inp, "issue", !!st.isIssue);
         return;
       }
 
@@ -381,7 +379,6 @@ export function textField(
         baseline = committed;
         draft = committed;
         syncValue(inp, committed);
-        setDataBool(inp, "issue", !!st.isIssue);
         return;
       }
 
@@ -391,7 +388,6 @@ export function textField(
         baseline = committed;
         draft = committed;
         syncValue(inp, draft);
-        setDataBool(inp, "issue", !!st.isIssue);
         return;
       }
 
@@ -401,7 +397,6 @@ export function textField(
       }
 
       syncValue(inp, draft);
-      setDataBool(inp, "issue", !!st.isIssue);
     });
 
     return inp;
@@ -553,7 +548,6 @@ function autosizeTextField(
       if (editModel === "live") {
         syncValue(inp, committed);
         mirror.textContent = committed.length ? committed : " ";
-        setDataBool(inp, "issue", !!st.isIssue);
         return;
       }
 
@@ -564,7 +558,6 @@ function autosizeTextField(
         draft = committed;
         syncValue(inp, committed);
         mirror.textContent = committed.length ? committed : " ";
-        setDataBool(inp, "issue", !!st.isIssue);
         return;
       }
 
@@ -575,7 +568,6 @@ function autosizeTextField(
         draft = committed;
         syncValue(inp, draft);
         mirror.textContent = draft.length ? draft : " ";
-        setDataBool(inp, "issue", !!st.isIssue);
         return;
       }
 
@@ -586,7 +578,6 @@ function autosizeTextField(
 
       syncValue(inp, draft);
       mirror.textContent = draft.length ? draft : " ";
-      setDataBool(inp, "issue", !!st.isIssue);
     });
 
     return wrap;

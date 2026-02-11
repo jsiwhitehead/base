@@ -67,10 +67,6 @@ export function setData(
   (el0.dataset as any)[key] = String(value);
 }
 
-export function setDataBool(el0: HTMLElement, key: string, on0: boolean): void {
-  (el0.dataset as any)[key] = on0 ? "true" : "false";
-}
-
 type ChildRec = { element: HTMLElement; dispose: () => void };
 
 class ChildManager<Id extends string | number> {
@@ -266,6 +262,9 @@ export function bindUiItemShell(
       sel.focus.container === spec.focus.container
     );
   });
+  const isIssue = computed(
+    () => spec.core.item(spec.focus.item).content.kind === "issue",
+  );
 
   ctx.target(spec.focus, DEFAULT_TARGET, () => shell);
 
@@ -278,6 +277,7 @@ export function bindUiItemShell(
 
   ctx.effect(() => {
     shell.classList.toggle("is-focused", isFocused.value);
+    shell.classList.toggle("is-issue", isIssue.value);
   });
 }
 
