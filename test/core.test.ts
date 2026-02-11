@@ -314,7 +314,7 @@ describe("core/invariants & rules", () => {
     expect(groupLabels(core, rowB)).toEqual(["name", "score"]);
     expect(groupLabels(core, rowC)).toEqual(["name", "score"]);
 
-    core.commit((t) => t.move(aScore, null));
+    core.commit((t) => t.remove(aScore));
     expect(groupLabels(core, rowA)).toEqual(["name"]);
     expect(groupLabels(core, rowB)).toEqual(["name"]);
     expect(groupLabels(core, rowC)).toEqual(["name"]);
@@ -369,7 +369,7 @@ describe("core/collab", () => {
 
     let x = "";
     core.commit((t) => {
-      x = t.insertChild(rootId, { kind: "blank" });
+      x = t.insertChild(rootId);
       t.setLabel(x, "x");
       t.setScalar(x, 1);
     });

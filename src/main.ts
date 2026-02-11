@@ -120,7 +120,8 @@ function seedDemo(app: App) {
   const mkGroup = (ownerId: ItemId, label: string, view: ViewKind = null) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId, { kind: "group" });
+      id = t.insertChild(ownerId);
+      t.setGroup(id);
       t.setLabel(id, label);
       if (view != null) t.setView(id, view);
     });
@@ -130,7 +131,7 @@ function seedDemo(app: App) {
   const mkScalar = (ownerId: ItemId, label: string, value: Scalar) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId, { kind: "blank" });
+      id = t.insertChild(ownerId);
       t.setLabel(id, label);
       t.setScalar(id, value);
     });
@@ -140,9 +141,9 @@ function seedDemo(app: App) {
   const mkDerived = (ownerId: ItemId, label: string, expr: string) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId, { kind: "blank" });
+      id = t.insertChild(ownerId);
       t.setLabel(id, label);
-      t.setSource(id, { type: "derived", expr });
+      t.setSource(id, { kind: "derived", expr });
     });
     return id;
   };
@@ -154,10 +155,10 @@ function seedDemo(app: App) {
   ) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId, { kind: "blank" });
+      id = t.insertChild(ownerId);
       t.setLabel(id, label);
       t.setSource(id, {
-        type: "lens",
+        kind: "lens",
         from: spec.from,
         where: spec.where ?? "",
         orderBy: spec.orderBy ?? "",

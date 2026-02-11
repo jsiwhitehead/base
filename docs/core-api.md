@@ -131,21 +131,21 @@ Modes describe what kind of content an item currently has and what editing UI sh
 - Item currently stores content directly.
 - UI may present direct editing controls.
 - Any edit may replace the item’s content.
-- Converting to or from a group is allowed only if the group is empty.
+- Group/non-group conversion follows the group conversion rule.
 
 ### Source
 
 - Item’s content is currently generated from a source.
 - Source fields are editable.
 - Any edit may replace the item’s content, including replacing the source with direct content.
-- Converting to or from a group is allowed only if the group is empty.
+- Group/non-group conversion follows the group conversion rule.
 
 ## Sources
 
 ```ts
 type Source =
-  | { type: "derived", expr: string }
-  | { type: "lens", from: string, where: string, orderBy: string }
+  | { kind: "derived", expr: string }
+  | { kind: "lens", from: string, where: string, orderBy: string }
 ```
 
 Sources define how an item’s content is computed.
@@ -180,10 +180,16 @@ tx.setLabel(id, label)
 tx.setView(id, view)
 tx.setScalar(id, value)
 tx.setSource(id, source)
+tx.setGroup(id)
 tx.insertChild(ownerId, opts)
 tx.move(id, toOwnerId, opts)
 tx.remove(id)
 ```
+
+### Group conversion rule
+
+Content may switch between `group` and non-group (`scalar`/`source`) only when the group is empty.
+If an operation would convert a non-empty group to non-group, the commit throws.
 
 `setLabel`:
 
@@ -198,30 +204,36 @@ tx.remove(id)
 `setScalar`:
 
 - Replaces the item’s content with a scalar value or blank.
+- Subject to the group conversion rule.
 
 `setSource`:
 
 - Replaces the item’s content with a source definition.
+- Subject to the group conversion rule.
+
+`setGroup`:
+
+- Converts the item’s content to an empty group.
+- Subject to the group conversion rule.
 
 `insertChild`:
 
-- `opts?: { at?: number, kind?: "blank" | "group" }`
+- `opts?: { at?: number }`
 - Creates a new child item under `ownerId`.
-- `kind: "blank"` → blank scalar item.
-- `kind: "group"` → empty group item.
+- New items are created as blank scalar items.
 - If `at` is omitted, the item is appended.
 - Returns the newly created item’s ID.
 
 `move`:
 
 - Moves an item to a new parent and/or index.
-- If `toOwnerId` is `null`, the item is removed from its parent.
 - `at` is the destination index; omitted means append.
 - If a move would violate label uniqueness, the commit throws.
 
 `remove`:
 
 - Removes the item from the tree.
+- If the removed item is a group, its children become orphans (`ownerId = null`).
 
 ### ApplyResult
 

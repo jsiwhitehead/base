@@ -116,10 +116,7 @@ export function mkBlank(
 ): ItemId {
   let id: ItemId = "";
   core.commit((t) => {
-    id = t.insertChild(ownerId, {
-      kind: "blank",
-      ...(args?.at != null ? { at: args.at } : {}),
-    });
+    id = t.insertChild(ownerId, args?.at != null ? { at: args.at } : undefined);
     if (args?.label != null) t.setLabel(id, args.label);
     if (args?.value !== undefined) t.setScalar(id, args.value);
   });
@@ -133,10 +130,8 @@ export function mkGroup(
 ): ItemId {
   let id: ItemId = "";
   core.commit((t) => {
-    id = t.insertChild(ownerId, {
-      kind: "group",
-      ...(args?.at != null ? { at: args.at } : {}),
-    });
+    id = t.insertChild(ownerId, args?.at != null ? { at: args.at } : undefined);
+    t.setGroup(id);
     if (args?.label != null) t.setLabel(id, args.label);
     if (args?.view != null) t.setView(id, args.view);
   });
@@ -145,7 +140,7 @@ export function mkGroup(
 
 export function setDerived(core: Core, id: ItemId, expr: string): void {
   core.commit((t) => {
-    t.setSource(id, { type: "derived", expr });
+    t.setSource(id, { kind: "derived", expr });
   });
 }
 
@@ -156,7 +151,7 @@ export function setLens(
 ): void {
   core.commit((t) => {
     t.setSource(id, {
-      type: "lens",
+      kind: "lens",
       from: args.from,
       where: args.where ?? "",
       orderBy: args.orderBy ?? "",

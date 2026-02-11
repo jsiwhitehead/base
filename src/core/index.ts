@@ -54,8 +54,8 @@ export type Content =
   | { kind: "group"; children: readonly ItemId[] };
 
 export type Source =
-  | { type: "derived"; expr: string }
-  | { type: "lens"; from: string; where: string; orderBy: string };
+  | { kind: "derived"; expr: string }
+  | { kind: "lens"; from: string; where: string; orderBy: string };
 
 type Mode =
   | { kind: "readonly" }
@@ -114,12 +114,12 @@ function storedFromScalar(v: ScalarOrBlank): EntryContent {
 function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
   if (ref.path.length) return { kind: "readonly" };
   if (isDerivedContent(c))
-    return { kind: "source", source: { type: "derived", expr: c.expr } };
+    return { kind: "source", source: { kind: "derived", expr: c.expr } };
   if (isLensContent(c))
     return {
       kind: "source",
       source: {
-        type: "lens",
+        kind: "lens",
         from: c.from,
         where: c.where,
         orderBy: c.orderBy,
@@ -145,13 +145,11 @@ type Tx = {
 
   setScalar(id: ItemId, value: ScalarOrBlank): void;
   setSource(id: ItemId, source: Source): void;
+  setGroup(id: ItemId): void;
 
-  insertChild(
-    ownerId: ItemId,
-    opts?: { at?: number; kind?: "blank" | "group" },
-  ): ItemId;
+  insertChild(ownerId: ItemId, opts?: { at?: number }): ItemId;
 
-  move(id: ItemId, toOwnerId: ItemId | null, opts?: { at?: number }): void;
+  move(id: ItemId, toOwnerId: ItemId, opts?: { at?: number }): void;
   remove(id: ItemId): void;
 };
 
@@ -768,7 +766,7 @@ export function createCore(opts: {
         const eid = ensureEntryId(id);
         if (eid == null) return;
 
-        if (source.type === "derived") {
+        if (source.kind === "derived") {
           ops.push(
             model.ops.patch(eid, {
               content: { kind: "derived", expr: source.expr },
@@ -789,14 +787,18 @@ export function createCore(opts: {
         );
       },
 
+      setGroup: (id) => {
+        const eid = ensureEntryId(id);
+        if (eid == null) return;
+        ops.push(model.ops.patch(eid, { content: { kind: "group", childIds: [] } }));
+      },
+
       insertChild: (ownerId, opts2) => {
         const ownerEid = ensureEntryId(ownerId);
         if (ownerEid == null) return itemIdOf(-1 as any);
 
         const id = model.createId();
-        const kind = opts2?.kind ?? "blank";
-        const entry: Entry =
-          kind === "group" ? makeGroupEntry(id) : makeBlankEntry(id);
+        const entry: Entry = makeBlankEntry(id);
 
         ops.push(model.ops.create(entry));
         ops.push(
@@ -814,8 +816,8 @@ export function createCore(opts: {
         const childEid = ensureEntryId(id);
         if (childEid == null) return;
 
-        const toOwnerEid = toOwnerId == null ? null : ensureEntryId(toOwnerId);
-        if (toOwnerId != null && toOwnerEid == null) return;
+        const toOwnerEid = ensureEntryId(toOwnerId);
+        if (toOwnerEid == null) return;
 
         ops.push(
           model.ops.move({

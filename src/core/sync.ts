@@ -51,6 +51,10 @@ export function createShapeSyncGroup(opts: {
     }
 
     for (const id of input.touched) {
+      if (input.moved.length === 0 && groups.has(id)) {
+        candidatesTouched.add(id);
+        continue;
+      }
       if (!m.hasEntry(id)) continue;
       const ownerId = m.peekEntry(id).ownerId;
       if (ownerId != null && groups.has(ownerId))

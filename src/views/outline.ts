@@ -203,7 +203,7 @@ const outlineCommands = {
   },
 
   setDerived(core: Core, id: ItemId): void {
-    core.commit((t) => t.setSource(id, { type: "derived", expr: "" }));
+    core.commit((t) => t.setSource(id, { kind: "derived", expr: "" }));
   },
 
   commitSourceField(core: Core, id: ItemId, key: string, text: string): void {
@@ -226,7 +226,7 @@ const outlineCommands = {
 
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(containerId, { at, kind: "blank" });
+      id = t.insertChild(containerId, { at });
     });
 
     return id || null;
@@ -263,7 +263,7 @@ const outlineCommands = {
 
     core.commit((t) => {
       t.setScalar(id, parseScalar(left));
-      rightId = t.insertChild(containerId, { at: idx + 1, kind: "blank" });
+      rightId = t.insertChild(containerId, { at: idx + 1 });
       t.setScalar(rightId, parseScalar(right));
     });
 
@@ -345,7 +345,8 @@ const outlineCommands = {
       let wrapperId: ItemId = "";
 
       core.commit((t) => {
-        wrapperId = t.insertChild(containerId, { at: idx, kind: "group" });
+        wrapperId = t.insertChild(containerId, { at: idx });
+        t.setGroup(wrapperId);
         t.setLabel(wrapperId, label);
         t.setLabel(id, "");
         t.move(id, wrapperId, { at: 0 });

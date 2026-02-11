@@ -603,7 +603,7 @@ type SourceField = {
 };
 
 export function fieldsFromSource(source: Source): SourceField[] {
-  if (source.type === "derived") {
+  if (source.kind === "derived") {
     return [
       { key: "expr", label: "=", multiline: true, text: source.expr ?? "" },
     ];
@@ -626,8 +626,8 @@ export function fieldsFromSource(source: Source): SourceField[] {
 }
 
 export function patchSource(source: Source, key: string, text: string): Source {
-  if (source.type === "derived") {
-    if (key === "expr") return { type: "derived", expr: text };
+  if (source.kind === "derived") {
+    if (key === "expr") return { kind: "derived", expr: text };
     return source;
   }
   if (key === "from") return { ...source, from: text };

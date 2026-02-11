@@ -113,7 +113,8 @@ const tableCommands = {
 
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(tableId, { at, kind: "group" });
+      id = t.insertChild(tableId, { at });
+      t.setGroup(id);
     });
 
     core.focus({ container: tableId, item: id }, DEFAULT_TARGET, {
