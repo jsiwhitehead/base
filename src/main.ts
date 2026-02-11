@@ -117,10 +117,10 @@ function createApp(opts: CreateAppOpts = {}): App {
 function seedDemo(app: App) {
   const { core, rootId } = app;
 
-  const mkGroup = (ownerId: ItemId, label: string, view: ViewKind = null) => {
+  const mkGroup = (parentId: ItemId, label: string, view: ViewKind = null) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId);
+      id = t.insertChild(parentId);
       t.setGroup(id);
       t.setLabel(id, label);
       if (view != null) t.setView(id, view);
@@ -128,20 +128,20 @@ function seedDemo(app: App) {
     return id;
   };
 
-  const mkValue = (ownerId: ItemId, label: string, value: Value) => {
+  const mkValue = (parentId: ItemId, label: string, value: Value) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId);
+      id = t.insertChild(parentId);
       t.setLabel(id, label);
       t.setValue(id, value);
     });
     return id;
   };
 
-  const mkFormula = (ownerId: ItemId, label: string, expr: string) => {
+  const mkFormula = (parentId: ItemId, label: string, expr: string) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId);
+      id = t.insertChild(parentId);
       t.setLabel(id, label);
       t.setConnected(id, { kind: "formula", expr });
     });
@@ -149,13 +149,13 @@ function seedDemo(app: App) {
   };
 
   const mkQuery = (
-    ownerId: ItemId,
+    parentId: ItemId,
     label: string,
     spec: { from: string; where?: string; orderBy?: string },
   ) => {
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(ownerId);
+      id = t.insertChild(parentId);
       t.setLabel(id, label);
       t.setConnected(id, {
         kind: "query",

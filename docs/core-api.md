@@ -181,8 +181,8 @@ tx.setView(id, view)
 tx.setValue(id, value)
 tx.setConnected(id, conn)
 tx.setGroup(id)
-tx.insertChild(ownerId, opts)
-tx.move(id, toOwnerId, opts)
+tx.insertChild(parentId, opts)
+tx.move(id, toParentId, opts)
 tx.remove(id)
 ```
 
@@ -219,7 +219,7 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 `insertChild`:
 
 - `opts?: { at?: number }`
-- Creates a new child item under `ownerId`.
+- Creates a new child item under `parentId`.
 - New items are created as blank value items.
 - If `at` is omitted, the item is appended.
 - Returns the newly created item’s ID.
@@ -233,7 +233,7 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 `remove`:
 
 - Removes the item from the tree.
-- If the removed item is a group, its children become orphans (`ownerId = null`).
+- If the removed item is a group, its children become orphans (`parentId = null`).
 
 ### ApplyResult
 
@@ -242,8 +242,8 @@ type ApplyResult = {
   created: readonly ItemId[]
   touched: readonly ItemId[]
   moved: readonly {
-    fromOwnerId: ItemId | null
-    toOwnerId: ItemId | null
+    fromParentId: ItemId | null
+    toParentId: ItemId | null
     fromIndex: number | null
     toIndex: number | null
   }[]
@@ -262,7 +262,7 @@ This information may be used to coordinate follow-up behavior such as selection 
 
 ```ts
 core.locate(id): {
-  ownerId: ItemId
+  parentId: ItemId
   index: number
   siblings: readonly ItemId[]
 } | null

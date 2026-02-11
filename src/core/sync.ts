@@ -44,10 +44,10 @@ export function createShapeSyncGroup(opts: {
     const candidatesTouched = new Set<EntryId>();
 
     for (const r of input.moved) {
-      if (r.toOwnerId != null && groups.has(r.toOwnerId))
-        candidatesTo.add(r.toOwnerId);
-      if (r.fromOwnerId != null && groups.has(r.fromOwnerId))
-        candidatesFrom.add(r.fromOwnerId);
+      if (r.toParentId != null && groups.has(r.toParentId))
+        candidatesTo.add(r.toParentId);
+      if (r.fromParentId != null && groups.has(r.fromParentId))
+        candidatesFrom.add(r.fromParentId);
     }
 
     for (const id of input.touched) {
@@ -56,9 +56,9 @@ export function createShapeSyncGroup(opts: {
         continue;
       }
       if (!m.hasEntry(id)) continue;
-      const ownerId = m.peekEntry(id).ownerId;
-      if (ownerId != null && groups.has(ownerId))
-        candidatesTouched.add(ownerId);
+      const parentId = m.peekEntry(id).parentId;
+      if (parentId != null && groups.has(parentId))
+        candidatesTouched.add(parentId);
     }
 
     const leaderId =
@@ -104,7 +104,7 @@ export function createShapeSyncGroup(opts: {
           const curIdx = indexOf.get(existing);
           if (curIdx != null && curIdx !== i) {
             ops.push(
-              m.ops.move({ childId: existing, toOwnerId: gid, toIndex: i }),
+              m.ops.move({ childId: existing, toParentId: gid, toIndex: i }),
             );
           }
           continue;
@@ -113,7 +113,7 @@ export function createShapeSyncGroup(opts: {
         const id = m.createId();
         const entry: Entry = { ...makeBlankEntry(id), label };
         ops.push(m.ops.create(entry));
-        ops.push(m.ops.move({ childId: id, toOwnerId: gid, toIndex: i }));
+        ops.push(m.ops.move({ childId: id, toParentId: gid, toIndex: i }));
       }
 
       for (const cid of childIds) {
@@ -121,7 +121,7 @@ export function createShapeSyncGroup(opts: {
         const nm = normalizeLabel(m.readEntry(cid).label);
         if (!nm) continue;
         if (!desiredSet.has(nm)) {
-          ops.push(m.ops.move({ childId: cid, toOwnerId: null }));
+          ops.push(m.ops.move({ childId: cid, toParentId: null }));
         }
       }
     }

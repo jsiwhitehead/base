@@ -134,8 +134,8 @@ export type ApplyResult = {
   readonly created: readonly ItemId[];
   readonly touched: readonly ItemId[];
   readonly moved: readonly {
-    readonly fromOwnerId: ItemId | null;
-    readonly toOwnerId: ItemId | null;
+    readonly fromParentId: ItemId | null;
+    readonly toParentId: ItemId | null;
     readonly fromIndex: number | null;
     readonly toIndex: number | null;
   }[];
@@ -149,14 +149,14 @@ type Tx = {
   setConnected(id: ItemId, conn: Connected): void;
   setGroup(id: ItemId): void;
 
-  insertChild(ownerId: ItemId, opts?: { at?: number }): ItemId;
+  insertChild(parentId: ItemId, opts?: { at?: number }): ItemId;
 
-  move(id: ItemId, toOwnerId: ItemId, opts?: { at?: number }): void;
+  move(id: ItemId, toParentId: ItemId, opts?: { at?: number }): void;
   remove(id: ItemId): void;
 };
 
 type LocateResult = {
-  ownerId: ItemId;
+  parentId: ItemId;
   index: number;
   siblings: readonly ItemId[];
 };
@@ -258,8 +258,8 @@ export function createCore(opts: {
       created: r.created.map(toItem),
       touched: r.touched.map(toItem),
       moved: r.moved.map((x) => ({
-        fromOwnerId: x.fromOwnerId == null ? null : toItem(x.fromOwnerId),
-        toOwnerId: x.toOwnerId == null ? null : toItem(x.toOwnerId),
+        fromParentId: x.fromParentId == null ? null : toItem(x.fromParentId),
+        toParentId: x.toParentId == null ? null : toItem(x.toParentId),
         fromIndex: x.fromIndex,
         toIndex: x.toIndex,
       })),
@@ -405,12 +405,12 @@ export function createCore(opts: {
         const childId = op.spec.childId;
         if (!model.hasEntry(childId)) continue;
         const child = model.peekEntry(childId);
-        const ownerId = child.ownerId ?? null;
-        const loc = model.locateInOwner(childId);
+        const parentId = child.parentId ?? null;
+        const loc = model.locateInParent(childId);
         inverses.push(
           model.ops.move({
             childId,
-            toOwnerId: ownerId,
+            toParentId: parentId,
             ...(loc ? { toIndex: loc.index } : {}),
           }),
         );
@@ -422,8 +422,8 @@ export function createCore(opts: {
         if (!model.hasEntry(id0)) continue;
 
         const cur = model.peekEntry(id0);
-        const ownerId = cur.ownerId ?? null;
-        const loc = model.locateInOwner(id0);
+        const parentId = cur.parentId ?? null;
+        const loc = model.locateInParent(id0);
         const prevIndex = loc?.index ?? undefined;
 
         if (isGroupContent(cur.content)) {
@@ -435,7 +435,7 @@ export function createCore(opts: {
             inverses.push(
               model.ops.move({
                 childId: childIds[i]!,
-                toOwnerId: id0,
+                toParentId: id0,
                 toIndex: i,
               }),
             );
@@ -444,7 +444,7 @@ export function createCore(opts: {
           inverses.push(
             model.ops.move({
               childId: id0,
-              toOwnerId: ownerId,
+              toParentId: parentId,
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
             }),
           );
@@ -452,7 +452,7 @@ export function createCore(opts: {
           inverses.push(
             model.ops.create({
               ...cur,
-              ownerId: null,
+              parentId: null,
               content: { kind: "group", childIds: [] },
             }),
           );
@@ -460,11 +460,11 @@ export function createCore(opts: {
           inverses.push(
             model.ops.move({
               childId: id0,
-              toOwnerId: ownerId,
+              toParentId: parentId,
               ...(prevIndex != null ? { toIndex: prevIndex } : {}),
             }),
           );
-          inverses.push(model.ops.create({ ...cur, ownerId: null }));
+          inverses.push(model.ops.create({ ...cur, parentId: null }));
         }
 
         continue;
@@ -795,9 +795,9 @@ export function createCore(opts: {
         ops.push(model.ops.patch(eid, { content: { kind: "group", childIds: [] } }));
       },
 
-      insertChild: (ownerId, opts2) => {
-        const ownerEid = ensureEntryId(ownerId);
-        if (ownerEid == null) return itemIdOf(-1 as any);
+      insertChild: (parentId, opts2) => {
+        const parentEid = ensureEntryId(parentId);
+        if (parentEid == null) return itemIdOf(-1 as any);
 
         const id = model.createId();
         const entry: Entry = makeBlankEntry(id);
@@ -806,7 +806,7 @@ export function createCore(opts: {
         ops.push(
           model.ops.move({
             childId: id,
-            toOwnerId: ownerEid,
+            toParentId: parentEid,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
           }),
         );
@@ -814,17 +814,17 @@ export function createCore(opts: {
         return itemIdOf(id);
       },
 
-      move: (id, toOwnerId, opts2) => {
+      move: (id, toParentId, opts2) => {
         const childEid = ensureEntryId(id);
         if (childEid == null) return;
 
-        const toOwnerEid = ensureEntryId(toOwnerId);
-        if (toOwnerEid == null) return;
+        const toParentEid = ensureEntryId(toParentId);
+        if (toParentEid == null) return;
 
         ops.push(
           model.ops.move({
             childId: childEid,
-            toOwnerId: toOwnerEid,
+            toParentId: toParentEid,
             ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
           }),
         );
@@ -894,11 +894,11 @@ export function createCore(opts: {
     const r = parseItemId(id);
     if (!r || r.path.length) return null;
 
-    const loc = model.locateInOwner(r.entryId);
+    const loc = model.locateInParent(r.entryId);
     if (!loc) return null;
 
     return {
-      ownerId: itemIdOf(loc.ownerId),
+      parentId: itemIdOf(loc.parentId),
       index: loc.index,
       siblings: loc.childIds.map((eid) => itemIdOf(eid)),
     };

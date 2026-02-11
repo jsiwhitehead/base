@@ -38,7 +38,7 @@ export type EntryContent = EntryContentSettable | FormulaContent | QueryContent;
 
 export type Entry = {
   readonly id: EntryId;
-  readonly ownerId: EntryId | null;
+  readonly parentId: EntryId | null;
   readonly label: string;
   readonly view: ViewKind;
   readonly content: EntryContent;
@@ -87,13 +87,13 @@ type SnapshotEntry = {
 
 type MoveSpec = {
   childId: EntryId;
-  toOwnerId: EntryId | null;
+  toParentId: EntryId | null;
   toIndex?: number;
 };
 
 type MoveResult = {
-  fromOwnerId: EntryId | null;
-  toOwnerId: EntryId | null;
+  fromParentId: EntryId | null;
+  toParentId: EntryId | null;
   fromIndex: number | null;
   toIndex: number | null;
 };
@@ -128,8 +128,8 @@ export type ApplyResult = {
   readonly moved: readonly MoveResult[];
 };
 
-type LocateInOwnerResult = {
-  readonly ownerId: EntryId;
+type LocateInParentResult = {
+  readonly parentId: EntryId;
   readonly index: number;
   readonly childIds: EntryId[];
 };
@@ -160,7 +160,7 @@ export type Model = {
 
   childIdsOf(groupId: EntryId): EntryId[];
   findChildIdByLabel(groupId: EntryId, label: string): EntryId | null;
-  locateInOwner(childId: EntryId): LocateInOwnerResult | null;
+  locateInParent(childId: EntryId): LocateInParentResult | null;
 
   apply(txn: Transaction): ApplyResult;
 
@@ -184,7 +184,7 @@ export function normalizeLabel(s: string): string {
 export function makeBlankEntry(id: EntryId): Entry {
   return {
     id,
-    ownerId: null,
+    parentId: null,
     label: "",
     view: null,
     content: { kind: "blank" },
@@ -194,7 +194,7 @@ export function makeBlankEntry(id: EntryId): Entry {
 export function makeGroupEntry(id: EntryId): Entry {
   return {
     id,
-    ownerId: null,
+    parentId: null,
     label: "",
     view: null,
     content: { kind: "group", childIds: [] },
@@ -261,16 +261,16 @@ export function createModel(): Model {
   };
 
   function assertUniqueChildLabels(
-    ownerId: EntryId,
+    parentId: EntryId,
     opts: {
       childIds?: readonly EntryId[];
       override?: { childId: EntryId; label: string };
     } = {},
   ) {
-    const owner = entrySignal(ownerId).peek();
-    if (!isGroupEntry(owner)) throw new Error("Owner is not a group");
+    const parent = entrySignal(parentId).peek();
+    if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
 
-    const childIds = opts.childIds ?? owner.content.childIds;
+    const childIds = opts.childIds ?? parent.content.childIds;
 
     const seen = new Set<string>();
     for (const cid of childIds) {
@@ -305,11 +305,11 @@ export function createModel(): Model {
     ): Transaction => (meta ? { ops: ops2, meta } : { ops: ops2 }),
   } as const;
 
-  const expectGroupOwner = (ownerId: EntryId) => {
-    const s = entryRec(ownerId).entrySignal;
-    const owner = s.peek();
-    if (!isGroupEntry(owner)) throw new Error("Owner is not a group");
-    return { entrySignal: s, owner };
+  const expectGroupParent = (parentId: EntryId) => {
+    const s = entryRec(parentId).entrySignal;
+    const parent = s.peek();
+    if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
+    return { entrySignal: s, parent };
   };
 
   const getGroupEntry = (id: EntryId | null): GroupEntry | null => {
@@ -319,34 +319,34 @@ export function createModel(): Model {
   };
 
   function move(spec: MoveSpec): MoveResult {
-    const { childId, toOwnerId } = spec;
+    const { childId, toParentId } = spec;
 
     if (!entries.has(childId)) throw new Error("Unknown child");
 
     const childRec = entryRec(childId);
     const child = childRec.entrySignal.peek();
-    const fromOwnerId = child.ownerId;
+    const fromParentId = child.parentId;
 
     let fromIndex: number | null = null;
     let toIndex: number | null = null;
     let preparedChildIds: EntryId[] | null = null;
 
-    const fromOwner = getGroupEntry(fromOwnerId);
-    const toOwner = getGroupEntry(toOwnerId);
+    const fromParent = getGroupEntry(fromParentId);
+    const toParent = getGroupEntry(toParentId);
 
-    if (fromOwnerId != null) {
-      if (!fromOwner) throw new Error("Owner is not a group");
-      const i = fromOwner.content.childIds.indexOf(childId);
+    if (fromParentId != null) {
+      if (!fromParent) throw new Error("Parent is not a group");
+      const i = fromParent.content.childIds.indexOf(childId);
       fromIndex = i >= 0 ? i : null;
     }
 
-    if (toOwnerId != null) {
-      if (!toOwner) throw new Error("Owner is not a group");
+    if (toParentId != null) {
+      if (!toParent) throw new Error("Parent is not a group");
 
       const baseline =
-        toOwnerId === fromOwnerId && fromIndex != null
-          ? toOwner.content.childIds.filter((cid) => cid !== childId)
-          : [...toOwner.content.childIds];
+        toParentId === fromParentId && fromIndex != null
+          ? toParent.content.childIds.filter((cid) => cid !== childId)
+          : [...toParent.content.childIds];
 
       const len = baseline.length;
       const rawAt = spec.toIndex == null ? len : clampIndex(spec.toIndex, len);
@@ -358,24 +358,26 @@ export function createModel(): Model {
         ...baseline.slice(rawAt),
       ];
 
-      assertUniqueChildLabels(toOwnerId, { childIds: preparedChildIds });
+      assertUniqueChildLabels(toParentId, { childIds: preparedChildIds });
     }
 
     if (
-      fromOwnerId != null &&
-      toOwnerId === fromOwnerId &&
+      fromParentId != null &&
+      toParentId === fromParentId &&
       fromIndex != null &&
       toIndex != null &&
       toIndex === fromIndex
     ) {
-      return { fromOwnerId, toOwnerId, fromIndex, toIndex };
+      return { fromParentId, toParentId, fromIndex, toIndex };
     }
 
     batch(() => {
-      if (toOwnerId != null && preparedChildIds) {
-        const { entrySignal: ownerSignal, owner } = expectGroupOwner(toOwnerId);
-        ownerSignal.value = {
-          ...owner,
+      if (toParentId != null && preparedChildIds) {
+        const { entrySignal: parentSignal, parent } = expectGroupParent(
+          toParentId,
+        );
+        parentSignal.value = {
+          ...parent,
           content: {
             kind: "group",
             childIds: preparedChildIds,
@@ -383,27 +385,27 @@ export function createModel(): Model {
         };
       }
 
-      if (fromOwnerId != null && fromOwnerId !== toOwnerId) {
-        const { entrySignal: ownerSignal, owner } =
-          expectGroupOwner(fromOwnerId);
-        if (owner.content.childIds.includes(childId)) {
-          ownerSignal.value = {
-            ...owner,
+      if (fromParentId != null && fromParentId !== toParentId) {
+        const { entrySignal: parentSignal, parent } =
+          expectGroupParent(fromParentId);
+        if (parent.content.childIds.includes(childId)) {
+          parentSignal.value = {
+            ...parent,
             content: {
               kind: "group",
-              childIds: owner.content.childIds.filter((x) => x !== childId),
+              childIds: parent.content.childIds.filter((x) => x !== childId),
             },
           };
         }
       }
 
-      const nextOwnerId = toOwnerId ?? null;
-      if (child.ownerId !== nextOwnerId) {
-        childRec.entrySignal.value = { ...child, ownerId: nextOwnerId };
+      const nextParentId = toParentId ?? null;
+      if (child.parentId !== nextParentId) {
+        childRec.entrySignal.value = { ...child, parentId: nextParentId };
       }
     });
 
-    return { fromOwnerId, toOwnerId, fromIndex, toIndex };
+    return { fromParentId, toParentId, fromIndex, toIndex };
   }
 
   const patch = (id: EntryId, next: EntryPatch): void => {
@@ -411,9 +413,9 @@ export function createModel(): Model {
     const cur = rec.entrySignal.peek();
 
     if (next.label !== undefined) {
-      const ownerId = cur.ownerId;
-      if (ownerId != null) {
-        assertUniqueChildLabels(ownerId, {
+      const parentId = cur.parentId;
+      if (parentId != null) {
+        assertUniqueChildLabels(parentId, {
           override: { childId: id, label: next.label },
         });
       }
@@ -446,7 +448,7 @@ export function createModel(): Model {
     id: EntryId,
   ): {
     removedId: EntryId;
-    ownerTouched: EntryId | null;
+    parentTouched: EntryId | null;
     orphanedChildren: EntryId[];
   } => {
     if (!entries.has(id)) throw new Error("Unknown entry");
@@ -455,23 +457,23 @@ export function createModel(): Model {
     const rec = entryRec(id);
     const cur = rec.entrySignal.peek();
 
-    const ownerId = cur.ownerId;
+    const parentId = cur.parentId;
     const orphanedChildren: EntryId[] = [];
 
     batch(() => {
-      if (ownerId != null) {
-        const owner = getGroupEntry(ownerId);
-        if (!owner) throw new Error("Owner is not a group");
+      if (parentId != null) {
+        const parent = getGroupEntry(parentId);
+        if (!parent) throw new Error("Parent is not a group");
 
-        const { entrySignal: ownerSignal, owner: ownerVal } =
-          expectGroupOwner(ownerId);
+        const { entrySignal: parentSignal, parent: parentVal } =
+          expectGroupParent(parentId);
 
-        if (ownerVal.content.childIds.includes(id)) {
-          ownerSignal.value = {
-            ...ownerVal,
+        if (parentVal.content.childIds.includes(id)) {
+          parentSignal.value = {
+            ...parentVal,
             content: {
               kind: "group",
-              childIds: ownerVal.content.childIds.filter((x) => x !== id),
+              childIds: parentVal.content.childIds.filter((x) => x !== id),
             },
           };
         }
@@ -482,8 +484,8 @@ export function createModel(): Model {
           if (!entries.has(cid)) continue;
           const childRec = entryRec(cid);
           const child = childRec.entrySignal.peek();
-          if (child.ownerId === id) {
-            childRec.entrySignal.value = { ...child, ownerId: null };
+          if (child.parentId === id) {
+            childRec.entrySignal.value = { ...child, parentId: null };
             orphanedChildren.push(cid);
           }
         }
@@ -492,7 +494,7 @@ export function createModel(): Model {
       entries.delete(id);
     });
 
-    return { removedId: id, ownerTouched: ownerId, orphanedChildren };
+    return { removedId: id, parentTouched: parentId, orphanedChildren };
   };
 
   const apply = (txn: Transaction): ApplyResult => {
@@ -518,15 +520,15 @@ export function createModel(): Model {
             const res = move(op0.spec);
             moved.push(res);
             touched.add(op0.spec.childId);
-            if (res.fromOwnerId != null) touched.add(res.fromOwnerId);
-            if (res.toOwnerId != null) touched.add(res.toOwnerId);
+            if (res.fromParentId != null) touched.add(res.fromParentId);
+            if (res.toParentId != null) touched.add(res.toParentId);
             break;
           }
 
           case "remove": {
             const res = remove(op0.id);
             touched.add(res.removedId);
-            if (res.ownerTouched != null) touched.add(res.ownerTouched);
+            if (res.parentTouched != null) touched.add(res.parentTouched);
             for (const cid of res.orphanedChildren) touched.add(cid);
             break;
           }
@@ -565,23 +567,23 @@ export function createModel(): Model {
     return childLabelIndexSignal(groupId).value.get(nm) ?? null;
   };
 
-  const locateInOwner = (childId: EntryId): LocateInOwnerResult | null => {
+  const locateInParent = (childId: EntryId): LocateInParentResult | null => {
     if (!entries.has(childId)) return null;
 
     const child = readEntry(childId);
-    const ownerId = child.ownerId;
-    if (ownerId == null) return null;
+    const parentId = child.parentId;
+    if (parentId == null) return null;
 
-    if (!entries.has(ownerId)) return null;
+    if (!entries.has(parentId)) return null;
 
-    const owner = readEntry(ownerId);
-    if (!isGroupEntry(owner)) return null;
+    const parent = readEntry(parentId);
+    if (!isGroupEntry(parent)) return null;
 
-    const childIds = [...owner.content.childIds];
+    const childIds = [...parent.content.childIds];
     const index = childIds.indexOf(childId);
     if (index < 0) return null;
 
-    return { ownerId, index, childIds };
+    return { parentId, index, childIds };
   };
 
   const collectReachableFrom = (start: EntryId): Set<EntryId> => {
@@ -648,8 +650,8 @@ export function createModel(): Model {
 
         const child = entries.get(cid)!.entrySignal.peek();
         devAssert(
-          child.ownerId === gid,
-          `Child ${cid} has ownerId=${String(child.ownerId)} but is listed under group ${gid}`,
+          child.parentId === gid,
+          `Child ${cid} has parentId=${String(child.parentId)} but is listed under group ${gid}`,
         );
       }
 
@@ -668,24 +670,24 @@ export function createModel(): Model {
 
     for (const [cid, rec] of entries) {
       const child = rec.entrySignal.peek();
-      const ownerId0 = child.ownerId;
-      if (ownerId0 == null) continue;
+      const parentId0 = child.parentId;
+      if (parentId0 == null) continue;
 
       devAssert(
-        entries.has(ownerId0),
-        `Entry ${cid} has missing owner ${ownerId0}`,
+        entries.has(parentId0),
+        `Entry ${cid} has missing parent ${parentId0}`,
       );
 
-      const ownerChildIds = groupChildIdsOf(ownerId0);
+      const parentChildIds = groupChildIdsOf(parentId0);
       devAssert(
-        ownerChildIds != null,
-        `Entry ${cid} owner ${ownerId0} is not a group`,
+        parentChildIds != null,
+        `Entry ${cid} parent ${parentId0} is not a group`,
       );
 
-      const count = ownerChildIds!.reduce((n, x) => n + (x === cid ? 1 : 0), 0);
+      const count = parentChildIds!.reduce((n, x) => n + (x === cid ? 1 : 0), 0);
       devAssert(
         count === 1,
-        `Entry ${cid} owner ${ownerId0} contains it ${count} times (expected 1)`,
+        `Entry ${cid} parent ${parentId0} contains it ${count} times (expected 1)`,
       );
     }
   }
@@ -738,7 +740,7 @@ export function createModel(): Model {
 
     childIdsOf,
     findChildIdByLabel,
-    locateInOwner,
+    locateInParent,
 
     apply,
 

@@ -137,8 +137,8 @@ export function createEvaluator(opts: {
     return r;
   };
 
-  const baseEnvFor = (ownerId: EntryId, ctx: EvalCtx): EvalEnv => ({
-    lookup: (name) => lookupInAncestors(name, ownerId, ctx),
+  const baseEnvFor = (parentId: EntryId, ctx: EvalCtx): EvalEnv => ({
+    lookup: (name) => lookupInAncestors(name, parentId, ctx),
     resolve: (id) => evaluateResult(id, ctx),
     getLabel: (id) => normalizeLabel(model.readEntry(id).label),
   });
@@ -152,14 +152,14 @@ export function createEvaluator(opts: {
     while (cur != null) {
       if (!model.hasEntry(cur)) break;
 
-      const ownerId: EntryId | null = model.readEntry(cur).ownerId;
-      if (ownerId == null) break;
-      if (!model.hasEntry(ownerId)) break;
+      const parentId: EntryId | null = model.readEntry(cur).parentId;
+      if (parentId == null) break;
+      if (!model.hasEntry(parentId)) break;
 
-      const hit = model.findChildIdByLabel(ownerId, name);
+      const hit = model.findChildIdByLabel(parentId, name);
       if (hit != null) return evaluateResult(hit, ctx);
 
-      cur = ownerId;
+      cur = parentId;
     }
     return Results.issue(`Unbound identifier: ${name}`);
   };
@@ -206,14 +206,14 @@ export function createEvaluator(opts: {
   });
 
   function evaluateQuery(
-    ownerId: EntryId,
+    parentId: EntryId,
     spec: Extract<EntryContent, { kind: "query" }>,
     ctx: EvalCtx,
   ): Result {
     const from = spec.from.trim();
     if (!from) return Results.blank();
 
-    const baseEnv = baseEnvFor(ownerId, ctx);
+    const baseEnv = baseEnvFor(parentId, ctx);
     const sourceResult = interpretExpr(from, baseEnv);
     const unwrapped = unwrapEntryGroup(
       sourceResult,

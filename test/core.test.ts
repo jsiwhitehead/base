@@ -28,7 +28,7 @@ describe("core/model", () => {
 
     const locB = core.locate(b);
     expect(locB).not.toBeNull();
-    expect(locB!.ownerId).toBe(g);
+    expect(locB!.parentId).toBe(g);
     expect(locB!.index).toBe(1);
     expect(locB!.siblings).toEqual([a, b, c]);
 

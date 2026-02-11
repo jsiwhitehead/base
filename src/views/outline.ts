@@ -43,7 +43,7 @@ const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
 function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
   if (id === rootId) return null;
   const loc = core.locate(id);
-  return loc ? loc.ownerId : null;
+  return loc ? loc.parentId : null;
 }
 
 function focusFor(core: Core, rootId: ItemId, id: ItemId): Focus {
@@ -73,10 +73,10 @@ function nextVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
   while (cur) {
     const loc = core.locate(cur);
     if (!loc) return null;
-    const { ownerId, index, siblings } = loc;
+    const { parentId, index, siblings } = loc;
     const sib = siblings[index + 1] ?? null;
     if (sib) return sib;
-    cur = ownerId;
+    cur = parentId;
     if (cur === rootId) return null;
   }
   return null;
@@ -86,10 +86,10 @@ function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
   if (id === rootId) return null;
   const loc = core.locate(id);
   if (!loc) return null;
-  const { ownerId, index, siblings } = loc;
+  const { parentId, index, siblings } = loc;
   const prev = siblings[index - 1] ?? null;
   if (prev) return lastDescendant(core, prev);
-  return ownerId === rootId ? null : ownerId;
+  return parentId === rootId ? null : parentId;
 }
 
 function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
@@ -132,8 +132,8 @@ type EditPoint = { id: ItemId; target: string };
 
 function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
   const out: EditPoint[] = [];
-  const walk = (ownerId: ItemId) => {
-    for (const cid of childrenOf(core, ownerId)) {
+  const walk = (parentId: ItemId) => {
+    for (const cid of childrenOf(core, parentId)) {
       if (isLeafForEditTraversal(core, cid)) {
         for (const t of editStopsForItem(core, cid))
           out.push({ id: cid, target: t });
@@ -221,12 +221,12 @@ const outlineCommands = {
     const loc = core.locate(sel.focus.item);
     if (!loc) return null;
 
-    const { ownerId: containerId, index: idx } = loc;
+    const { parentId, index: idx } = loc;
     const at = side === "before" ? idx : idx + 1;
 
     let id: ItemId = "";
     core.commit((t) => {
-      id = t.insertChild(containerId, { at });
+      id = t.insertChild(parentId, { at });
     });
 
     return id || null;
@@ -244,7 +244,7 @@ const outlineCommands = {
     const loc = core.locate(id);
     if (!loc) return null;
 
-    const { ownerId: containerId, index: idx } = loc;
+    const { parentId, index: idx } = loc;
 
     if (!(snap.mode.kind === "plain" && snap.content.kind === "value")) {
       return outlineCommands.insertSibling(core, sel, "after");
@@ -263,7 +263,7 @@ const outlineCommands = {
 
     core.commit((t) => {
       t.setValue(id, parseValue(left));
-      rightId = t.insertChild(containerId, { at: idx + 1 });
+      rightId = t.insertChild(parentId, { at: idx + 1 });
       t.setValue(rightId, parseValue(right));
     });
 
@@ -339,13 +339,13 @@ const outlineCommands = {
       const loc = core.locate(id);
       if (!loc) return null;
 
-      const { ownerId: containerId, index: idx } = loc;
+      const { parentId, index: idx } = loc;
 
       const label = core.item(id).label ?? "";
       let wrapperId: ItemId = "";
 
       core.commit((t) => {
-        wrapperId = t.insertChild(containerId, { at: idx });
+        wrapperId = t.insertChild(parentId, { at: idx });
         t.setGroup(wrapperId);
         t.setLabel(wrapperId, label);
         t.setLabel(id, "");
@@ -358,27 +358,27 @@ const outlineCommands = {
     const loc = core.locate(id);
     if (!loc) return null;
 
-    const { ownerId: containerId } = loc;
-    if (containerId === rootId) return null;
+    const { parentId: wrapperId } = loc;
+    if (wrapperId === rootId) return null;
 
-    const parentId = parentOf(core, rootId, containerId);
-    if (!parentId) return null;
+    const grandparentId = parentOf(core, rootId, wrapperId);
+    if (!grandparentId) return null;
 
-    const parentSnap = core.item(parentId);
-    if (parentSnap.content.kind !== "group") return null;
+    const grandparentSnap = core.item(grandparentId);
+    if (grandparentSnap.content.kind !== "group") return null;
 
-    const wrapperIdx = parentSnap.content.children.indexOf(containerId);
+    const wrapperIdx = grandparentSnap.content.children.indexOf(wrapperId);
     if (wrapperIdx < 0) return null;
 
-    const wrapperLabel = core.item(containerId).label ?? "";
+    const wrapperLabel = core.item(wrapperId).label ?? "";
 
     core.commit((t) => {
-      t.move(id, parentId, { at: wrapperIdx });
-      t.remove(containerId);
+      t.move(id, grandparentId, { at: wrapperIdx });
+      t.remove(wrapperId);
       t.setLabel(id, wrapperLabel);
     });
 
-    return { container: parentId, item: id };
+    return { container: grandparentId, item: id };
   },
 } as const;
 

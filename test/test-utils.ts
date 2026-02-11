@@ -111,12 +111,15 @@ export function focusOf(core: Core): Focus {
 
 export function mkBlank(
   core: Core,
-  ownerId: ItemId,
+  parentId: ItemId,
   args?: { at?: number; label?: string; value?: true | number | string | null },
 ): ItemId {
   let id: ItemId = "";
   core.commit((t) => {
-    id = t.insertChild(ownerId, args?.at != null ? { at: args.at } : undefined);
+    id = t.insertChild(
+      parentId,
+      args?.at != null ? { at: args.at } : undefined,
+    );
     if (args?.label != null) t.setLabel(id, args.label);
     if (args?.value !== undefined) t.setValue(id, args.value);
   });
@@ -125,12 +128,15 @@ export function mkBlank(
 
 export function mkGroup(
   core: Core,
-  ownerId: ItemId,
+  parentId: ItemId,
   args?: { at?: number; label?: string; view?: ViewKind },
 ): ItemId {
   let id: ItemId = "";
   core.commit((t) => {
-    id = t.insertChild(ownerId, args?.at != null ? { at: args.at } : undefined);
+    id = t.insertChild(
+      parentId,
+      args?.at != null ? { at: args.at } : undefined,
+    );
     t.setGroup(id);
     if (args?.label != null) t.setLabel(id, args.label);
     if (args?.view != null) t.setView(id, args.view);
