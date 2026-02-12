@@ -513,56 +513,6 @@ export function mountItemMeta(
     labelWrap.replaceChildren(labelComp.el);
     ctx.cleanup(() => labelComp.dispose());
 
-    const rows = ctx.list<string>(connWrap, (key) =>
-      createComponent(core, (ctx2) => {
-        const row = el("div", "ui-meta-conn-row");
-        const keyEl = el("div", "ui-meta-conn-key");
-        const valEl = el("div", "ui-meta-conn-val");
-        row.append(keyEl, valEl);
-
-        const tkey = connTarget(key);
-
-        const specForKey = (): ConnField | null => {
-          const snap = core.item(id);
-          if (snap.mode.kind !== "connected") return null;
-          return (
-            fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ?? null
-          );
-        };
-
-        const multilineForKey = (): boolean => specForKey()?.multiline ?? true;
-        const labelForKey = (): string => specForKey()?.label ?? "";
-
-        const fc = textField(core, {
-          focus: args.focus,
-          target: tkey,
-          multiline: multilineForKey(),
-          autosize: true,
-          commit: (text) => args.commitConnField(key, text),
-          getState: () => {
-            const snap = core.item(id);
-            if (snap.mode.kind !== "connected")
-              return { text: "", readOnly: true, isIssue: false };
-            const txt =
-              fieldsFromConn(snap.mode.conn).find((x) => x.key === key)?.text ??
-              "";
-            return { text: txt, readOnly: false, isIssue: false };
-          },
-          onIntent: args.dispatch,
-        });
-
-        valEl.replaceChildren(fc.el);
-        ctx2.cleanup(() => fc.dispose());
-
-        ctx2.effect(() => {
-          const lbl = labelForKey();
-          if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
-        });
-
-        return row;
-      }),
-    );
-
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
       return snap.mode.kind === "connected"
@@ -570,9 +520,59 @@ export function mountItemMeta(
         : [];
     });
 
-    ctx.effect(() => {
-      rows.update(fieldsSignal.value.map((f) => f.key));
-    });
+    ctx.list<string>(
+      connWrap,
+      () => fieldsSignal.value.map((f) => f.key),
+      (key) =>
+        createComponent(core, (ctx2) => {
+          const row = el("div", "ui-meta-conn-row");
+          const keyEl = el("div", "ui-meta-conn-key");
+          const valEl = el("div", "ui-meta-conn-val");
+          row.append(keyEl, valEl);
+
+          const tkey = connTarget(key);
+
+          const specForKey = (): ConnField | null => {
+            const snap = core.item(id);
+            if (snap.mode.kind !== "connected") return null;
+            return (
+              fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ?? null
+            );
+          };
+
+          const multilineForKey = (): boolean =>
+            specForKey()?.multiline ?? true;
+          const labelForKey = (): string => specForKey()?.label ?? "";
+
+          const fc = textField(core, {
+            focus: args.focus,
+            target: tkey,
+            multiline: multilineForKey(),
+            autosize: true,
+            commit: (text) => args.commitConnField(key, text),
+            getState: () => {
+              const snap = core.item(id);
+              if (snap.mode.kind !== "connected")
+                return { text: "", readOnly: true, isIssue: false };
+              const txt =
+                fieldsFromConn(snap.mode.conn).find((x) => x.key === key)
+                  ?.text ?? "";
+              return { text: txt, readOnly: false, isIssue: false };
+            },
+            onIntent: args.dispatch,
+          });
+
+          valEl.replaceChildren(fc.el);
+          ctx2.cleanup(() => fc.dispose());
+
+          ctx2.effect(() => {
+            const lbl = labelForKey();
+            if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
+          });
+
+          return row;
+        }),
+    );
 
     return meta;
   });

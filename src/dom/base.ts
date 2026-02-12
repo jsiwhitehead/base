@@ -41,20 +41,6 @@ export function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
   return () => el0.removeEventListener(type, listener as EventListener, opts);
 }
 
-export function reconcileChildren(
-  parent: HTMLElement,
-  desired: readonly HTMLElement[],
-): void {
-  for (let i = 0; i < desired.length; i++) {
-    const next = desired[i]!;
-    const cur = parent.children.item(i);
-    if (cur !== next) parent.insertBefore(next, cur);
-  }
-  while (parent.children.length > desired.length) {
-    parent.lastElementChild?.remove();
-  }
-}
-
 export function setData(
   el0: HTMLElement,
   key: string,
@@ -67,13 +53,69 @@ export function setData(
   (el0.dataset as any)[key] = String(value);
 }
 
+type Region = {
+  host: HTMLElement;
+  start: Comment;
+  end: Comment;
+  clear(): void;
+  reconcile(desired: readonly HTMLElement[]): void;
+  dispose(): void;
+};
+
+function createRegion(host: HTMLElement): Region {
+  const start = document.createComment("region:start");
+  const end = document.createComment("region:end");
+  host.append(start, end);
+
+  const clear = () => {
+    let n = start.nextSibling;
+    while (n && n !== end) {
+      const next = n.nextSibling;
+      n.remove();
+      n = next;
+    }
+  };
+
+  const reconcile = (desired: readonly HTMLElement[]) => {
+    let anchor: ChildNode = end;
+
+    for (let i = desired.length - 1; i >= 0; i--) {
+      const next = desired[i]!;
+      if (next.parentNode !== host || next.nextSibling !== anchor)
+        host.insertBefore(next, anchor);
+      anchor = next;
+    }
+
+    let cur = start.nextSibling;
+    const keep = new Set(desired);
+
+    while (cur && cur !== end) {
+      const next = cur.nextSibling;
+      if (cur instanceof HTMLElement && keep.has(cur)) {
+        cur = next;
+        continue;
+      }
+      cur.remove();
+      cur = next;
+    }
+  };
+
+  const dispose = () => {
+    clear();
+    start.remove();
+    end.remove();
+  };
+
+  return { host, start, end, clear, reconcile, dispose };
+}
+
 type ChildRec = { element: HTMLElement; dispose: () => void };
 
-class ChildManager<Id extends string | number> {
+class RegionChildManager<Id extends string | number> {
   private cache = new Map<Id, ChildRec>();
 
   constructor(
-    private container: HTMLElement,
+    private region: Region,
     private create: (id: Id) => { element: HTMLElement; dispose(): void },
   ) {}
 
@@ -96,13 +138,13 @@ class ChildManager<Id extends string | number> {
       return rec.element;
     });
 
-    reconcileChildren(this.container, desired);
+    this.region.reconcile(desired);
   }
 
   clear() {
     for (const rec of this.cache.values()) rec.dispose();
     this.cache.clear();
-    this.container.replaceChildren();
+    this.region.clear();
   }
 
   dispose() {
@@ -132,12 +174,13 @@ type Ctx = {
 
   effect(run: () => void | (() => void)): void;
 
-  slot(host: HTMLElement): { set(next: Component | null): void; clear(): void };
+  slot(host: HTMLElement, get: () => Component | null): void;
 
   list<Id extends string | number>(
     host: HTMLElement,
+    getIds: () => readonly Id[],
     create: (id: Id) => Component,
-  ): { update(ids: readonly Id[]): void; clear(): void };
+  ): void;
 
   target(
     focus: Focus,
@@ -180,42 +223,53 @@ export function createComponent(
       bag.add(disposeEffect);
     },
 
-    slot(host) {
+    slot(host, get) {
+      const region = createRegion(host);
       let cur: Component | null = null;
 
-      const set = (next: Component | null) => {
-        if (cur === next) return;
+      const disposeEffect = effect(() => {
+        const next = get();
+        if (next === cur) return;
+
         cur?.dispose();
         cur = next;
-        if (next) host.replaceChildren(next.el);
-        else host.replaceChildren();
-      };
 
-      const clear = () => set(null);
+        region.clear();
+
+        if (next) host.insertBefore(next.el, region.end);
+      });
 
       bag.add(() => {
         cur?.dispose();
         cur = null;
+        region.dispose();
       });
 
-      return { set, clear };
+      bag.add(disposeEffect);
     },
 
     list<Id extends string | number>(
       host: HTMLElement,
+      getIds: () => readonly Id[],
       create: (id: Id) => Component,
     ) {
-      const mgr = new ChildManager<Id>(host, (id) => {
+      const region = createRegion(host);
+
+      const mgr = new RegionChildManager<Id>(region, (id: Id) => {
         const c = create(id);
         return { element: c.el, dispose: c.dispose };
       });
 
-      bag.add(() => mgr.dispose());
+      const disposeEffect = effect(() => {
+        mgr.update(getIds());
+      });
 
-      return {
-        update: (ids: readonly Id[]) => mgr.update(ids),
-        clear: () => mgr.clear(),
-      };
+      bag.add(() => {
+        mgr.dispose();
+        region.dispose();
+      });
+
+      bag.add(disposeEffect);
     },
 
     target(focus, target, getEl, opts) {

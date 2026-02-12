@@ -45,12 +45,9 @@ function createApp(opts: CreateAppOpts = {}): App {
 
     bindUiItemShell(ctx, { core, focus }, rootShell);
 
-    const slot = ctx.slot(rootShell);
-
-    ctx.effect(() => {
+    ctx.slot(rootShell, () => {
       const wanted = core.view(rootId);
-      const mounted = core.mountView({ id: rootId, focus, view: wanted });
-      slot.set(mounted);
+      return core.mountView({ id: rootId, focus, view: wanted });
     });
 
     return rootShell;

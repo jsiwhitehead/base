@@ -170,7 +170,7 @@ Editability is mode-driven:
 - `readonly` is a hard stop for editing
 - `plain` vs `connected` determines which edit targets exist (`value` vs `conn:*`)
 
-The UI may convert modes (`plain` <-> `connected`), but conversion must be explicit.
+The UI may convert modes (`plain` and `connected`), but conversion must be explicit.
 
 ---
 
@@ -190,13 +190,12 @@ The only correct way to create a component is:
 
 `createComponent` provides:
 
-- automatic disposal of:
-  - event listeners
-  - reactive effects
-  - mounted child components
-  - target bindings
-
-- predictable teardown:
+- automatic teardown of:
+  - event listeners registered through `ctx.on`
+  - reactive effects registered through `ctx.effect`
+  - target bindings registered through `ctx.target`
+  - mounted child subtrees managed through `ctx.slot` / `ctx.list`
+- predictable disposal:
   - all cleanups run
   - the component root is emptied
 
@@ -206,18 +205,19 @@ This is the primary mechanism preventing:
 - stale DOM
 - stale focus targets
 - duplicate effects
+- forgotten disposal of mounted views/components
 
 ---
 
-## 1.3 `Ctx`: the UI’s “micro-framework”
+## 1.3 `Ctx`: the UI’s minimal mounting API
 
 `createComponent` supplies a `Ctx` that provides safe building blocks.
 
 ### `ctx.cleanup(fn)`
 
-Registers a cleanup function.
+Registers a cleanup function to run when the component is disposed.
 
-Use this whenever you mount another component or register any external disposer.
+Use this for external disposers not already owned by `ctx.*` helpers.
 
 ---
 
@@ -242,25 +242,57 @@ Effects should be written as idempotent updates to DOM state.
 
 ---
 
-### `ctx.slot(host)`
+## 1.3.1 Regions: stable insertion points (no wrapper nodes)
 
-Manages a single mounted child component inside a host element.
+Dynamic mounting is region-based.
 
-Used when a subtree must swap based on a discriminator (view kind, content kind).
+A **region** is a stable insertion point inside a host element where dynamic children live. Regions:
+
+- preserve DOM order (relative to static siblings and other regions)
+- allow updates without wrapper elements
+- ensure removals dispose correctly
+
+Regions are created implicitly when `ctx.slot` / `ctx.list` are called, and stay fixed for the component lifetime.
+
+**Hard rule:** once a region exists in a host, do not clear or replace the host's children manually (`replaceChildren`, `innerHTML = ""`, etc.). Doing so destroys the region anchors.
 
 ---
 
-### `ctx.list(host, create)`
+### `ctx.slot(host, getComponent)`
 
-Manages a keyed list of child components.
+Mounts **zero or one** component into a stable region inside `host`.
 
-Provides:
+- creates a region at the call site
+- installs an effect which re-runs when reactive dependencies read by `getComponent()` change
+- on each run:
+  - disposes the previously mounted component (if any)
+  - mounts the next component (or clears the region if `null`)
+- disposal is automatic; callers do not track the current child manually
 
-- stable reuse of children by id
-- deterministic disposal of removed children
-- DOM reconciliation without destroying stable nodes
+Used for:
 
-This is the standard way to render item children.
+- conditional chrome (meta on/off)
+- switching between view bodies (group vs scalar)
+- mounting `core.mountView(...)` where the view kind can change
+
+---
+
+### `ctx.list(host, getIds, mountById)`
+
+Mounts a **keyed list** of components into a stable region inside `host`.
+
+- creates a region at the call site
+- installs an effect which re-runs when reactive dependencies read by `getIds()` change
+- reconciles children by key:
+  - reuses existing components for ids that remain
+  - disposes components for ids that are removed
+  - orders DOM to match `getIds()` exactly
+
+Used for:
+
+- outline child nodes
+- table rows
+- table columns / schema-driven subtrees
 
 ---
 
@@ -274,24 +306,7 @@ This is the only correct way to integrate DOM focus with Core selection.
 
 ---
 
-## 1.4 DOM helpers and conventions
-
-The UI layer provides small helpers that encode conventions:
-
-- `el(tag, className?, text?)`
-- `reconcileChildren(parent, desired)`
-- `setData(el, key, value)`
-- `caretFromTarget(eventTarget)`
-
-These helpers exist to:
-
-- keep DOM code terse and consistent
-- avoid ad-hoc reconciliation patterns
-- make debugging easier via stable datasets
-
----
-
-## 1.5 Reactivity & stability rules
+## 1.4 Reactivity & stability rules
 
 Selection changes are frequent and must be cheap.
 
@@ -301,7 +316,7 @@ Selection-driven effects should only:
 
 - toggle classes
 - update datasets
-- update caret ranges / editor state
+- update caret/editor state
 
 Selection-driven effects must not:
 
@@ -323,24 +338,35 @@ This is foundational to predictable focus and pointer behavior.
 
 ### Rule: structural swaps must be gated by stable discriminators
 
-When using `slot.set(...)`, swaps must be gated by discriminators such as:
+When a subtree genuinely changes shape, `ctx.slot` should be fed by a stable discriminator (for example, a computed `"group" | "value"` or a view name).
 
-- item content kind (`group` vs `scalar`)
-- item view name
+This ensures:
 
-Reactive re-runs should not remount unchanged structure.
+- edits and selection changes don't remount structure
+- swaps happen only when structure truly changes
 
 ---
 
-### Rule: prefer small computed selectors
+### Rule: one region per responsibility
 
-When a component needs selection state, it should prefer local computed signals like:
+Prefer:
 
-- `isFocused = computed(() => ...)`
+- one `slot` for one conditional/switchable subtree
+- one `list` for one repeated sequence
 
-Rather than broad effects that read selection repeatedly.
+Avoid building manual reconciliation inside effects; the region primitives exist to own lifecycle and ordering safely.
 
-This keeps selection reads cheap and local.
+---
+
+## 1.5 DOM helpers and conventions
+
+The UI layer provides small helpers that encode conventions:
+
+- `el(tag, className?, text?)`
+- `setData(el, key, value)`
+- `caretFromTarget(eventTarget)`
+
+Helpers exist to keep DOM code terse and consistent. Structural mounting/reconciliation should be done via `ctx.slot` / `ctx.list` (regions), not ad-hoc child management.
 
 ---
 
@@ -1306,3 +1332,5 @@ To keep CSS minimal and maintainable, organize stylesheets as:
 - `CONFIRM` from `DEFAULT_TARGET` enters first item edit target, or runs the view structural default when no edit target exists.
 - Table Enter in cell edit commits and moves down when possible.
 - Mod+Enter inserts newline in multiline editors.
+- Dynamic subtrees are mounted into regions created by `ctx.slot` and `ctx.list`; regions preserve DOM order without wrapper nodes.
+- Once a region exists inside a host, do not clear/replace the host's children manually; updates must go through `slot`/`list` (or create static DOM before regions are created).

@@ -400,11 +400,6 @@ function mountOutlineNodeShell(
     bindUiItemShell(ctx, { core, focus }, shell);
 
     if (withMeta) {
-      const metaHost = el("div");
-      shell.append(metaHost);
-
-      const metaSlot = ctx.slot(metaHost);
-
       const canEditLabel = () => core.item(id).mode.kind !== "readonly";
 
       const commitLabel = (text: string) => {
@@ -441,58 +436,28 @@ function mountOutlineNodeShell(
 
       const hasFields = computed(() => fieldsSignal.value.length > 0);
 
-      ctx.effect(() => {
+      ctx.slot(shell, () => {
         const shouldShow =
           hasLabel.value || hasFields.value || labelFocused.value;
-        if (!shouldShow) {
-          metaSlot.clear();
-          return;
-        }
+        if (!shouldShow) return null;
 
-        metaSlot.set(
-          mountItemMeta(core, {
-            focus,
-            id,
-            dispatch: mountCtx.dispatch,
-            canEditLabel,
-            commitLabel,
-            commitConnField,
-          }),
-        );
+        return mountItemMeta(core, {
+          focus,
+          id,
+          dispatch: mountCtx.dispatch,
+          canEditLabel,
+          commitLabel,
+          commitConnField,
+        });
       });
     }
 
-    const wanted = core.view(id);
-    const body = core.mountView({ id, focus, view: wanted });
-    shell.append(body.el);
-    ctx.cleanup(() => body.dispose());
+    ctx.slot(shell, () => {
+      const wanted = core.view(id);
+      return core.mountView({ id, focus, view: wanted });
+    });
 
     return shell;
-  });
-}
-
-function mountOutlineGroupBody(
-  mountCtx: OutlineMountCtx,
-  focus: Focus,
-): Component {
-  const { core, rootId } = mountCtx;
-  const id = focus.item;
-
-  return createComponent(core, (ctx) => {
-    const host = el("div");
-
-    const mgr = ctx.list<ItemId>(host, (childId) => {
-      const childFocus = focusFor(core, rootId, childId);
-      return mountOutlineNodeShell(mountCtx, childFocus, true);
-    });
-
-    ctx.effect(() => {
-      const snap = core.item(id);
-      const c = snap.content;
-      mgr.update(c.kind === "group" ? [...c.children] : []);
-    });
-
-    return host;
   });
 }
 
@@ -539,33 +504,35 @@ function mountOutlineScalarBody(
 }
 
 function mountOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
-  const { core } = mountCtx;
+  const { core, rootId } = mountCtx;
   const id = focus.item;
 
   return createComponent(core, (ctx) => {
     const root = el("div");
     stampBody(root, "outline");
 
-    const slot = ctx.slot(root);
-
-    let curKind: "group" | "value" | null = null;
-
-    ctx.effect(() => {
+    const kind = computed<"group" | "value">(() => {
       const snap = core.item(id);
-      const nextKind = snap.content.kind === "group" ? "group" : "value";
-      if (curKind === nextKind) return;
-      curKind = nextKind;
-
-      slot.set(
-        nextKind === "group"
-          ? mountOutlineGroupBody(mountCtx, focus)
-          : mountOutlineScalarBody(mountCtx, focus),
-      );
+      return snap.content.kind === "group" ? "group" : "value";
     });
 
-    ctx.cleanup(() => {
-      curKind = null;
-    });
+    ctx.list<ItemId>(
+      root,
+      () => {
+        if (kind.value !== "group") return [];
+        const snap = core.item(id);
+        const c = snap.content;
+        return c.kind === "group" ? [...c.children] : [];
+      },
+      (childId) => {
+        const childFocus = focusFor(core, rootId, childId);
+        return mountOutlineNodeShell(mountCtx, childFocus, true);
+      },
+    );
+
+    ctx.slot(root, () =>
+      kind.value === "value" ? mountOutlineScalarBody(mountCtx, focus) : null,
+    );
 
     return root;
   });

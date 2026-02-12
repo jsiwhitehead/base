@@ -23,7 +23,6 @@ import {
   insertTextIntoActiveEditor,
   mountItemMeta,
   patchConn,
-  reconcileChildren,
   stampBody,
 } from "../dom";
 
@@ -155,100 +154,61 @@ function mountHeader(mountCtx: TableMountCtx): Component {
 
   return createComponent(core, (ctx) => {
     const header = el("div", "ui-table-header");
-
     const metaHead = el("div", "ui-table-col ui-table-meta-col");
     header.append(metaHead);
 
-    const cache = new Map<number, Component>();
+    ctx.list<number>(
+      header,
+      () => {
+        const n = sig.colCount.value;
+        const out: number[] = [];
+        for (let i = 0; i < n; i++) out.push(i);
+        return out;
+      },
+      (colIdx) =>
+        createComponent(core, (ctx2) => {
+          const col = el("div", "ui-table-col");
 
-    const disposeAll = () => {
-      for (const c of cache.values()) c.dispose();
-      cache.clear();
-    };
+          ctx2.slot(col, () => {
+            const rid = sig.schemaRowId.value;
+            const cid = rid ? (childrenOf(core, rid)[colIdx] ?? null) : null;
+            if (!rid || !cid) return null;
 
-    const updateCols = (n: number) => {
-      for (const [k, c] of cache) {
-        if (k >= n) {
-          c.dispose();
-          cache.delete(k);
-        }
-      }
+            const focus: Focus = { container: rid, item: cid };
 
-      const cols: HTMLElement[] = [];
-      for (let colIdx = 0; colIdx < n; colIdx++) {
-        let comp = cache.get(colIdx);
-        if (!comp) {
-          comp = createComponent(core, (ctx2) => {
-            const col = el("div", "ui-table-col");
-            const slot = ctx2.slot(col);
+            const canEditLabel = () => core.item(cid).mode.kind !== "readonly";
 
-            let curRid: ItemId | null = null;
-            let curCid: ItemId | null = null;
+            const commitLabel = (text: string) => {
+              if (!canEditLabel()) return;
+              const cur = core.item(cid).label ?? "";
+              if (cur === text) return;
+              core.commit((t) => t.setLabel(cid, text));
+            };
 
-            ctx2.effect(() => {
-              const rid = sig.schemaRowId.value;
-              const cid = rid ? (childrenOf(core, rid)[colIdx] ?? null) : null;
+            const commitConnField = (key: string, text: string) => {
+              const snap = core.item(cid);
+              if (snap.mode.kind !== "connected") return;
+              const next = patchConn(snap.mode.conn, key, text);
+              core.commit((t) => t.setConnected(cid, next));
+            };
 
-              if (rid === curRid && cid === curCid) return;
-              curRid = rid;
-              curCid = cid;
-
-              if (!rid || !cid) {
-                slot.clear();
-                return;
-              }
-
-              const focus: Focus = { container: rid, item: cid };
-
-              const canEditLabel = () =>
-                core.item(cid).mode.kind !== "readonly";
-
-              const commitLabel = (text: string) => {
-                if (!canEditLabel()) return;
-                const cur = core.item(cid).label ?? "";
-                if (cur === text) return;
-                core.commit((t) => t.setLabel(cid, text));
-              };
-
-              const commitConnField = (key: string, text: string) => {
-                const snap = core.item(cid);
-                if (snap.mode.kind !== "connected") return;
-                const next = patchConn(snap.mode.conn, key, text);
-                core.commit((t) => t.setConnected(cid, next));
-              };
-
-              slot.set(
-                mountItemMeta(core, {
-                  focus,
-                  id: cid,
-                  dispatch,
-                  canEditLabel,
-                  commitLabel,
-                  commitConnField,
-                }),
-              );
+            return mountItemMeta(core, {
+              focus,
+              id: cid,
+              dispatch,
+              canEditLabel,
+              commitLabel,
+              commitConnField,
             });
-
-            return col;
           });
 
-          cache.set(colIdx, comp);
-        }
-        cols.push(comp.el);
-      }
-
-      reconcileChildren(header, [metaHead, ...cols]);
-    };
-
-    ctx.effect(() => {
-      updateCols(sig.colCount.value);
-    });
+          return col;
+        }),
+    );
 
     ctx.on(header, "pointerdown", (e: PointerEvent) => {
       e.stopPropagation();
     });
-
-    ctx.cleanup(disposeAll);
 
     return header;
   });
@@ -261,9 +221,10 @@ function mountDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
     const focus: Focus = { container: rowId, item: cellId };
     bindUiItemShell(ctx, { core, focus }, host);
 
-    const body = core.mountView({ id: cellId, focus, view: core.view(cellId) });
-    host.replaceChildren(body.el);
-    ctx.cleanup(() => body.dispose());
+    ctx.slot(host, () => {
+      const wanted = core.view(cellId);
+      return core.mountView({ id: cellId, focus, view: wanted });
+    });
 
     return host;
   });
@@ -283,92 +244,64 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
     const metaCell = el("div", "ui-table-cell ui-table-meta-col");
     row.append(metaCell);
 
-    const canEditLabel = () => core.item(rowId).mode.kind !== "readonly";
+    ctx.slot(metaCell, () => {
+      const canEditLabel = () => core.item(rowId).mode.kind !== "readonly";
 
-    const commitLabel = (text: string) => {
-      if (!canEditLabel()) return;
-      const cur = core.item(rowId).label ?? "";
-      if (cur === text) return;
-      core.commit((t) => t.setLabel(rowId, text));
-    };
+      const commitLabel = (text: string) => {
+        if (!canEditLabel()) return;
+        const cur = core.item(rowId).label ?? "";
+        if (cur === text) return;
+        core.commit((t) => t.setLabel(rowId, text));
+      };
 
-    const commitConnField = (key: string, text: string) => {
-      const snap = core.item(rowId);
-      if (snap.mode.kind !== "connected") return;
-      const next = patchConn(snap.mode.conn, key, text);
-      core.commit((t) => t.setConnected(rowId, next));
-    };
+      const commitConnField = (key: string, text: string) => {
+        const snap = core.item(rowId);
+        if (snap.mode.kind !== "connected") return;
+        const next = patchConn(snap.mode.conn, key, text);
+        core.commit((t) => t.setConnected(rowId, next));
+      };
 
-    const meta = mountItemMeta(core, {
-      focus: { container: tableId, item: rowId },
-      id: rowId,
-      dispatch,
-      canEditLabel,
-      commitLabel,
-      commitConnField,
+      return mountItemMeta(core, {
+        focus: { container: tableId, item: rowId },
+        id: rowId,
+        dispatch,
+        canEditLabel,
+        commitLabel,
+        commitConnField,
+      });
     });
 
-    metaCell.replaceChildren(meta.el);
-    ctx.cleanup(() => meta.dispose());
-
-    const cache = new Map<string, Component>();
-
-    const disposeAll = () => {
-      for (const c of cache.values()) c.dispose();
-      cache.clear();
-    };
-
-    const updateCells = (n: number) => {
-      const rowCells = childrenOf(core, rowId);
-      const keys: string[] = [];
-      for (let i = 0; i < n; i++) {
-        const cid = rowCells[i];
-        if (!cid) continue;
-        keys.push(`${i}\u001f${cid}`);
-      }
-
-      const keep = new Set(keys);
-      for (const [k, c] of cache) {
-        if (keep.has(k)) continue;
-        c.dispose();
-        cache.delete(k);
-      }
-
-      const cells: HTMLElement[] = [];
-      for (const key of keys) {
-        let comp = cache.get(key);
-        if (!comp) {
-          const idx = key.indexOf("\u001f");
-          const cellId = (idx >= 0 ? key.slice(idx + 1) : "") as ItemId;
-          comp = mountDataCell(core, rowId, cellId);
-          cache.set(key, comp);
-        }
-        cells.push(comp.el);
-      }
-
-      reconcileChildren(row, [metaCell, ...cells]);
-    };
-
-    ctx.effect(() => {
-      updateCells(sig.colCount.value);
-    });
-
-    ctx.cleanup(disposeAll);
+    ctx.list<number>(
+      row,
+      () => {
+        const n = sig.colCount.value;
+        const out: number[] = [];
+        for (let i = 0; i < n; i++) out.push(i);
+        return out;
+      },
+      (colIdx) => {
+        const cid = childrenOf(core, rowId)[colIdx] ?? null;
+        if (!cid)
+          return createComponent(core, () => el("div", "ui-table-cell"));
+        return mountDataCell(core, rowId, cid);
+      },
+    );
 
     return row;
   });
 }
 
 function mountBody(mountCtx: TableMountCtx): Component {
-  const { sig } = mountCtx;
+  const { core, sig } = mountCtx;
 
-  return createComponent(mountCtx.core, (ctx) => {
+  return createComponent(core, (ctx) => {
     const body = el("div", "ui-table-body");
-    const rows = ctx.list<ItemId>(body, (rid) => mountRowShell(mountCtx, rid));
 
-    ctx.effect(() => {
-      rows.update(sig.rows.value);
-    });
+    ctx.list<ItemId>(
+      body,
+      () => sig.rows.value,
+      (rid) => mountRowShell(mountCtx, rid),
+    );
 
     return body;
   });

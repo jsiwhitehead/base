@@ -4,7 +4,6 @@ export {
   bindUiItemShell,
   createComponent,
   el,
-  reconcileChildren,
   setData,
   stampBody,
 } from "./base";
