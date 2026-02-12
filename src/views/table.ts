@@ -21,7 +21,7 @@ import {
   el,
   escapeLadder,
   insertTextIntoActiveEditor,
-  mountItemMeta,
+  buildItemMeta,
   patchConn,
   stampBody,
 } from "../dom";
@@ -149,7 +149,7 @@ type TableMountCtx = {
   dispatch: (intent: Intent) => void;
 };
 
-function mountHeader(mountCtx: TableMountCtx): Component {
+function buildHeader(mountCtx: TableMountCtx): Component {
   const { core, sig, dispatch } = mountCtx;
 
   return createComponent(core, (ctx) => {
@@ -192,7 +192,7 @@ function mountHeader(mountCtx: TableMountCtx): Component {
               core.commit((t) => t.setConnected(cid, next));
             };
 
-            return mountItemMeta(core, {
+            return buildItemMeta(core, {
               focus,
               id: cid,
               dispatch,
@@ -214,7 +214,7 @@ function mountHeader(mountCtx: TableMountCtx): Component {
   });
 }
 
-function mountDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
+function buildDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
   return createComponent(core, (ctx) => {
     const host = el("div", "ui-table-cell");
 
@@ -230,7 +230,7 @@ function mountDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
   });
 }
 
-function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
+function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
   const { core, tableId, sig, dispatch } = mountCtx;
 
   return createComponent(core, (ctx) => {
@@ -261,7 +261,7 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         core.commit((t) => t.setConnected(rowId, next));
       };
 
-      return mountItemMeta(core, {
+      return buildItemMeta(core, {
         focus: { container: tableId, item: rowId },
         id: rowId,
         dispatch,
@@ -283,7 +283,7 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         const cid = childrenOf(core, rowId)[colIdx] ?? null;
         if (!cid)
           return createComponent(core, () => el("div", "ui-table-cell"));
-        return mountDataCell(core, rowId, cid);
+        return buildDataCell(core, rowId, cid);
       },
     );
 
@@ -291,7 +291,7 @@ function mountRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
   });
 }
 
-function mountBody(mountCtx: TableMountCtx): Component {
+function buildBody(mountCtx: TableMountCtx): Component {
   const { core, sig } = mountCtx;
 
   return createComponent(core, (ctx) => {
@@ -300,7 +300,7 @@ function mountBody(mountCtx: TableMountCtx): Component {
     ctx.list<ItemId>(
       body,
       () => sig.rows.value,
-      (rid) => mountRowShell(mountCtx, rid),
+      (rid) => buildRowShell(mountCtx, rid),
     );
 
     return body;
@@ -555,14 +555,8 @@ export function createTableView(args: {
     bindUiItemShell(ctx, { core, focus: tableFocus }, root);
 
     const mountCtx: TableMountCtx = { core, tableId, sig, dispatch };
-
-    const header = mountHeader(mountCtx);
-    const body = mountBody(mountCtx);
-
-    root.append(header.el, body.el);
-
-    ctx.cleanup(() => header.dispose());
-    ctx.cleanup(() => body.dispose());
+    ctx.mount(root, buildHeader(mountCtx));
+    ctx.mount(root, buildBody(mountCtx));
 
     return root;
   });

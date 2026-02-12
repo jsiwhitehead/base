@@ -29,28 +29,16 @@ export function el(
   return n;
 }
 
-export function on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
-  el0: T,
-  type: K,
-  handler: (e: HTMLElementEventMap[K]) => void,
-  opts?: AddEventListenerOptions,
-): () => void {
-  const listener = (event: Event) =>
-    handler.call(el0, event as HTMLElementEventMap[K]);
-  el0.addEventListener(type, listener as EventListener, opts);
-  return () => el0.removeEventListener(type, listener as EventListener, opts);
-}
-
 export function setData(
   el0: HTMLElement,
   key: string,
   value: string | number | boolean | null | undefined,
 ): void {
   if (value == null || value === "") {
-    delete (el0.dataset as any)[key];
+    delete el0.dataset[key];
     return;
   }
-  (el0.dataset as any)[key] = String(value);
+  el0.dataset[key] = String(value);
 }
 
 type Region = {
@@ -162,8 +150,6 @@ export function caretFromTarget(el0: EventTarget | null): Caret {
 }
 
 type Ctx = {
-  cleanup(fn: (() => void) | null | undefined): void;
-
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
     target: T,
     type: K,
@@ -172,6 +158,8 @@ type Ctx = {
   ): void;
 
   effect(run: () => void | (() => void)): void;
+
+  mount(host: HTMLElement, child: Component): void;
 
   slot(host: HTMLElement, get: () => Component | null): void;
 
@@ -196,16 +184,22 @@ export function createComponent(
   const bag = new Disposer();
 
   const ctx: Ctx = {
-    cleanup(fn) {
-      bag.add(fn);
-    },
-
     on(target, type, handler, opts) {
-      bag.add(on(target, type, handler, opts));
+      const listener = (event: Event) =>
+        handler.call(target, event as HTMLElementEventMap[typeof type]);
+      target.addEventListener(type, listener as EventListener, opts);
+      bag.add(() =>
+        target.removeEventListener(type, listener as EventListener, opts),
+      );
     },
 
     effect(run) {
       bag.add(effect(run));
+    },
+
+    mount(host, child) {
+      host.append(child.el);
+      bag.add(() => child.dispose());
     },
 
     slot(host, get) {
@@ -214,7 +208,6 @@ export function createComponent(
 
       const disposeEffect = effect(() => {
         const next = get();
-        if (next === cur) return;
 
         region.clear();
         cur?.dispose();
@@ -229,6 +222,7 @@ export function createComponent(
         region.dispose();
       });
     },
+
     list<Id extends string | number>(
       host: HTMLElement,
       getIds: () => readonly Id[],

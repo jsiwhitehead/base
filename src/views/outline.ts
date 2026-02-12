@@ -24,11 +24,11 @@ import {
   escapeLadder,
   fieldsFromConn,
   insertTextIntoActiveEditor,
-  mountItemMeta,
+  buildItemMeta,
   patchConn,
   connTarget,
   stampBody,
-  textField,
+  buildTextField,
 } from "../dom";
 
 function valueToText(v: ValueOrBlank): string {
@@ -387,7 +387,7 @@ type OutlineMountCtx = {
   dispatch: (intent: Intent) => void;
 };
 
-function mountOutlineNodeShell(
+function buildOutlineNodeShell(
   mountCtx: OutlineMountCtx,
   focus: Focus,
   withMeta: boolean,
@@ -441,7 +441,7 @@ function mountOutlineNodeShell(
           hasLabel.value || hasFields.value || labelFocused.value;
         if (!shouldShow) return null;
 
-        return mountItemMeta(core, {
+        return buildItemMeta(core, {
           focus,
           id,
           dispatch: mountCtx.dispatch,
@@ -461,49 +461,43 @@ function mountOutlineNodeShell(
   });
 }
 
-function mountOutlineScalarBody(
+function buildOutlineScalarBody(
   mountCtx: OutlineMountCtx,
   focus: Focus,
 ): Component {
   const { core, dispatch } = mountCtx;
   const id = focus.item;
 
-  return createComponent(core, (ctx) => {
-    const tf = textField(core, {
-      focus,
-      target: VALUE_TARGET,
-      multiline: true,
-      autosize: false,
-      editModel: "live",
-      commit: (text) => outlineCommands.setText(core, id, text),
-      getState: () => {
-        const snap = core.item(id);
-        const c = snap.content;
+  return buildTextField(core, {
+    focus,
+    target: VALUE_TARGET,
+    multiline: true,
+    autosize: false,
+    editModel: "live",
+    commit: (text) => outlineCommands.setText(core, id, text),
+    getState: () => {
+      const snap = core.item(id);
+      const c = snap.content;
 
-        if (c.kind === "issue") {
-          return { text: c.message ?? "", readOnly: true, isIssue: true };
-        }
+      if (c.kind === "issue")
+        return { text: c.message ?? "", readOnly: true, isIssue: true };
 
-        if (c.kind === "value") {
-          const editable = snap.mode.kind === "plain";
-          return {
-            text: valueToText(c.value),
-            readOnly: !editable,
-            isIssue: false,
-          };
-        }
+      if (c.kind === "value") {
+        const editable = snap.mode.kind === "plain";
+        return {
+          text: valueToText(c.value),
+          readOnly: !editable,
+          isIssue: false,
+        };
+      }
 
-        return { text: "", readOnly: true, isIssue: false };
-      },
-      onIntent: dispatch,
-    });
-
-    ctx.cleanup(() => tf.dispose());
-    return tf.el;
+      return { text: "", readOnly: true, isIssue: false };
+    },
+    onIntent: dispatch,
   });
 }
 
-function mountOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
+function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
   const { core, rootId } = mountCtx;
   const id = focus.item;
 
@@ -526,12 +520,12 @@ function mountOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
       },
       (childId) => {
         const childFocus = focusFor(core, rootId, childId);
-        return mountOutlineNodeShell(mountCtx, childFocus, true);
+        return buildOutlineNodeShell(mountCtx, childFocus, true);
       },
     );
 
     ctx.slot(root, () =>
-      kind.value === "value" ? mountOutlineScalarBody(mountCtx, focus) : null,
+      kind.value === "value" ? buildOutlineScalarBody(mountCtx, focus) : null,
     );
 
     return root;
@@ -746,7 +740,7 @@ export function createOutlineView(args: {
   };
 
   const viewFocus: Focus = args.focus ?? { container: rootId, item: rootId };
-  const body = mountOutlineBody(
+  const body = buildOutlineBody(
     { core, rootId, editPointsSignal, dispatch },
     viewFocus,
   );

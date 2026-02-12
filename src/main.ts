@@ -1,6 +1,6 @@
 import type { Core, ItemId, Value, ViewKind, ViewName } from "./core";
 import { createCore } from "./core";
-import { createDebugPanel, createDebugState, instrumentCore } from "./debug";
+import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV, devAssert, devWarn } from "./dev";
 import { bindUiItemShell, createComponent, el } from "./dom";
 import { viewFactories } from "./views";
@@ -75,7 +75,7 @@ function createApp(opts: CreateAppOpts = {}): App {
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
   if (DEV) {
-    debugPanel = createDebugPanel({
+    debugPanel = buildDebugPanel({
       core,
       debug,
       probeRoot: main,

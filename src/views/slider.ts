@@ -88,7 +88,7 @@ type SliderMountCtx = {
   opts: SliderResolvedOpts;
 };
 
-function mountSliderBody({ core, id, opts }: SliderMountCtx): Component {
+function buildSliderBody({ core, id, opts }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
     const root = el("div");
     stampBody(root, "slider");
@@ -145,7 +145,7 @@ export function createSliderView(args: {
   const safeFocus: Focus = args.focus ?? { container: id, item: id };
   const resolved = DEFAULT_SLIDER_OPTS;
 
-  const content = mountSliderBody({
+  const content = buildSliderBody({
     core,
     id,
     focus: safeFocus,

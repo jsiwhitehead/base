@@ -194,6 +194,7 @@ The only correct way to create a component is:
   - event listeners registered through `ctx.on`
   - reactive effects registered through `ctx.effect`
   - target bindings registered through `ctx.target`
+  - mounted static child components registered through `ctx.mount`
   - mounted child subtrees managed through `ctx.slot` / `ctx.list`
 - predictable disposal:
   - all cleanups run
@@ -213,11 +214,14 @@ This is the primary mechanism preventing:
 
 `createComponent` supplies a `Ctx` that provides safe building blocks.
 
-### `ctx.cleanup(fn)`
+Quick chooser:
 
-Registers a cleanup function to run when the component is disposed.
-
-Use this for external disposers not already owned by `ctx.*` helpers.
+- `ctx.on`: attach DOM listeners with automatic cleanup
+- `ctx.effect`: run reactive effects with automatic cleanup
+- `ctx.target`: bind Core focus targets to DOM elements
+- `ctx.mount`: append a static child component once
+- `ctx.slot`: mount one reactive child subtree
+- `ctx.list`: mount a keyed reactive child list
 
 ---
 
@@ -242,9 +246,29 @@ Effects should be written as idempotent updates to DOM state.
 
 ---
 
-## 1.3.1 Regions: stable insertion points (no wrapper nodes)
+### `ctx.target(focus, target, getEl, opts?)`
 
-Dynamic mounting is region-based.
+Attaches a Core focus target binding.
+
+This registers a DOM element as the focus destination for a given `{ focus, target }`.
+
+This is the only correct way to integrate DOM focus with Core selection.
+
+---
+
+### `ctx.mount(host, child)`
+
+Mounts a static child component into `host`.
+
+- appends `child.el` to `host`
+- automatically disposes `child` when the parent component is disposed
+- use this for child components created once during build
+
+---
+
+## 1.3.1 Regions: stable insertion points
+
+`ctx.slot` and `ctx.list` are region-based reactive mounting primitives.
 
 A **region** is a stable insertion point inside a host element where dynamic children live. Regions:
 
@@ -293,16 +317,6 @@ Used for:
 - outline child nodes
 - table rows
 - table columns / schema-driven subtrees
-
----
-
-### `ctx.target(focus, target, getEl, opts?)`
-
-Attaches a Core focus target binding.
-
-This registers a DOM element as the focus destination for a given `{ focus, target }`.
-
-This is the only correct way to integrate DOM focus with Core selection.
 
 ---
 
@@ -495,9 +509,7 @@ Core:
 
 ### Editor yielding
 
-Editors implement “yielding” via:
-
-- `bindTextEditorYield(inp, onIntent)`
+Editors implement yielding inside `buildTextField` when `yieldNav` and `onIntent` are enabled.
 
 Yielding is semantic, not bubbling.
 It applies to text edit targets (`conn:*`, `value`), not to `label`.
@@ -549,9 +561,9 @@ Editors handle pointerdown by:
 
 The UI provides one text control:
 
-- `textField` (configured with options, including `autosize: true`)
+- `buildTextField` (configured with options, including `autosize: true`)
 
-`textField` supports:
+`buildTextField` supports:
 
 - `multiline` (`input` vs `textarea`)
 - `autosize` (mirror-driven sizing)
@@ -576,10 +588,10 @@ Padding note:
 - for autosize fields, apply padding to both `.ui-textfield-input` and `.ui-textfield-mirror` (not `.ui-textfield`).
 - autosize textfields must opt out of global `width: 100%` defaults (for example: wrapper uses `fit-content` and input uses auto width).
 
-`textField` instances:
+`buildTextField` instances:
 
 - attach their target via `ctx.target(...)`
-- participate in yielding via `bindTextEditorYield(...)`
+- participate in yielding when `yieldNav` and `onIntent` are enabled
 - respect readonly state
 - rely on shell-level issue state via `.ui-item.is-issue`
 
@@ -886,7 +898,7 @@ Each row contains:
 - a meta-column cell (`.ui-table-meta-col`) for row item meta
 - a set of cell shells for each cell item, each nesting `[.ui-body.<cell-view> subtree]`
 
-The header renders schema cell meta by mounting `mountItemMeta(...)` for schema-row cells.
+The header renders schema cell meta by mounting `buildItemMeta(...)` for schema-row cells.
 
 Canonical structure:
 

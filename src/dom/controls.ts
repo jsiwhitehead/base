@@ -2,7 +2,7 @@ import { computed } from "@preact/signals-core";
 
 import type { Caret, Component, Core, Focus, ItemId, Connected } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
-import { caretFromTarget, createComponent, el, on, setData } from "./base";
+import { caretFromTarget, createComponent, el, setData } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -143,86 +143,6 @@ function isLastLine(inp: HTMLTextAreaElement): boolean {
   return inp.value.indexOf("\n", pos) < 0;
 }
 
-function bindTextEditorYield(
-  inp: TextInputElement,
-  onIntent: (i: Intent) => void,
-): () => void {
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Tab") {
-      consume(e);
-      onIntent({ type: "TAB", shift: !!e.shiftKey });
-      return;
-    }
-
-    if (e.key === "Escape") {
-      consume(e);
-      onIntent({ type: "CANCEL" });
-      return;
-    }
-
-    const mode = keyNavMode(e);
-
-    const start = inp.selectionStart ?? 0;
-    const end = inp.selectionEnd ?? start;
-    const hasSel = start !== end;
-    const len = inp.value.length;
-
-    const dir = keyToNavDir(e.key);
-    if (dir) {
-      const atStart = !hasSel && start === 0;
-      const atEnd = !hasSel && end === len;
-
-      const shouldYield =
-        (dir === "left" && atStart) ||
-        (dir === "right" && atEnd) ||
-        (dir === "up" &&
-          (inp instanceof HTMLTextAreaElement ? isFirstLine(inp) : true)) ||
-        (dir === "down" &&
-          (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
-
-      if (shouldYield) {
-        consume(e);
-        onIntent({ type: "NAV", dir, mode });
-        return;
-      }
-    }
-
-    if (e.key === "Enter") {
-      if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey))
-        return;
-      consume(e);
-      onIntent({ type: "CONFIRM", caret: { start, end } });
-      return;
-    }
-
-    if (e.key === "Backspace" && !hasSel && start === 0) {
-      consume(e);
-      onIntent({ type: "DELETE_BOUNDARY", dir: "backward" });
-      return;
-    }
-
-    if (e.key === "Delete" && !hasSel && end === len) {
-      consume(e);
-      onIntent({ type: "DELETE_BOUNDARY", dir: "forward" });
-      return;
-    }
-  };
-
-  return on(inp, "keydown", onKeyDown);
-}
-
-function bindEditorPointerSelect(
-  core: Core,
-  focus: Focus,
-  target: string,
-  focusEl: HTMLElement,
-): () => void {
-  return on(focusEl, "pointerdown", (e: PointerEvent) => {
-    core.focus(focus, target, { caret: caretFromTarget(e.target) });
-    e.stopPropagation();
-  });
-}
-
 type TextFieldState = {
   text: string;
   readOnly: boolean;
@@ -245,7 +165,7 @@ type TextFieldOpts = {
   onIntent?: (i: Intent) => void;
 };
 
-export function textField(
+export function buildTextField(
   core: Core,
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
@@ -353,8 +273,73 @@ export function textField(
       opts.onIntent?.(i);
     };
 
-    if (opts.onIntent && yieldNav)
-      ctx.cleanup(bindTextEditorYield(inp, handleIntent));
+    if (opts.onIntent && yieldNav) {
+      ctx.on(inp, "keydown", (e: KeyboardEvent) => {
+        if (e.key === "Tab") {
+          consume(e);
+          handleIntent({ type: "TAB", shift: !!e.shiftKey });
+          return;
+        }
+
+        if (e.key === "Escape") {
+          consume(e);
+          handleIntent({ type: "CANCEL" });
+          return;
+        }
+
+        const mode = keyNavMode(e);
+
+        const start = inp.selectionStart ?? 0;
+        const end = inp.selectionEnd ?? start;
+        const hasSel = start !== end;
+        const len = inp.value.length;
+
+        const dir = keyToNavDir(e.key);
+        if (dir) {
+          const atStart = !hasSel && start === 0;
+          const atEnd = !hasSel && end === len;
+
+          const shouldYield =
+            (dir === "left" && atStart) ||
+            (dir === "right" && atEnd) ||
+            (dir === "up" &&
+              (inp instanceof HTMLTextAreaElement ? isFirstLine(inp) : true)) ||
+            (dir === "down" &&
+              (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
+
+          if (shouldYield) {
+            consume(e);
+            handleIntent({ type: "NAV", dir, mode });
+            return;
+          }
+        }
+
+        if (e.key === "Enter") {
+          if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey))
+            return;
+          consume(e);
+          handleIntent({ type: "CONFIRM", caret: { start, end } });
+          return;
+        }
+
+        if (e.key === "Backspace" && !hasSel && start === 0) {
+          consume(e);
+          handleIntent({ type: "DELETE_BOUNDARY", dir: "backward" });
+          return;
+        }
+
+        if (e.key === "Delete" && !hasSel && end === len) {
+          consume(e);
+          handleIntent({ type: "DELETE_BOUNDARY", dir: "forward" });
+          return;
+        }
+      });
+    }
+
+    ctx.on(inp, "pointerdown", (e: PointerEvent) => {
+      core.focus(opts.focus, opts.target, { caret: caretFromTarget(e.target) });
+      e.stopPropagation();
+    });
 
     ctx.on(inp, "focus", () => {
       beginDraftSession();
@@ -379,7 +364,6 @@ export function textField(
       commitDraft();
     });
 
-    ctx.cleanup(bindEditorPointerSelect(core, opts.focus, opts.target, inp));
     ctx.target(opts.focus, opts.target, () => inp, {
       caret: defaultTextCaret(),
     });
@@ -472,7 +456,7 @@ export function patchConn(
   return conn;
 }
 
-export function mountItemMeta(
+export function buildItemMeta(
   core: Core,
   args: {
     focus: Focus;
@@ -492,7 +476,7 @@ export function mountItemMeta(
     const connWrap = el("div", "ui-meta-conn");
     meta.append(labelWrap, connWrap);
 
-    const labelComp = textField(core, {
+    const labelComp = buildTextField(core, {
       focus: args.focus,
       target: LABEL_TARGET,
       multiline: false,
@@ -509,9 +493,7 @@ export function mountItemMeta(
       },
       onIntent: args.dispatch,
     });
-
-    labelWrap.replaceChildren(labelComp.el);
-    ctx.cleanup(() => labelComp.dispose());
+    ctx.mount(labelWrap, labelComp);
 
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
@@ -544,7 +526,7 @@ export function mountItemMeta(
             specForKey()?.multiline ?? true;
           const labelForKey = (): string => specForKey()?.label ?? "";
 
-          const fc = textField(core, {
+          const fc = buildTextField(core, {
             focus: args.focus,
             target: tkey,
             multiline: multilineForKey(),
@@ -561,9 +543,7 @@ export function mountItemMeta(
             },
             onIntent: args.dispatch,
           });
-
-          valEl.replaceChildren(fc.el);
-          ctx2.cleanup(() => fc.dispose());
+          ctx2.mount(valEl, fc);
 
           ctx2.effect(() => {
             const lbl = labelForKey();

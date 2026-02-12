@@ -206,7 +206,7 @@ function activeDomFocusText(): string {
   return `active: ${tag}${type}\ntarget: ${target}`;
 }
 
-export function createDebugPanel(opts: DebugPanelOpts) {
+export function buildDebugPanel(opts: DebugPanelOpts) {
   const { core, debug, probeRoot } = opts;
 
   return createComponent(core, (ctx) => {

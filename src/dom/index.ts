@@ -15,11 +15,11 @@ export {
   fieldsFromConn,
   insertTextIntoActiveEditor,
   LABEL_TARGET,
-  mountItemMeta,
+  buildItemMeta,
   parseKeydownIntent,
   patchConn,
   SELECT_ALL,
   connTarget,
-  textField,
+  buildTextField,
   VALUE_TARGET,
 } from "./controls";
