@@ -292,7 +292,7 @@ export function textField(
 
     const syncMirror = (text: string) => {
       if (!mirror) return;
-      const next = text.length ? text : " ";
+      const next = text.endsWith("\n") ? text + "\u200B" : text;
       if (mirror.textContent !== next) mirror.textContent = next;
     };
 

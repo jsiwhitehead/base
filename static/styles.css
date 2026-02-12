@@ -98,27 +98,27 @@
   }
 
   .ui-textfield {
-    display: inline-grid;
-    grid-template-areas: "field";
-    width: fit-content;
-    max-width: 100%;
+    --tf-pad-x: 0px;
+    --tf-pad-y: 0px;
+
     min-width: 0;
+    max-width: 100%;
   }
 
   .ui-textfield-input,
   .ui-textfield-mirror {
-    grid-area: field;
     font: inherit;
     min-width: 0;
+    padding: var(--tf-pad-y) var(--tf-pad-x);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .ui-textfield-input {
     display: block;
-    width: auto;
-    height: 100%;
+    width: 100%;
     background: transparent;
     border: 0;
-    padding: 0;
     margin: 0;
     resize: none;
   }
@@ -126,12 +126,20 @@
   .ui-textfield-mirror {
     visibility: hidden;
     color: transparent;
-    white-space: pre-wrap;
   }
 
-  .ui-body .ui-textfield,
-  .ui-body .ui-textfield-input {
+  .ui-textfield:has(.ui-textfield-mirror) {
+    position: relative;
+    display: inline-block;
+    width: fit-content;
+    min-width: 1ch;
+  }
+
+  .ui-textfield:has(.ui-textfield-mirror) .ui-textfield-input {
+    position: absolute;
+    inset: 0;
     width: 100%;
+    height: 100%;
   }
 
   .ui-item {
@@ -151,8 +159,10 @@
 
 @layer components {
   .ui-meta {
-    display: inline-block;
-    width: fit-content;
+    display: flex;
+    flex-direction: column;
+    gap: var(--inset);
+    min-width: 0;
     max-width: 100%;
     padding: var(--inset) var(--pad);
     background: var(--chrome-color);
@@ -160,9 +170,7 @@
   }
 
   .ui-meta-label {
-    display: inline-block;
-    width: fit-content;
-    max-width: 100%;
+    min-width: 0;
     font-size: var(--meta-size);
     line-height: var(--meta-leading);
     font-weight: var(--weight-strong);
@@ -170,10 +178,10 @@
   }
 
   .ui-meta-conn {
-    margin-top: var(--inset);
     display: flex;
     flex-direction: column;
     gap: var(--inset);
+    min-width: 0;
   }
 
   .ui-meta-conn-row {
@@ -208,7 +216,11 @@
 
 @layer views {
   .ui-body.ui-outline .ui-outline-node {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
     position: relative;
+    min-width: 0;
     --outline-indent: calc(var(--rail) + var(--pad));
     padding-left: var(--outline-indent);
   }
@@ -220,16 +232,16 @@
     left: 0;
     width: var(--rail);
     background: var(--chrome-color);
-    border-top-left-radius: var(--radius);
-    border-bottom-left-radius: var(--radius);
+    border-radius: 999px;
   }
 
   .ui-body.ui-outline .ui-outline-node > .ui-meta {
-    margin-bottom: var(--gap);
     margin-left: calc(-1 * var(--outline-indent));
     padding-left: calc(var(--pad) + var(--outline-indent));
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
+    display: inline-flex;
+    align-self: flex-start;
   }
 
   .ui-body.ui-table {
@@ -269,8 +281,6 @@
     padding: 0;
     background: transparent;
     border-radius: 0;
-    display: block;
-    width: auto;
   }
 
   .ui-body.ui-table .ui-table-cell {
@@ -299,6 +309,10 @@
 
   .ui-body.ui-table .ui-table-cell.ui-table-meta-col::before {
     content: none;
+  }
+
+  .ui-body.ui-table .ui-table-cell > * {
+    min-width: 0;
   }
 
   .ui-body.ui-slider {

@@ -1200,6 +1200,8 @@ Rails should be driven by tokens:
 - rail end radius
 - rail inset rules
 
+Rail endcaps are pill-rounded across views.
+
 These values are part of the UI's visual identity and should not vary between views except where explicitly called out.
 
 ---
@@ -1211,7 +1213,7 @@ Meta is chrome, not content.
 - `.ui-meta` is chrome, not a separate control surface.
 - When present, meta and rail must read as one continuous block (shared fill, no seam).
 - Meta fill uses the same derived chrome fill as rails.
-- Meta should size to content (`fit-content`) and clamp to container width.
+- Meta is full-width by default. Views may override meta sizing when needed.
 - Body value editors may remain full-width.
 
 Meta typography is intentionally restrained:
@@ -1232,6 +1234,7 @@ Chrome rules:
 
 - `.ui-outline-node` renders the vertical rail segment at its left edge.
 - Meta (if present) sits at the top of the node, above the mounted body.
+- Outline overrides meta sizing to shrink-wrap for compact chrome.
 - The outline group effect is created by stacked segments with small vertical gaps.
 - Meta and rail should visually merge into a single block.
 
@@ -1303,16 +1306,13 @@ To keep styling predictable:
 
 ## 4.9 Recommended CSS structure
 
-To keep CSS minimal and maintainable, organize stylesheets as:
+To keep CSS minimal and maintainable, organize stylesheets by layer:
 
-1. Tokens (`:root`)
-2. App frame (`#root`, `.ui-shell`, `.ui-shell-main`, `.ui-app`)
-3. Universal primitives (`.ui-item`, `.ui-body`, `.ui-meta`, `.is-focused`, `.is-issue`, typography)
-4. View chrome/layout blocks:
-   - outline
-   - table
-   - slider
-5. Text field primitive (`.ui-textfield`, `.ui-textfield-input`, `.ui-textfield-mirror`)
+1. Reset
+2. Tokens (`:root`)
+3. Base primitives (app frame, `.ui-item`, `.ui-body`, `.ui-textfield`)
+4. Components (`.ui-meta`)
+5. Views (outline, table, slider)
 
 ---
 
