@@ -1234,6 +1234,12 @@ Meta typography is intentionally restrained:
 - connection keys: smallest size, muted
 - connection values: monospaced
 
+### Textfield styling rules
+
+Textfields are base primitives. Add styles on the base `.ui-textfield` element using scoped CSS.
+
+- Padding is the exception. Set it through `--tf-pad-x` and `--tf-pad-y` on the wrapper.
+
 ---
 
 ## 4.7 Layout-specific chrome rules
@@ -1313,18 +1319,19 @@ To keep styling predictable:
 - Selection-driven changes should be class toggles only (`.is-focused`, `.is-issue`).
 - Avoid view-specific state classes unless a new view introduces a new semantic concept.
 - Prefer token-driven values over hardcoded per-view numbers.
+- In flex/grid layouts, apply `min-width: 0` to shrinkable items; apply overflow/truncation rules on the text element itself.
 
 ---
 
 ## 4.9 Recommended CSS structure
 
-To keep CSS minimal and maintainable, organize stylesheets by layer:
+Use a fixed layer order to keep CSS predictable:
 
-1. Reset
-2. Tokens (`:root`)
-3. Base primitives (app frame, `.ui-item`, `.ui-body`, `.ui-textfield`)
-4. Components (`.ui-meta`)
-5. Views (outline, table, slider)
+1. Reset: baseline normalization only.
+2. Tokens (`:root`): define tokens only here; all other layers consume them.
+3. Base primitives (`.ui-item`, `.ui-body`, `.ui-textfield`): shared defaults and primitive behavior.
+4. Components (`.ui-meta`): reusable chrome primitives.
+5. Views (outline, table, slider): layout/composition only; do not redefine shared chrome/state language.
 
 ---
 
