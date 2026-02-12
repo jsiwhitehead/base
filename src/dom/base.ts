@@ -144,7 +144,6 @@ class RegionChildManager<Id extends string | number> {
   clear() {
     for (const rec of this.cache.values()) rec.dispose();
     this.cache.clear();
-    this.region.clear();
   }
 
   dispose() {
@@ -206,21 +205,7 @@ export function createComponent(
     },
 
     effect(run) {
-      let prevCleanup: (() => void) | null = null;
-
-      const disposeEffect = effect(() => {
-        prevCleanup?.();
-        prevCleanup = null;
-
-        const next = run();
-        if (typeof next === "function") prevCleanup = next;
-      });
-
-      bag.add(() => {
-        prevCleanup?.();
-        prevCleanup = null;
-      });
-      bag.add(disposeEffect);
+      bag.add(effect(run));
     },
 
     slot(host, get) {
@@ -231,23 +216,19 @@ export function createComponent(
         const next = get();
         if (next === cur) return;
 
+        region.clear();
         cur?.dispose();
         cur = next;
-
-        region.clear();
 
         if (next) host.insertBefore(next.el, region.end);
       });
 
       bag.add(() => {
+        disposeEffect();
         cur?.dispose();
-        cur = null;
         region.dispose();
       });
-
-      bag.add(disposeEffect);
     },
-
     list<Id extends string | number>(
       host: HTMLElement,
       getIds: () => readonly Id[],
@@ -255,7 +236,7 @@ export function createComponent(
     ) {
       const region = createRegion(host);
 
-      const mgr = new RegionChildManager<Id>(region, (id: Id) => {
+      const mgr = new RegionChildManager<Id>(region, (id) => {
         const c = create(id);
         return { element: c.el, dispose: c.dispose };
       });
@@ -265,21 +246,21 @@ export function createComponent(
       });
 
       bag.add(() => {
+        disposeEffect();
         mgr.dispose();
         region.dispose();
       });
-
-      bag.add(disposeEffect);
     },
 
     target(focus, target, getEl, opts) {
-      const unbind = core.attachTarget({
-        focus,
-        target,
-        getEl,
-        ...(opts?.caret ? { caret: opts.caret } : {}),
-      });
-      bag.add(unbind);
+      bag.add(
+        core.attachTarget({
+          focus,
+          target,
+          getEl,
+          ...(opts?.caret ? { caret: opts.caret } : {}),
+        }),
+      );
     },
   };
 
