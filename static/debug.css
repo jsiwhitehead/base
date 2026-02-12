@@ -2,7 +2,9 @@
   position: sticky;
   top: 10px;
   max-height: calc(100vh - 20px);
+  min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   background: #f5f6f8;
   border: 1px solid #d6d9de;
   border-radius: 8px;
