@@ -218,7 +218,7 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 
 `insertChild`:
 
-- `opts?: { at?: number }`
+- Options: `opts?: { at?: number }`.
 - Creates a new child item under `parentId`.
 - New items are created as blank value items.
 - If `at` is omitted, the item is appended.

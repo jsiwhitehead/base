@@ -51,7 +51,7 @@
     --gap: 2px;
     --pad: 12px;
     --inset: 3px;
-    --rail: 4px;
+    --rail: 6px;
     --radius: 5px;
 
     --text: oklch(23% 0.02 255);
@@ -209,12 +209,21 @@
   }
 
   .ui-item.is-focused > .ui-meta .ui-meta-label,
-  .ui-item.is-focused > .ui-meta .ui-meta-conn-key {
+  .ui-item.is-focused > .ui-meta .ui-meta-conn-key,
+  .ui-item.is-issue > .ui-meta .ui-meta-label,
+  .ui-item.is-issue > .ui-meta .ui-meta-conn-key {
     color: var(--text);
   }
 }
 
 @layer views {
+  .ui-body.ui-outline {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    min-width: 0;
+  }
+
   .ui-body.ui-outline .ui-outline-node {
     display: flex;
     flex-direction: column;

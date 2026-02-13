@@ -10,10 +10,10 @@ This guide describes the DOM/UI system layered on Core: how UI is structured, ho
 
 The UI layer is intentionally small. It is not a general UI framework. It is a small set of primitives and conventions designed for an editor-like application where:
 
-- selection drives focus and interaction
-- nested views compose cleanly
-- DOM identity remains stable across navigation
-- keyboard behavior is predictable and consistent
+- Selection drives focus and interaction.
+- Nested views compose cleanly.
+- DOM identity remains stable across navigation.
+- Keyboard behavior is predictable and consistent.
 
 Core principles:
 
@@ -61,7 +61,7 @@ Tab invariant:
 
 ## 1.1 Two layers everywhere: Shell vs Body
 
-Every presented item is represented using two conceptual layers:
+Every item presentation uses two conceptual layers:
 
 ### Shell (owned by the parent/context)
 
@@ -69,14 +69,14 @@ The shell is the stable wrapper element for an item.
 
 A shell is responsible for:
 
-- representing exactly one Core item presentation
-- adding the `.ui-item` class
-- setting a stable `data-id` (recommended)
-- being programmatically focusable (`tabIndex = -1` if not already set)
-- attaching `DEFAULT_TARGET`
-- handling pointer selection on the item
-- applying selection-driven state classes (e.g. `.is-focused`)
-- optionally rendering **meta chrome** (label + connected fields)
+- Representing exactly one Core item presentation.
+- Adding the `.ui-item` class.
+- Setting a stable `data-id` (recommended).
+- Being programmatically focusable (`tabIndex = -1` if not already set).
+- Attaching `DEFAULT_TARGET`.
+- Handling pointer selection on the item.
+- Applying selection-driven state classes (e.g. `.is-focused`, `.is-issue`).
+- Rendering item chrome (rails + optional meta).
 
 Shell logic is shared and implemented by:
 
@@ -92,15 +92,15 @@ Meta is item chrome rendered by the parent/context.
 
 Meta includes:
 
-- label editor (`target = "label"`)
-- connected field editors (`target = "conn:*"`)
+- Label editor (`target = "label"`).
+- Connected field editors (`target = "conn:*"`).
 
 Meta is not view-specific. It is item-specific.
 
 Meta rendering policy:
 
-- parent/context controls meta visibility by mounting/unmounting it.
-- remounting meta starts editors from committed state.
+- Parent/context controls meta visibility by mounting/unmounting it.
+- Remounting meta starts editors from committed state.
 
 Canonical meta structure:
 
@@ -123,11 +123,11 @@ The body is the view-specific UI subtree.
 
 A body is responsible for:
 
-- rendering `.ui-body` (or an element stamped as body)
-- rendering view-specific structure
-- rendering children (via shell/body composition)
-- attaching **body-owned targets**
-- rendering view-owned controls (text editors, sliders, etc.)
+- Rendering `.ui-body` (or an element stamped as body).
+- Rendering view-specific structure.
+- Rendering children (via shell/body composition).
+- Attaching **body-owned targets**.
+- Rendering view-owned controls (text editors, sliders, etc.).
 
 Bodies are mounted via:
 
@@ -149,17 +149,17 @@ This is a core UI invariant.
 
 **Body owns these targets:**
 
-- `value`
-- any future body-specific targets
+- The `value` target.
+- Any future body-specific targets.
 
 Bodies must not attach `label` or `conn:*`.
 Shell/meta must not attach `value`.
 
 This keeps:
 
-- item chrome consistent across contexts
-- view bodies simpler
-- target behavior uniform regardless of which view is mounted
+- Item chrome consistent across contexts.
+- View bodies simpler.
+- Target behavior uniform regardless of which view is mounted.
 
 ---
 
@@ -167,8 +167,8 @@ This keeps:
 
 Editability is mode-driven:
 
-- `readonly` is a hard stop for editing
-- `plain` vs `connected` determines which edit targets exist (`value` vs `conn:*`)
+- `readonly` is a hard stop for editing.
+- `plain` vs `connected` determines which edit targets exist (`value` vs `conn:*`).
 
 The UI may convert modes (`plain` and `connected`), but conversion must be explicit.
 
@@ -190,23 +190,23 @@ The only correct way to create a component is:
 
 `createComponent` provides:
 
-- automatic teardown of:
-  - event listeners registered through `ctx.on`
-  - reactive effects registered through `ctx.effect`
-  - target bindings registered through `ctx.target`
-  - mounted static child components registered through `ctx.mount`
-  - mounted child subtrees managed through `ctx.slot` / `ctx.list`
-- predictable disposal:
-  - all cleanups run
-  - the component root is emptied
+- Automatic teardown of:
+  - Event listeners registered through `ctx.on`.
+  - Reactive effects registered through `ctx.effect`.
+  - Target bindings registered through `ctx.target`.
+  - Mounted static child components registered through `ctx.mount`.
+  - Mounted child subtrees managed through `ctx.slot` / `ctx.list`.
+- Predictable disposal:
+  - All cleanups run.
+  - The component root is emptied.
 
 This is the primary mechanism preventing:
 
-- memory leaks
-- stale DOM
-- stale focus targets
-- duplicate effects
-- forgotten disposal of mounted views/components
+- Memory leaks.
+- Stale DOM.
+- Stale focus targets.
+- Duplicate effects.
+- Forgotten disposal of mounted views/components.
 
 ---
 
@@ -216,12 +216,12 @@ This is the primary mechanism preventing:
 
 Quick chooser:
 
-- `ctx.on`: attach DOM listeners with automatic cleanup
-- `ctx.effect`: run reactive effects with automatic cleanup
-- `ctx.target`: bind Core focus targets to DOM elements
-- `ctx.mount`: append a static child component once
-- `ctx.slot`: mount one reactive child subtree
-- `ctx.list`: mount a keyed reactive child list
+- `ctx.on`: attach DOM listeners with automatic cleanup.
+- `ctx.effect`: run reactive effects with automatic cleanup.
+- `ctx.target`: bind Core focus targets to DOM elements.
+- `ctx.mount`: append a static child component once.
+- `ctx.slot`: mount one reactive child subtree.
+- `ctx.list`: mount a keyed reactive child list.
 
 ---
 
@@ -239,8 +239,8 @@ Registers a reactive effect using signals.
 
 `run()` may return a cleanup function which is called:
 
-- before the effect re-runs
-- when the component is disposed
+- Before the effect re-runs.
+- When the component is disposed.
 
 Effects should be written as idempotent updates to DOM state.
 
@@ -260,9 +260,9 @@ This is the only correct way to integrate DOM focus with Core selection.
 
 Mounts a static child component into `host`.
 
-- appends `child.el` to `host`
-- automatically disposes `child` when the parent component is disposed
-- use this for child components created once during build
+- Appends `child.el` to `host`.
+- Automatically disposes `child` when the parent component is disposed.
+- Use this for child components created once during build.
 
 ---
 
@@ -272,9 +272,9 @@ Mounts a static child component into `host`.
 
 A **region** is a stable insertion point inside a host element where dynamic children live. Regions:
 
-- preserve DOM order (relative to static siblings and other regions)
-- allow updates without wrapper elements
-- ensure removals dispose correctly
+- Preserve DOM order (relative to static siblings and other regions).
+- Allow updates without wrapper elements.
+- Ensure removals dispose correctly.
 
 Regions are created implicitly when `ctx.slot` / `ctx.list` are called, and stay fixed for the component lifetime.
 
@@ -286,18 +286,18 @@ Regions are created implicitly when `ctx.slot` / `ctx.list` are called, and stay
 
 Mounts **zero or one** component into a stable region inside `host`.
 
-- creates a region at the call site
-- installs an effect which re-runs when reactive dependencies read by `getComponent()` change
-- on each run:
-  - disposes the previously mounted component (if any)
-  - mounts the next component (or clears the region if `null`)
-- disposal is automatic; callers do not track the current child manually
+- Creates a region at the call site.
+- Installs an effect which re-runs when reactive dependencies read by `getComponent()` change.
+- On each run:
+  - Disposes the previously mounted component (if any).
+  - Mounts the next component (or clears the region if `null`).
+- Disposal is automatic; callers do not track the current child manually.
 
 Used for:
 
-- conditional chrome (meta on/off)
-- switching between view bodies (group vs scalar)
-- mounting `core.mountView(...)` where the view kind can change
+- Conditional chrome (meta on/off).
+- Switching between view bodies (group vs scalar).
+- Mounting `core.mountView(...)` where the view kind can change.
 
 ---
 
@@ -305,18 +305,18 @@ Used for:
 
 Mounts a **keyed list** of components into a stable region inside `host`.
 
-- creates a region at the call site
-- installs an effect which re-runs when reactive dependencies read by `getIds()` change
-- reconciles children by key:
-  - reuses existing components for ids that remain
-  - disposes components for ids that are removed
-  - orders DOM to match `getIds()` exactly
+- Creates a region at the call site.
+- Installs an effect which re-runs when reactive dependencies read by `getIds()` change.
+- Reconciles children by key:
+  - Reuses existing components for ids that remain.
+  - Disposes components for ids that are removed.
+  - Orders DOM to match `getIds()` exactly.
 
 Used for:
 
-- outline child nodes
-- table rows
-- table columns / schema-driven subtrees
+- Outline child nodes.
+- Table rows.
+- Table columns / schema-driven subtrees.
 
 ---
 
@@ -328,15 +328,15 @@ Selection changes are frequent and must be cheap.
 
 Selection-driven effects should only:
 
-- toggle classes
-- update datasets
-- update caret/editor state
+- Toggle classes.
+- Update datasets.
+- Update caret/editor state.
 
 Selection-driven effects must not:
 
-- rebuild shells
-- remount bodies
-- restructure lists
+- Rebuild shells.
+- Remount bodies.
+- Restructure lists.
 
 ---
 
@@ -356,8 +356,8 @@ When a subtree genuinely changes shape, `ctx.slot` should be fed by a stable dis
 
 This ensures:
 
-- edits and selection changes don't remount structure
-- swaps happen only when structure truly changes
+- Edits and selection changes don't remount structure.
+- Swaps happen only when structure truly changes.
 
 ---
 
@@ -365,8 +365,8 @@ This ensures:
 
 Prefer:
 
-- one `slot` for one conditional/switchable subtree
-- one `list` for one repeated sequence
+- One `slot` for one conditional/switchable subtree.
+- One `list` for one repeated sequence.
 
 Avoid building manual reconciliation inside effects; the region primitives exist to own lifecycle and ordering safely.
 
@@ -394,29 +394,29 @@ This chapter defines how keyboard and pointer input is routed and how editors be
 
 Core selection is always either:
 
-- idle (blurred)
-- focused: `{ focus, target, caret? }`
+- Idle (blurred).
+- Focused: `{ focus, target, caret? }`.
 
 The UI treats targets as named focus surfaces:
 
-- `DEFAULT_TARGET` — item container focus (shell)
-- `label` — label editor (shell/meta)
-- `conn:*` — connected editors (shell/meta)
-- `value` — primary content editor (body)
+- `DEFAULT_TARGET` — item container focus (shell).
+- `label` — label editor (shell/meta).
+- `conn:*` — connected editors (shell/meta).
+- `value` — primary content editor (body).
 
 Universal item edit targets are:
 
-- `conn:*` fields (in connected mode)
-- `value` (in plain scalar mode)
+- `conn:*` fields (in connected mode).
+- `value` (in plain scalar mode).
 
 `label` is a valid target but is not part of standard keyboard edit-entry flow.
 
 Universal label editing policy (current):
 
-- label editing is pointer-accessible only
-- keyboard navigation does not enter label
-- label targets do not yield navigation while editing
-- label is not part of edit-stop traversal
+- Label editing is pointer-accessible only.
+- Keyboard navigation does not enter label.
+- Label targets do not yield navigation while editing.
+- Label is not part of edit-stop traversal.
 
 Caret values are meaningful only for caret-supporting targets (typically text editors).
 
@@ -432,7 +432,7 @@ The app uses exactly one tabbable element total:
 
 - `.ui-shell-main` (`tabIndex=0`)
 
-No other element participates in browser tab-order navigation (App frame / shell DOM).
+No other element participates in browser tab-order navigation.
 
 ---
 
@@ -442,8 +442,8 @@ Tab is never used for browser focus traversal.
 
 Even inside text editors:
 
-- Tab is intercepted and translated into an app intent
-- the view defines what Tab means
+- Tab is intercepted and translated into an app intent.
+- The view defines what Tab means.
 
 This makes keyboard behavior consistent and view-controlled.
 
@@ -453,8 +453,8 @@ This makes keyboard behavior consistent and view-controlled.
 
 `TAB` / `Shift+TAB` is always interpreted by exactly one current view based on focused ownership.
 
-- focus on an outer container/target routes `TAB` to the parent/context view
-- focus on an inner container/target routes `TAB` to the child view that owns that target
+- Focus on an outer container/target routes `TAB` to the parent/context view.
+- Focus on an inner container/target routes `TAB` to the child view that owns that target.
 
 This keeps behavior local to the focused item context regardless of target type.
 
@@ -484,9 +484,9 @@ Views interpret intents. Controls emit intents.
 
 This separation is what keeps:
 
-- view logic simple
-- editor logic reusable
-- behavior consistent across views
+- View logic simple.
+- Editor logic reusable.
+- Behavior consistent across views.
 
 ---
 
@@ -500,10 +500,11 @@ Core owns the global `keydown` listener (attached once for the app).
 
 Core:
 
-- parses the event into an intent
-- consumes the DOM event when it routes an intent
-- handles global commands (for example, Escape ladder)
-- routes view intents to the active view intent handler
+- Parses the event into an intent.
+- Consumes the DOM event when it routes an intent.
+- Handles global commands (for example, Escape ladder).
+- Routes view intents to the active view intent handler.
+- Lets native text editors handle local text input first; explicit global commands may still be handled by Core.
 
 ---
 
@@ -525,9 +526,9 @@ Instead of letting arrow keys bubble, editors detect boundary conditions and emi
 
 This is what enables:
 
-- outline-style editing
-- grid-style editing
-- predictable navigation at text boundaries
+- Outline-style editing.
+- Grid-style editing.
+- Predictable navigation at text boundaries.
 
 ---
 
@@ -539,9 +540,9 @@ Pointer behavior is intentionally simple and consistent.
 
 `.ui-item` shells handle pointerdown by:
 
-- focusing the item at `DEFAULT_TARGET`
-- capturing a caret (if the pointer was on a text editor)
-- stopping propagation
+- Focusing the item at `DEFAULT_TARGET`.
+- Capturing a caret (if the pointer was on a text editor).
+- Stopping propagation.
 
 This is owned by `bindUiItemShell`.
 
@@ -551,9 +552,9 @@ This is owned by `bindUiItemShell`.
 
 Editors handle pointerdown by:
 
-- focusing their specific target
-- using `caretFromTarget(e.target)` for caret placement
-- stopping propagation
+- Focusing their specific target.
+- Using `caretFromTarget(e.target)` for caret placement.
+- Stopping propagation.
 
 ---
 
@@ -565,10 +566,10 @@ The UI provides one text control:
 
 `buildTextField` supports:
 
-- `multiline` (`input` vs `textarea`)
-- `autosize` (mirror-driven sizing)
-- `editModel: "live" | "draft"`
-- yielding on/off (`yieldNav`; labels typically disable yielding)
+- Multiline mode (`input` vs `textarea`).
+- Autosize mode (mirror-driven sizing).
+- Edit model: `live` or `draft`.
+- Yielding on/off (`yieldNav`; labels typically disable yielding).
 
 Canonical DOM:
 
@@ -580,20 +581,20 @@ Canonical DOM:
 
 Autosize semantics (`autosize: true`):
 
-- mirror is hidden but drives autosize layout.
-- input/textarea overlays the mirror in the same slot.
+- Mirror is hidden but drives autosize layout.
+- Input/textarea overlays the mirror in the same slot.
 
 Padding note:
 
-- for autosize fields, apply padding to both `.ui-textfield-input` and `.ui-textfield-mirror` (not `.ui-textfield`).
-- autosize textfields must opt out of global `width: 100%` defaults (for example: wrapper uses `fit-content` and input uses auto width).
+- For autosize fields, apply padding to both `.ui-textfield-input` and `.ui-textfield-mirror` (not `.ui-textfield`).
+- Autosize textfields must opt out of global `width: 100%` defaults (for example: wrapper uses `fit-content` and input uses auto width).
 
 `buildTextField` instances:
 
-- attach their target via `ctx.target(...)`
-- participate in yielding when `yieldNav` and `onIntent` are enabled
-- respect readonly state
-- rely on shell-level issue state via `.ui-item.is-issue`
+- Attach their target via `ctx.target(...)`.
+- Participate in yielding when `yieldNav` and `onIntent` are enabled.
+- Respect readonly state.
+- Rely on shell-level issue state via `.ui-item.is-issue`.
 
 ---
 
@@ -603,34 +604,33 @@ Editors support two commit models:
 
 #### Live
 
-- commits on every `input`
-- no local draft state
-- cancel does not revert
+- Commits on every `input`.
+- No local draft state.
+- Cancel does not revert.
 
 Use when:
 
-- updates are cheap
-- “what you see is what Core has” is desired
+- Updates are cheap.
+- “what you see is what Core has” is desired.
 
 ---
 
 #### Draft
 
-- maintains local draft state while focused
-- commits on:
+- Maintains local draft state while focused.
+- Commits on:
   - `CONFIRM`
   - `TAB`
-  - yielded `NAV`
+  - `NAV` (yielded)
   - `blur`
-
-- cancels on `CANCEL`
-- resets to committed state when focus leaves
+- Cancels on `CANCEL`.
+- Resets to committed state when focus leaves.
 
 Draft mode exists to provide:
 
-- explicit commit points
-- cancellation
-- stable editing across reactive reruns
+- Explicit commit points.
+- Cancellation.
+- Stable editing across reactive reruns.
 
 ---
 
@@ -643,8 +643,8 @@ In multiline editors:
 
 This preserves:
 
-- fast commit behavior
-- the ability to enter multiline content intentionally
+- Fast commit behavior.
+- The ability to enter multiline content intentionally.
 
 ---
 
@@ -656,8 +656,8 @@ These are shared across views.
 
 Escape behaves as:
 
-- if focused on a non-default target → focus `DEFAULT_TARGET`
-- else → blur
+- If focused on a non-default target -> focus `DEFAULT_TARGET`.
+- Else -> blur.
 
 ---
 
@@ -665,9 +665,9 @@ Escape behaves as:
 
 When focused on `DEFAULT_TARGET`:
 
-- `TYPE` enters the first item edit target (if any)
-- selects all
-- inserts the typed character
+- `TYPE` enters the first item edit target (if any).
+- Selects all.
+- Inserts the typed character.
 
 ---
 
@@ -675,9 +675,9 @@ When focused on `DEFAULT_TARGET`:
 
 When focused on `DEFAULT_TARGET`:
 
-- `CONFIRM` enters the first item edit target (if any)
-- caret is placed at end (not select-all)
-- if there is no item edit target, `CONFIRM` performs the view structural default
+- `CONFIRM` enters the first item edit target (if any).
+- Caret is placed at end (not select-all).
+- If there is no item edit target, `CONFIRM` performs the view structural default.
 
 ---
 
@@ -685,8 +685,8 @@ When focused on `DEFAULT_TARGET`:
 
 When navigation moves focus to a different item:
 
-- the destination is focused at `DEFAULT_TARGET`
-- navigation never auto-enters editing
+- The destination is focused at `DEFAULT_TARGET`.
+- Navigation never auto-enters editing.
 
 ---
 
@@ -696,13 +696,13 @@ This chapter describes each view and its intent interpretation.
 
 All views should be documented using the same template:
 
-1. Purpose / mental model
-2. DOM shape
-3. Focus surfaces + targets
-4. Navigation rules
-5. Editing rules
-6. Structural commands
-7. Notable edge cases
+1. Purpose / mental model.
+2. DOM shape.
+3. Focus surfaces + targets.
+4. Navigation rules.
+5. Editing rules.
+6. Structural commands.
+7. Notable edge cases.
 
 ---
 
@@ -712,9 +712,9 @@ All views should be documented using the same template:
 
 Outline is a hierarchical editor optimized for:
 
-- structural navigation
-- fast text editing
-- nesting / splitting / joining
+- Structural navigation.
+- Fast text editing.
+- Nesting / splitting / joining.
 
 Outline presents items in a depth-first visible order.
 
@@ -724,11 +724,11 @@ Outline presents items in a depth-first visible order.
 
 Outline renders:
 
-- a body stamped as `.ui-body.ui-outline`
-- for each presented item:
-  - a `.ui-outline-node` shell (`.ui-item`)
-  - optional `[.ui-meta subtree]` in the shell
-  - nested `[.ui-body.<child-view> subtree]` for that item’s mounted view body
+- A body stamped as `.ui-body.ui-outline`.
+- For each presented item:
+  - A `.ui-outline-node` shell (`.ui-item`).
+  - Optional `[.ui-meta subtree]` in the shell.
+  - Nested `[.ui-body.<child-view> subtree]` for that item’s mounted view body.
 
 Group items render children recursively.
 
@@ -754,7 +754,7 @@ Scalar item body (plain scalar):
 
 ### Meta visibility (outline)
 
-- meta is shown when label has content, connected fields exist, or the `label` target is focused.
+- Meta is shown when label has content, connected fields exist, or the `label` target is focused.
 
 ---
 
@@ -780,9 +780,9 @@ Body targets:
 
 Arrow navigation is structural:
 
-- up/down: previous/next visible item
-- left: parent item (if any)
-- right: first child (if any)
+- Up/down: previous/next visible item.
+- Left: parent item (if any).
+- Right: first child (if any).
 
 ---
 
@@ -790,20 +790,20 @@ Arrow navigation is structural:
 
 When focused on an edit target (`value` or `conn:*`):
 
-- arrow keys traverse the edit-flow space
-- traversal moves between edit stops (not structural shells)
+- Arrow keys traverse the edit-flow space.
+- Traversal moves between edit stops (not structural shells).
 
 Edit stops include:
 
-- `conn:*` fields for connected-mode leaf items
-- `value` for plain scalar leaf items
+- `conn:*` fields for connected-mode leaf items.
+- `value` for plain scalar leaf items.
 
 Label is excluded for now.
 
 Caret policy:
 
-- forward traversal places caret at start
-- backward traversal places caret at end
+- Forward traversal places caret at start.
+- Backward traversal places caret at end.
 
 ---
 
@@ -819,8 +819,8 @@ Outline follows the universal first-edit-target rule (`conn:*` then `value`).
 
 If the user types `=` on an empty plain scalar:
 
-- the item is converted to formula connected mode
-- focus moves to `conn:expr`
+- The item is converted to formula connected mode.
+- Focus moves to `conn:expr`.
 
 ---
 
@@ -829,11 +829,10 @@ If the user types `=` on an empty plain scalar:
 Enter behavior (outline-specific cases):
 
 - If editing `value`:
-  - split the scalar at caret selection into two sibling items
-  - focus the new right item’s `value`
-
+  - Split the scalar at caret selection into two sibling items.
+  - Focus the new right item’s `value`.
 - If editing a `conn:*` field:
-  - exit to `DEFAULT_TARGET`
+  - Exit to `DEFAULT_TARGET`.
 
 ---
 
@@ -841,13 +840,13 @@ Enter behavior (outline-specific cases):
 
 Tab performs nesting:
 
-- Tab: indent (nest in)
-- Shift+Tab: outdent (nest out)
+- Tab: indent (nest in).
+- Shift+Tab: outdent (nest out).
 
 When tabbing while editing:
 
-- the view attempts to preserve the same target
-- caret is clamped into the new text
+- The view attempts to preserve the same target.
+- Caret is clamped into the new text.
 
 ---
 
@@ -855,13 +854,13 @@ When tabbing while editing:
 
 Outline interprets boundary delete as:
 
-- removing empty items
-- joining adjacent scalar items when appropriate
-- removing non-scalar items structurally
+- Removing empty items.
+- Joining adjacent scalar items when appropriate.
+- Removing non-scalar items structurally.
 
 After deletion:
 
-- focus moves to a neighboring item or blurs if none remain
+- Focus moves to a neighboring item or blurs if none remain.
 
 ---
 
@@ -871,15 +870,15 @@ After deletion:
 
 Table presents a group item as a grid:
 
-- children of the table are rows
-- children of each row are cells
-- the first row defines the schema (column count)
+- Children of the table are rows.
+- Children of each row are cells.
+- Core maintains a shared labeled column set and order across rows.
 
 Table is optimized for:
 
-- spatial navigation
-- fast data entry
-- nested cell views
+- Spatial navigation.
+- Fast data entry.
+- Nested cell views.
 
 ---
 
@@ -887,7 +886,7 @@ Table is optimized for:
 
 Table mounts:
 
-- `.ui-body.ui-table`
+- `.ui-body.ui-table`:
   - `.ui-table-header`
   - `.ui-table-body`
 
@@ -895,10 +894,10 @@ Rows are rendered as `.ui-table-row.ui-item` shells.
 
 Each row contains:
 
-- a meta-column cell (`.ui-table-meta-col`) for row item meta
-- a set of cell shells for each cell item, each nesting `[.ui-body.<cell-view> subtree]`
+- A meta-column cell (`.ui-table-meta-col`) for row item meta.
+- A set of cell shells for each cell item, each nesting `[.ui-body.<cell-view> subtree]`.
 
-The header renders schema cell meta by mounting `buildItemMeta(...)` for schema-row cells.
+The header renders schema cell meta by mounting `buildItemMeta(...)` for schema-derived cells.
 
 Canonical structure:
 
@@ -925,7 +924,7 @@ Canonical structure:
 
 Row shells:
 
-- `DEFAULT_TARGET` is attached to the row shell
+- `DEFAULT_TARGET` is attached to the row shell.
 
 Row meta targets:
 
@@ -934,20 +933,20 @@ Row meta targets:
 
 Cell shells:
 
-- `DEFAULT_TARGET` attached to each cell shell
+- `DEFAULT_TARGET` attached to each cell shell.
 
 Cell body targets:
 
-- `value` for editable scalar cells
+- `value` for editable scalar cells.
 
 ---
 
 ### Traversal stops
 
-- row container focus
-- cell container focus
-- cell edit targets (`value`)
-- connected edit stops where applicable
+- Row container focus.
+- Cell container focus.
+- Cell edit targets (`value`).
+- Connected edit stops where applicable.
 
 ---
 
@@ -955,17 +954,17 @@ Cell body targets:
 
 #### Row container focus (`DEFAULT_TARGET`)
 
-- up/down: move between rows
-- right: enter first cell container (column 0)
-- left: no-op (table does not currently escape left)
+- Up/down: move between rows.
+- Right: enter first cell container (column 0).
+- Left: no-op (table does not currently escape left).
 
 ---
 
 #### Cell container focus (`DEFAULT_TARGET`)
 
-- left/right: move between cells
-- up/down: move between rows in same column
-- left from column 0: returns to row container focus
+- Left/right: move between cells.
+- Up/down: move between rows in same column.
+- Left from column 0: returns to row container focus.
 
 ---
 
@@ -973,7 +972,7 @@ Cell body targets:
 
 Editors yield at boundaries:
 
-- arrow keys yield at start/end to move to neighbor cell
+- Arrow keys yield at start/end to move to neighbor cell.
 
 ---
 
@@ -981,7 +980,7 @@ Editors yield at boundaries:
 
 Tab provides a linear traversal order:
 
-- row container → first cell → next cells → next row container → …
+- Row container -> first cell -> next cells -> next row container, then repeat.
 
 Shift+Tab moves backward.
 
@@ -992,13 +991,12 @@ Shift+Tab moves backward.
 Enter behavior is intentionally spreadsheet-like:
 
 - From row container focus:
-  - insert a new row after current row
-  - focus new row container
-
+  - Insert a new row after current row.
+  - Focus new row container.
 - From cell editing (`value`):
-  - commit and exit edit
-  - move focus down one row in the same column (if possible)
-  - otherwise exit to the same cell container
+  - Commit and exit edit.
+  - Move focus down one row in the same column (if possible).
+  - Otherwise exit to the same cell container.
 
 ---
 
@@ -1006,7 +1004,7 @@ Enter behavior is intentionally spreadsheet-like:
 
 Type-to-edit exception:
 
-- typing while row container-focused does nothing (row container is structural)
+- Typing while row container-focused does nothing (row container is structural).
 
 ---
 
@@ -1014,8 +1012,8 @@ Type-to-edit exception:
 
 Table supports:
 
-- add row after current row (Enter from row container)
-- remove row (command-driven; not bound to Delete by default)
+- Add row after current row (Enter from row container).
+- Remove row (command-driven; not bound to Delete by default).
 
 ---
 
@@ -1027,9 +1025,9 @@ Slider is a scalar editor optimized for numeric adjustment.
 
 It provides:
 
-- pointer dragging
-- keyboard nudging
-- formatted numeric display
+- Pointer dragging.
+- Keyboard nudging.
+- Formatted numeric display.
 
 ---
 
@@ -1037,7 +1035,7 @@ It provides:
 
 Slider mounts:
 
-- `.ui-body.ui-slider`
+- `.ui-body.ui-slider`:
   - `<input type="range">`
   - `.ui-slider-value`
 
@@ -1063,13 +1061,13 @@ The slider input is not a separate focus target; it is a body control.
 
 Arrow keys nudge the value:
 
-- left/down: decrement
-- right/up: increment
+- Left/down: decrement.
+- Right/up: increment.
 
 Jump vs step:
 
-- jump nudges by 10 steps
-- step nudges by 1 step
+- Jump nudges by 10 steps.
+- Step nudges by 1 step.
 
 ---
 
@@ -1077,8 +1075,8 @@ Jump vs step:
 
 Slider commits only when:
 
-- the item is a plain scalar
-- the value is numeric/coercible
+- The item is a plain scalar.
+- The value is numeric/coercible.
 
 Value display formatting depends on step precision.
 
@@ -1098,9 +1096,9 @@ The UI is driven by a small set of global tokens. These tokens define the visual
 
 Token categories:
 
-- Typography (fonts, sizes, weights, line-height)
-- Geometry (gap, padding, inset, rail thickness, radius)
-- Colors (text, muted text, background, chrome fill, focus, issue)
+- Typography (fonts, sizes, weights, line-height).
+- Geometry (gap, padding, inset, rail thickness, radius).
+- Colors (text, muted text, background, chrome fill, focus, issue).
 
 Tokens should be defined at `:root` and referenced everywhere else. View styles should not hardcode raw values unless unavoidable.
 
@@ -1114,13 +1112,13 @@ Styling assumes a two-layer presentation everywhere.
 
 Chrome is rendered by the parent/context and includes:
 
-- item rails (the signature marker)
-- optional meta header (`.ui-meta`)
+- Item rails (the signature marker).
+- Optional meta header (`.ui-meta`).
 
 Chrome is responsible for reflecting universal state:
 
-- focused
-- issue
+- Focused.
+- Issue.
 
 Chrome must not depend on the mounted body's internal DOM structure.
 
@@ -1130,8 +1128,8 @@ Chrome must not depend on the mounted body's internal DOM structure.
 
 Content is rendered by the mounted view body:
 
-- `.ui-body` subtree
-- view-specific layout and controls
+- `.ui-body` subtree.
+- View-specific layout and controls.
 
 Content is styled neutrally by default. View-specific styling should not redefine universal chrome language.
 
@@ -1148,11 +1146,17 @@ These classes are applied to `.ui-item` shells (and optionally on child shells w
 
 State styling rules:
 
-- default: rails + meta share a single neutral chrome fill
-- focused: rails + meta share the focus chrome fill
-- issue: rails + meta share the issue chrome fill
-- state priority is a stack: `issue` overrides `focus`
-- focus is indicated by chrome fill only (no focus ring)
+- Rails and meta always share one chrome fill.
+- Default: neutral fill.
+- Focused: focus fill.
+- Issue: issue fill.
+- Priority: `issue` overrides `focus`.
+- Focus is shown by chrome fill only (no focus ring).
+- Selection is local: only the selected item is loud; selected issue uses an issue-colored pill overlay.
+- Path context is subtle and local:
+  - Selected path (ancestors): gentle emphasis on each ancestor's own segment.
+  - Issue path (ancestors): lighter issue tint on each ancestor's own segment.
+- Siblings are never tinted by another item's state.
 
 Bodies should remain readable and neutral; state is expressed primarily through chrome.
 
@@ -1162,15 +1166,15 @@ Bodies should remain readable and neutral; state is expressed primarily through 
 
 Chrome styling is driven through a single derived value on `.ui-item`:
 
-- `.ui-item` defines one derived chrome fill: `--chrome-color`
-- `.is-focused` and `.is-issue` override that derived fill according to the state priority stack
-- rails and meta use the derived fill, not raw state tokens
+- `.ui-item` defines one derived chrome fill: `--chrome-color`.
+- `.is-focused` and `.is-issue` override that derived fill according to the state priority stack.
+- Rails and meta use the derived fill, not raw state tokens.
 
 This keeps:
 
-- rails and meta always match
-- state styling is centralized
-- chrome does not depend on body structure
+- Rails and meta always match.
+- State styling is centralized.
+- Chrome does not depend on body structure.
 
 ---
 
@@ -1178,18 +1182,58 @@ This keeps:
 
 Rails are the primary structural marker.
 
+They communicate:
+
+1. Hierarchy map (nested containment).
+2. Item segmentation (sibling boundaries).
+3. State (selection and issues).
+
+Rails are structural guides, not borders or cards.
+
+### One rail design everywhere
+
+Rails use one design everywhere.
+Each item has one rail segment at its depth.
+
 Principles:
 
-1. Every item has a representative rail (directly or via its chrome context).
-2. Groups are expressed as continuous rails composed of child rails, separated by gaps.
-3. Rail direction matches layout direction:
-   - vertical stacks -> vertical rail at left edge
-   - horizontal stacks -> horizontal rail at top edge
-4. Gaps are the separator language:
-   - rails do not require divider lines
-   - spacing between rail segments is the main grouping cue
+1. Grouping is shown by segmented rails and spacing, not divider lines.
+2. Rail direction follows layout:
+   - Vertical stacks -> vertical rail at the leading edge.
+   - Horizontal/table layouts -> horizontal rail at the top edge.
+3. State is item-local:
+   - Primary selection/issue styling applies to that item's own segment.
+   - Ancestor path context may add subtle emphasis/tint on ancestors' own segments.
+   - State does not spill to unrelated siblings.
 
-Rails are drawn on chrome elements that own layout geometry (not inside mounted body content).
+### Continuity and rounding
+
+- Default segments use square ends.
+- Only the leading and trailing ends of a contiguous run are rounded.
+- The selected item draws a louder pill overlay with rounded ends on its own segment.
+
+### Interaction
+
+- Rail segments remain visible and clickable.
+- Each segment should provide a wider hit target with a narrower visible rail mark inside it.
+
+Rails are drawn on chrome elements that own layout geometry (never inside mounted body content).
+
+---
+
+### Prominence hierarchy (quiet -> loud)
+
+1. Default item rail segment.
+2. Context segment (selected-path emphasis or issue tint).
+3. Selected item segment (loud pill overlay; issue-colored when selected item has issue).
+
+---
+
+### What does not happen
+
+- No multi-item selection glow.
+- No sibling or unrelated-item spillover from selection/issue state.
+- No per-depth or per-type rail shape or thickness changes.
 
 ---
 
@@ -1208,11 +1252,11 @@ Rails are drawn on chrome elements that own layout geometry (not inside mounted 
 
 Rails should be driven by tokens:
 
-- rail thickness (`--rail`)
-- rail end radius
-- rail inset rules
+- Rail thickness (`--rail`).
+- Rail end radius.
+- Rail inset rules.
 
-Rail endcaps are pill-rounded across views.
+Default segment endcaps are square; rounded caps are reserved for run boundaries and selected overlays.
 
 These values are part of the UI's visual identity and should not vary between views except where explicitly called out.
 
@@ -1230,9 +1274,9 @@ Meta is chrome, not content.
 
 Meta typography is intentionally restrained:
 
-- label: smaller size, slightly stronger weight
-- connection keys: smallest size, muted
-- connection values: monospaced
+- Label: smaller size, slightly stronger weight.
+- Connection keys: smallest size, muted.
+- Connection values: monospaced.
 
 ### Textfield styling rules
 
@@ -1251,9 +1295,11 @@ Outline items are vertically stacked.
 Chrome rules:
 
 - `.ui-outline-node` renders the vertical rail segment at its left edge.
+- Rails are depth-aligned in nested vertical columns.
+- Deeper columns are horizontally indented.
+- Small vertical gaps segment siblings and outline the nested tree shape.
 - Meta (if present) sits at the top of the node, above the mounted body.
 - Outline overrides meta sizing to shrink-wrap for compact chrome.
-- The outline group effect is created by stacked segments with small vertical gaps.
 - Meta and rail should visually merge into a single block.
 
 Canonical styling targets:
@@ -1337,19 +1383,34 @@ Use a fixed layer order to keep CSS predictable:
 
 # Summary of invariants
 
-- One item presentation → exactly one `.ui-item` shell.
-- Shell owns: `DEFAULT_TARGET`, label, and conn targets.
-- Body owns: value targets.
-- Shell identity is stable across selection changes.
-- Selection-driven updates must be styling-only.
-- One tabbable element total (`.ui-shell-main`).
-- Tab/Shift+Tab are always app commands.
-- Tab is routed by Core and delivered to the active view intent handler (outer -> parent/context view; inner -> child view).
-- Interaction is routed via intents.
-- Editors yield semantically (they emit intents rather than bubbling raw events).
+Structure and ownership:
+
+- One item presentation -> exactly one `.ui-item` shell.
+- Shell/meta owns `DEFAULT_TARGET`, `label`, and `conn:*`.
+- Body owns `value`.
+- `.ui-item` identity stays stable across selection changes.
+- Selection-driven updates are styling-only.
+
+Focus and interaction:
+
+- The app has one tabbable element: `.ui-shell-main`.
+- Tab/Shift+Tab are app commands, not browser focus traversal.
+- Tab is routed by Core to the active view intent handler (outer -> parent/context, inner -> child).
+- Interaction is intent-driven; editors yield semantically.
 - Label editing is pointer-only and does not yield navigation.
-- `CONFIRM` from `DEFAULT_TARGET` enters first item edit target, or runs the view structural default when no edit target exists.
-- Table Enter in cell edit commits and moves down when possible.
-- Mod+Enter inserts newline in multiline editors.
-- Dynamic subtrees are mounted into regions created by `ctx.slot` and `ctx.list`; regions preserve DOM order without wrapper nodes.
-- Once a region exists inside a host, do not clear/replace the host's children manually; updates must go through `slot`/`list` (or create static DOM before regions are created).
+
+Editing behavior:
+
+- `CONFIRM` from `DEFAULT_TARGET` enters the first item edit target, or runs the view structural default if none exists.
+- Table Enter in cell edit commits and moves focus down when possible.
+- In multiline editors, Mod+Enter inserts a newline.
+
+Mounting and reactivity:
+
+- Dynamic subtrees are mounted through regions (`ctx.slot`, `ctx.list`) to preserve DOM order and lifecycle.
+- Once a host has a region, do not manually clear/replace host children; update through `slot`/`list`.
+
+Rails and state:
+
+- Rail system has one primitive: each item has one rail segment at its depth.
+- Rail state is item-local; path context is subtle and siblings are unaffected.
