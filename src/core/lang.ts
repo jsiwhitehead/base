@@ -7,9 +7,9 @@ import {
   isEntryGroupResult,
   isIssueResult,
   isPresent,
+  isResultGroupResult,
   isScalarResult,
   isTrue,
-  isResultGroupResult,
 } from "./eval";
 
 const ISSUE = {
@@ -35,7 +35,7 @@ const ISSUE = {
   fnName: "Expected function name",
 } as const;
 
-const grammar = ohm.grammar(String.raw`
+const GRAMMAR = ohm.grammar(String.raw`
 Script {
   Start         = Expr
 
@@ -185,7 +185,7 @@ function decodeEscapes(unquoted: string): string {
   return JSON.parse(`"${s}"`);
 }
 
-const semantics = grammar.createSemantics().addAttribute("ast", {
+const SEMANTICS = GRAMMAR.createSemantics().addAttribute("ast", {
   Expr(expr) {
     return expr.ast;
   },
@@ -426,11 +426,14 @@ function getEntryGroupByPosition(
   const norm = normalizePosition(position);
   if ("kind" in norm) return norm;
 
-  if (!isEntryGroupResult(group)) return Results.issue(ISSUE.selectPosNonEntryGroup);
+  if (!isEntryGroupResult(group))
+    return Results.issue(ISSUE.selectPosNonEntryGroup);
 
   const id = group.entryIds[norm.index];
   if (id == null)
-    return Results.issue(ISSUE.positionOutOfRange(position, group.entryIds.length));
+    return Results.issue(
+      ISSUE.positionOutOfRange(position, group.entryIds.length),
+    );
   return env.resolve(id);
 }
 
@@ -440,15 +443,22 @@ function getValueGroupByPosition(group: Result, position: number): Result {
   const norm = normalizePosition(position);
   if ("kind" in norm) return norm;
 
-  if (!isResultGroupResult(group)) return Results.issue(ISSUE.selectPosNonResultGroup);
+  if (!isResultGroupResult(group))
+    return Results.issue(ISSUE.selectPosNonResultGroup);
 
   const it = group.items[norm.index];
   if (it == null)
-    return Results.issue(ISSUE.positionOutOfRange(position, group.items.length));
+    return Results.issue(
+      ISSUE.positionOutOfRange(position, group.items.length),
+    );
   return it.result;
 }
 
-function getByPositionOrLabel(group: Result, selV: Result, env: EvalEnv): Result {
+function getByPositionOrLabel(
+  group: Result,
+  selV: Result,
+  env: EvalEnv,
+): Result {
   if (isIssueResult(group)) return group;
   if (isIssueResult(selV)) return selV;
 
@@ -457,7 +467,8 @@ function getByPositionOrLabel(group: Result, selV: Result, env: EvalEnv): Result
     if (typeof lit === "number") {
       if (isEntryGroupResult(group))
         return getEntryGroupByPosition(group, lit, env);
-      if (isResultGroupResult(group)) return getValueGroupByPosition(group, lit);
+      if (isResultGroupResult(group))
+        return getValueGroupByPosition(group, lit);
       return Results.issue(ISSUE.selectPosNonGroup);
     }
     if (typeof lit === "string") return getEntryGroupByLabel(group, lit, env);
@@ -502,7 +513,10 @@ type Builtin = (env: EvalEnv, ...args: Result[]) => Result;
 function contentFn(op: (env: EvalEnv, ...args: Result[]) => Result): Builtin {
   return (env, ...args) => {
     const want = Math.max(0, op.length - 1);
-    const filled = Array.from({ length: want }, (_, i) => args[i] ?? Results.blank());
+    const filled = Array.from(
+      { length: want },
+      (_, i) => args[i] ?? Results.blank(),
+    );
     return op(env, ...filled);
   };
 }
@@ -511,11 +525,11 @@ type ArgSpec<T> =
   | { kind: "req"; convert: (v: Result) => T | null }
   | { kind: "opt"; convert: (v: Result) => T | null; fallback: T };
 
-const reqNum = { kind: "req", convert: numOpt } as const;
+const REQ_NUM = { kind: "req", convert: numOpt } as const;
 const optNum = (d: number) =>
   ({ kind: "opt", convert: numOpt, fallback: d }) as const;
 
-const reqText = { kind: "req", convert: textOpt } as const;
+const REQ_TEXT = { kind: "req", convert: textOpt } as const;
 const optText = (d: string) =>
   ({ kind: "opt", convert: textOpt, fallback: d }) as const;
 
@@ -585,13 +599,13 @@ function reduceNumbers(
   return ns.length ? op(ns) : null;
 }
 
-const groupSpec = {
+const GROUP_SPEC = {
   kind: "req",
   convert: (v: Result) =>
     isEntryGroupResult(v) || isResultGroupResult(v) ? v : null,
 } as const;
 
-const builtins: Record<string, Builtin> = {
+const BUILTINS: Record<string, Builtin> = {
   is_blank: contentFn((_env, v) => primitiveToResult(isBlankResult(v))),
   is_present: contentFn((_env, v) => primitiveToResult(isPresent(v))),
   is_true: contentFn((_env, v) => primitiveToResult(isTrue(v))),
@@ -657,79 +671,83 @@ const builtins: Record<string, Builtin> = {
     return isTrue(cond) ? thenV : elseV;
   }),
 
-  abs: typedFn([reqNum], (_env, n) => Results.scalar(Math.abs(n))),
+  abs: typedFn([REQ_NUM], (_env, n) => Results.scalar(Math.abs(n))),
 
-  round: typedFn([reqNum, optNum(0)], (_env, n, p) => {
+  round: typedFn([REQ_NUM, optNum(0)], (_env, n, p) => {
     const f = 10 ** p;
     return Results.scalar(Math.round(n * f) / f);
   }),
 
-  ceil: typedFn([reqNum], (_env, n) => Results.scalar(Math.ceil(n))),
+  ceil: typedFn([REQ_NUM], (_env, n) => Results.scalar(Math.ceil(n))),
 
-  floor: typedFn([reqNum], (_env, n) => Results.scalar(Math.floor(n))),
+  floor: typedFn([REQ_NUM], (_env, n) => Results.scalar(Math.floor(n))),
 
   clamp: typedFn(
     [
-      reqNum,
+      REQ_NUM,
       optNum(Number.NEGATIVE_INFINITY),
       optNum(Number.POSITIVE_INFINITY),
     ],
     (_env, n, lo, hi) => Results.scalar(Math.min(Math.max(n, lo), hi)),
   ),
 
-  mod: typedFn([reqNum, optNum(1)], (_env, d, m) =>
+  mod: typedFn([REQ_NUM, optNum(1)], (_env, d, m) =>
     Results.scalar(((d % m) + m) % m),
   ),
 
-  trim: typedFn([reqText], (_env, t) => Results.scalar(t.trim())),
+  trim: typedFn([REQ_TEXT], (_env, t) => Results.scalar(t.trim())),
 
-  contains: typedFn([reqText, reqText], (_env, t, s) =>
+  contains: typedFn([REQ_TEXT, REQ_TEXT], (_env, t, s) =>
     t.includes(s) ? Results.scalar(true) : Results.blank(),
   ),
 
-  lower: typedFn([reqText], (_env, t) => Results.scalar(t.toLowerCase())),
+  lower: typedFn([REQ_TEXT], (_env, t) => Results.scalar(t.toLowerCase())),
 
-  upper: typedFn([reqText], (_env, t) => Results.scalar(t.toUpperCase())),
+  upper: typedFn([REQ_TEXT], (_env, t) => Results.scalar(t.toUpperCase())),
 
   pad_start: typedFn(
-    [reqText, optNum(0), optText(" ")],
-    (_env, t, targetLen, padText) => Results.scalar(t.padStart(targetLen, padText)),
+    [REQ_TEXT, optNum(0), optText(" ")],
+    (_env, t, targetLen, padText) =>
+      Results.scalar(t.padStart(targetLen, padText)),
   ),
 
   pad_end: typedFn(
-    [reqText, optNum(0), optText(" ")],
-    (_env, t, targetLen, padText) => Results.scalar(t.padEnd(targetLen, padText)),
+    [REQ_TEXT, optNum(0), optText(" ")],
+    (_env, t, targetLen, padText) =>
+      Results.scalar(t.padEnd(targetLen, padText)),
   ),
 
-  split: typedFn([reqText, optText("")], (_env, t, sep) =>
-    Results.resultGroup(t.split(sep).map((p) => ({ result: Results.scalar(p) }))),
+  split: typedFn([REQ_TEXT, optText("")], (_env, t, sep) =>
+    Results.resultGroup(
+      t.split(sep).map((p) => ({ result: Results.scalar(p) })),
+    ),
   ),
 
   join: typedFn(
-    [groupSpec, optText(",")],
+    [GROUP_SPEC, optText(",")],
     (env, groupV: Result, sep: string) => {
       const parts = groupTextsOpt(groupV, env);
       return parts.length ? Results.scalar(parts.join(sep)) : Results.blank();
     },
   ),
 
-  count: typedFn([groupSpec], (env, source: Result) => {
+  count: typedFn([GROUP_SPEC], (env, source: Result) => {
     const vs = iterGroupValues(source, env);
     return Results.scalar(vs.filter((c) => !isBlankResult(c)).length);
   }),
 
-  count_blank: typedFn([groupSpec], (env, source: Result) => {
+  count_blank: typedFn([GROUP_SPEC], (env, source: Result) => {
     const vs = iterGroupValues(source, env);
     return Results.scalar(vs.filter((c) => isBlankResult(c)).length);
   }),
 
-  sum: typedFn([groupSpec], (env, source: Result) =>
+  sum: typedFn([GROUP_SPEC], (env, source: Result) =>
     primitiveToResult(
       reduceNumbers(source, env, (ns) => ns.reduce((a, b) => a + b, 0)),
     ),
   ),
 
-  avg: typedFn([groupSpec], (env, source: Result) =>
+  avg: typedFn([GROUP_SPEC], (env, source: Result) =>
     primitiveToResult(
       reduceNumbers(
         source,
@@ -739,17 +757,17 @@ const builtins: Record<string, Builtin> = {
     ),
   ),
 
-  min: typedFn([groupSpec], (env, source: Result) =>
+  min: typedFn([GROUP_SPEC], (env, source: Result) =>
     primitiveToResult(reduceNumbers(source, env, (ns) => Math.min(...ns))),
   ),
 
-  max: typedFn([groupSpec], (env, source: Result) =>
+  max: typedFn([GROUP_SPEC], (env, source: Result) =>
     primitiveToResult(reduceNumbers(source, env, (ns) => Math.max(...ns))),
   ),
 };
 
 function callBuiltin(env: EvalEnv, name: string, args: Result[]): Result {
-  const fn = builtins[name] ?? builtins[name.toLowerCase()];
+  const fn = BUILTINS[name] ?? BUILTINS[name.toLowerCase()];
   if (!fn) throw new TypeError(`Unknown function: ${name}`);
   return fn(env, ...args);
 }
@@ -838,7 +856,7 @@ function interpretAst(e: Expr, env: EvalEnv): Result {
 
 export function interpretExpr(code: string, env: EvalEnv): Result {
   if (!code.trim()) return Results.blank();
-  const match = grammar.match(code, "Start");
+  const match = GRAMMAR.match(code, "Start");
   if (match.failed()) return Results.issue(match.message ?? "Parse error");
-  return interpretAst(semantics(match).ast, env);
+  return interpretAst(SEMANTICS(match).ast, env);
 }

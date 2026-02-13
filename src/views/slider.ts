@@ -51,14 +51,14 @@ function formatNumberForStep(n: number, step: number): string {
 }
 
 const canSetValue = (core: Core, id: ItemId): boolean => {
-  const it = core.item(id);
-  return it.mode.kind === "plain" && it.content.kind === "value";
+  const item = core.item(id);
+  return item.mode.kind === "plain" && item.content.kind === "value";
 };
 
 const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
-  const it = core.item(id);
-  if (it.content.kind === "value")
-    return toNumberOr(it.content.value, fallback);
+  const item = core.item(id);
+  if (item.content.kind === "value")
+    return toNumberOr(item.content.value, fallback);
   return fallback;
 };
 
@@ -84,7 +84,6 @@ const sliderCommands = {
 type SliderMountCtx = {
   core: Core;
   id: ItemId;
-  focus: Focus;
   opts: SliderResolvedOpts;
 };
 
@@ -112,18 +111,18 @@ function buildSliderBody({ core, id, opts }: SliderMountCtx): Component {
       e.stopPropagation();
     });
 
-    ctx.on(input, "input", (e: Event) => {
-      e.stopPropagation();
+    ctx.on(input, "input", (event: Event) => {
+      event.stopPropagation();
       commitValue(Number(input.value));
     });
 
     ctx.effect(() => {
-      const cur = getValueOr(core, id, opts.min);
-      const clamped0 = clamp(cur, opts.min, opts.max);
-      const str = formatNumberForStep(clamped0, opts.step);
+      const currentValue = getValueOr(core, id, opts.min);
+      const clamped = clamp(currentValue, opts.min, opts.max);
+      const valueText = formatNumberForStep(clamped, opts.step);
 
-      if (input.value !== str) input.value = str;
-      if (valueEl.textContent !== str) valueEl.textContent = str;
+      if (input.value !== valueText) input.value = valueText;
+      if (valueEl.textContent !== valueText) valueEl.textContent = valueText;
     });
 
     ctx.effect(() => {
@@ -142,13 +141,11 @@ export function createSliderView(args: {
 }): DomView {
   const { core, id } = args;
 
-  const safeFocus: Focus = args.focus ?? { container: id, item: id };
   const resolved = DEFAULT_SLIDER_OPTS;
 
   const content = buildSliderBody({
     core,
     id,
-    focus: safeFocus,
     opts: resolved,
   });
 
@@ -159,9 +156,9 @@ export function createSliderView(args: {
         return;
 
       case "NAV": {
-        const mul = intent.mode === "jump" ? 10 : 1;
+        const multiplier = intent.mode === "jump" ? 10 : 1;
         const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-        sliderCommands.nudgeValue(core, id, dir * mul, resolved);
+        sliderCommands.nudgeValue(core, id, dir * multiplier, resolved);
         return;
       }
 

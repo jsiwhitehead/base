@@ -3,24 +3,24 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_TARGET } from "../src/core";
 import { viewFactories } from "../src/views";
 import {
-  makeCoreRuntime,
-  mountDomView,
-  mkBlank,
-  mkGroup,
-  setView,
-  scalarOfId,
-  pointerDown,
+  expectSel,
+  expectSnapshotSame,
   fireViewKey,
   fireWindowKey,
   flushDomEffects,
-  expectSel,
+  makeCoreRuntime,
+  mkBlank,
+  mkGroup,
+  mountDomView,
+  nodeOrderByDataId,
+  pointerDown,
+  requireSameEl,
+  requireEl,
   requireItemEl,
   requireTargetInput,
-  requireEl,
-  requireSameEl,
+  scalarOfId,
+  setView,
   snapshotEl,
-  expectSnapshotSame,
-  nodeOrderByDataId,
 } from "./test-utils";
 
 describe("views", () => {
@@ -38,19 +38,19 @@ describe("views", () => {
     core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
     await flushDomEffects();
 
-    const aEl0 = requireItemEl(view.root, a);
-    const bEl0 = requireItemEl(view.root, b);
+    const aElBefore = requireItemEl(view.root, a);
+    const bElBefore = requireItemEl(view.root, b);
 
     fireViewKey(view, "ArrowDown");
     fireViewKey(view, "ArrowDown");
     fireViewKey(view, "ArrowUp");
     await flushDomEffects();
 
-    const aEl1 = requireItemEl(view.root, a);
-    const bEl1 = requireItemEl(view.root, b);
+    const aElAfter = requireItemEl(view.root, a);
+    const bElAfter = requireItemEl(view.root, b);
 
-    requireSameEl(aEl0, aEl1);
-    requireSameEl(bEl0, bEl1);
+    requireSameEl(aElBefore, aElAfter);
+    requireSameEl(bElBefore, bElAfter);
 
     const sel = core.selection();
     expect(sel.kind).toBe("focused");
@@ -68,16 +68,16 @@ describe("views", () => {
     mountDomView(view);
     await flushDomEffects();
 
-    const itemEl0 = requireItemEl(view.root, x);
+    const itemElBefore = requireItemEl(view.root, x);
 
-    pointerDown(itemEl0);
+    pointerDown(itemElBefore);
     await flushDomEffects();
 
-    expect(document.activeElement === itemEl0).toBe(true);
+    expect(document.activeElement === itemElBefore).toBe(true);
     expectSel(core, { container: rootId, item: x, target: DEFAULT_TARGET });
 
-    const itemEl1 = requireItemEl(view.root, x);
-    requireSameEl(itemEl0, itemEl1);
+    const itemElAfter = requireItemEl(view.root, x);
+    requireSameEl(itemElBefore, itemElAfter);
   });
 
   test("outline: printable key at DEFAULT_TARGET enters value editor and inserts", async () => {
@@ -115,10 +115,10 @@ describe("views", () => {
     core.focus({ container: rootId, item: x }, "value");
     await flushDomEffects();
 
-    const itemEl0 = requireItemEl(view.root, x);
-    const snap0 = snapshotEl(itemEl0);
+    const itemElBefore = requireItemEl(view.root, x);
+    const snapBefore = snapshotEl(itemElBefore);
 
-    const valueEl = requireTargetInput(itemEl0, "value");
+    const valueEl = requireTargetInput(itemElBefore, "value");
     pointerDown(valueEl);
     await flushDomEffects();
 
@@ -128,10 +128,10 @@ describe("views", () => {
     expect(core.item(x).mode.kind).toBe("connected");
     expectSel(core, { container: rootId, item: x, target: "conn:expr" });
 
-    const itemEl1 = requireItemEl(view.root, x);
-    expectSnapshotSame(snap0, itemEl1);
+    const itemElAfter = requireItemEl(view.root, x);
+    expectSnapshotSame(snapBefore, itemElAfter);
 
-    const exprEl = requireTargetInput(itemEl1, "conn:expr");
+    const exprEl = requireTargetInput(itemElAfter, "conn:expr");
     expect(exprEl).toBeTruthy();
   });
 
@@ -147,20 +147,20 @@ describe("views", () => {
     mountDomView(view);
     await flushDomEffects();
 
-    const aEl0 = requireItemEl(view.root, a);
-    const bEl0 = requireItemEl(view.root, b);
-    const cEl0 = requireItemEl(view.root, c);
+    const aElBefore = requireItemEl(view.root, a);
+    const bElBefore = requireItemEl(view.root, b);
+    const cElBefore = requireItemEl(view.root, c);
 
     core.commit((t) => t.move(c, g, { at: 0 }));
     await flushDomEffects();
 
-    const aEl1 = requireItemEl(view.root, a);
-    const bEl1 = requireItemEl(view.root, b);
-    const cEl1 = requireItemEl(view.root, c);
+    const aElAfter = requireItemEl(view.root, a);
+    const bElAfter = requireItemEl(view.root, b);
+    const cElAfter = requireItemEl(view.root, c);
 
-    requireSameEl(aEl0, aEl1);
-    requireSameEl(bEl0, bEl1);
-    requireSameEl(cEl0, cEl1);
+    requireSameEl(aElBefore, aElAfter);
+    requireSameEl(bElBefore, bElAfter);
+    requireSameEl(cElBefore, cElAfter);
 
     const order = nodeOrderByDataId(view.root, `.ui-outline-node`);
     const filtered = order.filter((id) => id === a || id === b || id === c);
@@ -188,11 +188,11 @@ describe("views", () => {
 
     expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
 
-    const rowAEl0 = requireItemEl(view.root, rowA);
-    const rowBEl0 = requireItemEl(view.root, rowB);
+    const rowAElBefore = requireItemEl(view.root, rowA);
+    const rowBElBefore = requireItemEl(view.root, rowB);
 
     const cellA0 = requireEl(
-      rowAEl0.querySelector(
+      rowAElBefore.querySelector(
         `:scope > .ui-table-cell:not(.ui-table-meta-col)`,
       ) as HTMLElement | null,
       "Missing rowA first data cell",
@@ -248,14 +248,14 @@ describe("views", () => {
         : 0;
     expect(afterCount).toBe(beforeCount + 1);
 
-    const rowAEl1 = requireItemEl(view.root, rowA);
-    const rowBEl1 = requireItemEl(view.root, rowB);
+    const rowAElAfter = requireItemEl(view.root, rowA);
+    const rowBElAfter = requireItemEl(view.root, rowB);
 
-    requireSameEl(rowAEl0, rowAEl1);
-    requireSameEl(rowBEl0, rowBEl1);
+    requireSameEl(rowAElBefore, rowAElAfter);
+    requireSameEl(rowBElBefore, rowBElAfter);
 
     const cellA1 = requireEl(
-      rowAEl1.querySelector(
+      rowAElAfter.querySelector(
         `:scope > .ui-table-cell:not(.ui-table-meta-col)`,
       ) as HTMLElement | null,
       "Missing rowA first data cell",
@@ -372,9 +372,9 @@ describe("views", () => {
     core.focus({ container: rootId, item: sliderId }, DEFAULT_TARGET);
     await flushDomEffects();
 
-    const sliderItemEl0 = requireItemEl(outline.root, sliderId);
-    const sliderInput0 = requireEl(
-      sliderItemEl0.querySelector(
+    const sliderItemElBefore = requireItemEl(outline.root, sliderId);
+    const sliderInputBefore = requireEl(
+      sliderItemElBefore.querySelector(
         `input[type="range"]`,
       ) as HTMLInputElement | null,
       "Missing slider input",
@@ -391,15 +391,15 @@ describe("views", () => {
       target: DEFAULT_TARGET,
     });
 
-    const sliderItemEl1 = requireItemEl(outline.root, sliderId);
-    const sliderInput1 = requireEl(
-      sliderItemEl1.querySelector(
+    const sliderItemElAfter = requireItemEl(outline.root, sliderId);
+    const sliderInputAfter = requireEl(
+      sliderItemElAfter.querySelector(
         `input[type="range"]`,
       ) as HTMLInputElement | null,
       "Missing slider input",
     );
 
-    requireSameEl(sliderItemEl0, sliderItemEl1);
-    requireSameEl(sliderInput0, sliderInput1);
+    requireSameEl(sliderItemElBefore, sliderItemElAfter);
+    requireSameEl(sliderInputBefore, sliderInputAfter);
   });
 });

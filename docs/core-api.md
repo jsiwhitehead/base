@@ -1,102 +1,110 @@
-# Core API Overview
+# Core API overview
 
-This document defines the public API and behavior of Core. All behavior described here is stable and supported.
+This document defines the supported Core API contract and the behavior that callers can rely on. It is the authoritative reference for Core types, commands, and invariants. UI-layer behavior is documented separately in `docs/ui-system.md` and `docs/ui-views.md`.
 
-Core provides:
+## Scope
 
-- A reactive tree of items.
-- A uniform read model.
-- A transactional edit model.
-- Selection and focus state.
-- Undo/redo.
-- View mounting.
+This document covers:
 
-## Creating core
+- Public Core types and constants.
+- Core commands and reactive reads.
+- Structural, selection, and view-mounting invariants.
+
+This document does not cover:
+
+- UI ownership and DOM conventions.
+- Styling behavior.
+- View-specific interaction semantics beyond Core-enforced rules.
+
+## Creating Core
 
 ```ts
-createCore(opts): { core: Core, rootId: ItemId }
+createCore(opts): { core: Core; rootId: ItemId }
 ```
 
 Creates a new Core instance.
 
-- `rootId` is the ID of the root item.
-- The root item always exists.
-- The root item cannot be removed.
-- `createCore` accepts an optional collaboration adapter that receives committed transactions and can apply remote transactions.
-- `createCore` also accepts a view-factory registry used by `core.mountView(...)`.
-- A Core instance owns all state and must be explicitly disposed.
+Rules:
+
+- `rootId` MUST reference the root item.
+- The root item MUST always exist.
+- The root item MUST NOT be removed.
+- `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
+- `createCore` MAY receive a view-factory registry used by `core.mountView(...)`.
+- A Core instance owns all state and MUST be explicitly disposed.
 
 ## Reactivity model
 
-Core is reactive.
+Core exposes reactive reads and imperative commands.
 
 The following methods are reactive when called inside a reactive context:
 
-- `core.item(id)`
-- `core.selection()`
-- `core.locate(id)`
-- `core.view(id)`
+- `core.item(id)`.
+- `core.selection()`.
+- `core.locate(id)`.
+- `core.view(id)`.
 
-When the underlying state they depend on changes, the reactive context re-runs. Each call returns the current snapshot at the time of evaluation. All other Core methods are non-reactive commands.
+Rules:
+
+- A reactive read MUST return the current snapshot at evaluation time.
+- When underlying state changes, dependent reactive contexts MUST re-run.
+- All other Core methods SHOULD be treated as non-reactive commands.
 
 ## Item IDs
 
 ```ts
-type ItemId = string
+type ItemId = string;
 ```
 
 An `ItemId` uniquely identifies an item.
 
-- IDs are stable for the lifetime of the item.
-- IDs returned by Core can always be passed back to Core.
-- Undo/redo preserve item IDs for items that continue to exist.
+Rules:
+
+- IDs MUST remain stable for the lifetime of the item.
+- IDs returned by Core MUST always be valid inputs back into Core.
+- Undo/redo MUST preserve IDs for items that continue to exist.
 
 ## Items
 
 ```ts
 type Item = {
-  id: ItemId
-  label?: string
-  content: Content
-  mode: Mode
-}
+  id: ItemId;
+  label?: string;
+  content: Content;
+  mode: Mode;
+};
 ```
 
 ```ts
 core.item(id): Item
 ```
 
-Returns the current state of an item.
+Returns the current item snapshot.
 
-If the ID does not exist or cannot be resolved, Core returns an item with:
+Fallback behavior:
 
-- `content.kind === "issue"`
-- `mode.kind === "readonly"`
-
-This ensures `core.item` always succeeds.
+- If `id` cannot be resolved, `core.item(id)` MUST still return an `Item`.
+- The fallback item MUST use `content.kind === "issue"`.
+- The fallback item MUST use `mode.kind === "readonly"`.
 
 ## Item content
 
 ```ts
 type Content =
-  | { kind: "value", value: Value | null }
-  | { kind: "group", children: readonly ItemId[] }
-  | { kind: "issue", message: string }
+  | { kind: "value"; value: Value | null }
+  | { kind: "group"; children: readonly ItemId[] }
+  | { kind: "issue"; message: string };
 ```
 
-### Value
+Kinds:
 
-- Represents a single value.
-- `null` represents blank.
+- `value`: Represents a single value. `null` means blank.
+- `group`: Represents an ordered list of child items.
+- `issue`: Represents an error state.
 
-### Group
+Rules:
 
-- Represents an ordered list of child items.
-- Child order is stable unless explicitly changed by edits.
-
-### Issue
-
-- Represents an error state.
+- Group child order MUST remain stable unless changed by edits.
 
 ## Item modes and editability
 
@@ -104,98 +112,93 @@ type Content =
 type Mode =
   | { kind: "readonly" }
   | { kind: "plain" }
-  | { kind: "connected", conn: Connected }
+  | { kind: "connected"; conn: Connected };
 ```
 
-### Editability rule
-
-An item is editable if and only if:
+Editability rule:
 
 ```ts
-item.mode.kind !== "readonly"
+item.mode.kind !== "readonly";
 ```
 
-Core does not pre-filter edits by mode. Transactions may still fail (throw) if the model rejects them.
+Rules:
 
-### Meaning of modes
+- An item MUST be editable if and only if the editability rule evaluates true.
+- Core MUST NOT pre-filter edits by mode.
+- Transactions MAY still fail if the model rejects them.
 
-Modes describe what kind of content an item currently has and what editing UI should be shown. They do not restrict what edits are allowed beyond the readonly rule.
+Meaning:
 
-### Readonly
+- `readonly`: item content is computed or invalid; editing is blocked.
+- `plain`: item stores direct content.
+- `connected`: item content is generated from a connected definition.
 
-- Item cannot be edited.
-- Content is computed or invalid.
+Notes:
 
-### Plain
+- `plain` and `connected` describe current content semantics and UI intent.
+- Except for `readonly`, modes do not add extra edit restrictions beyond model invariants.
 
-- Item currently stores content directly.
-- UI may present plain editing controls.
-- Any edit may replace the item’s content.
-- Group/non-group conversion follows the group conversion rule.
-
-### Connected
-
-- Item’s content is currently generated from a connected definition.
-- Connected fields are editable.
-- Any edit may replace the item’s content, including replacing the connected definition with plain content.
-- Group/non-group conversion follows the group conversion rule.
-
-## Sources
+## Connected definitions
 
 ```ts
 type Connected =
-  | { kind: "formula", expr: string }
-  | { kind: "query", from: string, where: string, orderBy: string }
+  | { kind: "formula"; expr: string }
+  | { kind: "query"; from: string; where: string; orderBy: string };
 ```
 
-Connected definitions describe how an item’s content is computed.
+Connected definitions describe how item content is computed.
 
-- `formula`: produces content from an expression.
-- `query`: selects and transforms items from a group.
+Rules:
 
-The result of a connected definition determines the item’s visible content kind (value or group).
+- `formula` MUST compute content from `expr`.
+- `query` MUST compute content from `from`/`where`/`orderBy`.
+- The computed result MUST determine whether visible content is `value` or `group`.
 
-## Editing
+## Editing and transactions
 
-Edits are performed using transactions.
+All edits are performed in transactions.
 
 ```ts
-core.commit(tx => {
+core.commit((tx) => {
   // operations
 }): ApplyResult
 ```
 
-All operations inside a commit:
+Commit rules:
 
-- Are applied atomically.
-- Trigger reactive updates.
-- Are recorded for undo/redo.
-
-If a commit produces no ops, undo history is not extended.
+- Transaction operations MUST apply atomically.
+- A successful commit MUST trigger reactive updates.
+- A successful commit MUST be recorded for undo/redo.
+- If a commit produces no ops, undo history MUST NOT be extended.
 
 ### Transaction operations
 
 ```ts
-tx.setLabel(id, label)
-tx.setView(id, view)
-tx.setValue(id, value)
-tx.setConnected(id, conn)
-tx.setGroup(id)
-tx.insertChild(parentId, opts)
-tx.move(id, toParentId, opts)
-tx.remove(id)
+tx.setLabel(id, label);
+tx.setView(id, view);
+tx.setValue(id, value);
+tx.setConnected(id, conn);
+tx.setGroup(id);
+tx.insertChild(parentId, opts);
+tx.move(id, toParentId, opts);
+tx.remove(id);
 ```
 
 ### Group conversion rule
 
 Content may switch between `group` and non-group (`value`/`connected`) only when the group is empty.
-If an operation would convert a non-empty group to non-group, the commit throws.
+
+Rule:
+
+- If an operation would convert a non-empty group to non-group, the commit MUST throw.
+
+### Operation contracts
 
 `setLabel`:
 
-- Sets or replaces the item’s label.
-- Within a single parent group, non-blank labels must be unique after trimming whitespace.
-- If a label change would create a duplicate, the commit throws.
+- Sets or replaces the item label.
+- Within one parent group, non-blank labels MUST be unique after trimming whitespace.
+- If a label change would create a duplicate, the commit MUST throw.
 
 `setView`:
 
@@ -203,60 +206,62 @@ If an operation would convert a non-empty group to non-group, the commit throws.
 
 `setValue`:
 
-- Replaces the item’s content with a value or blank.
-- Subject to the group conversion rule.
+- Replaces content with a value or blank.
+- MUST follow the group conversion rule.
 
 `setConnected`:
 
-- Replaces the item’s content with a connected definition.
-- Subject to the group conversion rule.
+- Replaces content with a connected definition.
+- MUST follow the group conversion rule.
 
 `setGroup`:
 
-- Converts the item’s content to an empty group.
-- Subject to the group conversion rule.
+- Converts content to an empty group.
+- MUST follow the group conversion rule.
 
 `insertChild`:
 
-- Options: `opts?: { at?: number }`.
-- Creates a new child item under `parentId`.
-- New items are created as blank value items.
-- If `at` is omitted, the item is appended.
-- Returns the newly created item’s ID.
+- Signature option: `opts?: { at?: number }`.
+- Creates a new child under `parentId`.
+- New children MUST start as blank value items.
+- If `at` is omitted, child insertion MUST append.
+- MUST return the created item ID.
 
 `move`:
 
 - Moves an item to a new parent and/or index.
-- `at` is the destination index; omitted means append.
-- If a move would violate label uniqueness, the commit throws.
+- `at` sets destination index; omitted means append.
+- If move would violate label uniqueness, the commit MUST throw.
 
 `remove`:
 
 - Removes the item from the tree.
-- If the removed item is a group, its children become orphans (`parentId = null`).
+- If removed item content is `group`, its children MUST become orphans (`parentId = null`).
 
 ### ApplyResult
 
 ```ts
 type ApplyResult = {
-  created: readonly ItemId[]
-  touched: readonly ItemId[]
+  created: readonly ItemId[];
+  touched: readonly ItemId[];
   moved: readonly {
-    fromParentId: ItemId | null
-    toParentId: ItemId | null
-    fromIndex: number | null
-    toIndex: number | null
-  }[]
-}
+    fromParentId: ItemId | null;
+    toParentId: ItemId | null;
+    fromIndex: number | null;
+    toIndex: number | null;
+  }[];
+};
 ```
 
 Returned by:
 
-- `commit`
-- `undo`
-- `redo`
+- `core.commit(...)`.
+- `core.undo()`.
+- `core.redo()`.
 
-This information may be used to coordinate follow-up behavior such as selection changes or animations.
+Notes:
+
+- This result MAY be used for follow-up behavior such as selection coordination or animation.
 
 ## Location and structure
 
@@ -268,44 +273,43 @@ core.locate(id): {
 } | null
 ```
 
-Returns the item’s position within its parent group.
+Returns the item position within its parent group.
 
-- `siblings` reflects the full ordered list at the time of the call.
-- Returns `null` if the item has no parent.
+Rules:
+
+- `siblings` MUST reflect the full ordered sibling list at call time.
+- If item has no parent, `core.locate(id)` MUST return `null`.
 
 ## Selection
 
 ```ts
 type Selection =
   | { kind: "idle" }
-  | { kind: "focused", focus: Focus, target: string, caret?: Caret }
+  | { kind: "focused"; focus: Focus; target: string; caret?: Caret };
 
-type Focus = { container: ItemId, item: ItemId }
-type Caret = { start: number, end: number }
+type Focus = { container: ItemId; item: ItemId };
+type Caret = { start: number; end: number };
 ```
 
-### Reading
+Read selection:
 
 ```ts
-core.selection()
+core.selection();
 ```
 
-Returns the current selection state.
-
-### Updating
+Update selection:
 
 ```ts
 core.focus(focus, target?, opts?)
 core.blur()
 ```
 
-- `focus` selects an item within a container.
-- `target` selects a specific sub-target.
-- `caret` sets the text cursor position.
-- If `target` is omitted, Core uses `DEFAULT_TARGET`.
-- If `opts` is omitted (or `opts.caret` is omitted), selection is focused without a caret.
+Rules:
 
-If edits invalidate the current selection, Core automatically repairs selection to a valid state.
+- `focus` MUST select an item within a container.
+- If `target` is omitted, Core MUST use `DEFAULT_TARGET`.
+- If `opts` or `opts.caret` is omitted, selection MUST remain focused without a caret.
+- If edits invalidate selection, Core MUST repair selection to a valid state.
 
 ## Focus binding
 
@@ -318,23 +322,24 @@ core.attachTarget({
 })
 ```
 
-Registers a binding for a specific `(focus, target)` pair.
+Registers a focus binding for a `(focus, target)` pair.
 
-- `getEl()` returns the concrete DOM element to focus when selection matches `(focus, target)`.
-- `caret` (if provided) allows Core to position the text cursor when this target is focused.
-- Returns a cleanup function that must be called when the binding is no longer valid.
-- One active binding per `(focus, target)`; new registrations replace the old.
-- Replacement is per `(focus, target)` pair (independent of view nesting); the most recently attached binding wins until disposed.
+Rules:
 
-### Selection application (DOM focus)
+- `getEl()` MUST return the element to focus when selection matches the pair.
+- `caret` MAY be provided to support text-cursor placement.
+- `core.attachTarget(...)` MUST return a cleanup function.
+- Callers MUST invoke cleanup when binding is no longer valid.
+- Only one active binding MAY exist per `(focus, target)` pair.
+- New binding registration for the same pair MUST replace the previous one.
 
-When selection is updated via `core.focus(...)`, Core applies it by:
+Selection application behavior:
 
-- Resolving the registered `(focus, target)` binding (falling back to `(focus, DEFAULT_TARGET)` when needed).
-- Focusing the returned DOM element.
-- Applying caret state when supported.
-- If no binding exists (or `getEl()` returns `null`), selection state still updates, but DOM focus may not move.
-- Caret application is best-effort and only runs when the focused element supports it.
+- Core MUST resolve exact `(focus, target)` binding first.
+- If missing, Core MUST fall back to `(focus, DEFAULT_TARGET)`.
+- Core MUST focus returned element when available.
+- Caret application SHOULD be best-effort and only run on supported focused elements.
+- If no binding exists, selection state MUST still update even if DOM focus does not move.
 
 ## Views and mounting
 
@@ -343,87 +348,91 @@ core.view(id): ViewName
 core.mountView({ id, focus?, view: ViewName }): Component
 ```
 
-`core.view(id)` returns the current view name for an item.
-
-If the ID does not exist or the stored view cannot be resolved, Core returns the default view name (`"outline"`).
-
-`core.mountView(...)` mounts the requested view for an item and returns:
-
 ```ts
-type Component = { el: HTMLElement, dispose(): void }
+type Component = { el: HTMLElement; dispose(): void };
 ```
 
-Calling `dispose` must release all resources associated with the view.
+`core.view(id)` behavior:
 
-`core.mountView(...)` always returns a `Component` for entry item IDs.
+- Returns current view name for the item.
+- If `id` is missing or stored view cannot be resolved, Core MUST return default view name (`"outline"`).
 
-- Throws if `id` is not an entry item ID.
-- Uses the requested view factory, or falls back to `"outline"` if missing.
-- Throws if no `"outline"` factory is registered.
+`core.mountView(...)` behavior:
 
-### View semantics
-
-Some views have built-in meaning and behavior that Core enforces automatically.
+- MUST return a `Component` for entry item IDs.
+- MUST throw if `id` is not an entry item ID.
+- MUST use requested view factory when present.
+- MUST fall back to `"outline"` if requested factory is missing.
+- MUST throw if no `"outline"` factory is registered.
+- `dispose()` MUST release all resources for the mounted view.
 
 ### Active view and keyboard routing
 
-When `core.focus(...)` updates selection, Core sets the active view from the focused DOM element.
+When `core.focus(...)` updates selection, Core sets active view from focused DOM ownership.
 
-- Active view is derived from the element focused via the `(focus, target)` binding (`getEl()`), not from pointer event targets.
-- The active view is the closest mounted view root that contains the focused element.
-- View routing therefore depends on bindings targeting an element inside the intended mounted view root.
-- Global keyboard input is parsed and routed by Core to the active view intent handler.
-- Native text editors (`input`, `textarea`, `contenteditable`) handle text editing locally first; Core may still handle explicit global commands (for example, Escape).
-- Native text editors may explicitly yield navigation intents to the view.
+Rules:
 
-#### Table view
+- Active view MUST be derived from element focused via target binding (`getEl()`), not pointer event targets.
+- Active view MUST resolve to the closest mounted view root containing that element.
+- Global keyboard input MUST be parsed and routed by Core to the active view intent handler.
+- Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
+- Core MAY still handle explicit global commands while focus is in native text editors.
 
-When an item’s view is `"table"`, Core treats it as a table:
+### Table view semantics (Core-enforced)
 
-- The table item is always a group.
-- Each direct child is a row and is always a group.
-- If the table item or a row is not already a group, Core coerces it into an empty group.
-- Coercion occurs while applying edits and invariant repair (including commit/undo/redo), not as a read-time projection.
-- Children of each row are columns, identified by their normalized, non-empty labels.
+When item view is `"table"`, Core enforces table structural semantics.
 
-Core keeps all rows in the table structurally consistent:
+Rules:
 
-- All rows share the same set and order of labeled columns.
-- When one row changes, Core may create missing columns in other rows (as blank entries), reorder columns to match the table’s column order, and detach columns that are no longer part of the table shape.
+- Table item MUST be a `group`.
+- Each direct child row MUST be a `group`.
+- If table item or row is not a group, Core MUST coerce it to an empty group.
+- Coercion MUST occur during edit application and invariant repair (`commit`/`undo`/`redo`), not as a read-time projection.
+- Row children MUST act as columns identified by normalized, non-empty labels.
 
-These updates happen automatically and may create, move, or touch additional items beyond the original edit.
+Row consistency rules:
 
-## Undo/redo
+- All rows MUST share the same labeled column set and order.
+- When one row changes, Core MAY create missing columns in other rows as blank entries.
+- When one row changes, Core MAY reorder columns across rows to match table column order.
+- When one row changes, Core MAY detach columns no longer in table shape.
+
+Notes:
+
+- These repairs are automatic and MAY create, move, or touch additional items beyond the initiating edit.
+
+## Undo and redo
 
 ```ts
 core.undo(): ApplyResult
 core.redo(): ApplyResult
 ```
 
-Undo/redo restore:
+Rules:
 
-- Item content.
-- Item structure.
-
-Selection is repaired to remain valid, but is not historically restored. Undo history is linear; new edits clear the redo stack.
+- Undo/redo MUST restore item content and structure.
+- Selection MUST be repaired to valid state.
+- Selection MUST NOT be historically restored.
+- Undo history MUST be linear.
+- A new edit MUST clear the redo stack.
 
 ## Lifecycle
 
 ```ts
-core.dispose()
+core.dispose();
 ```
 
-Disposes all internal state.
+Disposes Core resources.
 
-- All reactive resources are released.
-- All focus bindings are detached.
-- No further calls are valid after disposal.
+Rules:
+
+- Core MUST release all reactive resources.
+- Core MUST detach all focus bindings.
+- After disposal, Core methods MUST NOT be used.
 
 ## Public Core API surface
 
-The following exports constitute the supported Core API.
-
-Core:
+Core exports:
 
 - `createCore`
 - `core.item`
@@ -439,7 +448,7 @@ Core:
 - `core.mountView`
 - `core.dispose`
 
-Types:
+Type exports:
 
 - `ItemId`
 - `Item`
@@ -453,10 +462,10 @@ Types:
 - `ViewName`
 - `ViewKind`
 
-Constants:
+Constant exports:
 
-- `DEFAULT_TARGET: string`: Default focus target used when none is specified.
+- `DEFAULT_TARGET`
 
-Value helpers:
+Helper exports:
 
-- `parseValue(text): Value | null`: Converts user-entered text into a value.
+- `parseValue(text): Value | null`

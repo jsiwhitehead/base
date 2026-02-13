@@ -101,15 +101,15 @@ export function defaultTextCaret(
 
 function isNativeEditorTarget(target: EventTarget | null): boolean {
   for (
-    let el0 = target instanceof HTMLElement ? target : null;
-    el0;
-    el0 = el0.parentElement
+    let el = target instanceof HTMLElement ? target : null;
+    el;
+    el = el.parentElement
   ) {
-    if (el0.isContentEditable) return true;
+    if (el.isContentEditable) return true;
     if (
-      el0 instanceof HTMLTextAreaElement ||
-      el0 instanceof HTMLInputElement ||
-      el0 instanceof HTMLSelectElement
+      el instanceof HTMLTextAreaElement ||
+      el instanceof HTMLInputElement ||
+      el instanceof HTMLSelectElement
     ) {
       return true;
     }
@@ -181,11 +181,11 @@ function viewAtTarget(
   target: EventTarget | null,
 ): ViewHandle | null {
   for (
-    let el0 = target instanceof HTMLElement ? target : null;
-    el0;
-    el0 = el0.parentElement
+    let el = target instanceof HTMLElement ? target : null;
+    el;
+    el = el.parentElement
   ) {
-    const hit = viewRoots.get(el0);
+    const hit = viewRoots.get(el);
     if (hit) return hit;
   }
   return null;
@@ -271,22 +271,26 @@ export function createRuntime<C>(opts: {
   };
 
   const focusMapFor = (focus: Focus): Map<string, TargetBindingRec> => {
-    const k = keyOf(focus);
-    let m = bindings.get(k);
-    if (!m) {
-      m = new Map();
-      bindings.set(k, m);
+    const focusKey = keyOf(focus);
+    let targetBindings = bindings.get(focusKey);
+    if (!targetBindings) {
+      targetBindings = new Map();
+      bindings.set(focusKey, targetBindings);
     }
-    return m;
+    return targetBindings;
   };
 
   const resolveBinding = (
     focus: Focus,
     target: string,
   ): TargetBinding | null => {
-    const m = bindings.get(keyOf(focus));
-    if (!m) return null;
-    return m.get(target)?.binding ?? m.get(DEFAULT_TARGET)?.binding ?? null;
+    const targetBindings = bindings.get(keyOf(focus));
+    if (!targetBindings) return null;
+    return (
+      targetBindings.get(target)?.binding ??
+      targetBindings.get(DEFAULT_TARGET)?.binding ??
+      null
+    );
   };
 
   const applyDomFocus = (
@@ -295,33 +299,37 @@ export function createRuntime<C>(opts: {
   ): void => {
     if (sel.kind !== "focused") return;
 
-    const b = resolveBinding(sel.focus, sel.target);
-    const el0 = (b?.getEl() as HTMLElement | null) ?? null;
-    if (!b || !el0) return;
+    const binding = resolveBinding(sel.focus, sel.target);
+    const targetEl = (binding?.getEl() as HTMLElement | null) ?? null;
+    if (!binding || !targetEl) return;
 
-    const wasFocused = document.activeElement === el0;
-    if (!wasFocused) el0.focus({ preventScroll: true });
+    const wasFocused = document.activeElement === targetEl;
+    if (!wasFocused) targetEl.focus({ preventScroll: true });
 
-    const hitView = viewAtTarget(viewRoots, el0);
+    const hitView = viewAtTarget(viewRoots, targetEl);
     if (hitView) setActiveView(hitView);
 
     const caret = sel.caret;
-    const canCaret = !!caret && !!b.caret;
+    const canCaret = !!caret && !!binding.caret;
     const shouldUpdateCaret = canCaret && (!wasFocused || !!focusEff.anchor);
 
     if (shouldUpdateCaret) {
-      const len = b.caret!.getLength();
-      b.caret!.set(clamp(caret!.end, 0, len));
+      const len = binding.caret!.getLength();
+      binding.caret!.set(clamp(caret!.end, 0, len));
       return;
     }
 
-    if (!isTextInput(el0) || wasFocused) return;
+    if (!isTextInput(targetEl) || wasFocused) return;
 
     const pos = focusEff.anchor
-      ? computeAnchoredPos(el0.value, el0.value.length, focusEff.anchor)
-      : el0.value.length;
+      ? computeAnchoredPos(
+          targetEl.value,
+          targetEl.value.length,
+          focusEff.anchor,
+        )
+      : targetEl.value.length;
 
-    el0.setSelectionRange(pos, pos);
+    targetEl.setSelectionRange(pos, pos);
   };
 
   const applyDomEffects = (sel: Selection, effects: RuntimeEffect[]): void => {
@@ -402,11 +410,14 @@ export function createRuntime<C>(opts: {
     enqueueDomEffects(repaired, effects);
   };
 
-  const registerViewRoot = (v: {
+  const registerViewRoot = (view: {
     root: HTMLElement;
     onIntent?: (intent: KeyIntent) => void;
   }): (() => void) => {
-    const handle: ViewHandle = { root: v.root, onIntent: v.onIntent };
+    const handle: ViewHandle = {
+      root: view.root,
+      ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+    };
     viewRoots.set(handle.root, handle);
     viewsSet.add(handle);
 
@@ -416,33 +427,36 @@ export function createRuntime<C>(opts: {
     };
   };
 
-  const attachTarget = (b: {
+  const attachTarget = (target: {
     focus: Focus;
     target: string;
     getEl: () => HTMLElement | null;
     caret?: { set(pos: number): void; getLength(): number };
   }): (() => void) => {
-    const m = focusMapFor(b.focus);
-    const prev = m.get(b.target);
+    const targetBindings = focusMapFor(target.focus);
+    const prev = targetBindings.get(target.target);
     const nextToken = (prev?.token ?? 0) + 1;
 
-    m.set(b.target, {
-      binding: { getEl: b.getEl, ...(b.caret ? { caret: b.caret } : {}) },
+    targetBindings.set(target.target, {
+      binding: {
+        getEl: target.getEl,
+        ...(target.caret ? { caret: target.caret } : {}),
+      },
       token: nextToken,
     });
 
-    const focusKey = keyOf(b.focus);
-    const targetKey = b.target;
+    const focusKey = keyOf(target.focus);
+    const targetKey = target.target;
     const tokenAtAttach = nextToken;
 
     return () => {
-      const mm = bindings.get(focusKey);
-      const cur = mm?.get(targetKey);
-      if (!mm || !cur) return;
+      const targetBindingsAtFocus = bindings.get(focusKey);
+      const cur = targetBindingsAtFocus?.get(targetKey);
+      if (!targetBindingsAtFocus || !cur) return;
       if (cur.token !== tokenAtAttach) return;
 
-      mm.delete(targetKey);
-      if (mm.size === 0) bindings.delete(focusKey);
+      targetBindingsAtFocus.delete(targetKey);
+      if (targetBindingsAtFocus.size === 0) bindings.delete(focusKey);
 
       const sel = selectionSignal.peek();
       if (
@@ -492,10 +506,10 @@ export function createRuntime<C>(opts: {
       return;
     }
 
-    const v = getActiveView();
-    if (!v?.onIntent) return;
+    const active = getActiveView();
+    if (!active?.onIntent) return;
     consumeEvent(e);
-    v.onIntent(intent);
+    active.onIntent(intent);
   };
 
   const installGlobalListeners = (win: Window = window): (() => void) => {
@@ -507,23 +521,23 @@ export function createRuntime<C>(opts: {
     return () => win.removeEventListener("keydown", onKeyDown);
   };
 
-  const mountView = (opts2: {
+  const mountView = (mountOpts: {
     id: ItemId;
     focus?: Focus;
     view: ViewName;
   }): Component => {
-    const id = opts2.id;
-    const focus: Focus = opts2.focus ?? { container: id, item: id };
+    const id = mountOpts.id;
+    const focus: Focus = mountOpts.focus ?? { container: id, item: id };
 
     const entryId = entryIdFromItemId(id);
     if (entryId == null) {
       throw new Error(`mountView expects an entry item id, got: ${id}`);
     }
 
-    const factory = views[opts2.view] ?? views.outline;
+    const factory = views[mountOpts.view] ?? views.outline;
     if (!factory) {
       throw new Error(
-        `No view factory available for '${opts2.view}' and outline fallback is missing`,
+        `No view factory available for '${mountOpts.view}' and outline fallback is missing`,
       );
     }
 
@@ -531,7 +545,7 @@ export function createRuntime<C>(opts: {
 
     const unreg = registerViewRoot({
       root: view.root,
-      onIntent: view.onIntent,
+      ...(view.onIntent ? { onIntent: view.onIntent } : {}),
     });
 
     return {

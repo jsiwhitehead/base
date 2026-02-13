@@ -36,8 +36,8 @@ function valueToText(v: ValueOrBlank): string {
 }
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
-  const c = core.item(id).content;
-  return c.kind === "group" ? c.children : [];
+  const content = core.item(id).content;
+  return content.kind === "group" ? content.children : [];
 };
 
 function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
@@ -47,8 +47,8 @@ function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
 }
 
 function focusFor(core: Core, rootId: ItemId, id: ItemId): Focus {
-  const p = parentOf(core, rootId, id);
-  return { container: p ?? rootId, item: id };
+  const parentId = parentOf(core, rootId, id);
+  return { container: parentId ?? rootId, item: id };
 }
 
 function firstChild(core: Core, id: ItemId): ItemId | null {
@@ -66,16 +66,16 @@ function lastDescendant(core: Core, id: ItemId): ItemId {
 }
 
 function nextVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
-  const fc = firstChild(core, id);
-  if (fc) return fc;
+  const firstVisibleChild = firstChild(core, id);
+  if (firstVisibleChild) return firstVisibleChild;
 
   let cur: ItemId | null = id;
   while (cur) {
     const loc = core.locate(cur);
     if (!loc) return null;
     const { parentId, index, siblings } = loc;
-    const sib = siblings[index + 1] ?? null;
-    if (sib) return sib;
+    const sibling = siblings[index + 1] ?? null;
+    if (sibling) return sibling;
     cur = parentId;
     if (cur === rootId) return null;
   }
@@ -93,17 +93,17 @@ function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
 }
 
 function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
-  const it = core.item(id);
-  if (it.mode.kind === "connected") return true;
-  return it.mode.kind === "plain" && it.content.kind === "value";
+  const item = core.item(id);
+  if (item.mode.kind === "connected") return true;
+  return item.mode.kind === "plain" && item.content.kind === "value";
 }
 
 function editStopsForItem(core: Core, id: ItemId): string[] {
-  const it = core.item(id);
-  if (it.mode.kind === "connected") {
-    return fieldsFromConn(it.mode.conn).map((f) => connTarget(f.key));
+  const item = core.item(id);
+  if (item.mode.kind === "connected") {
+    return fieldsFromConn(item.mode.conn).map((field) => connTarget(field.key));
   }
-  if (it.mode.kind === "plain" && it.content.kind === "value")
+  if (item.mode.kind === "plain" && item.content.kind === "value")
     return [VALUE_TARGET];
   return [];
 }
@@ -113,16 +113,19 @@ function primaryEditTarget(core: Core, id: ItemId): string | null {
 }
 
 function textForTarget(core: Core, id: ItemId, target: string): string {
-  const it = core.item(id);
+  const item = core.item(id);
   if (target === VALUE_TARGET) {
-    return it.content.kind === "value" ? valueToText(it.content.value) : "";
+    return item.content.kind === "value" ? valueToText(item.content.value) : "";
   }
   if (target.startsWith("conn:")) {
-    if (it.mode.kind !== "connected") return "";
+    if (item.mode.kind !== "connected") return "";
     const key = target.slice("conn:".length);
-    return fieldsFromConn(it.mode.conn).find((f) => f.key === key)?.text ?? "";
+    return (
+      fieldsFromConn(item.mode.conn).find((field) => field.key === key)?.text ??
+      ""
+    );
   }
-  if (target === LABEL_TARGET) return it.label ?? "";
+  if (target === LABEL_TARGET) return item.label ?? "";
   return "";
 }
 
@@ -176,19 +179,24 @@ function moveEditPoint(
 }
 
 function caretFromActiveEditor(): Caret | null {
-  const a = document.activeElement;
-  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
+  const activeEl = document.activeElement;
+  if (
+    !(
+      activeEl instanceof HTMLInputElement ||
+      activeEl instanceof HTMLTextAreaElement
+    )
+  )
     return null;
-  const start = a.selectionStart ?? 0;
-  const end = a.selectionEnd ?? start;
+  const start = activeEl.selectionStart ?? 0;
+  const end = activeEl.selectionEnd ?? start;
   return { start, end };
 }
 
-function clampCaretToText(c: Caret, text: string): Caret {
+function clampCaretToText(caret: Caret, text: string): Caret {
   const len = text.length;
-  const s = Math.max(0, Math.min(c.start, len));
-  const e = Math.max(0, Math.min(c.end, len));
-  return { start: s, end: e };
+  const start = Math.max(0, Math.min(caret.start, len));
+  const end = Math.max(0, Math.min(caret.end, len));
+  return { start, end };
 }
 
 const outlineCommands = {
@@ -205,9 +213,9 @@ const outlineCommands = {
   },
 
   commitConnField(core: Core, id: ItemId, key: string, text: string): void {
-    const it = core.item(id);
-    if (it.mode.kind !== "connected") return;
-    const next = patchConn(it.mode.conn, key, text);
+    const item = core.item(id);
+    if (item.mode.kind !== "connected") return;
+    const next = patchConn(item.mode.conn, key, text);
     core.commit((t) => t.setConnected(id, next));
   },
 
@@ -287,14 +295,18 @@ const outlineCommands = {
     const leftId = dir === "backward" ? neighbor : sel.focus.item;
     const rightId = dir === "backward" ? sel.focus.item : neighbor;
 
-    const a = core.item(leftId);
-    const b = core.item(rightId);
+    const leftItem = core.item(leftId);
+    const rightItem = core.item(rightId);
 
-    if (!(a.mode.kind === "plain" && a.content.kind === "value")) return null;
-    if (!(b.mode.kind === "plain" && b.content.kind === "value")) return null;
+    if (!(leftItem.mode.kind === "plain" && leftItem.content.kind === "value"))
+      return null;
+    if (
+      !(rightItem.mode.kind === "plain" && rightItem.content.kind === "value")
+    )
+      return null;
 
-    const leftText = valueToText(a.content.value);
-    const rightText = valueToText(b.content.value);
+    const leftText = valueToText(leftItem.content.value);
+    const rightText = valueToText(rightItem.content.value);
 
     core.commit((t) => {
       t.setValue(leftId, parseValue(leftText + rightText));
@@ -392,7 +404,7 @@ function buildOutlineNodeShell(
   focus: Focus,
   withMeta: boolean,
 ): Component {
-  const { core, rootId } = mountCtx;
+  const { core } = mountCtx;
   const id = focus.item;
 
   return createComponent(core, (ctx) => {
@@ -622,14 +634,14 @@ export function createOutlineView(args: {
         if (sel.kind !== "focused") return;
 
         const id = sel.focus.item;
-        const it = core.item(id);
+        const item = core.item(id);
 
         if (
           intent.char === "=" &&
           (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
-          it.mode.kind === "plain" &&
-          it.content.kind === "value" &&
-          valueToText(it.content.value).trim() === ""
+          item.mode.kind === "plain" &&
+          item.content.kind === "value" &&
+          valueToText(item.content.value).trim() === ""
         ) {
           outlineCommands.setFormula(core, id);
           core.focus(focusFor(core, rootId, id), connTarget("expr"), {
@@ -691,9 +703,9 @@ export function createOutlineView(args: {
         if (sel.kind !== "focused") return;
 
         const prefer = intent.dir === "backward" ? "prev" : "next";
-        const it = core.item(sel.focus.item);
+        const item = core.item(sel.focus.item);
 
-        if (!(it.mode.kind === "plain" && it.content.kind === "value")) {
+        if (!(item.mode.kind === "plain" && item.content.kind === "value")) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();
@@ -705,7 +717,7 @@ export function createOutlineView(args: {
           return;
         }
 
-        if (valueToText(it.content.value).length === 0) {
+        if (valueToText(item.content.value).length === 0) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();

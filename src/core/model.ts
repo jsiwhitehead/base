@@ -217,8 +217,8 @@ export function createModel(): Model {
   };
 
   const createId = (): EntryId => nextId++;
-  const setNextId = (n: EntryId): void => {
-    nextId = n;
+  const setNextId = (next: EntryId): void => {
+    nextId = next;
   };
 
   const hasEntry = (id: EntryId): boolean => entries.has(id);
@@ -244,19 +244,20 @@ export function createModel(): Model {
   const childLabelIndexSignal = (
     groupId: EntryId,
   ): ReadonlySignal<Map<string, EntryId>> => {
-    const rec = entryRec(groupId);
-    return (rec.childLabelIndexSignal ??= computed(() => {
-      const it = entrySignal(groupId).value;
-      if (!isGroupContent(it.content)) return new Map<string, EntryId>();
+    const groupRec = entryRec(groupId);
+    return (groupRec.childLabelIndexSignal ??= computed(() => {
+      const groupEntry = entrySignal(groupId).value;
+      if (!isGroupContent(groupEntry.content))
+        return new Map<string, EntryId>();
 
-      const m = new Map<string, EntryId>();
-      for (const childId of it.content.childIds) {
+      const childLabelIndex = new Map<string, EntryId>();
+      for (const childId of groupEntry.content.childIds) {
         if (!entries.has(childId)) continue;
         const child = entrySignal(childId).value;
-        const nm = normalizeLabel(child.label);
-        if (nm) m.set(nm, childId);
+        const label = normalizeLabel(child.label);
+        if (label) childLabelIndex.set(label, childId);
       }
-      return m;
+      return childLabelIndex;
     }));
   };
 
@@ -276,17 +277,18 @@ export function createModel(): Model {
     for (const cid of childIds) {
       if (!entries.has(cid)) continue;
 
-      const it = entrySignal(cid).peek();
+      const childEntry = entrySignal(cid).peek();
       const raw =
         opts.override && opts.override.childId === cid
           ? opts.override.label
-          : it.label;
+          : childEntry.label;
 
-      const nm = normalizeLabel(raw);
-      if (!nm) continue;
+      const label = normalizeLabel(raw);
+      if (!label) continue;
 
-      if (seen.has(nm)) throw new Error(`Duplicate label '${nm}' in group`);
-      seen.add(nm);
+      if (seen.has(label))
+        throw new Error(`Duplicate label '${label}' in group`);
+      seen.add(label);
     }
   }
 
@@ -314,8 +316,8 @@ export function createModel(): Model {
 
   const getGroupEntry = (id: EntryId | null): GroupEntry | null => {
     if (id == null || !entries.has(id)) return null;
-    const o = entrySignal(id).peek();
-    return isGroupEntry(o) ? o : null;
+    const entry = entrySignal(id).peek();
+    return isGroupEntry(entry) ? entry : null;
   };
 
   function move(spec: MoveSpec): MoveResult {
@@ -373,9 +375,8 @@ export function createModel(): Model {
 
     batch(() => {
       if (toParentId != null && preparedChildIds) {
-        const { entrySignal: parentSignal, parent } = expectGroupParent(
-          toParentId,
-        );
+        const { entrySignal: parentSignal, parent } =
+          expectGroupParent(toParentId);
         parentSignal.value = {
           ...parent,
           content: {
@@ -503,30 +504,30 @@ export function createModel(): Model {
     const moved: MoveResult[] = [];
 
     batch(() => {
-      for (const op0 of txn.ops) {
-        switch (op0.kind) {
+      for (const op of txn.ops) {
+        switch (op.kind) {
           case "create":
-            createEntryInternal(op0.entry);
-            created.push(op0.entry.id);
-            touched.add(op0.entry.id);
+            createEntryInternal(op.entry);
+            created.push(op.entry.id);
+            touched.add(op.entry.id);
             break;
 
           case "patch":
-            patch(op0.id, op0.next);
-            touched.add(op0.id);
+            patch(op.id, op.next);
+            touched.add(op.id);
             break;
 
           case "move": {
-            const res = move(op0.spec);
+            const res = move(op.spec);
             moved.push(res);
-            touched.add(op0.spec.childId);
+            touched.add(op.spec.childId);
             if (res.fromParentId != null) touched.add(res.fromParentId);
             if (res.toParentId != null) touched.add(res.toParentId);
             break;
           }
 
           case "remove": {
-            const res = remove(op0.id);
+            const res = remove(op.id);
             touched.add(res.removedId);
             if (res.parentTouched != null) touched.add(res.parentTouched);
             for (const cid of res.orphanedChildren) touched.add(cid);
@@ -534,7 +535,7 @@ export function createModel(): Model {
           }
 
           default: {
-            const never: never = op0;
+            const never: never = op;
             throw new Error(`Unknown op: ${String((never as any).kind)}`);
           }
         }
@@ -554,17 +555,19 @@ export function createModel(): Model {
   };
 
   const childIdsOf = (groupId: EntryId): EntryId[] => {
-    const it = entrySignal(groupId).value;
-    return isGroupContent(it.content) ? [...it.content.childIds] : [];
+    const groupEntry = entrySignal(groupId).value;
+    return isGroupContent(groupEntry.content)
+      ? [...groupEntry.content.childIds]
+      : [];
   };
 
   const findChildIdByLabel = (
     groupId: EntryId,
     label: string,
   ): EntryId | null => {
-    const nm = normalizeLabel(label);
-    if (!nm) return null;
-    return childLabelIndexSignal(groupId).value.get(nm) ?? null;
+    const normalizedLabel = normalizeLabel(label);
+    if (!normalizedLabel) return null;
+    return childLabelIndexSignal(groupId).value.get(normalizedLabel) ?? null;
   };
 
   const locateInParent = (childId: EntryId): LocateInParentResult | null => {
@@ -597,9 +600,9 @@ export function createModel(): Model {
 
       seen.add(id);
 
-      const it = entrySignal(id).peek();
-      if (isGroupEntry(it))
-        for (const cid of it.content.childIds) stack.push(cid);
+      const entry = entrySignal(id).peek();
+      if (isGroupEntry(entry))
+        for (const cid of entry.content.childIds) stack.push(cid);
     }
     return seen;
   };
@@ -624,16 +627,16 @@ export function createModel(): Model {
     devAssert(entries.has(root!), `Root entry missing: ${String(root)}`);
 
     const groupChildIdsOf = (id: EntryId): readonly EntryId[] | null => {
-      const it = entries.get(id)?.entrySignal.peek();
-      if (!it) return null;
-      return isGroupEntry(it) ? it.content.childIds : null;
+      const entry = entries.get(id)?.entrySignal.peek();
+      if (!entry) return null;
+      return isGroupEntry(entry) ? entry.content.childIds : null;
     };
 
     for (const [gid, rec] of entries) {
-      const it = rec.entrySignal.peek();
-      if (!isGroupEntry(it)) continue;
+      const groupEntry = rec.entrySignal.peek();
+      if (!isGroupEntry(groupEntry)) continue;
 
-      const childIds = it.content.childIds;
+      const childIds = groupEntry.content.childIds;
 
       const seenIds = new Set<EntryId>();
       for (const cid of childIds) {
@@ -658,36 +661,39 @@ export function createModel(): Model {
       const seenLabels = new Set<string>();
       for (const cid of childIds) {
         const child = entries.get(cid)!.entrySignal.peek();
-        const nm = normalizeLabel(child.label);
-        if (!nm) continue;
+        const label = normalizeLabel(child.label);
+        if (!label) continue;
         devAssert(
-          !seenLabels.has(nm),
-          `Duplicate label '${nm}' in group ${gid}`,
+          !seenLabels.has(label),
+          `Duplicate label '${label}' in group ${gid}`,
         );
-        seenLabels.add(nm);
+        seenLabels.add(label);
       }
     }
 
     for (const [cid, rec] of entries) {
       const child = rec.entrySignal.peek();
-      const parentId0 = child.parentId;
-      if (parentId0 == null) continue;
+      const parentId = child.parentId;
+      if (parentId == null) continue;
 
       devAssert(
-        entries.has(parentId0),
-        `Entry ${cid} has missing parent ${parentId0}`,
+        entries.has(parentId),
+        `Entry ${cid} has missing parent ${parentId}`,
       );
 
-      const parentChildIds = groupChildIdsOf(parentId0);
+      const parentChildIds = groupChildIdsOf(parentId);
       devAssert(
         parentChildIds != null,
-        `Entry ${cid} parent ${parentId0} is not a group`,
+        `Entry ${cid} parent ${parentId} is not a group`,
       );
 
-      const count = parentChildIds!.reduce((n, x) => n + (x === cid ? 1 : 0), 0);
+      const count = parentChildIds!.reduce(
+        (n, x) => n + (x === cid ? 1 : 0),
+        0,
+      );
       devAssert(
         count === 1,
-        `Entry ${cid} parent ${parentId0} contains it ${count} times (expected 1)`,
+        `Entry ${cid} parent ${parentId} contains it ${count} times (expected 1)`,
       );
     }
   }
@@ -714,10 +720,14 @@ export function createModel(): Model {
   };
 
   const snapshot = (id: EntryId): SnapshotEntry => {
-    const it = entrySignal(id).value;
-    const label = it.label.trim() ? it.label : undefined;
-    const view = it.view ?? undefined;
-    return { label, view, content: snapshotContent(it.content) };
+    const entry = entrySignal(id).value;
+    const label = entry.label.trim() ? entry.label : undefined;
+    const view = entry.view ?? undefined;
+    return {
+      ...(label ? { label } : {}),
+      ...(view ? { view } : {}),
+      content: snapshotContent(entry.content),
+    };
   };
 
   return {

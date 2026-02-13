@@ -5,6 +5,6 @@ import { createTableView } from "./table";
 
 export const viewFactories: Record<ViewName, ViewFactory<Core>> = {
   outline: createOutlineView,
-  table: createTableView,
   slider: createSliderView,
+  table: createTableView,
 };

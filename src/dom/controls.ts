@@ -1,6 +1,6 @@
 import { computed } from "@preact/signals-core";
 
-import type { Caret, Component, Core, Focus, ItemId, Connected } from "../core";
+import type { Caret, Component, Connected, Core, Focus, ItemId } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import { caretFromTarget, createComponent, el, setData } from "./base";
 
@@ -76,16 +76,21 @@ export function parseKeydownIntent(e: KeyboardEvent): Intent | null {
 }
 
 export function insertTextIntoActiveEditor(text: string): void {
-  const a = document.activeElement;
-  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement))
+  const activeEl = document.activeElement;
+  if (
+    !(
+      activeEl instanceof HTMLInputElement ||
+      activeEl instanceof HTMLTextAreaElement
+    )
+  )
     return;
-  if (a.readOnly || a.disabled) return;
+  if (activeEl.readOnly || activeEl.disabled) return;
 
-  const start = a.selectionStart ?? 0;
-  const end = a.selectionEnd ?? start;
+  const start = activeEl.selectionStart ?? 0;
+  const end = activeEl.selectionEnd ?? start;
 
-  a.setRangeText(text, start, end, "end");
-  a.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  activeEl.setRangeText(text, start, end, "end");
+  activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
 }
 
 export function escapeLadder(core: Core): void {
@@ -102,18 +107,18 @@ export function escapeLadder(core: Core): void {
 }
 
 function textInput(multiline: boolean): TextInputElement {
-  const n = document.createElement(multiline ? "textarea" : "input") as
+  const inputEl = document.createElement(multiline ? "textarea" : "input") as
     | HTMLInputElement
     | HTMLTextAreaElement;
 
-  if (n instanceof HTMLInputElement) n.type = "text";
-  n.autocapitalize = "off";
-  n.autocomplete = "off";
-  n.setAttribute("autocorrect", "off");
-  n.spellcheck = false;
-  if (n instanceof HTMLTextAreaElement) n.rows = 1;
-  n.tabIndex = -1;
-  return n;
+  if (inputEl instanceof HTMLInputElement) inputEl.type = "text";
+  inputEl.autocapitalize = "off";
+  inputEl.autocomplete = "off";
+  inputEl.setAttribute("autocorrect", "off");
+  inputEl.spellcheck = false;
+  if (inputEl instanceof HTMLTextAreaElement) inputEl.rows = 1;
+  inputEl.tabIndex = -1;
+  return inputEl;
 }
 
 function syncValue(inp: TextInputElement, next: string) {
@@ -162,7 +167,7 @@ type TextFieldOpts = {
   yieldNav?: boolean;
   commit: (text: string) => void;
   getState: () => TextFieldState;
-  onIntent?: (i: Intent) => void;
+  onIntent?: (intent: Intent) => void;
 };
 
 export function buildTextField(
@@ -220,10 +225,10 @@ export function buildTextField(
       if (editModel !== "draft") return;
       if (editing) return;
 
-      const st = opts.getState();
-      if (st.readOnly) return;
+      const state = opts.getState();
+      if (state.readOnly) return;
 
-      const committed = st.text ?? "";
+      const committed = state.text ?? "";
       editing = true;
       dirty = false;
       baseline = committed;
@@ -236,8 +241,8 @@ export function buildTextField(
       if (!editing) return;
       if (!dirty) return;
 
-      const st = opts.getState();
-      if (st.readOnly) return;
+      const state = opts.getState();
+      if (state.readOnly) return;
 
       opts.commit(draft);
       dirty = false;
@@ -252,25 +257,29 @@ export function buildTextField(
       syncMirror(baseline);
     };
 
-    const handleIntent = (i: Intent) => {
+    const handleIntent = (intent: Intent) => {
       if (editModel === "draft") {
-        if (i.type === "CANCEL") {
+        if (intent.type === "CANCEL") {
           cancelDraft();
-          opts.onIntent?.(i);
+          opts.onIntent?.(intent);
           return;
         }
 
-        if (i.type === "CONFIRM" || i.type === "TAB" || i.type === "NAV") {
+        if (
+          intent.type === "CONFIRM" ||
+          intent.type === "TAB" ||
+          intent.type === "NAV"
+        ) {
           commitDraft();
-          opts.onIntent?.(i);
+          opts.onIntent?.(intent);
           return;
         }
 
-        opts.onIntent?.(i);
+        opts.onIntent?.(intent);
         return;
       }
 
-      opts.onIntent?.(i);
+      opts.onIntent?.(intent);
     };
 
     if (opts.onIntent && yieldNav) {
@@ -369,10 +378,10 @@ export function buildTextField(
     });
 
     ctx.effect(() => {
-      const st = opts.getState();
-      inp.readOnly = st.readOnly;
+      const state = opts.getState();
+      inp.readOnly = state.readOnly;
 
-      const committed = st.text ?? "";
+      const committed = state.text ?? "";
       const focused = isThisTargetFocused();
 
       if (editModel === "live") {
@@ -391,7 +400,7 @@ export function buildTextField(
         return;
       }
 
-      if (!editing && !st.readOnly) {
+      if (!editing && !state.readOnly) {
         editing = true;
         dirty = false;
         baseline = committed;
@@ -504,15 +513,15 @@ export function buildItemMeta(
 
     ctx.list<string>(
       connWrap,
-      () => fieldsSignal.value.map((f) => f.key),
+      () => fieldsSignal.value.map((field) => field.key),
       (key) =>
-        createComponent(core, (ctx2) => {
+        createComponent(core, (rowCtx) => {
           const row = el("div", "ui-meta-conn-row");
           const keyEl = el("div", "ui-meta-conn-key");
           const valEl = el("div", "ui-meta-conn-val");
           row.append(keyEl, valEl);
 
-          const tkey = connTarget(key);
+          const targetKey = connTarget(key);
 
           const specForKey = (): ConnField | null => {
             const snap = core.item(id);
@@ -528,7 +537,7 @@ export function buildItemMeta(
 
           const fc = buildTextField(core, {
             focus: args.focus,
-            target: tkey,
+            target: targetKey,
             multiline: multilineForKey(),
             autosize: true,
             commit: (text) => args.commitConnField(key, text),
@@ -543,9 +552,9 @@ export function buildItemMeta(
             },
             onIntent: args.dispatch,
           });
-          ctx2.mount(valEl, fc);
+          rowCtx.mount(valEl, fc);
 
-          ctx2.effect(() => {
+          rowCtx.effect(() => {
             const lbl = labelForKey();
             if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
           });

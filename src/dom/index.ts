@@ -9,17 +9,17 @@ export {
 } from "./base";
 
 export {
+  buildItemMeta,
+  buildTextField,
   caret0,
   caretAt,
+  connTarget,
   escapeLadder,
   fieldsFromConn,
   insertTextIntoActiveEditor,
   LABEL_TARGET,
-  buildItemMeta,
   parseKeydownIntent,
   patchConn,
   SELECT_ALL,
-  connTarget,
-  buildTextField,
   VALUE_TARGET,
 } from "./controls";

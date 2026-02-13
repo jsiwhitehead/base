@@ -10,7 +10,10 @@ type BlankResult = { kind: "blank" };
 type IssueResult = { kind: "issue"; message: string };
 type ScalarResult = { kind: "scalar"; result: Scalar };
 type EntryGroupResult = { kind: "entry-group"; entryIds: readonly EntryId[] };
-type ResultGroupResult = { kind: "result-group"; items: readonly LabeledResult[] };
+type ResultGroupResult = {
+  kind: "result-group";
+  items: readonly LabeledResult[];
+};
 
 export type Result =
   | BlankResult
@@ -67,10 +70,13 @@ export type EvalEnv = {
 type Interpreter = (expr: string, env: EvalEnv) => Result;
 
 type EvalCtx = { visiting: Set<EntryId> };
-const makeEvalCtx = (): EvalCtx => ({ visiting: new Set<EntryId>() });
+const createEvalCtx = (): EvalCtx => ({ visiting: new Set<EntryId>() });
+
+const CYCLIC_DEPENDENCY_MESSAGE = "Cyclic dependency";
+const MISSING_ENTRY_MESSAGE = "Missing entry";
 
 function withVisiting(ctx: EvalCtx, id: EntryId, run: () => Result): Result {
-  if (ctx.visiting.has(id)) return Results.issue("Cyclic dependency");
+  if (ctx.visiting.has(id)) return Results.issue(CYCLIC_DEPENDENCY_MESSAGE);
   ctx.visiting.add(id);
   try {
     return run();
@@ -81,7 +87,7 @@ function withVisiting(ctx: EvalCtx, id: EntryId, run: () => Result): Result {
   }
 }
 
-const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+const SORT_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 
 const sortRank = (v: Result): [number, unknown] => {
   if (isBlankResult(v) || isIssueResult(v)) return [4, null];
@@ -103,7 +109,7 @@ const compareSortKey = (a: Result, b: Result): number => {
     const d = (va as number) - (vb as number);
     if (d) return d;
   } else if (ra === 1) {
-    const d = collator.compare(String(va), String(vb));
+    const d = SORT_COLLATOR.compare(String(va), String(vb));
     if (d) return d;
   }
   return 0;
@@ -128,13 +134,13 @@ export function createEvaluator(opts: {
 
   const cache = new Map<EntryId, CacheRec>();
 
-  const rec = (id: EntryId): CacheRec => {
-    let r = cache.get(id);
-    if (!r) {
-      r = {};
-      cache.set(id, r);
+  const cacheRecFor = (id: EntryId): CacheRec => {
+    let cacheRec = cache.get(id);
+    if (!cacheRec) {
+      cacheRec = {};
+      cache.set(id, cacheRec);
     }
-    return r;
+    return cacheRec;
   };
 
   const baseEnvFor = (parentId: EntryId, ctx: EvalCtx): EvalEnv => ({
@@ -169,16 +175,19 @@ export function createEvaluator(opts: {
       return Results.resultGroup(
         v.entryIds
           .filter((id) => model.hasEntry(id))
-          .map((id) => ({
-            label: model.readEntry(id).label || undefined,
-            result: materializeEntryGroups(evaluateResult(id, ctx), ctx),
-          })),
+          .map((id) => {
+            const label = model.readEntry(id).label || undefined;
+            return {
+              ...(label ? { label } : {}),
+              result: materializeEntryGroups(evaluateResult(id, ctx), ctx),
+            };
+          }),
       );
     }
     if (isResultGroupResult(v)) {
       return Results.resultGroup(
         v.items.map((it) => ({
-          label: it.label,
+          ...(it.label ? { label: it.label } : {}),
           result: materializeEntryGroups(it.result, ctx),
         })),
       );
@@ -233,7 +242,7 @@ export function createEvaluator(opts: {
       i: number,
       rowCtx: EvalCtx,
     ): Result => {
-      if (!model.hasEntry(rowId)) return Results.issue("Missing entry");
+      if (!model.hasEntry(rowId)) return Results.issue(MISSING_ENTRY_MESSAGE);
 
       const row = evaluateResult(rowId, rowCtx);
       if (isIssueResult(row)) return row;
@@ -287,36 +296,38 @@ export function createEvaluator(opts: {
   }
 
   function evaluateResult(id: EntryId, ctx: EvalCtx): Result {
-    if (!model.hasEntry(id)) return Results.issue("Missing entry");
+    if (!model.hasEntry(id)) return Results.issue(MISSING_ENTRY_MESSAGE);
 
     return withVisiting(ctx, id, () => {
-      if (!model.hasEntry(id)) return Results.issue("Missing entry");
+      if (!model.hasEntry(id)) return Results.issue(MISSING_ENTRY_MESSAGE);
 
-      const it = model.readEntry(id);
-      switch (it.content.kind) {
+      const entry = model.readEntry(id);
+      switch (entry.content.kind) {
         case "blank":
           return Results.blank();
         case "scalar":
-          return Results.scalar(it.content.value);
+          return Results.scalar(entry.content.value);
         case "group":
           return Results.entryGroup(
-            [...it.content.childIds].filter((cid) => model.hasEntry(cid)),
+            [...entry.content.childIds].filter((cid) => model.hasEntry(cid)),
           );
         case "formula": {
-          const expr = it.content.expr.trim();
+          const expr = entry.content.expr.trim();
           if (!expr) return Results.blank();
           const out = interpretExpr(expr, baseEnvFor(id, ctx));
           return materializeEntryGroups(out, ctx);
         }
         case "query":
-          return evaluateQuery(id, it.content, ctx);
+          return evaluateQuery(id, entry.content, ctx);
       }
     });
   }
 
   const resultSignal = (id: EntryId): ReadonlySignal<Result> => {
-    const r = rec(id);
-    return (r.resultSignal ??= computed(() => evaluateResult(id, makeEvalCtx())));
+    const cacheRec = cacheRecFor(id);
+    return (cacheRec.resultSignal ??= computed(() =>
+      evaluateResult(id, createEvalCtx()),
+    ));
   };
 
   const result = (id: EntryId): Result => resultSignal(id).value;

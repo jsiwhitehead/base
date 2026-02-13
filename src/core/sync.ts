@@ -34,66 +34,70 @@ export function createShapeSyncGroup(opts: {
   addRule: (rule: Rule) => () => void;
 }): SyncGroup {
   const { model } = opts;
-  const groups = new Set<EntryId>();
+  const groupIds = new Set<EntryId>();
 
-  const rule: Rule = (m, input) => {
-    if (groups.size <= 1) return [];
+  const rule: Rule = (model, input) => {
+    if (groupIds.size <= 1) return [];
 
     const candidatesTo = new Set<EntryId>();
     const candidatesFrom = new Set<EntryId>();
     const candidatesTouched = new Set<EntryId>();
 
-    for (const r of input.moved) {
-      if (r.toParentId != null && groups.has(r.toParentId))
-        candidatesTo.add(r.toParentId);
-      if (r.fromParentId != null && groups.has(r.fromParentId))
-        candidatesFrom.add(r.fromParentId);
+    for (const moved of input.moved) {
+      if (moved.toParentId != null && groupIds.has(moved.toParentId))
+        candidatesTo.add(moved.toParentId);
+      if (moved.fromParentId != null && groupIds.has(moved.fromParentId))
+        candidatesFrom.add(moved.fromParentId);
     }
 
     for (const id of input.touched) {
-      if (input.moved.length === 0 && groups.has(id)) {
+      if (input.moved.length === 0 && groupIds.has(id)) {
         candidatesTouched.add(id);
         continue;
       }
-      if (!m.hasEntry(id)) continue;
-      const parentId = m.peekEntry(id).parentId;
-      if (parentId != null && groups.has(parentId))
+      if (!model.hasEntry(id)) continue;
+      const parentId = model.peekEntry(id).parentId;
+      if (parentId != null && groupIds.has(parentId))
         candidatesTouched.add(parentId);
     }
 
     const leaderId =
       minId(candidatesTo) ?? minId(candidatesTouched) ?? minId(candidatesFrom);
-    if (leaderId == null || !groups.has(leaderId) || !m.hasEntry(leaderId))
+    if (
+      leaderId == null ||
+      !groupIds.has(leaderId) ||
+      !model.hasEntry(leaderId)
+    )
       return [];
 
-    const leaderChildIds = m.childIdsOf(leaderId);
+    const leaderChildIds = model.childIdsOf(leaderId);
     const desiredLabels: string[] = [];
-    for (const cid of leaderChildIds) {
-      if (!m.hasEntry(cid)) continue;
-      const nm = normalizeLabel(m.readEntry(cid).label);
-      if (nm) desiredLabels.push(nm);
+    for (const childId of leaderChildIds) {
+      if (!model.hasEntry(childId)) continue;
+      const normalized = normalizeLabel(model.readEntry(childId).label);
+      if (normalized) desiredLabels.push(normalized);
     }
 
     const desiredSet = new Set(desiredLabels);
-    const targetGroupIds = [...groups]
-      .filter((gid) => gid !== leaderId)
+    const targetGroupIds = [...groupIds]
+      .filter((groupId) => groupId !== leaderId)
       .sort((a, b) => a - b);
 
     const ops: Op[] = [];
 
-    for (const gid of targetGroupIds) {
-      if (!m.hasEntry(gid)) continue;
+    for (const groupId of targetGroupIds) {
+      if (!model.hasEntry(groupId)) continue;
 
-      const childIds = m.childIdsOf(gid);
+      const childIds = model.childIdsOf(groupId);
       const byLabel = new Map<string, EntryId>();
       const indexOf = new Map<EntryId, number>();
 
       for (let i = 0; i < childIds.length; i++) {
-        const cid = childIds[i]!;
-        indexOf.set(cid, i);
-        if (!m.hasEntry(cid)) continue;
-        const nm = normalizeLabel(m.readEntry(cid).label);
-        if (nm) byLabel.set(nm, cid);
+        const childId = childIds[i]!;
+        indexOf.set(childId, i);
+        if (!model.hasEntry(childId)) continue;
+        const normalized = normalizeLabel(model.readEntry(childId).label);
+        if (normalized) byLabel.set(normalized, childId);
       }
 
       for (let i = 0; i < desiredLabels.length; i++) {
@@ -101,27 +105,33 @@ export function createShapeSyncGroup(opts: {
         const existing = byLabel.get(label) ?? null;
 
         if (existing != null) {
-          const curIdx = indexOf.get(existing);
-          if (curIdx != null && curIdx !== i) {
+          const currentIndex = indexOf.get(existing);
+          if (currentIndex != null && currentIndex !== i) {
             ops.push(
-              m.ops.move({ childId: existing, toParentId: gid, toIndex: i }),
+              model.ops.move({
+                childId: existing,
+                toParentId: groupId,
+                toIndex: i,
+              }),
             );
           }
           continue;
         }
 
-        const id = m.createId();
+        const id = model.createId();
         const entry: Entry = { ...makeBlankEntry(id), label };
-        ops.push(m.ops.create(entry));
-        ops.push(m.ops.move({ childId: id, toParentId: gid, toIndex: i }));
+        ops.push(model.ops.create(entry));
+        ops.push(
+          model.ops.move({ childId: id, toParentId: groupId, toIndex: i }),
+        );
       }
 
-      for (const cid of childIds) {
-        if (!m.hasEntry(cid)) continue;
-        const nm = normalizeLabel(m.readEntry(cid).label);
-        if (!nm) continue;
-        if (!desiredSet.has(nm)) {
-          ops.push(m.ops.move({ childId: cid, toParentId: null }));
+      for (const childId of childIds) {
+        if (!model.hasEntry(childId)) continue;
+        const normalized = normalizeLabel(model.readEntry(childId).label);
+        if (!normalized) continue;
+        if (!desiredSet.has(normalized)) {
+          ops.push(model.ops.move({ childId, toParentId: null }));
         }
       }
     }
@@ -133,9 +143,9 @@ export function createShapeSyncGroup(opts: {
 
   const pruneMissing = (): EntryId[] => {
     const removed: EntryId[] = [];
-    for (const id of groups) {
+    for (const id of groupIds) {
       if (!model.hasEntry(id)) {
-        groups.delete(id);
+        groupIds.delete(id);
         removed.push(id);
       }
     }
@@ -144,20 +154,20 @@ export function createShapeSyncGroup(opts: {
 
   return {
     add(id: EntryId) {
-      groups.add(id);
+      groupIds.add(id);
     },
     remove(id: EntryId) {
-      groups.delete(id);
+      groupIds.delete(id);
     },
     has(id: EntryId) {
-      return groups.has(id);
+      return groupIds.has(id);
     },
     clear() {
-      groups.clear();
+      groupIds.clear();
     },
     pruneMissing,
     dispose() {
-      groups.clear();
+      groupIds.clear();
       removeRule();
     },
   };

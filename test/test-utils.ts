@@ -46,14 +46,14 @@ export function scalarOfId(
 }
 
 export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {
-  const c = core.item(id).content;
-  return c.kind === "group" ? c.children : [];
+  const content = core.item(id).content;
+  return content.kind === "group" ? content.children : [];
 }
 
 export function groupLabels(core: Core, id: ItemId): string[] {
-  const it = core.item(id);
-  if (it.content.kind !== "group") return [];
-  return it.content.children.map((cid) => core.item(cid).label ?? "");
+  const item = core.item(id);
+  if (item.content.kind !== "group") return [];
+  return item.content.children.map((childId) => core.item(childId).label ?? "");
 }
 
 type TreeShape =
@@ -67,21 +67,21 @@ type TreeShape =
   | { label: string; mode: string; kind: "group"; children: TreeShape[] };
 
 export function tree(core: Core, id: ItemId): TreeShape {
-  const it = core.item(id);
-  const label = it.label ?? "";
-  const mode = it.mode.kind;
-  const c = it.content;
+  const item = core.item(id);
+  const label = item.label ?? "";
+  const mode = item.mode.kind;
+  const content = item.content;
 
-  if (c.kind === "value")
-    return { label, mode, kind: "value", value: c.value };
-  if (c.kind === "issue")
-    return { label, mode, kind: "issue", message: c.message };
+  if (content.kind === "value")
+    return { label, mode, kind: "value", value: content.value };
+  if (content.kind === "issue")
+    return { label, mode, kind: "issue", message: content.message };
 
   return {
     label,
     mode,
     kind: "group",
-    children: c.children.map((x) => tree(core, x)),
+    children: content.children.map((childId) => tree(core, childId)),
   };
 }
 
@@ -231,9 +231,9 @@ export function requireTargetInput(
   root: ParentNode,
   target: string,
 ): HTMLTextAreaElement | HTMLInputElement {
-  const el0 = queryTargetInput(root, target);
-  if (!el0) throw new Error(`Missing input for target=${target}`);
-  return el0;
+  const targetInput = queryTargetInput(root, target);
+  if (!targetInput) throw new Error(`Missing input for target=${target}`);
+  return targetInput;
 }
 
 export function findItemEl(root: ParentNode, id: ItemId): HTMLElement | null {
@@ -241,13 +241,13 @@ export function findItemEl(root: ParentNode, id: ItemId): HTMLElement | null {
 }
 
 export function requireItemEl(root: ParentNode, id: ItemId): HTMLElement {
-  const el0 = findItemEl(root, id);
-  if (!el0) throw new Error(`Missing item element for id=${String(id)}`);
-  return el0;
+  const itemEl = findItemEl(root, id);
+  if (!itemEl) throw new Error(`Missing item element for id=${String(id)}`);
+  return itemEl;
 }
 
-export function pointerDown(el0: HTMLElement): void {
-  el0.dispatchEvent(
+export function pointerDown(element: HTMLElement): void {
+  element.dispatchEvent(
     new Event("pointerdown", { bubbles: true, cancelable: true }),
   );
 }
@@ -281,17 +281,17 @@ export function findPresenterSurface(
 export function requirePresenterSurface(
   fromItemEl: HTMLElement | null,
 ): HTMLElement {
-  const s = findPresenterSurface(fromItemEl);
-  if (!s) throw new Error("Missing presenter surface");
-  return s;
+  const presenterSurface = findPresenterSurface(fromItemEl);
+  if (!presenterSurface) throw new Error("Missing presenter surface");
+  return presenterSurface;
 }
 
 export function requireEl<T extends Element>(
-  el0: T | null,
+  element: T | null,
   msg = "Missing element",
 ): T {
-  if (!el0) throw new Error(msg);
-  return el0;
+  if (!element) throw new Error(msg);
+  return element;
 }
 
 export function nodeOrderByDataId(
@@ -303,9 +303,11 @@ export function nodeOrderByDataId(
 }
 
 export function requireFocusedItemEl(root: ParentNode): HTMLElement {
-  const el0 = root.querySelector(`.ui-item.is-focused`) as HTMLElement | null;
-  if (!el0) throw new Error("Missing focused item element");
-  return el0;
+  const focusedItemEl = root.querySelector(
+    `.ui-item.is-focused`,
+  ) as HTMLElement | null;
+  if (!focusedItemEl) throw new Error("Missing focused item element");
+  return focusedItemEl;
 }
 
 export function requireNotSameEl(a: Element | null, b: Element | null): void {
@@ -324,16 +326,16 @@ export type ElSnapshot = {
 };
 
 export function snapshotEl(
-  el0: Element,
+  element: Element,
   keySelectors: string[] = [],
 ): ElSnapshot {
   const keyEls: Element[] = [];
   for (const sel of keySelectors) {
-    const hit = (el0 as ParentNode).querySelector(sel);
+    const hit = (element as ParentNode).querySelector(sel);
     if (!hit) throw new Error(`Missing key element selector=${sel}`);
     keyEls.push(hit);
   }
-  return { el: el0, keyEls };
+  return { el: element, keyEls };
 }
 
 export function expectSnapshotSame(

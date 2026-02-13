@@ -15,20 +15,20 @@ import {
   SELECT_ALL,
   VALUE_TARGET,
   bindUiItemShell,
+  buildItemMeta,
   caret0,
   caretAt,
   createComponent,
   el,
   escapeLadder,
   insertTextIntoActiveEditor,
-  buildItemMeta,
   patchConn,
   stampBody,
 } from "../dom";
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
-  const c = core.item(id).content;
-  return c.kind === "group" ? c.children : [];
+  const content = core.item(id).content;
+  return content.kind === "group" ? content.children : [];
 };
 
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
@@ -160,41 +160,44 @@ function buildHeader(mountCtx: TableMountCtx): Component {
     ctx.list<number>(
       header,
       () => {
-        const n = sig.colCount.value;
+        const colCount = sig.colCount.value;
         const out: number[] = [];
-        for (let i = 0; i < n; i++) out.push(i);
+        for (let i = 0; i < colCount; i++) out.push(i);
         return out;
       },
       (colIdx) =>
-        createComponent(core, (ctx2) => {
+        createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-col");
 
-          ctx2.slot(col, () => {
-            const rid = sig.schemaRowId.value;
-            const cid = rid ? (childrenOf(core, rid)[colIdx] ?? null) : null;
-            if (!rid || !cid) return null;
+          colCtx.slot(col, () => {
+            const schemaRowId = sig.schemaRowId.value;
+            const cellId = schemaRowId
+              ? (childrenOf(core, schemaRowId)[colIdx] ?? null)
+              : null;
+            if (!schemaRowId || !cellId) return null;
 
-            const focus: Focus = { container: rid, item: cid };
+            const focus: Focus = { container: schemaRowId, item: cellId };
 
-            const canEditLabel = () => core.item(cid).mode.kind !== "readonly";
+            const canEditLabel = () =>
+              core.item(cellId).mode.kind !== "readonly";
 
             const commitLabel = (text: string) => {
               if (!canEditLabel()) return;
-              const cur = core.item(cid).label ?? "";
+              const cur = core.item(cellId).label ?? "";
               if (cur === text) return;
-              core.commit((t) => t.setLabel(cid, text));
+              core.commit((t) => t.setLabel(cellId, text));
             };
 
             const commitConnField = (key: string, text: string) => {
-              const snap = core.item(cid);
+              const snap = core.item(cellId);
               if (snap.mode.kind !== "connected") return;
               const next = patchConn(snap.mode.conn, key, text);
-              core.commit((t) => t.setConnected(cid, next));
+              core.commit((t) => t.setConnected(cellId, next));
             };
 
             return buildItemMeta(core, {
               focus,
-              id: cid,
+              id: cellId,
               dispatch,
               canEditLabel,
               commitLabel,
@@ -274,16 +277,16 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
     ctx.list<number>(
       row,
       () => {
-        const n = sig.colCount.value;
+        const colCount = sig.colCount.value;
         const out: number[] = [];
-        for (let i = 0; i < n; i++) out.push(i);
+        for (let i = 0; i < colCount; i++) out.push(i);
         return out;
       },
       (colIdx) => {
-        const cid = childrenOf(core, rowId)[colIdx] ?? null;
-        if (!cid)
+        const cellId = childrenOf(core, rowId)[colIdx] ?? null;
+        if (!cellId)
           return createComponent(core, () => el("div", "ui-table-cell"));
-        return buildDataCell(core, rowId, cid);
+        return buildDataCell(core, rowId, cellId);
       },
     );
 
@@ -460,8 +463,8 @@ export function createTableView(args: {
   const rowsSignal = computed(() => rowIds(core, tableId));
   const schemaRowIdSignal = computed(() => rowsSignal.value[0] ?? null);
   const colCountSignal = computed(() => {
-    const rid = schemaRowIdSignal.value;
-    return rid ? childrenOf(core, rid).length : 0;
+    const schemaRowId = schemaRowIdSignal.value;
+    return schemaRowId ? childrenOf(core, schemaRowId).length : 0;
   });
 
   const sig: TableSignals = {
@@ -471,50 +474,66 @@ export function createTableView(args: {
   };
 
   const dispatch = (intent: Intent): void => {
-    const sel0 = core.selection();
+    const selection = core.selection();
 
     if (intent.type === "CANCEL") {
       escapeLadder(core);
       return;
     }
 
-    if (!isFocused(sel0)) return;
+    if (!isFocused(selection)) return;
 
     const rows = sig.rows.value;
     const ncols = sig.colCount.value;
 
     switch (intent.type) {
       case "NAV": {
-        if (sel0.target !== DEFAULT_TARGET) return;
-        const res = tableNavMove(core, tableId, rows, ncols, sel0, intent.dir);
+        if (selection.target !== DEFAULT_TARGET) return;
+        const res = tableNavMove(
+          core,
+          tableId,
+          rows,
+          ncols,
+          selection,
+          intent.dir,
+        );
         if (!res) return;
         core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
 
       case "TAB": {
-        if (sel0.target !== DEFAULT_TARGET) return;
-        const res = tabMove(core, tableId, rows, ncols, sel0, intent.shift);
+        if (selection.target !== DEFAULT_TARGET) return;
+        const res = tabMove(
+          core,
+          tableId,
+          rows,
+          ncols,
+          selection,
+          intent.shift,
+        );
         if (!res) return;
         core.focus(res.focus, res.target, { caret: res.caret });
         return;
       }
 
       case "CONFIRM": {
-        if (isRowContainerSel(sel0, tableId)) {
-          tableCommands.addRowAfter(core, tableId, sel0.focus.item);
+        if (isRowContainerSel(selection, tableId)) {
+          tableCommands.addRowAfter(core, tableId, selection.focus.item);
           return;
         }
 
-        if (isCellContainerSel(core, tableId, rows, sel0)) {
-          core.focus(sel0.focus, VALUE_TARGET, { caret: caretAt(1_000_000) });
+        if (isCellContainerSel(core, tableId, rows, selection)) {
+          core.focus(selection.focus, VALUE_TARGET, {
+            caret: caretAt(1_000_000),
+          });
           return;
         }
 
-        if (isCellValueSel(core, tableId, rows, sel0)) {
-          const next = enterMove(core, rows, sel0);
+        if (isCellValueSel(core, tableId, rows, selection)) {
+          const next = enterMove(core, rows, selection);
           const dest = next ?? {
-            focus: sel0.focus,
+            focus: selection.focus,
             target: DEFAULT_TARGET,
             caret: caret0(),
           };
@@ -526,11 +545,11 @@ export function createTableView(args: {
       }
 
       case "TYPE": {
-        if (sel0.target !== DEFAULT_TARGET) return;
-        if (isRowContainerSel(sel0, tableId)) return;
+        if (selection.target !== DEFAULT_TARGET) return;
+        if (isRowContainerSel(selection, tableId)) return;
 
-        if (isCellContainerSel(core, tableId, rows, sel0)) {
-          core.focus(sel0.focus, VALUE_TARGET, { caret: SELECT_ALL });
+        if (isCellContainerSel(core, tableId, rows, selection)) {
+          core.focus(selection.focus, VALUE_TARGET, { caret: SELECT_ALL });
           queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
           return;
         }

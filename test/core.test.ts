@@ -3,17 +3,17 @@ import { describe, expect, test } from "bun:test";
 import type { Transaction } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
 import {
-  makeCoreRuntime,
-  scalarOf,
   childrenOf,
-  mkBlank,
-  mkGroup,
-  setFormula,
-  setQuery,
-  setView,
   expectFocused,
   expectSel,
   groupLabels,
+  makeCoreRuntime,
+  mkBlank,
+  mkGroup,
+  scalarOf,
+  setFormula,
+  setQuery,
+  setView,
   tree,
 } from "./test-utils";
 
@@ -140,10 +140,14 @@ describe("core/eval", () => {
     const rb = mkRow("b", 1);
     const rc = mkRow("c", 3);
 
-    const L = mkBlank(core, rootId, { label: "L" });
-    setQuery(core, L, { from: "rows", where: "score > 1", orderBy: "score" });
+    const listId = mkBlank(core, rootId, { label: "L" });
+    setQuery(core, listId, {
+      from: "rows",
+      where: "score > 1",
+      orderBy: "score",
+    });
 
-    const s1 = core.item(L);
+    const s1 = core.item(listId);
     expect(s1.content.kind).toBe("group");
     if (s1.content.kind !== "group") throw new Error("Expected group content");
 
@@ -155,13 +159,13 @@ describe("core/eval", () => {
       expect(core.locate(cid)).not.toBe(null);
     }
 
-    setQuery(core, L, {
+    setQuery(core, listId, {
       from: "rows",
       where: "position = 1 or label = 'c'",
       orderBy: "label",
     });
 
-    const s2 = core.item(L);
+    const s2 = core.item(listId);
     expect(s2.content.kind).toBe("group");
     if (s2.content.kind !== "group") throw new Error("Expected group content");
 
@@ -181,12 +185,14 @@ describe("core/eval", () => {
     const mkRow = (
       label: string,
       keyKind: "num" | "text" | "true" | "blank" | "issue",
-      v?: any,
+      value?: unknown,
     ) => {
       const row = mkGroup(core, rows, { label });
       const key = mkBlank(core, row, { label: "key" });
-      if (keyKind === "num") core.commit((t) => t.setValue(key, v));
-      else if (keyKind === "text") core.commit((t) => t.setValue(key, v));
+      if (keyKind === "num")
+        core.commit((t) => t.setValue(key, value as number));
+      else if (keyKind === "text")
+        core.commit((t) => t.setValue(key, value as string));
       else if (keyKind === "true") core.commit((t) => t.setValue(key, true));
       else if (keyKind === "blank") core.commit((t) => t.setValue(key, null));
       else if (keyKind === "issue") setFormula(core, key, "unknown_name");
@@ -201,10 +207,10 @@ describe("core/eval", () => {
     mkRow("n2", "num", 2);
     mkRow("t2", "text", "a");
 
-    const L = mkBlank(core, rootId, { label: "L" });
-    setQuery(core, L, { from: "rows", orderBy: "key" });
+    const listId = mkBlank(core, rootId, { label: "L" });
+    setQuery(core, listId, { from: "rows", orderBy: "key" });
 
-    const labels = groupLabels(core, L);
+    const labels = groupLabels(core, listId);
     expect(labels).toEqual(["n1", "n2", "t2", "t1", "u1", "b1", "e1"]);
   });
 });
@@ -303,9 +309,9 @@ describe("core/invariants & rules", () => {
     expect(groupLabels(core, rowB)).toEqual(["score", "name"]);
     expect(groupLabels(core, rowC)).toEqual(["score", "name"]);
 
-    const bKids = childrenOf(core, rowB);
-    const bScore = bKids.find((id) => core.item(id).label === "score")!;
-    const bName = bKids.find((id) => core.item(id).label === "name")!;
+    const rowBChildren = childrenOf(core, rowB);
+    const bScore = rowBChildren.find((id) => core.item(id).label === "score")!;
+    const bName = rowBChildren.find((id) => core.item(id).label === "name")!;
     expect(scalarOf(core.item(bScore).content)).toBe(null);
     expect(scalarOf(core.item(bName).content)).toBe(null);
 

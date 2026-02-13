@@ -23,22 +23,22 @@ export function el(
   className?: string,
   text?: string,
 ): HTMLElement {
-  const n = document.createElement(tag);
-  if (className) n.className = className;
-  if (text != null) n.textContent = text;
-  return n;
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text != null) element.textContent = text;
+  return element;
 }
 
 export function setData(
-  el0: HTMLElement,
+  element: HTMLElement,
   key: string,
   value: string | number | boolean | null | undefined,
 ): void {
   if (value == null || value === "") {
-    delete el0.dataset[key];
+    delete element.dataset[key];
     return;
   }
-  el0.dataset[key] = String(value);
+  element.dataset[key] = String(value);
 }
 
 type Region = {
@@ -119,8 +119,8 @@ class RegionChildManager<Id extends string | number> {
     const desired: HTMLElement[] = ids.map((id) => {
       let rec = this.cache.get(id);
       if (!rec) {
-        const v = this.create(id);
-        rec = { element: v.element, dispose: v.dispose.bind(v) };
+        const child = this.create(id);
+        rec = { element: child.element, dispose: child.dispose.bind(child) };
         this.cache.set(id, rec);
       }
       return rec.element;
@@ -139,11 +139,14 @@ class RegionChildManager<Id extends string | number> {
   }
 }
 
-export function caretFromTarget(el0: EventTarget | null): Caret {
-  const el1 = el0 instanceof HTMLElement ? el0 : null;
-  if (el1 instanceof HTMLInputElement || el1 instanceof HTMLTextAreaElement) {
-    const start = el1.selectionStart ?? 0;
-    const end = el1.selectionEnd ?? start;
+export function caretFromTarget(target: EventTarget | null): Caret {
+  const targetEl = target instanceof HTMLElement ? target : null;
+  if (
+    targetEl instanceof HTMLInputElement ||
+    targetEl instanceof HTMLTextAreaElement
+  ) {
+    const start = targetEl.selectionStart ?? 0;
+    const end = targetEl.selectionEnd ?? start;
     return { start, end };
   }
   return { start: 0, end: 0 };
@@ -230,18 +233,18 @@ export function createComponent(
     ) {
       const region = createRegion(host);
 
-      const mgr = new RegionChildManager<Id>(region, (id) => {
+      const childManager = new RegionChildManager<Id>(region, (id) => {
         const c = create(id);
         return { element: c.el, dispose: c.dispose };
       });
 
       const disposeEffect = effect(() => {
-        mgr.update(getIds());
+        childManager.update(getIds());
       });
 
       bag.add(() => {
         disposeEffect();
-        mgr.dispose();
+        childManager.dispose();
         region.dispose();
       });
     },
@@ -258,13 +261,13 @@ export function createComponent(
     },
   };
 
-  const el0 = build(ctx);
+  const rootEl = build(ctx);
 
   return {
-    el: el0,
+    el: rootEl,
     dispose() {
       bag.run();
-      el0.replaceChildren();
+      rootEl.replaceChildren();
     },
   };
 }

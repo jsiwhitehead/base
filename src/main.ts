@@ -60,9 +60,12 @@ function createApp(opts: CreateAppOpts = {}): App {
 
   main.addEventListener(
     "pointerdown",
-    (e) => {
-      const t = e.target;
-      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement)
+    (event) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement
+      )
         return;
       main.focus();
     },
@@ -109,10 +112,14 @@ function createApp(opts: CreateAppOpts = {}): App {
   return app;
 }
 
-function seedDemo(app: App) {
+function seedDemo(app: App): void {
   const { core, rootId } = app;
 
-  const mkGroup = (parentId: ItemId, label: string, view: ViewKind = null) => {
+  const mkGroup = (
+    parentId: ItemId,
+    label: string,
+    view: ViewKind = null,
+  ): ItemId => {
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
@@ -123,7 +130,7 @@ function seedDemo(app: App) {
     return id;
   };
 
-  const mkValue = (parentId: ItemId, label: string, value: Value) => {
+  const mkValue = (parentId: ItemId, label: string, value: Value): ItemId => {
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
@@ -133,7 +140,7 @@ function seedDemo(app: App) {
     return id;
   };
 
-  const mkFormula = (parentId: ItemId, label: string, expr: string) => {
+  const mkFormula = (parentId: ItemId, label: string, expr: string): ItemId => {
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
@@ -147,7 +154,7 @@ function seedDemo(app: App) {
     parentId: ItemId,
     label: string,
     spec: { from: string; where?: string; orderBy?: string },
-  ) => {
+  ): ItemId => {
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
@@ -175,9 +182,9 @@ function autoMount(): void {
   if (typeof document === "undefined") return;
   if (typeof window === "undefined") return;
 
-  const g = globalThis as { __APP_MOUNTED__?: boolean };
-  if (g.__APP_MOUNTED__) return;
-  g.__APP_MOUNTED__ = true;
+  const globalMountState = globalThis as { __APP_MOUNTED__?: boolean };
+  if (globalMountState.__APP_MOUNTED__) return;
+  globalMountState.__APP_MOUNTED__ = true;
 
   createApp({ demo: true, rootView: "outline" });
 }

@@ -1,15 +1,26 @@
-# base
+# Base
 
-To install dependencies:
+Work-in-progress system for working with grouped, labeled, and connected information using diverse, composable views.
 
-```bash
+## Status
+
+Work in progress.
+
+## Requirements
+
+- Bun
+
+## Quickstart
+
+```sh
 bun install
+bun run app
 ```
 
-To run:
+## Development
 
-```bash
-bun run index.ts
+```sh
+bun run typecheck
+bun test
+bun run format
 ```
-
-This project was created using `bun init` in bun v1.2.13. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

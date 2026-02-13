@@ -7,8 +7,8 @@ import {
   isBlankResult,
   isEntryGroupResult,
   isIssueResult,
-  isScalarResult,
   isResultGroupResult,
+  isScalarResult,
 } from "./eval";
 import { interpretExpr } from "./lang";
 import type {
@@ -97,14 +97,14 @@ const parseItemId = (id: ItemId): ItemRef | null => {
 };
 
 const refFromItemId = (id: ItemId): ItemRef => {
-  const r = parseItemId(id);
-  if (!r) throw new Error("Invalid item id");
-  return r;
+  const ref = parseItemId(id);
+  if (!ref) throw new Error("Invalid item id");
+  return ref;
 };
 
 const entryIdFromItemId = (id: ItemId): EntryId | null => {
-  const r = parseItemId(id);
-  return r && r.path.length === 0 ? r.entryId : null;
+  const ref = parseItemId(id);
+  return ref && ref.path.length === 0 ? ref.entryId : null;
 };
 
 function storedFromValue(v: ValueOrBlank): EntryContent {
@@ -252,12 +252,12 @@ export function createCore(opts: {
     moved: [...a.moved, ...b.moved],
   });
 
-  const toApplyResult = (r: ModelApplyResult): ApplyResult => {
+  const toApplyResult = (modelApply: ModelApplyResult): ApplyResult => {
     const toItem = (eid: EntryId) => itemIdOf(eid);
     return {
-      created: r.created.map(toItem),
-      touched: r.touched.map(toItem),
-      moved: r.moved.map((x) => ({
+      created: modelApply.created.map(toItem),
+      touched: modelApply.touched.map(toItem),
+      moved: modelApply.moved.map((x) => ({
         fromParentId: x.fromParentId == null ? null : toItem(x.fromParentId),
         toParentId: x.toParentId == null ? null : toItem(x.toParentId),
         fromIndex: x.fromIndex,
@@ -275,8 +275,8 @@ export function createCore(opts: {
   };
 
   const repairSelectionAfterDispatch = (meta?: Transaction["meta"]) => {
-    const src = meta?.source;
-    if (src === "remote") {
+    const source = meta?.source;
+    if (source === "remote") {
       const sel = runtime.selectionSignal.peek();
       if (!selectionStillValid(sel)) runtime.setSelection({ kind: "idle" });
       return;
@@ -285,7 +285,8 @@ export function createCore(opts: {
   };
 
   const childrenOfResolved = (base: ItemRef, v: Result): readonly ItemId[] => {
-    if (isEntryGroupResult(v)) return v.entryIds.map((eid) => itemIdOf(eid, []));
+    if (isEntryGroupResult(v))
+      return v.entryIds.map((eid) => itemIdOf(eid, []));
     if (isResultGroupResult(v))
       return v.items.map((_it, i) => itemIdOf(base.entryId, [...base.path, i]));
     return [];
@@ -300,11 +301,11 @@ export function createCore(opts: {
       const idx = ref.path[i]!;
       if (!isResultGroupResult(cur))
         return { result: { kind: "issue", message: "Invalid path" } as any };
-      const it = cur.items[idx];
-      if (!it)
+      const item = cur.items[idx];
+      if (!item)
         return { result: { kind: "issue", message: "Invalid path" } as any };
-      label = it.label?.trim() || undefined;
-      cur = it.result;
+      label = item.label?.trim() || undefined;
+      cur = item.result;
     }
 
     return { result: cur, ...(label ? { label } : {}) };
@@ -329,8 +330,8 @@ export function createCore(opts: {
   const item = (id: ItemId): Item => {
     try {
       const ref = refFromItemId(id);
-      const r = resolve(ref);
-      const c = toContent(ref, r.result);
+      const resolved = resolve(ref);
+      const content = toContent(ref, resolved.result);
 
       let mode: Mode = { kind: "readonly" };
       if (!ref.path.length) {
@@ -340,8 +341,8 @@ export function createCore(opts: {
 
       return {
         id,
-        ...(r.label ? { label: r.label } : {}),
-        content: c,
+        ...(resolved.label ? { label: resolved.label } : {}),
+        content,
         mode,
       };
     } catch (e) {
@@ -376,9 +377,9 @@ export function createCore(opts: {
   };
 
   const ensureEntryId = (id: ItemId): EntryId | null => {
-    const r = parseItemId(id);
-    if (!r || r.path.length) return null;
-    return r.entryId;
+    const ref = parseItemId(id);
+    if (!ref || ref.path.length) return null;
+    return ref.entryId;
   };
 
   const captureInverseForTxn = (txn: Transaction): Op[] => {
@@ -496,8 +497,8 @@ export function createCore(opts: {
 
     for (let pass = 0; pass < MAX_RULE_PASSES; pass++) {
       let opsOut: Op[] = [];
-      for (const r of rules) {
-        const ops0 = r.run(model, input, { source: "rule" });
+      for (const rule of rules) {
+        const ops0 = rule.run(model, input, { source: "rule" });
         if (ops0.length) opsOut = opsOut.concat(ops0);
       }
       if (!opsOut.length) break;
@@ -514,9 +515,9 @@ export function createCore(opts: {
 
   const addRuleInternal = (
     ruleFn: SyncRule,
-    opts2: { id?: string } = {},
+    addRuleOpts: { id?: string } = {},
   ): (() => void) => {
-    const id = opts2.id ?? `rule:${nextRuleId++}`;
+    const id = addRuleOpts.id ?? `rule:${nextRuleId++}`;
     const rec = { id, run: ruleFn };
     rules.push(rec);
     let active = true;
@@ -583,12 +584,12 @@ export function createCore(opts: {
       seen.add(id);
       if (!model.hasEntry(id)) continue;
 
-      const it = model.peekEntry(id);
-      const isTable = it.view === "table";
+      const entry = model.peekEntry(id);
+      const isTable = entry.view === "table";
       if (isTable) tableIds.push(id);
 
-      if (isGroupContent(it.content)) {
-        for (const cid of it.content.childIds) {
+      if (isGroupContent(entry.content)) {
+        for (const cid of entry.content.childIds) {
           if (isTable) rowIds.add(cid);
           stack.push(cid);
         }
@@ -658,10 +659,10 @@ export function createCore(opts: {
   const applyPipeline = (txn: Transaction): ApplyResult => {
     let final = emptyModelApply;
     const inverseAcc: Op[] = [];
-    const src = txn.meta?.source;
+    const source = txn.meta?.source;
 
     batch(() => {
-      const isRemote = src === "remote";
+      const isRemote = source === "remote";
 
       if (isRemote) {
         const res = model.apply(txn);
@@ -675,7 +676,7 @@ export function createCore(opts: {
         return;
       }
 
-      const isUser = src === "user";
+      const isUser = source === "user";
 
       const { result: userRes, inverseOps: invUser } = applyTxnWithInverse(txn);
       inverseAcc.push(...invUser);
@@ -752,10 +753,10 @@ export function createCore(opts: {
         ops.push(model.ops.patch(eid, { label }));
       },
 
-      setView: (id, view0) => {
+      setView: (id, view) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patch(eid, { view: view0 }));
+        ops.push(model.ops.patch(eid, { view }));
       },
 
       setValue: (id, value) => {
@@ -792,10 +793,12 @@ export function createCore(opts: {
       setGroup: (id) => {
         const eid = ensureEntryId(id);
         if (eid == null) return;
-        ops.push(model.ops.patch(eid, { content: { kind: "group", childIds: [] } }));
+        ops.push(
+          model.ops.patch(eid, { content: { kind: "group", childIds: [] } }),
+        );
       },
 
-      insertChild: (parentId, opts2) => {
+      insertChild: (parentId, insertOpts) => {
         const parentEid = ensureEntryId(parentId);
         if (parentEid == null) return itemIdOf(-1 as any);
 
@@ -807,14 +810,14 @@ export function createCore(opts: {
           model.ops.move({
             childId: id,
             toParentId: parentEid,
-            ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
+            ...(insertOpts?.at != null ? { toIndex: insertOpts.at } : {}),
           }),
         );
 
         return itemIdOf(id);
       },
 
-      move: (id, toParentId, opts2) => {
+      move: (id, toParentId, moveOpts) => {
         const childEid = ensureEntryId(id);
         if (childEid == null) return;
 
@@ -825,7 +828,7 @@ export function createCore(opts: {
           model.ops.move({
             childId: childEid,
             toParentId: toParentEid,
-            ...(opts2?.at != null ? { toIndex: opts2.at } : {}),
+            ...(moveOpts?.at != null ? { toIndex: moveOpts.at } : {}),
           }),
         );
       },
@@ -864,16 +867,16 @@ export function createCore(opts: {
   };
 
   const focus = (
-    f: Focus,
+    focus: Focus,
     target: string = DEFAULT_TARGET,
-    opts2: { caret?: Caret } = {},
+    focusOpts: { caret?: Caret } = {},
   ) => {
     runtime.setSelection(
       {
         kind: "focused",
-        focus: f,
+        focus,
         target,
-        ...(opts2.caret ? { caret: opts2.caret } : {}),
+        ...(focusOpts.caret ? { caret: focusOpts.caret } : {}),
       },
       [],
     );
@@ -891,10 +894,10 @@ export function createCore(opts: {
   const mountView: Core["mountView"] = (args) => runtime.mountView(args);
 
   const locate = (id: ItemId): LocateResult | null => {
-    const r = parseItemId(id);
-    if (!r || r.path.length) return null;
+    const ref = parseItemId(id);
+    if (!ref || ref.path.length) return null;
 
-    const loc = model.locateInParent(r.entryId);
+    const loc = model.locateInParent(ref.entryId);
     if (!loc) return null;
 
     return {

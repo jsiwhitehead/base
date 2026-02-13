@@ -50,19 +50,19 @@ export function createDebugState(): DebugState {
 }
 
 export function instrumentCore(core: Core, debug: DebugState): Core {
-  const commit0 = core.commit.bind(core);
-  const undo0 = core.undo.bind(core);
-  const redo0 = core.redo.bind(core);
-  const focus0 = core.focus.bind(core);
-  const blur0 = core.blur.bind(core);
-  const dispose0 = core.dispose.bind(core);
-  const selection0 = core.selection.bind(core);
+  const commitCore = core.commit.bind(core);
+  const undoCore = core.undo.bind(core);
+  const redoCore = core.redo.bind(core);
+  const focusCore = core.focus.bind(core);
+  const blurCore = core.blur.bind(core);
+  const disposeCore = core.dispose.bind(core);
+  const selectionCore = core.selection.bind(core);
 
-  const readSelection = () => selection0();
+  const readSelection = () => selectionCore();
 
   core.commit = (run) => {
     const selectionBefore = readSelection();
-    const result = commit0(run);
+    const result = commitCore(run);
     const selectionAfter = readSelection();
     debug.setLast({ kind: "commit", selectionBefore, selectionAfter, result });
     return result;
@@ -70,7 +70,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
 
   core.undo = () => {
     const selectionBefore = readSelection();
-    const result = undo0();
+    const result = undoCore();
     const selectionAfter = readSelection();
     debug.setLast({ kind: "undo", selectionBefore, selectionAfter, result });
     return result;
@@ -78,7 +78,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
 
   core.redo = () => {
     const selectionBefore = readSelection();
-    const result = redo0();
+    const result = redoCore();
     const selectionAfter = readSelection();
     debug.setLast({ kind: "redo", selectionBefore, selectionAfter, result });
     return result;
@@ -86,7 +86,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
 
   core.focus = (focus, target = DEFAULT_TARGET, opts = {}) => {
     const selectionBefore = readSelection();
-    focus0(focus, target, opts);
+    focusCore(focus, target, opts);
     const selectionAfter = readSelection();
     debug.setLast({
       kind: "focus",
@@ -100,14 +100,14 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
 
   core.blur = () => {
     const selectionBefore = readSelection();
-    blur0();
+    blurCore();
     const selectionAfter = readSelection();
     debug.setLast({ kind: "blur", selectionBefore, selectionAfter });
   };
 
   core.dispose = () => {
     debug.setLast({ kind: "dispose" });
-    dispose0();
+    disposeCore();
   };
 
   return core;
@@ -128,16 +128,16 @@ function safeJson(x: unknown): string {
   }
 }
 
-function selectionText(sel: Selection): string {
-  if (sel.kind === "idle") return "idle";
-  const caret = sel.caret
-    ? `caret: { start: ${sel.caret.start}, end: ${sel.caret.end} }`
+function selectionText(selection: Selection): string {
+  if (selection.kind === "idle") return "idle";
+  const caret = selection.caret
+    ? `caret: { start: ${selection.caret.start}, end: ${selection.caret.end} }`
     : "caret: (none)";
   return [
     "focused",
-    `container: ${sel.focus.container}`,
-    `item:      ${sel.focus.item}`,
-    `target:    ${sel.target}`,
+    `container: ${selection.focus.container}`,
+    `item:      ${selection.focus.item}`,
+    `target:    ${selection.target}`,
     caret,
   ].join("\n");
 }
@@ -192,16 +192,16 @@ function formatDataset(ds: Record<string, string> | undefined): string {
 }
 
 function activeDomFocusText(): string {
-  const ae =
+  const activeElement =
     typeof document !== "undefined"
       ? (document.activeElement as HTMLElement | null)
       : null;
-  if (!ae) return "active: (none)\ntarget: (none)";
+  if (!activeElement) return "active: (none)\ntarget: (none)";
 
-  const tag = ae.tagName.toUpperCase();
-  const isInput = ae instanceof HTMLInputElement;
-  const type = isInput ? ` ${ae.type}` : "";
-  const target = (ae as HTMLElement).dataset?.target ?? "(none)";
+  const tag = activeElement.tagName.toUpperCase();
+  const isInput = activeElement instanceof HTMLInputElement;
+  const type = isInput ? ` ${activeElement.type}` : "";
+  const target = activeElement.dataset?.target ?? "(none)";
 
   return `active: ${tag}${type}\ntarget: ${target}`;
 }
@@ -246,25 +246,25 @@ export function buildDebugPanel(opts: DebugPanelOpts) {
     });
 
     ctx.effect(() => {
-      const sel = core.selection();
-      bSel.textContent = selectionText(sel);
+      const selection = core.selection();
+      bSel.textContent = selectionText(selection);
       bActive.textContent = activeDomFocusText();
 
-      if (sel.kind !== "focused") {
+      if (selection.kind !== "focused") {
         bItem.textContent = "(none)";
         bDom.textContent = "(none)";
         return;
       }
 
-      const snap = core.item(sel.focus.item);
+      const snap = core.item(selection.focus.item);
       bItem.textContent = safeJson(snap);
 
-      const p = probeUiItem(probeRoot, sel.focus.item);
-      if (!p.mounted) {
+      const probe = probeUiItem(probeRoot, selection.focus.item);
+      if (!probe.mounted) {
         bDom.textContent = "mounted: no";
         return;
       }
-      bDom.textContent = `mounted: yes\n${formatDataset(p.dataset)}`;
+      bDom.textContent = `mounted: yes\n${formatDataset(probe.dataset)}`;
     });
 
     return root;
