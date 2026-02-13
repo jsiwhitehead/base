@@ -460,8 +460,9 @@ Use the simplest, most standard Markdown link conventions:
 
 ### Typography
 
-- Typographic punctuation (curly quotes, em dashes) is allowed.
-- Avoid mixing styles within a single section.
+- Prefer ASCII punctuation (`'`, `"`, `--`) in technical docs.
+- Typographic punctuation (curly quotes, em dashes) is allowed for prose-heavy sections when used intentionally.
+- Avoid mixing punctuation styles within the same section.
 
 ### Documentation file naming
 

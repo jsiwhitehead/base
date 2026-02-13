@@ -1,6 +1,6 @@
 # UI System
 
-This document defines the UI system contract layered on Core: shared architecture, runtime model, interaction semantics, visual language, and cross-view invariants. It is intentionally view-agnostic. View-specific behavior belongs in `docs/ui-views.md`, and Core API contracts belong in `docs/core-api.md`.
+This document defines the UI system contract layered on Core: shared UI structure, runtime mounting model, selection/targets integration, interaction semantics, and cross-view visual invariants. It is intentionally view-agnostic. View-specific behavior belongs in `docs/ui-views.md`. Core API contracts belong in `docs/core-api.md`.
 
 ## Scope
 
@@ -9,7 +9,7 @@ This document covers:
 - Shared UI architecture and ownership boundaries.
 - Runtime mounting and reactivity contracts.
 - Shared interaction and editing semantics.
-- Cross-view styling and chrome invariants.
+- Cross-view styling and rails/header invariants.
 
 This document does not cover:
 
@@ -23,7 +23,7 @@ Rules:
 
 - Core MUST be the source of truth.
 - Selection MUST be the single focus truth.
-- Item shell structure MUST remain stable while body content MAY swap.
+- Frame structure MUST remain stable while body content MAY swap.
 - Interaction SHOULD be semantic (intent-driven), not DOM-event-driven.
 - Tab handling MUST be an app command, not browser tab-order navigation.
 
@@ -31,15 +31,16 @@ Rules:
 
 Structure and ownership:
 
-- One item presentation MUST map to exactly one `.ui-item` shell.
-- Shell/meta MUST own `DEFAULT_TARGET`, `label`, and `conn:*`.
-- Body MUST own `value`.
-- `.ui-item` identity MUST remain stable across selection changes.
+- Each rendered item MUST map to exactly one `.ui-frame`.
+- The frame element MUST own `DEFAULT_TARGET`.
+- The header MUST own `label` and `conn:*`.
+- The body MUST own `value`.
+- `.ui-frame` identity MUST remain stable across selection changes.
 - Selection-driven updates MUST be styling-only.
 
 Focus and interaction:
 
-- The app MUST expose one tabbable element: `.ui-shell-main`.
+- The app MUST expose one tabbable element: `.ui-app-main`.
 - `Tab`/`Shift+Tab` MUST be app commands.
 - Core MUST route `TAB` intents to the active view handler.
 - Interaction SHOULD be intent-driven.
@@ -52,102 +53,134 @@ Mounting and reactivity:
 
 Visual language:
 
-- Chrome state MUST be expressed through `.is-focused` and `.is-issue`.
-- Chrome fill MUST derive from one value (`--chrome-color`).
+- Item state MUST be expressed through `.is-focused` and `.is-issue`.
+- Rails and header visuals MUST derive from state-driven tokens (`--rails-tint`, `--header-fill`).
 - Rails MUST remain segmented and local; sibling state bleed is disallowed.
 
 ## UI architecture
 
-### App frame and shell DOM
+### App container DOM
 
 Canonical app frame (debug panel omitted):
 
 ```text
 #root
-  .ui-shell
-    .ui-shell-main                              (tabIndex=0; only tabbable element)
-      .ui-app.ui-item                           (root item shell; target: DEFAULT_TARGET)
+  .ui-app
+    .ui-app-main                                (tabIndex=0; only tabbable element)
+      .ui-frame                                 (root item frame; target: DEFAULT_TARGET)
         [.ui-body.<root-view> subtree]          (mounted root view body)
 ```
 
 Rules:
 
-- `.ui-shell-main` MUST be the only tabbable element.
+- `.ui-app-main` MUST be the only tabbable element.
 - All other focus changes MUST be programmatic via Core targets.
 
-### Two-layer model: shell and body
+Notes:
 
-Every item presentation uses two layers.
+- The root `.ui-app` wrapper is optional but recommended as a stable styling boundary.
+- `.ui-body.<root-view>` is the view root for routing and intent handling.
 
-Shell responsibilities:
+## Mental model: rails, header, body
 
-- Represent exactly one item presentation.
-- Add `.ui-item`.
-- Set a stable `data-id` (recommended).
-- Be programmatically focusable.
-- Attach `DEFAULT_TARGET`.
-- Handle pointer selection.
-- Apply selection-driven state classes.
-- Render chrome (rails and optional meta).
+Each item is expressed with three structural parts:
+
+- **rails**: structure marker ("where am I?")
+- **header**: identity + definition UI ("what is this?" / "what drives it?")
+- **body**: view-specific content ("what does it contain / do?")
+
+Rendering is split across two cooperating views:
+
+- The **outer view** renders the stable `.ui-frame` plus rails + header, and mounts the body.
+- The **item view** renders the body as a `.ui-body.<view-name>` subtree and interprets intents.
+
+The `.ui-body.<view-name>` element is the boundary used to determine the **active view** for keyboard routing.
+
+## Frame element (`.ui-frame`)
+
+The frame element is the stable DOM anchor for an item.
+
+Rules:
+
+- Each rendered item MUST have exactly one `.ui-frame`.
+- `.ui-frame` MUST remain stable across selection changes.
+- Selection-driven effects MUST NOT replace, remount, or reorder `.ui-frame` elements.
+- Universal item state classes MUST apply to `.ui-frame`.
+- `.ui-frame` SHOULD set a stable `data-id` attribute (recommended).
 
 Implementation note:
 
-- Shared shell behavior SHOULD be implemented via `bindUiItemShell(ctx, { core, focus }, shellEl)`.
+- Shared frame behavior SHOULD be implemented via a helper (for example `bindUiFrame(ctx, { core, focus }, frameEl)`), to keep pointer/selection/state logic consistent across views.
+
+## Header and body ownership
+
+### Header
+
+The header is stable, view-agnostic UI rendered by the outer view.
+
+Header responsibilities:
+
+- Render the item label UI.
+- Render connected definition fields when the item is in connected mode.
+- Attach header-owned targets.
+
+Header-owned targets:
+
+- `label`
+- `conn:*`
+
+Rules:
+
+- The header MUST use `.ui-header`.
+- The header MUST NOT attach the `value` target.
+- Label editing MUST keep yielding disabled.
+- Header MAY be mounted/unmounted by the outer view, but ownership rules remain fixed.
+
+### Body
+
+The body is view-specific UI rendered by the item view.
 
 Body responsibilities:
 
-- Render `.ui-body` (or an equivalent body-stamped root).
+- Render the `.ui-body.<view-name>` root element.
 - Render view-specific structure and controls.
 - Render composed children.
 - Attach body-owned targets.
 
-Mounting rule:
+Body-owned targets:
 
-- View bodies SHOULD mount through `core.mountView({ id, focus, view: core.view(id) })`.
-
-### Meta ownership
-
-Meta is item chrome owned by parent/context and is not view-specific.
-
-Meta targets:
-
-- `label`.
-- `conn:*`.
-
-Rendering policy:
-
-- Parent/context MAY mount or unmount meta.
-- Remounting meta SHOULD initialize editors from committed state.
-
-Canonical meta structure:
-
-```text
-.ui-meta
-  .ui-meta-label
-    [.ui-textfield subtree]                     (target: label)
-  .ui-meta-conn
-    .ui-meta-conn-row                           (repeated)
-      .ui-meta-conn-key
-      .ui-meta-conn-val
-        [.ui-textfield subtree]                 (target: conn:<fieldKey>)
-```
-
-### Target ownership contract
+- `value`
+- future body-specific targets
 
 Rules:
 
-- Shell/meta MUST own `DEFAULT_TARGET`, `label`, and `conn:<fieldKey>`.
-- Body MUST own `value` and future body-specific targets.
-- Body MUST NOT attach `label` or `conn:*`.
-- Shell/meta MUST NOT attach `value`.
+- The body MUST NOT attach `label` or `conn:*`.
+- The body MUST remain structurally stable across selection changes.
 
-### Editability and mode
+## Target ownership contract
+
+Rules:
+
+- `.ui-frame` MUST own `DEFAULT_TARGET`.
+- Header MUST own `label` and `conn:<fieldKey>`.
+- Body MUST own `value` and any future body-specific targets.
+- Body MUST NOT attach `label` or `conn:*`.
+- Header MUST NOT attach `value`.
+
+## Editability and mode
+
+Core defines item modes and editability.
 
 Rules:
 
 - `readonly` MUST be treated as a hard stop for editing.
 - `plain` versus `connected` MUST determine available edit targets (`value` versus `conn:*`).
 - Mode conversion MAY occur but SHOULD be explicit.
+
+UI terminology:
+
+- **connected definition**: the Core `Connected` value (formula/query/etc.).
+- **definition fields**: the header controls that edit the connected definition.
 
 ## Runtime model
 
@@ -168,7 +201,7 @@ Teardown guarantees:
 - `ctx.target` bindings MUST be cleaned up.
 - Mounted child components and reactive regions MUST be disposed.
 
-### Ctx API
+## Ctx API
 
 `createComponent` provides the minimal safe mounting API.
 
@@ -181,25 +214,13 @@ Contracts:
 - `ctx.slot`: mount zero/one reactive child subtree.
 - `ctx.list`: mount keyed reactive child lists.
 
-`ctx.on(el, type, handler, opts?)`:
+Rules:
 
-- Views SHOULD use this instead of raw `addEventListener`.
+- Views SHOULD use `ctx.on` instead of raw `addEventListener`.
+- Views MUST use `ctx.target(...)` for DOM-to-Core focus integration.
+- Structural mounting and reconciliation MUST use `ctx.slot` / `ctx.list`, not ad-hoc child management.
 
-`ctx.effect(run)`:
-
-- `run` MAY return a cleanup function.
-- Effects SHOULD produce idempotent DOM updates.
-
-`ctx.target(focus, target, getEl, opts?)`:
-
-- MUST be used for DOM-to-Core focus integration.
-
-`ctx.mount(host, child)`:
-
-- MUST append `child.el`.
-- MUST dispose child when parent disposes.
-
-### Regions and insertion stability
+## Regions and insertion stability
 
 `ctx.slot` and `ctx.list` provide region-based mounting.
 
@@ -213,7 +234,7 @@ Rules:
 
 - MUST mount zero or one component in a stable region.
 - MUST dispose previous child before mounting replacement.
-- SHOULD be used for conditional chrome and body switching.
+- SHOULD be used for conditional header/body switching.
 
 `ctx.list(host, getIds, mountById)`:
 
@@ -221,30 +242,16 @@ Rules:
 - MUST preserve order exactly as returned by `getIds()`.
 - SHOULD be used for repeated UI structures (for example rows, children, schema-driven lists).
 
-### Reactivity and stability rules
+## Reactivity and stability rules
 
 Rules:
 
 - Selection-driven effects SHOULD only toggle classes, datasets, or caret/editor state.
-- Selection-driven effects MUST NOT remount shells, bodies, or lists.
+- Selection-driven effects MUST NOT remount frames, bodies, or lists.
 - Structural swaps SHOULD be gated by stable discriminators (for example `"group" | "value"`, or a view name).
 - One region SHOULD own one responsibility (`slot` for one conditional surface, `list` for one keyed sequence).
 
-### DOM helper conventions
-
-Helper inventory:
-
-- `el(tag, className?, text?)`
-- `setData(el, key, value)`
-- `caretFromTarget(eventTarget)`
-
-Rule:
-
-- Structural mounting and reconciliation MUST use `ctx.slot`/`ctx.list`, not ad-hoc child management.
-
-## Interaction and editing system
-
-### Programmatic focus
+## Programmatic focus
 
 Rules:
 
@@ -252,7 +259,7 @@ Rules:
 - Inputs MAY receive focus for caret and text behavior.
 - Inputs MUST NOT participate in browser tab-order traversal.
 
-### Intent model
+## Intent model
 
 Shared intent vocabulary:
 
@@ -269,7 +276,7 @@ Rules:
 - Views MUST interpret intents.
 - Controls SHOULD emit intents.
 
-### Keyboard routing
+## Keyboard routing
 
 Global routing rules:
 
@@ -280,25 +287,25 @@ Global routing rules:
 
 Editor yielding rules:
 
-- Text editors MAY yield semantic intents when `yieldNav` and `onIntent` are enabled.
+- Text editors MAY yield semantic intents when yielding is enabled.
 - Yielding applies to `conn:*` and `value`, not `label`.
 - Yielding SHOULD be semantic (intent emission), not key-event bubbling.
 
-### Pointer routing
+## Pointer routing
 
-Shell pointerdown:
+Frame pointerdown:
 
-- `.ui-item` shells SHOULD focus `DEFAULT_TARGET`.
-- Shells SHOULD capture caret when pointerdown hits text-editing surfaces.
-- Shell handling SHOULD stop propagation.
+- `.ui-frame` SHOULD focus `DEFAULT_TARGET`.
+- Frames SHOULD capture caret when pointerdown hits text-editing surfaces.
+- Frame handling SHOULD stop propagation.
 
-Editor pointerdown:
+Editor/control pointerdown:
 
-- Editors SHOULD focus their own target.
-- Editors SHOULD use `caretFromTarget(e.target)` for caret placement.
-- Editor handling SHOULD stop propagation.
+- Editors and controls SHOULD focus their own target.
+- Editors SHOULD use caret-from-target logic for caret placement.
+- Editor/control handling SHOULD stop propagation.
 
-### Text editing control
+## Shared text editing control
 
 The shared text editor control is `buildTextField`.
 
@@ -327,9 +334,9 @@ Integration rules:
 
 - `buildTextField` instances MUST attach targets with `ctx.target(...)`.
 - Editors MUST respect readonly behavior.
-- Editors SHOULD rely on shell issue state (`.ui-item.is-issue`).
+- Editors SHOULD rely on frame issue state (`.ui-frame.is-issue`).
 
-### Editor commit models
+## Editor commit models
 
 `live` model:
 
@@ -344,18 +351,18 @@ Integration rules:
 - Cancels on `CANCEL`.
 - Resets to committed state when focus leaves.
 
-### Multiline Enter behavior
+## Multiline Enter behavior
 
 Rules:
 
 - In multiline editors, `Enter` SHOULD map to `CONFIRM` by default.
 - `Ctrl+Enter` or `Meta+Enter` SHOULD insert a newline.
 
-### Universal interaction rules
+## Universal interaction rules
 
 Escape ladder:
 
-- If focused on non-default target, Core SHOULD focus `DEFAULT_TARGET`.
+- If focused on a non-default target, Core SHOULD focus `DEFAULT_TARGET`.
 - Otherwise, Core SHOULD blur selection.
 
 Typing from `DEFAULT_TARGET`:
@@ -374,10 +381,10 @@ Navigation rule:
 
 Tab routing context:
 
-- Outer focused targets SHOULD route `TAB` to parent/context view.
-- Inner focused targets SHOULD route `TAB` to child/owned view.
+- Outer-focused targets MUST route `TAB` to the outer view.
+- Inner-focused targets MUST route `TAB` to the item view.
 
-## Shared chrome and visual language
+## Visual language invariants
 
 ### Visual foundations
 
@@ -392,22 +399,23 @@ Token categories:
 - Geometry.
 - Colors.
 
-### Two visual layers
+## Two visual layers
 
-Chrome layer:
+Frame layer:
 
-- Context-owned.
-- Contains rails and optional `.ui-meta`.
+- Outer-view-owned.
+- Contains rails and optional header.
 - MUST express focus and issue state.
 - MUST NOT depend on body internals.
 
-Content layer:
+Body layer:
 
-- View-owned `.ui-body` subtree.
+- Item-view-owned.
+- Contains the `.ui-body.<view-name>` subtree.
 - SHOULD remain neutral by default.
-- MUST NOT redefine universal chrome language.
+- MUST NOT redefine shared rails/header language.
 
-### Universal state classes
+## Universal state classes
 
 State classes:
 
@@ -416,21 +424,22 @@ State classes:
 
 Rules:
 
-- State classes MUST apply on `.ui-item` shells.
-- Chrome MUST use one priority stack: issue overrides focus.
-- Focus indication SHOULD be chrome-fill based.
+- State classes MUST apply on `.ui-frame`.
+- Frame state MUST use one priority stack: issue overrides focus.
+- Focus indication SHOULD be rails-tint based.
 - Path context SHOULD be local and subtle.
 - Siblings MUST NOT inherit another item's state styling.
 
-### Chrome fill derivation
+## Rails and header state derivation
 
 Rules:
 
-- `.ui-item` MUST derive shared chrome fill from `--chrome-color`.
-- `.is-focused` and `.is-issue` MUST override that value.
-- Rails and meta MUST consume derived value, not raw state tokens.
+- `.ui-frame` MUST define item state via `.is-focused` and `.is-issue`.
+- Rails MUST consume `--rails-tint`.
+- Header MUST consume `--header-fill`.
+- `.is-issue` MUST override `.is-focused` for both rails and header derived values.
 
-### Rails language
+## Rails language
 
 Rules:
 
@@ -439,25 +448,25 @@ Rules:
 - Rail state MUST be local to each item segment.
 - Rails MUST NOT behave like card borders.
 
-### Styling boundaries and invariants
+## Styling boundaries and invariants
 
 Rules:
 
-- Chrome styling MUST NOT rely on body internals.
-- Body styling MUST NOT restyle chrome primitives (`.ui-meta`, rails).
+- Rails/header styling MUST NOT rely on body internals.
+- Body styling MUST NOT restyle rails/header primitives.
 - Selection-driven visual changes SHOULD be class toggles only.
 - View-specific state classes SHOULD be added only for new semantics.
 - CSS values SHOULD be token-driven.
 - In shrinkable flex/grid layouts, text overflow handling SHOULD be applied on text elements with `min-width: 0` on shrinkable containers.
 
-### Recommended CSS structure
+## Recommended CSS structure
 
 Layer order:
 
 1. Reset.
 2. Tokens (`:root`).
-3. Base primitives (`.ui-item`, `.ui-body`, `.ui-textfield`).
-4. Components (`.ui-meta`).
+3. Base primitives (`.ui-frame`, `.ui-body`, `.ui-textfield`).
+4. Components (`.ui-header`).
 5. Views (layout/composition only).
 
 ## Shared view authoring conventions
@@ -467,21 +476,21 @@ Layer order:
 Rules:
 
 - Views MUST attach targets through `ctx.target(...)`.
-- Views MUST respect shell/meta versus body target ownership.
-- Every presented item MUST expose `DEFAULT_TARGET`.
+- Views MUST respect frame/header versus body target ownership.
+- Every rendered item MUST expose `DEFAULT_TARGET`.
 
-### Standard shell behavior
+### Standard frame behavior
 
 Rules:
 
-- Item shells SHOULD use shared shell behavior (`bindUiItemShell`).
-- Shells SHOULD keep pointer, selection, and state-class behavior consistent.
+- Frames SHOULD use shared frame behavior (for example `bindUiFrame`).
+- Frames SHOULD keep pointer, selection, and state-class behavior consistent.
 
 ### Selection-driven performance
 
 Rules:
 
-- Selection changes MUST NOT remount shells.
+- Selection changes MUST NOT remount frames.
 - Selection changes MUST NOT rebuild lists.
 - Selection changes MUST NOT switch body subtrees.
 
@@ -508,32 +517,6 @@ Rules:
 - Value and connected editors SHOULD enable yielding where appropriate.
 - Label editors SHOULD keep yielding disabled.
 
-### Checklist for adding a new view
-
-Structure:
-
-- [ ] Root is `.ui-body.<view-name>`.
-- [ ] Each presented item has one stable `.ui-item` shell.
-- [ ] Shell behavior uses `bindUiItemShell`.
-- [ ] Target ownership is respected.
-
-Mounting:
-
-- [ ] Conditional subtree uses `ctx.slot`.
-- [ ] Repeated keyed subtree uses `ctx.list`.
-- [ ] Region hosts are not manually cleared.
-
-Interaction:
-
-- [ ] View documents intent handling for `NAV`, `TAB`, `CONFIRM`, `TYPE`, `DELETE`, `CANCEL`, and `DELETE_BOUNDARY`.
-- [ ] Text editors use `buildTextField` and semantic yielding.
-
-Styling:
-
-- [ ] Uses shared tokens.
-- [ ] Uses `.is-focused` and `.is-issue` for shared state.
-- [ ] Keeps view CSS layout-focused without redefining shared chrome.
-
-### Rationale
+## Rationale
 
 This system avoids common editor failure modes: focus instability, inconsistent keyboard behavior, leaked effects/listeners, and styling drift. It remains robust by keeping a small set of contracts strict and view-local behavior explicit.
