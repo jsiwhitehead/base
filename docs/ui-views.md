@@ -1,35 +1,72 @@
 # UI Views
 
-This document defines view-specific behavior: for each view, how it structures its body, what focus surfaces it exposes, what targets exist, and how it interprets intents into Core operations and focus transitions. Shared architecture, interaction invariants, and visual language belong in `docs/ui-system.md`. Core API semantics belong in `docs/core-api.md`.
+This document defines **view-specific behavior**.
+
+For each view, it specifies:
+
+- What the view's **body subtree** looks like.
+- What **focus surfaces** exist inside the body.
+- Which **targets** the view introduces (if any).
+- How the view interprets **intents** into Core operations and focus transitions.
+
+Shared UI runtime architecture, ownership boundaries, interaction invariants, and visual language belong in `docs/ui-system.md`. Core API semantics belong in `docs/core-api.md`.
 
 ## Scope
 
 This document covers:
 
 - Per-view purpose and mental model.
-- Per-view DOM shape and focus surfaces.
+- Per-view body DOM shape.
+- Per-view focus surfaces and targets.
 - Per-view intent handling.
 - Per-view commands, invariants, and styling notes.
 
 This document does not cover:
 
-- Shared UI runtime and ownership contracts.
-- Shared interaction semantics.
-- Core API behavior.
+- The shared frame/header/body ownership contract.
+- Global intent parsing and routing.
+- Shared editor behavior (`buildTextField`, yielding rules, etc.).
+
+## Shared assumptions (from `docs/ui-system.md`)
+
+All views in this file inherit these rules:
+
+### Outer view vs item view
+
+- The **outer view** owns the stable `.ui-frame`, rails, header, and mounts the item view body.
+- The **item view** owns the `.ui-body.<view>` subtree and all behavior inside it.
+
+### Target ownership
+
+- `.ui-frame` owns `DEFAULT_TARGET`.
+- `.ui-header` owns:
+  - `label`
+  - `conn:*`
+
+- `.ui-body.<view>` owns:
+  - `value` (when applicable)
+
+### Selection and updates
+
+- Selection-driven updates MUST be styling-only.
+- Frames and mounted bodies MUST NOT be remounted due to selection changes.
+
+### Intent handling
+
+- Views interpret intents only when their item is the focused selection.
+- `NAV` MUST NOT implicitly enter edit mode (unless explicitly stated by the view).
 
 ## View specification template
 
-Each view section SHOULD follow one structure.
+Each view section SHOULD follow this structure:
 
-Template sections:
-
-- Purpose and mental model.
-- DOM shape.
-- Focus surfaces and targets.
-- Intent handling.
-- Commands and state transitions.
-- Edge cases and invariants.
-- Styling notes.
+- Purpose and mental model
+- Body DOM shape
+- Focus surfaces and targets
+- Intent handling
+- Commands and state transitions
+- Edge cases and invariants
+- Styling notes
 
 Intent handling SHOULD describe these intents where applicable:
 
@@ -49,80 +86,103 @@ Outline is the primary hierarchical editor view.
 
 Rules:
 
-- Items are treated as either `group` containers or scalar `value` leaves.
-- Navigation is depth-first and hierarchical.
-- Editing remains inline within outline context.
+- Items are treated as either:
+  - `group` containers, or
+  - scalar leaves (plain `value` or connected `conn:*`).
 
-### DOM shape
+- Navigation is hierarchical and depth-first over visible items.
+- Editing remains inline in the outline context.
+- Outline defines an **edit traversal space** across leaf edit targets.
 
-Outline body:
+### Body DOM shape
+
+Outline group body:
 
 ```text
 .ui-body.ui-outline
-  [.ui-outline-node.ui-item]*            (for each child item; repeated)
-  [value editor]*                        (if focused item is a scalar)
+  .ui-outline-node.ui-frame                    (target: DEFAULT_TARGET)
+    [.ui-header subtree]                       (optional; targets: label, conn:*)
+    [.ui-body.<child-view> subtree]            (mounted child view body)
+  .ui-outline-node.ui-frame
+    ...
 ```
 
-Outline node shell:
+Outline scalar body:
 
 ```text
-.ui-outline-node.ui-item
-  [optional meta subtree]                (slot)
-  [mounted child view body]              (slot: core.mountView)
+.ui-body.ui-outline
+  [.ui-textfield subtree]                      (target: value)
 ```
 
-Structural rule:
+Structural rules:
 
-- Node shells MUST stay stable per visible child item.
-- Mounted child body MAY swap by view kind.
+- `.ui-outline-node.ui-frame` instances MUST stay stable per visible child item.
+- `.ui-header` subtree in `.ui-outline-node.ui-frame` MAY mount/unmount by header visibility policy.
+- Mounted child body subtree MAY swap by child view kind, but `.ui-outline-node.ui-frame` MUST not.
+
+Notes:
+
+- For the current outline item, `.ui-frame` and `.ui-header` are outside `.ui-body.ui-outline` and are outer-view-owned.
+- For each visible child item, outline renders a `.ui-outline-node.ui-frame` that hosts the child's optional `.ui-header` subtree and mounted child body subtree.
 
 ### Focus surfaces and targets
 
 Outline focus surfaces:
 
-- Item container focus: `DEFAULT_TARGET` on item shell.
-- Item edit focus: view-local edit targets.
+- **Frame container focus**: `DEFAULT_TARGET` on the item's `.ui-frame` (outer view).
+- **Inline edit focus**:
+  - `value` (body-owned)
+  - `conn:*` (header-owned)
+  - `label` (header-owned)
 
-Edit targets by item:
+Edit targets by item kind:
 
-- Plain scalar leaves: `value`.
-- Connected leaves: `conn:*` (meta-owned).
-- Label edit: `label` (meta-owned).
+- Plain scalar leaf:
+  - `value`
+
+- Connected leaf:
+  - `conn:*` in `fieldsFromConn` order
+  - (optionally) `value` if the view supports showing it (usually no)
+
+- Label editing:
+  - `label`
 
 Notes:
 
-- Outline defines an edit traversal space for navigation while editing.
+- Outline defines a traversal space for `NAV` while editing.
+- Groups participate in navigation but not in edit traversal.
+- Even when child header/body are hosted inside `.ui-outline-node`, target ownership stays per `docs/ui-system.md`.
 
 ### Edit traversal space
 
-Leaf participation rule:
+Leaf participation:
 
 - Connected items MUST participate as leaf edit nodes.
 - Plain scalar items MUST participate as leaf edit nodes.
 - Groups MUST NOT participate as edit traversal nodes.
 
-Edit stops:
+Edit stops per leaf:
 
-- Connected item: `conn:*` in `fieldsFromConn` order.
-- Plain scalar item: `value`.
-- Other item kinds: no edit stops.
+- Connected leaf: `conn:*` in `fieldsFromConn` order.
+- Plain scalar leaf: `value`.
+- Other kinds: no edit stops.
 
-Traversal rule:
+Traversal order:
 
-- Traversal order MUST be depth-first over collected leaf edit stops.
+- Traversal MUST be depth-first over collected leaf edit stops.
 
-Caret placement rule:
+Caret placement policy:
 
-- Backward traversal (`up` or `left`) SHOULD place caret at destination end.
-- Forward traversal (`down` or `right`) SHOULD place caret at destination start.
+- Backward traversal (`NAV up` / `NAV left`) SHOULD place caret at destination end.
+- Forward traversal (`NAV down` / `NAV right`) SHOULD place caret at destination start.
 
-### Meta visibility policy
+### Header visibility policy
 
-Outline shows meta when at least one condition is true:
+Inside `.ui-outline-node`, outline mounts the child header subtree when at least one condition is true:
 
-- Item has non-empty label.
+- Item has a non-empty label.
 - Item has connected fields.
-- `label` target is focused.
+- The `label` target is focused.
 
 ### Intent handling
 
@@ -132,13 +192,13 @@ Precondition shorthand:
 - Editing: `sel.target !== DEFAULT_TARGET`.
 - Container focus: `sel.target === DEFAULT_TARGET`.
 
-`CANCEL`:
+#### `CANCEL`
 
 | Intent   | Preconditions | Action               | Focus result                     |
 | -------- | ------------- | -------------------- | -------------------------------- |
 | `CANCEL` | Always        | `escapeLadder(core)` | Exit to `DEFAULT_TARGET` or blur |
 
-`NAV` from container focus:
+#### `NAV` from container focus
 
 | Intent      | Preconditions            | Action                        | Focus result                     |
 | ----------- | ------------------------ | ----------------------------- | -------------------------------- |
@@ -147,17 +207,17 @@ Precondition shorthand:
 | `NAV up`    | Focused, container focus | Move to previous visible item | Focus item at `DEFAULT_TARGET`   |
 | `NAV down`  | Focused, container focus | Move to next visible item     | Focus item at `DEFAULT_TARGET`   |
 
-`NAV` while editing:
+#### `NAV` while editing
 
 | Intent | Preconditions    | Action                   | Focus result                                         |
 | ------ | ---------------- | ------------------------ | ---------------------------------------------------- |
 | `NAV`  | Focused, editing | Move between edit points | Focus destination target with traversal caret policy |
 
-`TYPE` behavior:
+#### `TYPE`
 
 | Intent        | Preconditions                                                       | Action                                   | Focus result                     |
 | ------------- | ------------------------------------------------------------------- | ---------------------------------------- | -------------------------------- |
-| `TYPE "="`    | Focused, container focus or `value`; item is plain scalar and blank | Convert item to formula-connected        | Focus `conn:expr` caret at start |
+| `TYPE "="`    | Focused; container focus or `value`; item is plain scalar and blank | Convert item to formula-connected        | Focus `conn:expr` caret at start |
 | `TYPE <char>` | Focused, container focus                                            | Enter primary edit target and select all | Insert char in microtask         |
 
 Primary edit target order:
@@ -166,21 +226,21 @@ Primary edit target order:
 - Otherwise `value` if plain scalar.
 - Otherwise none.
 
-`CONFIRM` while editing:
+#### `CONFIRM` while editing
 
 | Intent    | Preconditions                            | Action                             | Focus result                        |
 | --------- | ---------------------------------------- | ---------------------------------- | ----------------------------------- |
 | `CONFIRM` | Focused, editing `value`, caret provided | Split scalar at caret into sibling | Focus new sibling `value` at start  |
 | `CONFIRM` | Focused, editing non-`value` target      | Exit edit                          | Focus same item at `DEFAULT_TARGET` |
 
-`CONFIRM` from container focus:
+#### `CONFIRM` from container focus
 
-| Intent    | Preconditions                                | Action               | Focus result                           |
-| --------- | -------------------------------------------- | -------------------- | -------------------------------------- |
-| `CONFIRM` | Focused, container focus, edit target exists | Enter edit           | Focus primary target with caret at end |
-| `CONFIRM` | Focused, container focus, no edit target     | Insert sibling after | Focus new sibling `value`              |
+| Intent    | Preconditions                                | Action               | Focus result                       |
+| --------- | -------------------------------------------- | -------------------- | ---------------------------------- |
+| `CONFIRM` | Focused, container focus, edit target exists | Enter edit           | Focus primary target; caret at end |
+| `CONFIRM` | Focused, container focus, no edit target     | Insert sibling after | Focus new sibling `value`          |
 
-`TAB` nesting behavior:
+#### `TAB` nesting behavior
 
 | Intent      | Preconditions | Action   | Focus result                                         |
 | ----------- | ------------- | -------- | ---------------------------------------------------- |
@@ -195,7 +255,7 @@ Tab focus rules:
   - Otherwise exit to `DEFAULT_TARGET`.
   - Caret SHOULD be clamped to destination text length.
 
-`DELETE` and `DELETE_BOUNDARY`:
+#### `DELETE` and `DELETE_BOUNDARY`
 
 | Intent                             | Preconditions                              | Action                                    | Focus result                            |
 | ---------------------------------- | ------------------------------------------ | ----------------------------------------- | --------------------------------------- |
@@ -208,15 +268,15 @@ Tab focus rules:
 
 Outline-local commands:
 
-- `setLabel(id, text)`.
-- `setText(id, text)`.
-- `setFormula(id)`.
-- `commitConnField(id, key, text)`.
-- `insertSibling(sel, side)`.
-- `splitAt(sel, caretStart, caretEnd)`.
-- `joinBoundary(sel, dir)`.
-- `removeItem(sel, prefer)`.
-- `changeNesting(sel, dir)`.
+- `setLabel(id, text)`
+- `setText(id, text)`
+- `setFormula(id)`
+- `commitConnField(id, key, text)`
+- `insertSibling(sel, side)`
+- `splitAt(sel, caretStart, caretEnd)`
+- `joinBoundary(sel, dir)`
+- `removeItem(sel, prefer)`
+- `changeNesting(sel, dir)`
 
 `changeNesting(sel, dir)` rules:
 
@@ -231,17 +291,19 @@ Rules:
 - `NAV up/down` MUST use visible depth-first order.
 - `CONFIRM` split MUST apply only to plain scalar values.
 - Join MUST apply only when both items are plain scalars.
-- Removing last item SHOULD blur selection.
+- Removing the last item SHOULD blur selection.
 - Tab indentation SHOULD repair focus by preserving target when possible and clamping caret.
 
 ### Styling notes
 
-Outline-local styling language:
+Outline-local styling:
 
 - One left rail segment per item depth.
-- Indentation based on `rail + pad` per depth level.
-- Meta capsule aligned to item rail start.
-- Node shells stacked with vertical gap.
+- Indentation based on `(rail + pad)` per depth level.
+- Header capsule aligns to item rail start.
+- Nodes stack with vertical gap.
+
+Rails geometry and selection pill behavior are defined in `docs/ui-system.md`.
 
 ## Table view (`table`)
 
@@ -254,76 +316,101 @@ Rules:
 - Table item children represent rows.
 - Row item children represent cells.
 - Navigation follows spreadsheet-like row/column movement.
+- Table distinguishes **container focus** from **cell edit focus**.
 
-### DOM shape
+### Body DOM shape
 
 Table body:
 
 ```text
-.ui-body.ui-table.ui-item                    (shell for table itself)
+.ui-body.ui-table
   .ui-table-header
-    .ui-table-col.ui-table-meta-col
-    [.ui-table-col]*                         (columns)
+    .ui-table-col.ui-table-header-col
+    .ui-table-col
+      [.ui-header subtree]                     (schema cell header; targets: label, conn:*)
+    ...
   .ui-table-body
-    [.ui-table-row]*                         (rows)
+    .ui-table-row.ui-frame                     (row target: DEFAULT_TARGET)
+      .ui-table-cell.ui-table-header-col
+        [.ui-header subtree]                   (row header; targets: label, conn:*)
+      .ui-table-cell.ui-frame                  (cell target: DEFAULT_TARGET)
+        [.ui-body.<cell-view> subtree]         (mounted cell view body)
+      ...
+    ...
 ```
 
-Row:
+Structural rules:
 
-```text
-.ui-table-row.ui-item                        (row container focus)
-  .ui-table-cell.ui-table-meta-col
-    [meta subtree]
-  [.ui-table-cell]*                          (data cells)
-```
+- `.ui-table-row.ui-frame` and `.ui-table-cell.ui-frame` wrappers MUST stay stable for visible rows/cells.
+- Cell bodies MAY swap by view kind.
 
-Cell:
+Notes:
 
-```text
-.ui-table-cell.ui-item                       (cell container focus)
-  [mounted cell view body]                   (slot: core.mountView)
-```
+- For the table item itself, `DEFAULT_TARGET` is on the table's `.ui-frame` outside `.ui-body.ui-table`.
+- Row/cell container focus in table body MUST be implemented as Core focus surfaces on `.ui-table-row.ui-frame` / `.ui-table-cell.ui-frame`, not raw DOM focus.
 
 ### Focus surfaces and targets
 
 Table focus modes:
 
-- Table container focus: table shell at `DEFAULT_TARGET`.
-- Row container focus: `{ container: tableId, item: rowId }` at `DEFAULT_TARGET`.
-- Cell container focus: `{ container: rowId, item: cellId }` at `DEFAULT_TARGET`.
-- Cell edit focus: `{ container: rowId, item: cellId }` at `value`.
+- **Table frame container focus**:
+  - `DEFAULT_TARGET` on the table's `.ui-frame`
+
+- **Row container focus**:
+  - focus refers to a row item
+  - `DEFAULT_TARGET`
+
+- **Cell container focus**:
+  - focus refers to a cell item
+  - `DEFAULT_TARGET`
+
+- **Cell edit focus**:
+  - focus refers to a cell item
+  - `value`
 
 Rules:
 
 - Table MUST distinguish container focus from `value` edit focus.
 - Table MUST NOT implement outline-style multi-target edit traversal.
+- `NAV` and `TAB` are container-focus operations in table mode.
+- Row/cell container focus MUST be implemented as Core focus surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
 
 ### Schema row behavior
 
 Rules:
 
-- Header schema row SHOULD resolve as `rows[0] ?? null`.
+- Schema row SHOULD resolve as `rows[0] ?? null`.
 - `colCount` SHOULD follow `schemaRow.children.length` when schema row exists.
-- Header SHOULD mount `buildItemMeta` for schema cells.
+- Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
+- Schema header cells SHOULD mount header content via `buildItemMeta` (or its direct equivalent) to preserve shared header target semantics.
 
 ### Intent handling
 
 Precondition shorthand:
 
+- `tableId`: focused table item id.
+- `rowId`: focused row item id (child of `tableId`).
+- `cellId`: focused cell item id (child of `rowId`).
 - Row container selection:
-  - `sel.focus.container === tableId`.
-  - `sel.target === DEFAULT_TARGET`.
-- Cell selection:
-  - `sel.focus.container` is `rowId`.
-  - `sel.focus.item` is a child of that row.
+  - `sel.focus.container === tableId`
+  - `sel.focus.item === rowId`
+  - `sel.target === DEFAULT_TARGET`
+  - `rowId` is a child of `tableId`
 
-`CANCEL`:
+- Cell selection:
+  - `sel.focus.container === rowId`
+  - `sel.focus.item === cellId`
+  - `cellId` is a child of `rowId`
+  - container focus: `sel.target === DEFAULT_TARGET`
+  - edit focus: `sel.target === "value"`
+
+#### `CANCEL`
 
 | Intent   | Preconditions | Action               | Focus result                     |
 | -------- | ------------- | -------------------- | -------------------------------- |
 | `CANCEL` | Always        | `escapeLadder(core)` | Exit to `DEFAULT_TARGET` or blur |
 
-`NAV` from row container focus:
+#### `NAV` from row container focus
 
 | Intent      | Preconditions | Action           | Focus result         |
 | ----------- | ------------- | ---------------- | -------------------- |
@@ -332,20 +419,20 @@ Precondition shorthand:
 | `NAV right` | Row container | Enter first cell | Focus cell container |
 | `NAV left`  | Row container | No-op            | Unchanged            |
 
-`NAV` from cell container focus:
+#### `NAV` from cell container focus
 
-| Intent      | Preconditions  | Action                                      | Focus result         |
-| ----------- | -------------- | ------------------------------------------- | -------------------- |
-| `NAV left`  | Cell container | If col=0: row container; else previous cell | Focus destination    |
-| `NAV right` | Cell container | Next cell when present                      | Focus cell container |
-| `NAV up`    | Cell container | Same column, previous row                   | Focus cell container |
-| `NAV down`  | Cell container | Same column, next row                       | Focus cell container |
+| Intent      | Preconditions  | Action                                      | Focus result      |
+| ----------- | -------------- | ------------------------------------------- | ----------------- |
+| `NAV left`  | Cell container | If col=0: row container; else previous cell | Focus destination |
+| `NAV right` | Cell container | Next cell when present                      | Focus destination |
+| `NAV up`    | Cell container | Same column, previous row                   | Focus destination |
+| `NAV down`  | Cell container | Same column, next row                       | Focus destination |
 
 Rule:
 
 - `NAV` MUST NOT enter edit mode.
 
-`TAB` behavior:
+#### `TAB`
 
 | Intent      | Preconditions  | Action                              | Focus result                         |
 | ----------- | -------------- | ----------------------------------- | ------------------------------------ |
@@ -358,36 +445,36 @@ Rule:
 
 - Table tab traversal is positional and MUST NOT enter edit mode.
 
-`CONFIRM` behavior:
+#### `CONFIRM`
 
 | Intent    | Preconditions           | Action                  | Focus result                                                     |
 | --------- | ----------------------- | ----------------------- | ---------------------------------------------------------------- |
 | `CONFIRM` | Row container           | Insert row after        | Focus new row container                                          |
-| `CONFIRM` | Cell container          | Enter edit              | Focus `value` caret at end                                       |
+| `CONFIRM` | Cell container          | Enter edit              | Focus `value`; caret at end                                      |
 | `CONFIRM` | Cell `value` edit focus | Exit edit and move down | Focus next-row same-col cell container; else same cell container |
 
-`TYPE` behavior:
+#### `TYPE`
 
 | Intent        | Preconditions  | Action                    | Focus result             |
 | ------------- | -------------- | ------------------------- | ------------------------ |
 | `TYPE`        | Row container  | No-op                     | Unchanged                |
 | `TYPE <char>` | Cell container | Enter edit and select all | Insert char in microtask |
 
-`DELETE` and `DELETE_BOUNDARY` behavior:
+#### `DELETE` and `DELETE_BOUNDARY`
 
-- Table view currently ignores both intents.
+- Table currently ignores both intents at the table level.
 - Mounted child views MAY still interpret delete locally.
 
 ### Commands and state transitions
 
 Table-local commands:
 
-- `addRowAfter(tableId, afterRowId)`.
-- `removeRow(tableId, rowId)`.
+- `addRowAfter(tableId, afterRowId)`
+- `removeRow(tableId, rowId)`
 
 Notes:
 
-- `removeRow` is implemented but not currently bound to intents.
+- `removeRow` may exist but is not necessarily bound to intents.
 
 ### Edge cases and invariants
 
@@ -401,12 +488,14 @@ Rules:
 
 ### Styling notes
 
-Table-local styling language:
+Table-local styling:
 
 - Uses CSS table display grouping primitives.
-- Header columns use neutral chrome fill.
-- Data cells present chrome as top rail segments.
-- Meta column presents left block chrome without rail segment.
+- Header column and data columns are distinct layout roles.
+- Data cells present top rail segments.
+- Header column presents a left block rail region.
+
+Rails geometry and derived token behavior are defined in `docs/ui-system.md`.
 
 ## Slider view (`slider`)
 
@@ -418,14 +507,15 @@ Rules:
 
 - Presents a range input and formatted numeric readout.
 - Supports arrow-key nudging with step and jump modes.
+- Slider interprets navigation intents as nudging, not focus movement.
 
-### DOM shape
+### Body DOM shape
 
 Slider body:
 
 ```text
 .ui-body.ui-slider
-  input[type="range"]
+  input[type="range"]                            (body control; not a separate Core target)
   .ui-slider-value
 ```
 
@@ -433,19 +523,19 @@ Slider body:
 
 Rules:
 
-- Slider introduces no extra Core targets beyond shell `DEFAULT_TARGET`.
-- `<input type="range">` is a local pointer control, not a Core target.
+- Slider introduces no additional Core targets beyond the frame `DEFAULT_TARGET`.
+- The `<input type="range">` is a local pointer control, not a Core target.
 - Keyboard semantics are interpreted at view level.
 
 ### Intent handling
 
-`CANCEL`:
+#### `CANCEL`
 
 | Intent   | Preconditions | Action               | Focus result                     |
 | -------- | ------------- | -------------------- | -------------------------------- |
 | `CANCEL` | Always        | `escapeLadder(core)` | Exit to `DEFAULT_TARGET` or blur |
 
-`NAV` nudging:
+#### `NAV` nudging
 
 | Intent      | Preconditions | Action     | Focus result        |
 | ----------- | ------------- | ---------- | ------------------- |
@@ -471,12 +561,12 @@ Ignored intents:
 
 Slider-local commands:
 
-- `setValue(id, value)`.
-- `nudgeValue(id, deltaSteps, opts)`.
+- `setValue(id, value)`
+- `nudgeValue(id, deltaSteps, opts)`
 
 Rules:
 
-- `setValue` SHOULD commit only when item is editable plain scalar and value is finite.
+- `setValue` SHOULD commit only when item is an editable plain scalar and value is finite.
 - `nudgeValue` SHOULD read current value, clamp to bounds, and commit.
 
 ### Edge cases and invariants
@@ -492,11 +582,13 @@ Rules:
 
 ### Styling notes
 
-Slider-local styling language:
+Slider-local styling:
 
 - Horizontal row layout.
 - Flexible range control.
 - Compact muted value readout.
+
+Rails geometry and derived token behavior are defined in `docs/ui-system.md`.
 
 ## Adding a new view
 
@@ -507,8 +599,10 @@ Rules:
 
 A new view specification MUST define:
 
+- Body DOM shape (`.ui-body.<view>`) and stable wrappers.
 - Meaning of `DEFAULT_TARGET` in that view context.
 - Edit-entry behavior from container focus.
 - Type-to-edit behavior.
-- Yielding behavior from editors.
+- Yielding behavior from editors (per `docs/ui-system.md`).
 - `DELETE`/`DELETE_BOUNDARY` handling (or explicit no-op).
+- Styling notes describing view-local rail composition (not shared rails geometry).

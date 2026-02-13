@@ -1,6 +1,8 @@
 # UI System
 
-This document defines the UI system contract layered on Core: shared UI structure, runtime mounting model, selection/targets integration, interaction semantics, and cross-view visual invariants. It is intentionally view-agnostic. View-specific behavior belongs in `docs/ui-views.md`. Core API contracts belong in `docs/core-api.md`.
+This document defines the UI system contract layered on Core.
+It covers shared UI structure, runtime mounting, target integration, interaction semantics, and cross-view visual invariants.
+View-specific behavior belongs in `docs/ui-views.md`. Core API contracts belong in `docs/core-api.md`.
 
 ## Scope
 
@@ -108,7 +110,7 @@ Rules:
 - Universal item state classes MUST apply to `.ui-frame`.
 - `.ui-frame` SHOULD set a stable `data-id` attribute (recommended).
 
-Implementation note:
+Notes:
 
 - Shared frame behavior SHOULD be implemented via a helper (for example `bindUiFrame(ctx, { core, focus }, frameEl)`), to keep pointer/selection/state logic consistent across views.
 
@@ -136,6 +138,24 @@ Rules:
 - Label editing MUST keep yielding disabled.
 - Header MAY be mounted/unmounted by the outer view, but ownership rules remain fixed.
 
+Canonical header DOM contract:
+
+```text
+.ui-header
+  .ui-header-label
+    [.ui-textfield subtree]                    (target: label)
+  .ui-header-conn
+    .ui-header-conn-row                        (repeated)
+      .ui-header-conn-key
+      .ui-header-conn-val
+        [.ui-textfield subtree]                (target: conn:<fieldKey>)
+```
+
+Rules:
+
+- This structure is the canonical system-level shape for header chrome.
+- Views MAY style or conditionally mount parts of the header, but target ownership and row semantics MUST remain consistent.
+
 ### Body
 
 The body is view-specific UI rendered by the item view.
@@ -149,8 +169,8 @@ Body responsibilities:
 
 Body-owned targets:
 
-- `value`
-- future body-specific targets
+- `value`.
+- Future body-specific targets.
 
 Rules:
 
@@ -200,6 +220,7 @@ Teardown guarantees:
 - `ctx.effect` reactions MUST be cleaned up.
 - `ctx.target` bindings MUST be cleaned up.
 - Mounted child components and reactive regions MUST be disposed.
+- Disposing a component MUST empty its root container; no component-owned DOM nodes may remain mounted.
 
 ## Ctx API
 
@@ -219,6 +240,18 @@ Rules:
 - Views SHOULD use `ctx.on` instead of raw `addEventListener`.
 - Views MUST use `ctx.target(...)` for DOM-to-Core focus integration.
 - Structural mounting and reconciliation MUST use `ctx.slot` / `ctx.list`, not ad-hoc child management.
+
+## UI helpers
+
+Shared helper utilities:
+
+- `el(...)`: create DOM elements with consistent local conventions.
+- `setData(...)`: encode data attributes consistently for state and styling hooks.
+- `caretFromTarget(...)`: derive caret intent/caret placement context from pointer event targets.
+
+Rules:
+
+- Helpers SHOULD be preferred for shared DOM/state encoding conventions; structural mounting/reconciliation MUST still use `ctx.slot` / `ctx.list`.
 
 ## Regions and insertion stability
 
@@ -283,6 +316,7 @@ Global routing rules:
 - Core MUST own the global `keydown` listener.
 - Core MUST parse key events into intents.
 - Core MUST route view intents to the active view handler.
+- If Core routes an intent, Core MUST consume/prevent the original DOM key event.
 - Core MAY handle explicit global commands while text editors are focused.
 
 Editor yielding rules:
@@ -447,6 +481,11 @@ Rules:
 - Each item MUST have one rail segment at its depth.
 - Rail state MUST be local to each item segment.
 - Rails MUST NOT behave like card borders.
+- Rails MUST be segmented per frame and MUST NOT bleed vertically across sibling frame boundaries.
+- Rail segments SHOULD be square-ended by default.
+- Rounded rail ends SHOULD be used only at contiguous run boundaries.
+- Selection overlays (for example a pill effect) MUST be local to the frame segment and MUST NOT alter sibling segment geometry.
+- Rail hit targets MAY be wider than the visible rail strip to preserve pointer usability without changing visible geometry.
 
 ## Styling boundaries and invariants
 

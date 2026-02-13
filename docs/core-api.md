@@ -1,4 +1,4 @@
-# Core API overview
+# Core API Overview
 
 This document defines the supported Core API contract and the behavior that callers can rely on. It is the authoritative reference for Core types, commands, and invariants. UI-layer behavior is documented separately in `docs/ui-system.md` and `docs/ui-views.md`.
 
