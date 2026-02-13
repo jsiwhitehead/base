@@ -1,12 +1,6 @@
 export type { Intent, NavDir } from "./controls";
 
-export {
-  bindUiItemShell,
-  createComponent,
-  el,
-  setData,
-  stampBody,
-} from "./base";
+export { bindUiItemShell, createComponent, el, stampBody } from "./base";
 
 export {
   buildItemMeta,

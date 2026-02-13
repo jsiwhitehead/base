@@ -10,7 +10,7 @@ import type {
   Selection,
 } from "./core";
 import { DEFAULT_TARGET } from "./core";
-import { createComponent, el, setData } from "./dom";
+import { createComponent, el } from "./dom";
 
 type DebugLast =
   | {
@@ -212,7 +212,7 @@ export function buildDebugPanel(opts: DebugPanelOpts) {
   return createComponent(core, (ctx) => {
     const root = el("div", opts.className ?? "ui-debug");
     root.tabIndex = -1;
-    setData(root, "role", "debug");
+    root.dataset.role = "debug";
 
     const header = el("div", "ui-debug-header");
     const lastLine = el("div", "ui-debug-last");

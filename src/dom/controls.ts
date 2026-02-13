@@ -2,7 +2,7 @@ import { computed } from "@preact/signals-core";
 
 import type { Caret, Component, Connected, Core, Focus, ItemId } from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
-import { caretFromTarget, createComponent, el, setData } from "./base";
+import { caretFromTarget, createComponent, el } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -189,7 +189,7 @@ export function buildTextField(
     inp.classList.add("ui-textfield-input");
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
 
-    setData(inp, "target", opts.target);
+    inp.dataset.target = opts.target;
 
     const mirror = autosize
       ? (el("span", "ui-textfield-mirror") as HTMLSpanElement)

@@ -29,18 +29,6 @@ export function el(
   return element;
 }
 
-export function setData(
-  element: HTMLElement,
-  key: string,
-  value: string | number | boolean | null | undefined,
-): void {
-  if (value == null || value === "") {
-    delete element.dataset[key];
-    return;
-  }
-  element.dataset[key] = String(value);
-}
-
 type Region = {
   host: HTMLElement;
   start: Comment;

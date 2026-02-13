@@ -246,12 +246,11 @@ Rules:
 Shared helper utilities:
 
 - `el(...)`: create DOM elements with consistent local conventions.
-- `setData(...)`: encode data attributes consistently for state and styling hooks.
 - `caretFromTarget(...)`: derive caret intent/caret placement context from pointer event targets.
 
 Rules:
 
-- Helpers SHOULD be preferred for shared DOM/state encoding conventions; structural mounting/reconciliation MUST still use `ctx.slot` / `ctx.list`.
+- Helpers SHOULD be preferred for shared DOM conventions; structural mounting/reconciliation MUST still use `ctx.slot` / `ctx.list`.
 
 ## Regions and insertion stability
 
