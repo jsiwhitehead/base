@@ -11,7 +11,7 @@ This document covers:
 - Shared UI architecture and ownership boundaries.
 - Runtime mounting and reactivity contracts.
 - Shared interaction and editing semantics.
-- Cross-view styling and rails/header invariants.
+- Cross-view styling and rail/header invariants.
 
 This document does not cover:
 
@@ -42,7 +42,7 @@ Structure and ownership:
 
 Focus and interaction:
 
-- The app MUST expose one tabbable element: `.ui-app-main`.
+- The app MUST expose one tabbable element: `.ui-main`.
 - `Tab`/`Shift+Tab` MUST be app commands.
 - Core MUST route `TAB` intents to the active view handler.
 - Interaction SHOULD be intent-driven.
@@ -56,8 +56,8 @@ Mounting and reactivity:
 Visual language:
 
 - Item state MUST be expressed through `.is-focused` and `.is-issue`.
-- Rails and header visuals MUST derive from state-driven tokens (`--rails-tint`, `--header-fill`).
-- Rails MUST remain segmented and local; sibling state bleed is disallowed.
+- Rail and header visuals MUST derive from state-driven tokens (`--rail-tint`, `--header-fill`).
+- Rail MUST remain segmented and local; sibling state bleed is disallowed.
 
 ## UI architecture
 
@@ -67,33 +67,33 @@ Canonical app frame (debug panel omitted):
 
 ```text
 #root
-  .ui-app
-    .ui-app-main                                (tabIndex=0; only tabbable element)
+  .ui-root
+    .ui-main                                    (tabIndex=0; only tabbable element)
       .ui-frame                                 (root item frame; target: DEFAULT_TARGET)
         [.ui-body.<root-view> subtree]          (mounted root view body)
 ```
 
 Rules:
 
-- `.ui-app-main` MUST be the only tabbable element.
+- `.ui-main` MUST be the only tabbable element.
 - All other focus changes MUST be programmatic via Core targets.
 
 Notes:
 
-- The root `.ui-app` wrapper is optional but recommended as a stable styling boundary.
+- The root `.ui-root` wrapper is optional but recommended as a stable styling boundary.
 - `.ui-body.<root-view>` is the view root for routing and intent handling.
 
-## Mental model: rails, header, body
+## Mental model: rail, header, body
 
 Each item is expressed with three structural parts:
 
-- **rails**: structure marker ("where am I?")
+- **rail**: structure marker ("where am I?")
 - **header**: identity + definition UI ("what is this?" / "what drives it?")
 - **body**: view-specific content ("what does it contain / do?")
 
 Rendering is split across two cooperating views:
 
-- The **outer view** renders the stable `.ui-frame` plus rails + header, and mounts the body.
+- The **outer view** renders the stable `.ui-frame` plus rail + header, and mounts the body.
 - The **item view** renders the body as a `.ui-body.<view-name>` subtree and interprets intents.
 
 The `.ui-body.<view-name>` element is the boundary used to determine the **active view** for keyboard routing.
@@ -437,7 +437,7 @@ Token categories:
 Frame layer:
 
 - Outer-view-owned.
-- Contains rails and optional header.
+- Contains rail and optional header.
 - MUST express focus and issue state.
 - MUST NOT depend on body internals.
 
@@ -446,7 +446,7 @@ Body layer:
 - Item-view-owned.
 - Contains the `.ui-body.<view-name>` subtree.
 - SHOULD remain neutral by default.
-- MUST NOT redefine shared rails/header language.
+- MUST NOT redefine shared rail/header language.
 
 ## Universal state classes
 
@@ -459,28 +459,28 @@ Rules:
 
 - State classes MUST apply on `.ui-frame`.
 - Frame state MUST use one priority stack: issue overrides focus.
-- Focus indication SHOULD be rails-tint based.
+- Focus indication SHOULD be rail-tint based.
 - Path context SHOULD be local and subtle.
 - Siblings MUST NOT inherit another item's state styling.
 
-## Rails and header state derivation
+## Rail and header state derivation
 
 Rules:
 
 - `.ui-frame` MUST define item state via `.is-focused` and `.is-issue`.
-- Rails MUST consume `--rails-tint`.
+- Rail MUST consume `--rail-tint`.
 - Header MUST consume `--header-fill`.
-- `.is-issue` MUST override `.is-focused` for both rails and header derived values.
+- `.is-issue` MUST override `.is-focused` for both rail and header derived values.
 
-## Rails language
+## Rail language
 
 Rules:
 
-- Rails MUST be the primary structural marker.
+- Rail MUST be the primary structural marker.
 - Each item MUST have one rail segment at its depth.
 - Rail state MUST be local to each item segment.
-- Rails MUST NOT behave like card borders.
-- Rails MUST be segmented per frame and MUST NOT bleed vertically across sibling frame boundaries.
+- Rail MUST NOT behave like card borders.
+- Rail MUST be segmented per frame and MUST NOT bleed vertically across sibling frame boundaries.
 - Rail segments SHOULD be square-ended by default.
 - Rounded rail ends SHOULD be used only at contiguous run boundaries.
 - Selection overlays (for example a pill effect) MUST be local to the frame segment and MUST NOT alter sibling segment geometry.
@@ -490,8 +490,8 @@ Rules:
 
 Rules:
 
-- Rails/header styling MUST NOT rely on body internals.
-- Body styling MUST NOT restyle rails/header primitives.
+- Rail/header styling MUST NOT rely on body internals.
+- Body styling MUST NOT restyle rail/header primitives.
 - Selection-driven visual changes SHOULD be class toggles only.
 - View-specific state classes SHOULD be added only for new semantics.
 - CSS values SHOULD be token-driven.

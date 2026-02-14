@@ -33,7 +33,7 @@ All views in this file inherit these rules:
 
 ### Outer view vs item view
 
-- The **outer view** owns the stable `.ui-frame`, rails, header, and mounts the item view body.
+- The **outer view** owns the stable `.ui-frame`, rail, header, and mounts the item view body.
 - The **item view** owns the `.ui-body.<view>` subtree and all behavior inside it.
 
 ### Target ownership
@@ -100,10 +100,10 @@ Outline group body:
 
 ```text
 .ui-body.ui-outline
-  .ui-outline-node.ui-frame                    (target: DEFAULT_TARGET)
+  .ui-frame.ui-outline-child                   (target: DEFAULT_TARGET)
     [.ui-header subtree]                       (optional; targets: label, conn:*)
     [.ui-body.<child-view> subtree]            (mounted child view body)
-  .ui-outline-node.ui-frame
+  .ui-frame.ui-outline-child
     ...
 ```
 
@@ -116,14 +116,14 @@ Outline scalar body:
 
 Structural rules:
 
-- `.ui-outline-node.ui-frame` instances MUST stay stable per visible child item.
-- `.ui-header` subtree in `.ui-outline-node.ui-frame` MAY mount/unmount by header visibility policy.
-- Mounted child body subtree MAY swap by child view kind, but `.ui-outline-node.ui-frame` MUST not.
+- `.ui-frame.ui-outline-child` instances MUST stay stable per visible child item.
+- `.ui-header` subtree in `.ui-frame.ui-outline-child` MAY mount/unmount by header visibility policy.
+- Mounted child body subtree MAY swap by child view kind, but `.ui-frame.ui-outline-child` MUST not.
 
 Notes:
 
 - For the current outline item, `.ui-frame` and `.ui-header` are outside `.ui-body.ui-outline` and are outer-view-owned.
-- For each visible child item, outline renders a `.ui-outline-node.ui-frame` that hosts the child's optional `.ui-header` subtree and mounted child body subtree.
+- For each visible child item, outline renders a `.ui-frame.ui-outline-child` that hosts the child's optional `.ui-header` subtree and mounted child body subtree.
 
 ### Focus surfaces and targets
 
@@ -151,7 +151,7 @@ Notes:
 
 - Outline defines a traversal space for `NAV` while editing.
 - Groups participate in navigation but not in edit traversal.
-- Even when child header/body are hosted inside `.ui-outline-node`, target ownership stays per `docs/ui-system.md`.
+- Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/ui-system.md`.
 
 ### Edit traversal space
 
@@ -178,7 +178,7 @@ Caret placement policy:
 
 ### Header visibility policy
 
-Inside `.ui-outline-node`, outline mounts the child header subtree when at least one condition is true:
+Inside `.ui-outline-child`, outline mounts the child header subtree when at least one condition is true:
 
 - Item has a non-empty label.
 - Item has connected fields.
@@ -303,7 +303,7 @@ Outline-local styling:
 - Header capsule aligns to item rail start.
 - Nodes stack with vertical gap.
 
-Rails geometry and selection pill behavior are defined in `docs/ui-system.md`.
+Rail geometry and selection pill behavior are defined in `docs/ui-system.md`.
 
 ## Table view (`table`)
 
@@ -330,10 +330,10 @@ Table body:
       [.ui-header subtree]                     (schema cell header; targets: label, conn:*)
     ...
   .ui-table-body
-    .ui-table-row.ui-frame                     (row target: DEFAULT_TARGET)
+    .ui-frame.ui-table-row                     (row target: DEFAULT_TARGET)
       .ui-table-cell.ui-table-header-col
         [.ui-header subtree]                   (row header; targets: label, conn:*)
-      .ui-table-cell.ui-frame                  (cell target: DEFAULT_TARGET)
+      .ui-frame.ui-table-cell                  (cell target: DEFAULT_TARGET)
         [.ui-body.<cell-view> subtree]         (mounted cell view body)
       ...
     ...
@@ -341,13 +341,13 @@ Table body:
 
 Structural rules:
 
-- `.ui-table-row.ui-frame` and `.ui-table-cell.ui-frame` wrappers MUST stay stable for visible rows/cells.
+- `.ui-frame.ui-table-row` and `.ui-frame.ui-table-cell` wrappers MUST stay stable for visible rows/cells.
 - Cell bodies MAY swap by view kind.
 
 Notes:
 
 - For the table item itself, `DEFAULT_TARGET` is on the table's `.ui-frame` outside `.ui-body.ui-table`.
-- Row/cell container focus in table body MUST be implemented as Core focus surfaces on `.ui-table-row.ui-frame` / `.ui-table-cell.ui-frame`, not raw DOM focus.
+- Row/cell container focus in table body MUST be implemented as Core focus surfaces on `.ui-frame.ui-table-row` / `.ui-frame.ui-table-cell`, not raw DOM focus.
 
 ### Focus surfaces and targets
 
@@ -495,7 +495,7 @@ Table-local styling:
 - Data cells present top rail segments.
 - Header column presents a left block rail region.
 
-Rails geometry and derived token behavior are defined in `docs/ui-system.md`.
+Rail geometry and derived token behavior are defined in `docs/ui-system.md`.
 
 ## Slider view (`slider`)
 
@@ -588,7 +588,7 @@ Slider-local styling:
 - Flexible range control.
 - Compact muted value readout.
 
-Rails geometry and derived token behavior are defined in `docs/ui-system.md`.
+Rail geometry and derived token behavior are defined in `docs/ui-system.md`.
 
 ## Adding a new view
 
@@ -605,4 +605,4 @@ A new view specification MUST define:
 - Type-to-edit behavior.
 - Yielding behavior from editors (per `docs/ui-system.md`).
 - `DELETE`/`DELETE_BOUNDARY` handling (or explicit no-op).
-- Styling notes describing view-local rail composition (not shared rails geometry).
+- Styling notes describing view-local rail composition (not shared rail geometry).
