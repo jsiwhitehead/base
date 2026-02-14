@@ -136,10 +136,10 @@ Mounts zero or one reactive child subtree.
 Rules:
 
 - `getComponent()` MUST be evaluated in a reactive effect.
-- When the returned component instance changes:
+- On each reactive evaluation:
   - the previous component MUST be disposed
   - the region MUST be cleared
-  - the new component MUST be inserted into the region
+  - if non-null, the new component MUST be inserted into the region
 
 - If `getComponent()` returns `null`, the region MUST become empty.
 
@@ -414,7 +414,6 @@ buildTextField(core, {
 {
   text: string;
   readOnly: boolean;
-  isIssue: boolean;
 }
 ```
 
@@ -453,14 +452,12 @@ Lifecycle rules:
 
 Commit triggers:
 
-- `CONFIRM`
-- `TAB`
-- `NAV` (yielded)
+- yielded `CONFIRM`/`TAB`/`NAV`
 - `blur`
 
 Cancel trigger:
 
-- `CANCEL` MUST revert to baseline and clear dirty.
+- yielded `CANCEL` MUST revert to baseline and clear dirty.
 
 Focus loss rule:
 
@@ -472,6 +469,8 @@ Yielding applies only when:
 
 - `opts.onIntent` is provided
 - `yieldNav !== false`
+
+Keyboard-driven draft commit/cancel uses this yielded-intent path; `blur` commit remains independent.
 
 Rules:
 

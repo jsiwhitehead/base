@@ -161,7 +161,6 @@ function isLastLine(inp: HTMLTextAreaElement): boolean {
 type TextFieldState = {
   text: string;
   readOnly: boolean;
-  isIssue: boolean;
 };
 
 type TextFieldEditModel = "live" | "draft";
@@ -500,7 +499,6 @@ export function buildItemHeader(
         return {
           text: snap.label ?? "",
           readOnly: !args.canEditLabel(),
-          isIssue: false,
         };
       },
       onIntent: args.dispatch,
@@ -547,11 +545,11 @@ export function buildItemHeader(
             getState: () => {
               const snap = core.item(id);
               if (snap.mode.type !== "connected")
-                return { text: "", readOnly: true, isIssue: false };
+                return { text: "", readOnly: true };
               const txt =
                 fieldsFromConn(snap.mode.conn).find((x) => x.key === key)
                   ?.text ?? "";
-              return { text: txt, readOnly: false, isIssue: false };
+              return { text: txt, readOnly: false };
             },
             onIntent: args.dispatch,
           });

@@ -492,18 +492,17 @@ function buildOutlineScalarBody(
       const c = snap.content;
 
       if (c.type === "issue")
-        return { text: c.message ?? "", readOnly: true, isIssue: true };
+        return { text: c.message ?? "", readOnly: true };
 
       if (c.type === "value") {
         const editable = snap.mode.type === "plain";
         return {
           text: valueToText(c.value),
           readOnly: !editable,
-          isIssue: false,
         };
       }
 
-      return { text: "", readOnly: true, isIssue: false };
+      return { text: "", readOnly: true };
     },
     onIntent: dispatch,
   });

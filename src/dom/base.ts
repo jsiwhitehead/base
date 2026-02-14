@@ -2,6 +2,7 @@ import { computed, effect } from "@preact/signals-core";
 
 import type { Caret, Component, Core, Focus, ViewName } from "../core";
 import { DEFAULT_TARGET } from "../core";
+import { DEV, devAssert } from "../dev";
 
 type Ctx = {
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
@@ -122,6 +123,10 @@ class RegionChildManager<Id extends string | number> {
   ) {}
 
   update(ids: readonly Id[]): void {
+    if (DEV) {
+      devAssert(new Set(ids).size === ids.length, "ctx.list requires unique keys");
+    }
+
     const keep = new Set(ids);
 
     for (const [id, rec] of this.cache) {
