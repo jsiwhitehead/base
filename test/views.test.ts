@@ -344,6 +344,8 @@ describe("views", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     expect(scalarOfId(core, sliderId)).toBe(42);
 
+    core.focus({ container: rootId, item: sliderId }, DEFAULT_TARGET);
+
     core.commit((t) => t.setValue(sliderId, 100));
     fireViewKey(view, "ArrowRight");
     expect(scalarOfId(core, sliderId)).toBe(100);
