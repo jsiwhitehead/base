@@ -34,7 +34,7 @@ Do:
 - Keep edits minimal and scoped to the task.
 - Follow existing local patterns in touched files.
 - Reuse existing primitives (`createComponent`, `ctx.on`, `ctx.effect`, `ctx.slot`, `ctx.list`).
-- Add or update tests when behavior changes.
+- Prefer simple, clean, minimal, standard implementations that directly solve the requested task.
 
 Don't:
 
@@ -42,6 +42,8 @@ Don't:
 - Add dependencies or change tooling config without explicit need.
 - Rename/move files unless required.
 - Bypass shared runtime patterns with ad-hoc event/mount logic.
+- Do not add code comments unless explicitly requested.
+- Do not add new tests unless explicitly requested. If existing tests do not cover the changed behavior, prefer a quick inline runtime check where suitable.
 
 ## Where to make changes
 

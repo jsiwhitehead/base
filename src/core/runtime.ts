@@ -530,8 +530,14 @@ export function createRuntime<C>(opts: {
     const focus: Focus = mountOpts.focus ?? { container: id, item: id };
 
     const entryId = entryIdFromItemId(id);
-    if (entryId == null) {
-      throw new Error(`mountView expects an entry item id, got: ${id}`);
+    const i = id.indexOf(":");
+    const isMountable = i !== -1 && id.slice(i + 1) === "";
+
+    if (entryId == null || !isMountable) {
+      throw new Error(`mountView expects a mountable item id, got: ${id}`);
+    }
+    if (!model.hasEntry(entryId)) {
+      throw new Error(`mountView expects an existing item id, got: ${id}`);
     }
 
     const factory = views[mountOpts.view] ?? views.outline;

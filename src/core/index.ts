@@ -376,12 +376,6 @@ export function createCore(opts: {
     return sig.value;
   };
 
-  const ensureEntryId = (id: ItemId): EntryId | null => {
-    const ref = parseItemId(id);
-    if (!ref || ref.path.length) return null;
-    return ref.entryId;
-  };
-
   const captureInverseForTxn = (txn: Transaction): Op[] => {
     const inverses: Op[] = [];
 
@@ -745,29 +739,40 @@ export function createCore(opts: {
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
     const ops: Op[] = [];
+    const pendingCreated = new Set<EntryId>();
+
+    const requireTxEntryId = (id: ItemId, opName: string): EntryId => {
+      const ref = parseItemId(id);
+      if (!ref) throw new Error(`${opName} expects a valid item id`);
+
+      const { entryId, path } = ref;
+      if (path.length !== 0)
+        throw new Error(`${opName} does not accept readonly/derived item ids`);
+      if (!model.hasEntry(entryId) && !pendingCreated.has(entryId)) {
+        throw new Error(`${opName} expects an existing item id`);
+      }
+
+      return entryId;
+    };
 
     const t: Tx = {
       setLabel: (id, label) => {
-        const eid = ensureEntryId(id);
-        if (eid == null) return;
+        const eid = requireTxEntryId(id, "setLabel");
         ops.push(model.ops.patch(eid, { label }));
       },
 
       setView: (id, view) => {
-        const eid = ensureEntryId(id);
-        if (eid == null) return;
+        const eid = requireTxEntryId(id, "setView");
         ops.push(model.ops.patch(eid, { view }));
       },
 
       setValue: (id, value) => {
-        const eid = ensureEntryId(id);
-        if (eid == null) return;
+        const eid = requireTxEntryId(id, "setValue");
         ops.push(model.ops.patch(eid, { content: storedFromValue(value) }));
       },
 
       setConnected: (id, conn) => {
-        const eid = ensureEntryId(id);
-        if (eid == null) return;
+        const eid = requireTxEntryId(id, "setConnected");
 
         if (conn.kind === "formula") {
           ops.push(
@@ -791,19 +796,18 @@ export function createCore(opts: {
       },
 
       setGroup: (id) => {
-        const eid = ensureEntryId(id);
-        if (eid == null) return;
+        const eid = requireTxEntryId(id, "setGroup");
         ops.push(
           model.ops.patch(eid, { content: { kind: "group", childIds: [] } }),
         );
       },
 
       insertChild: (parentId, insertOpts) => {
-        const parentEid = ensureEntryId(parentId);
-        if (parentEid == null) return itemIdOf(-1 as any);
+        const parentEid = requireTxEntryId(parentId, "insertChild");
 
         const id = model.createId();
         const entry: Entry = makeBlankEntry(id);
+        pendingCreated.add(id);
 
         ops.push(model.ops.create(entry));
         ops.push(
@@ -818,11 +822,9 @@ export function createCore(opts: {
       },
 
       move: (id, toParentId, moveOpts) => {
-        const childEid = ensureEntryId(id);
-        if (childEid == null) return;
+        const childEid = requireTxEntryId(id, "move");
 
-        const toParentEid = ensureEntryId(toParentId);
-        if (toParentEid == null) return;
+        const toParentEid = requireTxEntryId(toParentId, "move");
 
         ops.push(
           model.ops.move({
@@ -834,8 +836,7 @@ export function createCore(opts: {
       },
 
       remove: (id) => {
-        const eid = ensureEntryId(id);
-        if (eid == null) return;
+        const eid = requireTxEntryId(id, "remove");
         ops.push(model.ops.remove(eid));
       },
     };

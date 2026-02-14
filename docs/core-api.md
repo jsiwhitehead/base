@@ -129,7 +129,7 @@ Rules:
 
 Meaning:
 
-- `readonly`: item content is computed or invalid; editing is blocked.
+- `readonly`: item is not directly editable; this includes formula-derived sub-items and fallback `issue` items.
 - `plain`: item stores direct content.
 - `connected`: item content is generated from a connected definition.
 
@@ -146,13 +146,13 @@ type Connected =
   | { kind: "query"; from: string; where: string; orderBy: string };
 ```
 
-Connected definitions describe how item content is computed.
+Connected definitions describe how item content is generated.
 
 Rules:
 
-- `formula` MUST compute content from `expr`.
-- `query` MUST compute content from `from`/`where`/`orderBy`.
-- The computed result MUST determine whether visible content is `value` or `group`.
+- `formula` MUST generate content from `expr`.
+- `query` MUST generate content from `from`/`where`/`orderBy`.
+- The generated result MUST determine whether visible content is `value` or `group`.
 
 ## Editing and transactions
 
@@ -167,6 +167,7 @@ core.commit((tx) => {
 Commit rules:
 
 - Transaction operations MUST apply atomically.
+- If any operation in a transaction fails validation or execution, the commit MUST throw and Core state MUST remain unchanged.
 - A successful commit MUST trigger reactive updates.
 - A successful commit MUST be recorded for undo/redo.
 - If a commit produces no ops, undo history MUST NOT be extended.
@@ -194,6 +195,10 @@ Rule:
 
 ### Operation contracts
 
+All transaction operations:
+
+- MUST throw if an input item ID is invalid, missing, or resolves to a readonly/derived item.
+
 `setLabel`:
 
 - Sets or replaces the item label.
@@ -216,7 +221,8 @@ Rule:
 
 `setGroup`:
 
-- Converts content to an empty group.
+- If current content is non-group, converts content to an empty group.
+- If current content is already `group`, `setGroup` MUST be a no-op.
 - MUST follow the group conversion rule.
 
 `insertChild`:
@@ -225,6 +231,7 @@ Rule:
 - Creates a new child under `parentId`.
 - New children MUST start as blank value items.
 - If `at` is omitted, child insertion MUST append.
+- MUST throw if `parentId` does not resolve to an existing editable group item.
 - MUST return the created item ID.
 
 `move`:
@@ -359,12 +366,11 @@ type Component = { el: HTMLElement; dispose(): void };
 
 `core.mountView(...)` behavior:
 
-- MUST return a `Component` for entry item IDs.
-- MUST throw if `id` is not an entry item ID.
-- MUST use requested view factory when present.
-- MUST fall back to `"outline"` if requested factory is missing.
-- MUST throw if no `"outline"` factory is registered.
-- `dispose()` MUST release all resources for the mounted view.
+- MUST mount non-readonly existing items only.
+- MUST throw for readonly or missing `id`.
+- MUST use the requested view when available, otherwise fall back to `"outline"`.
+- MUST throw if neither the requested view nor `"outline"` is registered.
+- `dispose()` MUST release mounted-view resources.
 
 ### Active view and keyboard routing
 

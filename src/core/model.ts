@@ -173,6 +173,11 @@ type EntryRec = {
   childLabelIndexSignal?: ReadonlySignal<Map<string, EntryId>>;
 };
 
+type EntrySnapshotRec = {
+  rec: EntryRec;
+  entry: Entry;
+};
+
 function clampIndex(i: number, len: number): number {
   return Math.max(0, Math.min(i, len));
 }
@@ -239,6 +244,21 @@ export function createModel(): Model {
     if (entries.has(initial.id))
       throw new Error(`Duplicate entry id: ${String(initial.id)}`);
     entries.set(initial.id, { entrySignal: signal(initial) });
+  };
+
+  const snapshotEntries = (): Map<EntryId, EntrySnapshotRec> =>
+    new Map(
+      [...entries].map(([id, rec]) => [id, { rec, entry: rec.entrySignal.peek() }]),
+    );
+
+  const restoreEntries = (snapshot: Map<EntryId, EntrySnapshotRec>): void => {
+    batch(() => {
+      entries.clear();
+      for (const [id, snap] of snapshot) {
+        entries.set(id, snap.rec);
+        snap.rec.entrySignal.value = snap.entry;
+      }
+    });
   };
 
   const childLabelIndexSignal = (
@@ -412,6 +432,7 @@ export function createModel(): Model {
   const patch = (id: EntryId, next: EntryPatch): void => {
     const rec = entryRec(id);
     const cur = rec.entrySignal.peek();
+    let nextContent = next.content;
 
     if (next.label !== undefined) {
       const parentId = cur.parentId;
@@ -422,15 +443,17 @@ export function createModel(): Model {
       }
     }
 
-    if (next.content !== undefined) {
+    if (nextContent !== undefined) {
       const curC = cur.content;
-      const nextC = next.content;
+      const nextC = nextContent;
 
       if (isGroupContent(nextC)) {
-        if (isGroupContent(curC))
-          throw new Error("Group membership must be modified via move");
         if (nextC.childIds.length !== 0)
           throw new Error("Group membership must be modified via move");
+
+        if (isGroupContent(curC)) {
+          nextContent = undefined;
+        }
       } else {
         if (isGroupContent(curC) && curC.childIds.length !== 0)
           throw new Error("Cannot convert non-empty group to non-group");
@@ -441,7 +464,7 @@ export function createModel(): Model {
       ...cur,
       ...(next.label !== undefined ? { label: next.label } : {}),
       ...(next.view !== undefined ? { view: next.view } : {}),
-      ...(next.content !== undefined ? { content: next.content } : {}),
+      ...(nextContent !== undefined ? { content: nextContent } : {}),
     };
   };
 
@@ -502,45 +525,51 @@ export function createModel(): Model {
     const created: EntryId[] = [];
     const touched = new Set<EntryId>();
     const moved: MoveResult[] = [];
+    const snapshot = snapshotEntries();
 
-    batch(() => {
-      for (const op of txn.ops) {
-        switch (op.kind) {
-          case "create":
-            createEntryInternal(op.entry);
-            created.push(op.entry.id);
-            touched.add(op.entry.id);
-            break;
+    try {
+      batch(() => {
+        for (const op of txn.ops) {
+          switch (op.kind) {
+            case "create":
+              createEntryInternal(op.entry);
+              created.push(op.entry.id);
+              touched.add(op.entry.id);
+              break;
 
-          case "patch":
-            patch(op.id, op.next);
-            touched.add(op.id);
-            break;
+            case "patch":
+              patch(op.id, op.next);
+              touched.add(op.id);
+              break;
 
-          case "move": {
-            const res = move(op.spec);
-            moved.push(res);
-            touched.add(op.spec.childId);
-            if (res.fromParentId != null) touched.add(res.fromParentId);
-            if (res.toParentId != null) touched.add(res.toParentId);
-            break;
-          }
+            case "move": {
+              const res = move(op.spec);
+              moved.push(res);
+              touched.add(op.spec.childId);
+              if (res.fromParentId != null) touched.add(res.fromParentId);
+              if (res.toParentId != null) touched.add(res.toParentId);
+              break;
+            }
 
-          case "remove": {
-            const res = remove(op.id);
-            touched.add(res.removedId);
-            if (res.parentTouched != null) touched.add(res.parentTouched);
-            for (const cid of res.orphanedChildren) touched.add(cid);
-            break;
-          }
+            case "remove": {
+              const res = remove(op.id);
+              touched.add(res.removedId);
+              if (res.parentTouched != null) touched.add(res.parentTouched);
+              for (const cid of res.orphanedChildren) touched.add(cid);
+              break;
+            }
 
-          default: {
-            const never: never = op;
-            throw new Error(`Unknown op: ${String((never as any).kind)}`);
+            default: {
+              const never: never = op;
+              throw new Error(`Unknown op: ${String((never as any).kind)}`);
+            }
           }
         }
-      }
-    });
+      });
+    } catch (err) {
+      restoreEntries(snapshot);
+      throw err;
+    }
 
     if (DEV) assertValidInternal();
     return { created, touched: [...touched], moved };
