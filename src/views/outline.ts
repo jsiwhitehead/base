@@ -7,8 +7,8 @@ import type {
   DomView,
   Focus,
   ItemId,
-  ValueOrBlank,
   Selection,
+  ValueOrBlank,
 } from "../core";
 import { DEFAULT_TARGET, parseValue } from "../core";
 import type { Intent, NavDir } from "../dom";
@@ -16,6 +16,8 @@ import {
   LABEL_TARGET,
   VALUE_TARGET,
   bindItemFrame,
+  buildItemHeader,
+  buildTextField,
   caret0,
   caretAt,
   connTarget,
@@ -23,13 +25,13 @@ import {
   el,
   enterEditOnType,
   fieldsFromConn,
-  buildItemHeader,
   makeIntentDispatcher,
   patchConn,
   setBodyClasses,
-  buildTextField,
   toggleEditOnConfirm,
 } from "../dom";
+
+type EditPoint = { id: ItemId; target: string };
 
 function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
@@ -128,8 +130,6 @@ function getTextForTarget(core: Core, id: ItemId, target: string): string {
   if (target === LABEL_TARGET) return item.label ?? "";
   return "";
 }
-
-type EditPoint = { id: ItemId; target: string };
 
 function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
   const out: EditPoint[] = [];
@@ -407,19 +407,19 @@ type OutlineMountCtx = {
   dispatch: (intent: Intent) => void;
 };
 
-function buildChildOuterShell(
+function buildChildOuterFrame(
   mountCtx: OutlineMountCtx,
   focus: Focus,
-  withMeta: boolean,
+  withHeader: boolean,
 ): Component {
   const { core } = mountCtx;
   const id = focus.item;
 
   return createComponent(core, (ctx) => {
-    const shell = el("div", "ui-outline-child");
-    bindItemFrame(ctx, { core, focus }, shell);
+    const frameEl = el("div", "ui-outline-child");
+    bindItemFrame(ctx, { core, focus }, frameEl);
 
-    if (withMeta) {
+    if (withHeader) {
       const canEditLabel = () => core.item(id).mode.type !== "readonly";
 
       const commitLabel = (text: string) => {
@@ -456,7 +456,7 @@ function buildChildOuterShell(
 
       const hasFields = computed(() => fieldsSignal.value.length > 0);
 
-      ctx.slot(shell, () => {
+      ctx.slot(frameEl, () => {
         const shouldShow =
           hasLabel.value || hasFields.value || labelFocused.value;
         if (!shouldShow) return null;
@@ -472,12 +472,12 @@ function buildChildOuterShell(
       });
     }
 
-    ctx.slot(shell, () => {
+    ctx.slot(frameEl, () => {
       const wanted = core.view(id);
       return core.mountView({ id, focus, view: wanted });
     });
 
-    return shell;
+    return frameEl;
   });
 }
 
@@ -535,7 +535,7 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
       },
       (childId) => {
         const childFocus = focusFor(core, rootId, childId);
-        return buildChildOuterShell(mountCtx, childFocus, true);
+        return buildChildOuterFrame(mountCtx, childFocus, true);
       },
     );
 

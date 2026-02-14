@@ -59,7 +59,7 @@ describe("views", () => {
     }
   });
 
-  test("outline: click focuses item shell; does not replace shell", async () => {
+  test("outline: click focuses item frame; does not replace frame", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x", value: 1 });
@@ -167,7 +167,7 @@ describe("views", () => {
     expect(filtered).toEqual([c, a, b]);
   });
 
-  test("table: navigation does not replace row item roots or cell shells", async () => {
+  test("table: navigation does not replace row item roots or cell frames", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });

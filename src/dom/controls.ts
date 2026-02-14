@@ -600,11 +600,11 @@ export function buildItemHeader(
   const id = args.id;
 
   return createComponent(core, (ctx) => {
-    const meta = el("div", "ui-header");
+    const headerEl = el("div", "ui-header");
 
     const labelWrap = el("div", "ui-header-label");
     const connWrap = el("div", "ui-header-conn");
-    meta.append(labelWrap, connWrap);
+    headerEl.append(labelWrap, connWrap);
 
     const labelComp = buildTextField(core, {
       focus: args.focus,
@@ -680,6 +680,6 @@ export function buildItemHeader(
         }),
     );
 
-    return meta;
+    return headerEl;
   });
 }

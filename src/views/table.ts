@@ -139,22 +139,22 @@ type TableSignals = {
 type TableMountCtx = {
   core: Core;
   tableId: ItemId;
-  sig: TableSignals;
+  signals: TableSignals;
   dispatch: (intent: Intent) => void;
 };
 
 function buildHeader(mountCtx: TableMountCtx): Component {
-  const { core, sig, dispatch } = mountCtx;
+  const { core, signals, dispatch } = mountCtx;
 
   return createComponent(core, (ctx) => {
     const header = el("div", "ui-table-header");
-    const metaHead = el("div", "ui-table-col ui-table-header-col");
-    header.append(metaHead);
+    const headerHead = el("div", "ui-table-col ui-table-header-col");
+    header.append(headerHead);
 
     ctx.list<number>(
       header,
       () => {
-        const colCount = sig.colCount.value;
+        const colCount = signals.colCount.value;
         const out: number[] = [];
         for (let i = 0; i < colCount; i++) out.push(i);
         return out;
@@ -164,7 +164,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
           const col = el("div", "ui-table-col");
 
           colCtx.slot(col, () => {
-            const schemaRowId = sig.schemaRowId.value;
+            const schemaRowId = signals.schemaRowId.value;
             const cellId = schemaRowId
               ? (childrenOf(core, schemaRowId)[colIdx] ?? null)
               : null;
@@ -223,8 +223,8 @@ function buildDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
   });
 }
 
-function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
-  const { core, tableId, sig, dispatch } = mountCtx;
+function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
+  const { core, tableId, signals, dispatch } = mountCtx;
 
   return createComponent(core, (ctx) => {
     const row = el("div", "ui-table-row");
@@ -234,10 +234,10 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
       row,
     );
 
-    const metaCell = el("div", "ui-table-cell ui-table-header-col");
-    row.append(metaCell);
+    const headerCell = el("div", "ui-table-cell ui-table-header-col");
+    row.append(headerCell);
 
-    ctx.slot(metaCell, () => {
+    ctx.slot(headerCell, () => {
       const canEditLabel = () => core.item(rowId).mode.type !== "readonly";
 
       const commitLabel = (text: string) => {
@@ -267,7 +267,7 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
     ctx.list<number>(
       row,
       () => {
-        const colCount = sig.colCount.value;
+        const colCount = signals.colCount.value;
         const out: number[] = [];
         for (let i = 0; i < colCount; i++) out.push(i);
         return out;
@@ -285,15 +285,15 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
 }
 
 function buildBody(mountCtx: TableMountCtx): Component {
-  const { core, sig } = mountCtx;
+  const { core, signals } = mountCtx;
 
   return createComponent(core, (ctx) => {
     const body = el("div", "ui-table-body");
 
     ctx.list<ItemId>(
       body,
-      () => sig.rows.value,
-      (rid) => buildRowShell(mountCtx, rid),
+      () => signals.rows.value,
+      (rid) => buildRowFrame(mountCtx, rid),
     );
 
     return body;
@@ -304,7 +304,7 @@ function tableNavMove(
   core: Core,
   tableId: ItemId,
   rows: readonly ItemId[],
-  ncols: number,
+  colCount: number,
   sel: Extract<Selection, { type: "focused" }>,
   dir: NavDir,
 ): { focus: Focus; target: string; caret: Caret } | null {
@@ -326,7 +326,8 @@ function tableNavMove(
     }
 
     if (dir === "right") {
-      const firstCell = ncols > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+      const firstCell =
+        colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
       return firstCell ? focusCellContainer(rowId, firstCell) : null;
     }
 
@@ -372,7 +373,7 @@ function tabMove(
   core: Core,
   tableId: ItemId,
   rows: readonly ItemId[],
-  ncols: number,
+  colCount: number,
   sel: Extract<Selection, { type: "focused" }>,
   shift: boolean,
 ): { focus: Focus; target: string; caret: Caret } | null {
@@ -383,7 +384,8 @@ function tabMove(
   if (isRowContainerSel(sel, tableId)) {
     if (shift) return null;
     const rowId = sel.focus.item;
-    const firstCell = ncols > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+    const firstCell =
+      colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
     return firstCell ? focusCellContainer(rowId, firstCell) : null;
   }
 
@@ -400,7 +402,7 @@ function tabMove(
 
   const nextCol = colIdx + dir;
 
-  if (nextCol >= 0 && nextCol < ncols) {
+  if (nextCol >= 0 && nextCol < colCount) {
     const nextCell = childrenOf(core, rowId)[nextCol] ?? null;
     return nextCell ? focusCellContainer(rowId, nextCell) : null;
   }
@@ -409,14 +411,15 @@ function tabMove(
   if (!nextRow) return null;
 
   if (dir > 0) {
-    const firstCell = ncols > 0 ? (childrenOf(core, nextRow)[0] ?? null) : null;
+    const firstCell =
+      colCount > 0 ? (childrenOf(core, nextRow)[0] ?? null) : null;
     return firstCell
       ? focusCellContainer(nextRow, firstCell)
       : focusRowContainer(tableId, nextRow);
   }
 
   const lastCell =
-    ncols > 0 ? (childrenOf(core, nextRow)[ncols - 1] ?? null) : null;
+    colCount > 0 ? (childrenOf(core, nextRow)[colCount - 1] ?? null) : null;
   return lastCell
     ? focusCellContainer(nextRow, lastCell)
     : focusRowContainer(tableId, nextRow);
@@ -457,7 +460,7 @@ export function createTableView(args: {
     return schemaRowId ? childrenOf(core, schemaRowId).length : 0;
   });
 
-  const sig: TableSignals = {
+  const signals: TableSignals = {
     rows: rowsSignal,
     schemaRowId: schemaRowIdSignal,
     colCount: colCountSignal,
@@ -466,33 +469,42 @@ export function createTableView(args: {
   const dispatch = makeIntentDispatcher(core, {
     NAV(selection, intent) {
       if (selection.target !== DEFAULT_TARGET) return;
-      const rows = sig.rows.value;
-      const ncols = sig.colCount.value;
+      const rows = signals.rows.value;
+      const colCount = signals.colCount.value;
 
-      const res = tableNavMove(
+      const nextFocus = tableNavMove(
         core,
         tableId,
         rows,
-        ncols,
+        colCount,
         selection,
         intent.dir,
       );
-      if (!res) return;
-      core.focus(res.focus, res.target, { caret: res.caret });
+      if (!nextFocus) return;
+      core.focus(nextFocus.focus, nextFocus.target, { caret: nextFocus.caret });
     },
 
     TAB(selection, intent) {
       if (selection.target !== DEFAULT_TARGET) return;
-      const rows = sig.rows.value;
-      const ncols = sig.colCount.value;
+      const rows = signals.rows.value;
+      const colCount = signals.colCount.value;
 
-      const res = tabMove(core, tableId, rows, ncols, selection, intent.shift);
-      if (!res) return;
-      core.focus(res.focus, res.target, { caret: res.caret });
+      const nextFocus = tabMove(
+        core,
+        tableId,
+        rows,
+        colCount,
+        selection,
+        intent.shift,
+      );
+      if (!nextFocus) return;
+      core.focus(nextFocus.focus, nextFocus.target, {
+        caret: nextFocus.caret,
+      });
     },
 
     CONFIRM(selection) {
-      const rows = sig.rows.value;
+      const rows = signals.rows.value;
 
       if (isRowContainerSel(selection, tableId)) {
         tableCommands.addRowAfter(core, tableId, selection.focus.item);
@@ -519,7 +531,7 @@ export function createTableView(args: {
     TYPE(selection, intent) {
       if (selection.target !== DEFAULT_TARGET) return;
 
-      const rows = sig.rows.value;
+      const rows = signals.rows.value;
 
       if (isRowContainerSel(selection, tableId)) return;
 
@@ -543,7 +555,7 @@ export function createTableView(args: {
     };
     bindItemFrame(ctx, { core, focus: tableFocus }, root);
 
-    const mountCtx: TableMountCtx = { core, tableId, sig, dispatch };
+    const mountCtx: TableMountCtx = { core, tableId, signals, dispatch };
     ctx.mount(root, buildHeader(mountCtx));
     ctx.mount(root, buildBody(mountCtx));
 

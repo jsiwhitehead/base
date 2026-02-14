@@ -234,21 +234,21 @@ Notes:
 
 ## Frame binding helpers
 
-### `bindItemFrame(ctx, spec, shell)`
+### `bindItemFrame(ctx, spec, frameEl)`
 
 `bindItemFrame` implements the canonical `.ui-frame` behavior for an item.
 
 Signature:
 
 ```ts
-bindItemFrame(ctx, { core, focus }, shell);
+bindItemFrame(ctx, { core, focus }, frameEl);
 ```
 
 Rules:
 
-- `shell` MUST receive `.ui-frame`.
-- `shell.dataset.id` MUST be set to `focus.item`.
-- If `shell` does not have `tabindex`, it MUST be assigned `tabIndex = -1`.
+- `frameEl` MUST receive `.ui-frame`.
+- `frameEl.dataset.id` MUST be set to `focus.item`.
+- If `frameEl` does not have `tabindex`, it MUST be assigned `tabIndex = -1`.
 - The frame MUST attach `DEFAULT_TARGET` via `ctx.target`.
 - On `pointerdown`:
   - the frame MUST focus `DEFAULT_TARGET`

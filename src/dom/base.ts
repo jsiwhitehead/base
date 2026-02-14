@@ -269,11 +269,11 @@ export function createComponent(
 export function bindItemFrame(
   ctx: Ctx,
   spec: { core: Core; focus: Focus },
-  shell: HTMLElement,
+  frameEl: HTMLElement,
 ): void {
-  shell.classList.add("ui-frame");
-  shell.dataset.id = spec.focus.item;
-  if (!shell.hasAttribute("tabindex")) shell.tabIndex = -1;
+  frameEl.classList.add("ui-frame");
+  frameEl.dataset.id = spec.focus.item;
+  if (!frameEl.hasAttribute("tabindex")) frameEl.tabIndex = -1;
 
   const isFocused = computed(() => {
     const sel = spec.core.selection();
@@ -287,9 +287,9 @@ export function bindItemFrame(
     () => spec.core.item(spec.focus.item).content.type === "issue",
   );
 
-  ctx.target(spec.focus, DEFAULT_TARGET, () => shell);
+  ctx.target(spec.focus, DEFAULT_TARGET, () => frameEl);
 
-  ctx.on(shell, "pointerdown", (e: PointerEvent) => {
+  ctx.on(frameEl, "pointerdown", (e: PointerEvent) => {
     spec.core.focus(spec.focus, DEFAULT_TARGET, {
       caret: caretFromTarget(e.target),
     });
@@ -297,8 +297,8 @@ export function bindItemFrame(
   });
 
   ctx.effect(() => {
-    shell.classList.toggle("is-focused", isFocused.value);
-    shell.classList.toggle("is-issue", isIssue.value);
+    frameEl.classList.toggle("is-focused", isFocused.value);
+    frameEl.classList.toggle("is-issue", isIssue.value);
   });
 }
 

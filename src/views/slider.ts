@@ -27,35 +27,36 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
   step: 1,
 };
 
-const clamp = (n: number, lo: number, hi: number): number =>
-  Math.max(lo, Math.min(hi, n));
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
 
-function toNumberOr(v: ValueOrBlank, fallback: number): number {
-  if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : fallback;
+function toNumberOr(value: ValueOrBlank, fallback: number): number {
+  if (typeof value === "number")
+    return Number.isFinite(value) ? value : fallback;
+  if (typeof value === "string") {
+    const parsedNumber = Number(value);
+    return Number.isFinite(parsedNumber) ? parsedNumber : fallback;
   }
-  return v === true ? 1 : fallback;
+  return value === true ? 1 : fallback;
 }
 
 function precisionFromStep(step: number): number {
   if (!Number.isFinite(step) || step <= 0) return 0;
-  const s = String(step);
+  const stepText = String(step);
 
-  if (/[eE]/.test(s)) {
-    const [m = "", e = "0"] = s.split(/[eE]/);
-    const exp = Number(e);
-    const dec = (m.split(".")[1]?.length ?? 0) - exp;
-    return Math.max(0, dec);
+  if (/[eE]/.test(stepText)) {
+    const [mantissa = "", exponentText = "0"] = stepText.split(/[eE]/);
+    const exponent = Number(exponentText);
+    const decimals = (mantissa.split(".")[1]?.length ?? 0) - exponent;
+    return Math.max(0, decimals);
   }
 
-  return Math.max(0, s.split(".")[1]?.length ?? 0);
+  return Math.max(0, stepText.split(".")[1]?.length ?? 0);
 }
 
-function formatNumberForStep(n: number, step: number): string {
-  const p = precisionFromStep(step);
-  return p <= 0 ? String(Math.trunc(n)) : n.toFixed(p);
+function formatNumberForStep(value: number, step: number): string {
+  const precision = precisionFromStep(step);
+  return precision <= 0 ? String(Math.trunc(value)) : value.toFixed(precision);
 }
 
 const canSetValue = (core: Core, id: ItemId): boolean => {
@@ -80,12 +81,16 @@ const sliderCommands = {
     core: Core,
     id: ItemId,
     deltaSteps: number,
-    opts: SliderResolvedOpts,
+    resolvedOpts: SliderResolvedOpts,
   ): void {
     if (!canSetValue(core, id)) return;
-    const cur = getValueOr(core, id, opts.min);
-    const next = clamp(cur + deltaSteps * opts.step, opts.min, opts.max);
-    sliderCommands.setValue(core, id, next);
+    const currentValue = getValueOr(core, id, resolvedOpts.min);
+    const nextValue = clamp(
+      currentValue + deltaSteps * resolvedOpts.step,
+      resolvedOpts.min,
+      resolvedOpts.max,
+    );
+    sliderCommands.setValue(core, id, nextValue);
   },
 } as const;
 
@@ -93,10 +98,15 @@ type SliderMountCtx = {
   core: Core;
   id: ItemId;
   focus: Focus;
-  opts: SliderResolvedOpts;
+  resolvedOpts: SliderResolvedOpts;
 };
 
-function buildSliderBody({ core, id, focus, opts }: SliderMountCtx): Component {
+function buildSliderBody({
+  core,
+  id,
+  focus,
+  resolvedOpts,
+}: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
     const root = el("div");
     setBodyClasses(root, "slider");
@@ -104,9 +114,9 @@ function buildSliderBody({ core, id, focus, opts }: SliderMountCtx): Component {
 
     const input = document.createElement("input");
     input.type = "range";
-    input.min = String(opts.min);
-    input.max = String(opts.max);
-    input.step = String(opts.step);
+    input.min = String(resolvedOpts.min);
+    input.max = String(resolvedOpts.max);
+    input.step = String(resolvedOpts.step);
     input.tabIndex = -1;
 
     const valueEl = el("div", "ui-slider-value");
@@ -130,9 +140,9 @@ function buildSliderBody({ core, id, focus, opts }: SliderMountCtx): Component {
     ctx.target(focus, VALUE_TARGET, () => input);
 
     ctx.effect(() => {
-      const currentValue = getValueOr(core, id, opts.min);
-      const clamped = clamp(currentValue, opts.min, opts.max);
-      const valueText = formatNumberForStep(clamped, opts.step);
+      const currentValue = getValueOr(core, id, resolvedOpts.min);
+      const clamped = clamp(currentValue, resolvedOpts.min, resolvedOpts.max);
+      const valueText = formatNumberForStep(clamped, resolvedOpts.step);
 
       if (input.value !== valueText) input.value = valueText;
       if (valueEl.textContent !== valueText) valueEl.textContent = valueText;
@@ -154,7 +164,7 @@ export function createSliderView(args: {
 }): DomView {
   const { core, id } = args;
 
-  const resolved = DEFAULT_SLIDER_OPTS;
+  const resolvedOpts = DEFAULT_SLIDER_OPTS;
 
   const viewFocus: Focus = args.focus ?? { container: id, item: id };
 
@@ -164,7 +174,7 @@ export function createSliderView(args: {
 
       const multiplier = intent.mode === "jump" ? 10 : 1;
       const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-      sliderCommands.nudgeValue(core, id, dir * multiplier, resolved);
+      sliderCommands.nudgeValue(core, id, dir * multiplier, resolvedOpts);
     },
 
     CONFIRM(sel) {
@@ -187,19 +197,19 @@ export function createSliderView(args: {
     DELETE_BOUNDARY() {},
   });
 
-  const content = buildSliderBody({
+  const body = buildSliderBody({
     core,
     id,
     focus: viewFocus,
-    opts: resolved,
+    resolvedOpts,
   });
 
   return {
     id: `slider:${String(id)}`,
-    root: content.el,
+    root: body.el,
     onIntent: dispatch,
     dispose() {
-      content.dispose();
+      body.dispose();
     },
   };
 }
