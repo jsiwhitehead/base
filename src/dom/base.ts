@@ -152,12 +152,12 @@ type Ctx = {
 
   mount(host: HTMLElement, child: Component): void;
 
-  slot(host: HTMLElement, get: () => Component | null): void;
+  slot(host: HTMLElement, getComponent: () => Component | null): void;
 
   list<Id extends string | number>(
     host: HTMLElement,
     getIds: () => readonly Id[],
-    create: (id: Id) => Component,
+    buildById: (id: Id) => Component,
   ): void;
 
   target(
@@ -193,12 +193,12 @@ export function createComponent(
       bag.add(() => child.dispose());
     },
 
-    slot(host, get) {
+    slot(host, getComponent) {
       const region = createRegion(host);
       let cur: Component | null = null;
 
       const disposeEffect = effect(() => {
-        const next = get();
+        const next = getComponent();
 
         region.clear();
         cur?.dispose();
@@ -217,12 +217,12 @@ export function createComponent(
     list<Id extends string | number>(
       host: HTMLElement,
       getIds: () => readonly Id[],
-      create: (id: Id) => Component,
+      buildById: (id: Id) => Component,
     ) {
       const region = createRegion(host);
 
       const childManager = new RegionChildManager<Id>(region, (id) => {
-        const c = create(id);
+        const c = buildById(id);
         return { element: c.el, dispose: c.dispose };
       });
 

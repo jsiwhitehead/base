@@ -248,7 +248,10 @@ export function createModel(): Model {
 
   const snapshotEntries = (): Map<EntryId, EntrySnapshotRec> =>
     new Map(
-      [...entries].map(([id, rec]) => [id, { rec, entry: rec.entrySignal.peek() }]),
+      [...entries].map(([id, rec]) => [
+        id,
+        { rec, entry: rec.entrySignal.peek() },
+      ]),
     );
 
   const restoreEntries = (snapshot: Map<EntryId, EntrySnapshotRec>): void => {

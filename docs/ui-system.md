@@ -1,37 +1,48 @@
 # UI System
 
 This document defines the UI system contract layered on Core.
-It covers shared UI structure, runtime mounting, target integration, interaction semantics, and cross-view visual invariants.
-View-specific behavior belongs in `docs/ui-views.md`. Core API contracts belong in `docs/core-api.md`.
+
+It is the authoritative reference for:
+
+- The shared UI runtime (`dom/`)
+- Shared DOM structure and ownership boundaries
+- Target integration and focus surfaces
+- Shared interaction semantics (intents, text editing, escape ladder)
+- Cross-view visual invariants (frame/header/body + state tokens)
+
+View-specific behavior belongs in `docs/ui-views.md`.
+Core API contracts belong in `docs/core-api.md`.
 
 ## Scope
 
 This document covers:
 
-- Shared UI architecture and ownership boundaries.
-- Runtime mounting and reactivity contracts.
-- Shared interaction and editing semantics.
-- Cross-view styling and rail/header invariants.
+- Shared UI architecture and DOM ownership boundaries.
+- The shared DOM runtime API (the `dom/` folder).
+- Component mounting and cleanup guarantees.
+- Shared interaction semantics and intent vocabulary.
+- Cross-view structural and styling invariants.
 
 This document does not cover:
 
-- View-specific keymaps and behaviors.
-- Core API semantics.
-- Styling details that are purely local to one view.
+- View-specific keymaps, traversal rules, or commands.
+- Core API semantics and data invariants.
+- View-local styling.
 
 ## Core principles
 
 Rules:
 
-- Core MUST be the source of truth.
-- Selection MUST be the single focus truth.
-- Frame structure MUST remain stable while body content MAY swap.
+- Core MUST be the single source of truth for state.
+- Selection MUST be the single source of truth for focus.
+- The UI MUST be target-driven, not tab-order-driven.
+- The frame structure MUST remain stable while the body content MAY swap.
 - Interaction SHOULD be semantic (intent-driven), not DOM-event-driven.
-- Tab handling MUST be an app command, not browser tab-order navigation.
+- Selection-driven updates MUST be styling-only.
 
 ## Summary of invariants
 
-Structure and ownership:
+### Structure and ownership
 
 - Each rendered item MUST map to exactly one `.ui-frame`.
 - The frame element MUST own `DEFAULT_TARGET`.
@@ -40,20 +51,19 @@ Structure and ownership:
 - `.ui-frame` identity MUST remain stable across selection changes.
 - Selection-driven updates MUST be styling-only.
 
-Focus and interaction:
+### Focus and interaction
 
 - The app MUST expose one tabbable element: `.ui-main`.
-- `Tab`/`Shift+Tab` MUST be app commands.
-- Core MUST route `TAB` intents to the active view handler.
-- Interaction SHOULD be intent-driven.
-- Label editing SHOULD remain pointer-only and MUST NOT yield navigation intents.
+- `Tab` and `Shift+Tab` MUST be app commands, not browser navigation.
+- Core MUST route intents to the active view handler.
+- Label editing MUST remain pointer-only and MUST NOT yield navigation intents.
 
-Mounting and reactivity:
+### Mounting and reactivity
 
 - Dynamic subtrees MUST mount through `ctx.slot` and `ctx.list`.
-- Hosts with regions MUST NOT be manually cleared or replaced.
+- Hosts that contain regions MUST NOT be manually cleared or replaced.
 
-Visual language:
+### Visual language
 
 - Item state MUST be expressed through `.is-focused` and `.is-issue`.
 - Rail and header visuals MUST derive from state-driven tokens (`--rail-tint`, `--header-fill`).
@@ -79,7 +89,6 @@ Rules:
 
 Notes:
 
-- The root `.ui-root` wrapper is optional but recommended as a stable styling boundary.
 - `.ui-main` and the root `.ui-frame` MAY be the same element.
 - `.ui-body.<root-view>` is the view root for routing and intent handling.
 
@@ -91,7 +100,7 @@ Each item is expressed with three structural parts:
 - **header**: identity + definition UI ("what is this?" / "what drives it?")
 - **body**: view-specific content ("what does it contain / do?")
 
-Rendering is split across two cooperating views:
+Rendering is split across two cooperating layers:
 
 - The **outer view** renders the stable `.ui-frame` plus rail + header, and mounts the body.
 - The **item view** renders the body as a `.ui-body.<view-name>` subtree and interprets intents.
@@ -108,11 +117,7 @@ Rules:
 - `.ui-frame` MUST remain stable across selection changes.
 - Selection-driven effects MUST NOT replace, remount, or reorder `.ui-frame` elements.
 - Universal item state classes MUST apply to `.ui-frame`.
-- `.ui-frame` SHOULD set a stable `data-id` attribute (recommended).
-
-Notes:
-
-- Shared frame behavior SHOULD be implemented via a helper (for example `bindItemFrame(ctx, { core, focus }, frameEl)`), to keep pointer/selection/state logic consistent across views.
+- `.ui-frame` SHOULD set a stable `data-id` attribute.
 
 ## Header and body ownership
 
@@ -136,7 +141,6 @@ Rules:
 - The header MUST use `.ui-header`.
 - The header MUST NOT attach the `value` target.
 - Label editing MUST keep yielding disabled.
-- Header MAY be mounted/unmounted by the outer view, but ownership rules remain fixed.
 
 Canonical header DOM contract:
 
@@ -199,10 +203,21 @@ Rules:
 
 UI terminology:
 
-- **connected definition**: the Core `Connected` value (formula/query/etc.).
+- **connected definition**: the Core `Connected` value.
 - **definition fields**: the header controls that edit the connected definition.
 
-## Runtime model
+## UI runtime model (`dom/`)
+
+The `dom/` folder defines the shared UI runtime. It is view-agnostic.
+
+It provides:
+
+- A minimal component model.
+- A safe mounting context (`Ctx`).
+- Region-based dynamic mounting (`slot`, `list`).
+- Target integration helpers.
+- Shared controls (`buildTextField`, `buildItemHeader`).
+- Intent parsing helpers.
 
 ### Component model
 
@@ -210,144 +225,342 @@ UI terminology:
 type Component = { el: HTMLElement; dispose(): void };
 ```
 
-Creation rule:
+Rules:
 
-- Components SHOULD be created with `createComponent(core, (ctx) => HTMLElement)`.
+- A component MUST expose one root element (`el`).
+- A component MUST release all resources on `dispose()`.
+- A disposed component MUST leave no component-owned DOM nodes mounted.
 
-Teardown guarantees:
+### `createComponent(core, build)`
 
-- `ctx.on` listeners MUST be cleaned up.
-- `ctx.effect` reactions MUST be cleaned up.
-- `ctx.target` bindings MUST be cleaned up.
-- Mounted child components and reactive regions MUST be disposed.
-- Disposing a component MUST empty its root container; no component-owned DOM nodes may remain mounted.
+`createComponent` is the canonical way to build UI components.
 
-## Ctx API
+Signature:
 
-`createComponent` provides the minimal safe mounting API.
-
-Contracts:
-
-- `ctx.on`: register DOM listeners with automatic cleanup.
-- `ctx.effect`: register reactive effects with rerun/dispose cleanup.
-- `ctx.target`: bind Core target focus surfaces to DOM elements.
-- `ctx.mount`: mount a static child component once.
-- `ctx.slot`: mount zero/one reactive child subtree.
-- `ctx.list`: mount keyed reactive child lists.
+```ts
+createComponent(core: Core, build: (ctx: Ctx) => HTMLElement): Component
+```
 
 Rules:
 
-- Views SHOULD use `ctx.on` instead of raw `addEventListener`.
-- Views MUST use `ctx.target(...)` for DOM-to-Core focus integration.
-- Structural mounting and reconciliation MUST use `ctx.slot` / `ctx.list`, not ad-hoc child management.
+- `build(ctx)` MUST be called exactly once.
+- The returned `HTMLElement` MUST be the component root.
+- `dispose()` MUST:
+  - run all registered cleanups
+  - dispose mounted child components
+  - detach all targets
+  - stop all reactive effects
+  - remove all region anchors
+  - empty the root element (`replaceChildren()`)
 
-## UI helpers
+Notes:
 
-Shared helper utilities:
+- Cleanup ordering is last-in-first-out (reverse registration order).
 
-- `el(...)`: create DOM elements with consistent local conventions.
-- `caretFromTarget(...)`: derive caret intent/caret placement context from pointer event targets.
+### `Ctx` API
+
+`createComponent` provides a minimal safe mounting API via `Ctx`.
+
+```ts
+type Ctx = {
+  on(target, type, handler, opts?);
+  effect(run);
+  mount(host, child);
+  slot(host, getComponent);
+  list(host, getIds, buildById);
+  target(focus, target, getEl, opts?);
+};
+```
+
+`ctx.on(target, type, handler, opts?)`:
+
+Registers a DOM listener with automatic cleanup.
 
 Rules:
 
-- Helpers SHOULD be preferred for shared DOM conventions; structural mounting/reconciliation MUST still use `ctx.slot` / `ctx.list`.
+- The listener MUST be removed on component disposal.
+- View code SHOULD use `ctx.on` instead of raw `addEventListener`.
 
-## Regions and insertion stability
+`ctx.effect(run)`:
+
+Registers a reactive effect with automatic cleanup.
+
+Rules:
+
+- The effect MUST stop on component disposal.
+- The effect MUST be re-run when reactive dependencies change.
+- If `run()` returns a cleanup function, it MUST be invoked before re-running and on disposal.
+
+`ctx.mount(host, child)`:
+
+Mounts a static child component.
+
+Rules:
+
+- `child.el` MUST be appended to `host`.
+- `child.dispose()` MUST be called on parent disposal.
+
+### Regions: `ctx.slot` and `ctx.list`
 
 `ctx.slot` and `ctx.list` provide region-based mounting.
+
+A **region** is a stable insertion boundary inside a host element.
 
 Rules:
 
 - Regions MUST preserve DOM order relative to static siblings and other regions.
-- Region updates MUST dispose removed children.
-- Once a region exists in a host, callers MUST NOT clear or replace host children manually (for example `replaceChildren`, `innerHTML = ""`).
+- Regions MUST dispose removed children.
+- Once a region exists in a host, callers MUST NOT clear or replace host children manually.
+
+Implementation note:
+
+- Regions are anchored using comment boundary nodes:
+  - `<!-- region:start -->`
+  - `<!-- region:end -->`
+
+This enables multiple independent regions inside one host.
 
 `ctx.slot(host, getComponent)`:
 
-- MUST mount zero or one component in a stable region.
-- MUST dispose previous child before mounting replacement.
-- SHOULD be used for conditional header/body switching.
-
-`ctx.list(host, getIds, mountById)`:
-
-- MUST reconcile by key.
-- MUST preserve order exactly as returned by `getIds()`.
-- SHOULD be used for repeated UI structures (for example rows, children, schema-driven lists).
-
-## Reactivity and stability rules
+Mounts zero or one reactive child subtree.
 
 Rules:
 
-- Selection-driven effects SHOULD only toggle classes, datasets, or caret/editor state.
-- Selection-driven effects MUST NOT remount frames, bodies, or lists.
-- Structural swaps SHOULD be gated by stable discriminators (for example `"group" | "value"`, or a view name).
-- One region SHOULD own one responsibility (`slot` for one conditional surface, `list` for one keyed sequence).
+- `getComponent()` MUST be evaluated in a reactive effect.
+- When the returned component instance changes:
+  - the previous component MUST be disposed
+  - the region MUST be cleared
+  - the new component MUST be inserted into the region
 
-## Programmatic focus
+- If `getComponent()` returns `null`, the region MUST become empty.
+
+Use cases:
+
+- Conditional header/body mounting.
+- Swapping one subtree by discriminator.
+
+`ctx.list(host, getIds, buildById)`:
+
+Mounts a keyed reactive list of child components.
+
+Signature:
+
+```ts
+ctx.list<Id extends string | number>(
+  host,
+  getIds: () => readonly Id[],
+  buildById: (id: Id) => Component,
+)
+```
 
 Rules:
 
-- Focus targets MUST be applied programmatically from Core selection.
-- Inputs MAY receive focus for caret and text behavior.
-- Inputs MUST NOT participate in browser tab-order traversal.
+- `getIds()` MUST be evaluated in a reactive effect.
+- Keys MUST be `string | number` (simple, standard, interoperable).
+- Keys MUST be **unique** within the list.
+- Keys MUST be **stable** across updates for the same logical child.
+- Child components MUST be cached by key.
+- Removed keys MUST be disposed immediately.
+- DOM order MUST exactly match the order returned by `getIds()`.
+- When order changes, DOM nodes MUST be moved, not recreated.
 
-## Intent model
+Key stability policy (critical):
 
-Shared intent vocabulary:
+- The system assumes keys represent identity, not position.
+- Using unstable keys (for example array indices) will cause focus loss, incorrect caching, and disposal churn.
+- Any view that renders tables MUST treat row/cell keys as stable identities, not indices.
 
-- `NAV { dir, mode }`
-- `TAB { shift }`
-- `CONFIRM { caret? }`
-- `CANCEL`
-- `TYPE { char }`
-- `DELETE { dir }`
-- `DELETE_BOUNDARY { dir }`
+Target integration: `ctx.target(...)`
+
+`ctx.target` binds a Core focus surface to a DOM element.
+
+Signature:
+
+```ts
+ctx.target(
+  focus: Focus,
+  target: string,
+  getEl: () => HTMLElement | null,
+  opts?: { caret?: { set(pos: number): void; getLength(): number } },
+)
+```
+
+Rules:
+
+- `ctx.target` MUST call `core.attachTarget(...)`.
+- The returned cleanup MUST run on component disposal.
+- `getEl()` MUST return the element that should receive DOM focus.
+- Only one active binding may exist per `(focus, target)` pair.
+
+Caret support:
+
+- A caret adapter MAY be provided for text targets.
+- Caret application is best-effort.
+
+### Shared DOM helpers (`dom/base.ts`)
+
+`el(tag, className?, text?)`:
+
+Creates a DOM element.
+
+Rules:
+
+- If `className` is provided, it MUST be applied.
+- If `text` is provided (including empty string), it MUST be applied as `textContent`.
+
+`caretFromTarget(target)`:
+
+Extracts a text caret from an event target.
+
+Rules:
+
+- If `target` is an `HTMLInputElement` or `HTMLTextAreaElement`, it MUST return:
+  - `{ start: selectionStart, end: selectionEnd }` (best-effort)
+
+- Otherwise it MUST return `{ start: 0, end: 0 }`.
+
+Notes:
+
+- This is used for pointerdown focus so caret placement feels natural.
+- It intentionally does not attempt to support `contenteditable`.
+
+`bindItemFrame(ctx, spec, shell)`:
+
+`bindItemFrame` implements the canonical `.ui-frame` behavior for an item.
+
+Signature:
+
+```ts
+bindItemFrame(ctx, { core, focus }, shell);
+```
+
+Rules:
+
+- `shell` MUST receive `.ui-frame`.
+- `shell.dataset.id` MUST be set to `focus.item`.
+- If `shell` does not have `tabindex`, it MUST be assigned `tabIndex = -1`.
+- The frame MUST attach `DEFAULT_TARGET` via `ctx.target`.
+- On `pointerdown`:
+  - the frame MUST focus `DEFAULT_TARGET`
+  - caret MUST be derived via `caretFromTarget(e.target)`
+  - propagation MUST be stopped
+
+- Frame state classes MUST be applied:
+  - `.is-focused` when selection matches the item focus
+  - `.is-issue` when `item.content.kind === "issue"`
+
+`setBodyClasses(root, view)`:
+
+Applies the canonical body classes to a view root.
+
+Rules:
+
+- MUST add `.ui-body`.
+- MUST add `.ui-${view}`.
+
+### Shared controls (`dom/controls.ts`)
+
+Intent vocabulary:
+
+```ts
+type Intent =
+  | {
+      type: "NAV";
+      dir: "left" | "right" | "up" | "down";
+      mode: "step" | "jump";
+    }
+  | { type: "CONFIRM"; caret?: Caret }
+  | { type: "CANCEL" }
+  | { type: "TAB"; shift: boolean }
+  | { type: "TYPE"; char: string }
+  | { type: "DELETE"; dir: "backward" | "forward" }
+  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
+```
 
 Rules:
 
 - Views MUST interpret intents.
-- Controls SHOULD emit intents.
+- Shared controls SHOULD emit intents instead of directly calling view commands.
 
-## Keyboard routing
+`parseKeydownIntent(e)`:
 
-Global routing rules:
+Parses a `KeyboardEvent` into an `Intent`.
 
-- Core MUST own the global `keydown` listener.
-- Core MUST parse key events into intents.
-- Core MUST route view intents to the active view handler.
-- If Core routes an intent, Core MUST consume/prevent the original DOM key event.
-- Core MAY handle explicit global commands while text editors are focused.
+Rules:
 
-Editor yielding rules:
+- `Escape` -> `CANCEL`
+- `Tab` -> `TAB`
+- `Enter` -> `CONFIRM`
+- `Backspace` -> `DELETE backward`
+- `Delete` -> `DELETE forward`
+- Arrow keys -> `NAV`
+  - `mode = "jump"` when `ctrlKey` or `metaKey` is held
+  - otherwise `mode = "step"`
 
-- Text editors MAY yield semantic intents when yielding is enabled.
-- Yielding applies to `conn:*` and `value`, not `label`.
-- Yielding SHOULD be semantic (intent emission), not key-event bubbling.
+- Printable keys (no ctrl/meta/alt, `key.length === 1`) -> `TYPE`
 
-## Pointer routing
+If no mapping applies, it MUST return `null`.
 
-Frame pointerdown:
+Caret helpers:
 
-- `.ui-frame` SHOULD focus `DEFAULT_TARGET`.
-- Frames SHOULD capture caret when pointerdown hits text-editing surfaces.
-- Frame handling SHOULD stop propagation.
+Exports:
 
-Editor/control pointerdown:
+- `SELECT_ALL`
+- `caret0()`
+- `caretAt(pos)`
 
-- Editors and controls SHOULD focus their own target.
-- Editors SHOULD use caret-from-target logic for caret placement.
-- Editor/control handling SHOULD stop propagation.
+Rules:
 
-## Shared text editing control
+- `SELECT_ALL` MUST be treated as "select all text".
+- `caretAt(pos)` MUST represent a collapsed caret.
 
-The shared text editor control is `buildTextField`.
+Target constants:
 
-Capabilities:
+Exports:
 
-- Multiline mode (`input` or `textarea`).
-- Autosize mode (`autosize: true`) via mirror sizing.
-- Edit models: `live` and `draft`.
-- Optional yielding (`yieldNav`).
+- `LABEL_TARGET = "label"`
+- `VALUE_TARGET = "value"`
+- `connTarget(key) = "conn:" + key`
+
+Rules:
+
+- These strings are canonical and MUST be used consistently across views.
+
+`insertTextIntoActiveEditor(text)`:
+
+Inserts text into the currently focused native editor.
+
+Rules:
+
+- It MUST only operate when `document.activeElement` is an `<input>` or `<textarea>`.
+- It MUST no-op for readonly or disabled inputs.
+- It MUST insert via `setRangeText`.
+- It MUST dispatch a bubbling `InputEvent("input")`.
+
+Use cases:
+
+- Implementing type-to-edit from container focus.
+
+`escapeLadder(core)`:
+
+Implements the shared escape ladder.
+
+Rules:
+
+- If there is no focused selection, it MUST blur (no-op safe).
+- If focused and `sel.target !== DEFAULT_TARGET`, it MUST focus the same item on `DEFAULT_TARGET`.
+- Otherwise it MUST blur.
+
+### Shared text editing control: `buildTextField`
+
+`buildTextField` is the canonical shared text editor control.
+
+It provides:
+
+- Single-line (`<input>`) or multiline (`<textarea>`).
+- Optional autosize via a mirror element.
+- Two commit models: `live` and `draft`.
+- Optional yielding of semantic intents (nav/tab/confirm/cancel).
 
 Canonical DOM:
 
@@ -357,67 +570,272 @@ Canonical DOM:
   input.ui-textfield-input | textarea.ui-textfield-input
 ```
 
-Autosize rules:
+Rules:
 
-- Mirror MUST drive size while remaining visually hidden.
-- Input and mirror SHOULD receive matched padding.
-- Autosize controls SHOULD opt out of global `width: 100%` defaults when needed.
+- The input element MUST set `tabIndex = -1`.
+- The input element MUST have `data-target = <target>`.
 
-Integration rules:
+Options:
 
-- `buildTextField` instances MUST attach targets with `ctx.target(...)`.
-- Editors MUST respect readonly behavior.
-- Editors SHOULD rely on frame issue state (`.ui-frame.is-issue`).
+```ts
+buildTextField(core, {
+  focus,
+  target,
+  multiline,
+  autosize?,
+  className?,
+  inputClassName?,
+  editModel?,      // "draft" | "live"
+  yieldNav?,       // default true
+  commit(text),
+  getState(),
+  onIntent?(intent),
+})
+```
 
-## Editor commit models
+`getState()` returns:
 
-`live` model:
-
-- Commits on every `input`.
-- Does not maintain local draft state.
-- `CANCEL` does not revert.
-
-`draft` model:
-
-- Maintains local draft while focused.
-- Commits on `CONFIRM`, `TAB`, yielded `NAV`, and `blur`.
-- Cancels on `CANCEL`.
-- Resets to committed state when focus leaves.
-
-## Multiline Enter behavior
+```ts
+{
+  text: string;
+  readOnly: boolean;
+  isIssue: boolean;
+}
+```
 
 Rules:
 
-- In multiline editors, `Enter` SHOULD map to `CONFIRM` by default.
-- `Ctrl+Enter` or `Meta+Enter` SHOULD insert a newline.
+- The editor MUST set `readOnly` based on state.
+- The editor MUST synchronize its visible value from `state.text`.
+
+Edit models:
+
+Live model:
+
+Rules:
+
+- Commits MUST occur on every `input`.
+- No draft state MUST be maintained.
+- `CANCEL` MUST NOT revert.
+
+Draft model (default):
+
+Draft model maintains a local editing session.
+
+Lifecycle rules:
+
+- When the target becomes focused and is editable:
+  - a draft session MUST begin
+  - baseline MUST be set from committed text
+
+- On `input`:
+  - draft MUST update
+  - dirty MUST become true
+
+- On commit triggers:
+  - if dirty, `commit(draft)` MUST be called
+  - dirty MUST reset
+
+Commit triggers:
+
+- `CONFIRM`
+- `TAB`
+- `NAV` (yielded)
+- `blur`
+
+Cancel trigger:
+
+- `CANCEL` MUST revert to baseline and clear dirty.
+
+Focus loss rule:
+
+- When the target is no longer focused, draft state MUST reset to committed state.
+
+Yielding and key handling:
+
+Yielding applies only when:
+
+- `opts.onIntent` is provided
+- `yieldNav !== false`
+
+Rules:
+
+- `Tab` MUST be consumed and emitted as `TAB`.
+- `Escape` MUST be consumed and emitted as `CANCEL`.
+- `Enter` MUST be consumed and emitted as `CONFIRM`
+  - except: multiline editor with `ctrlKey` or `metaKey` MUST insert newline
+
+- Arrow keys MAY yield `NAV` when caret is at the boundary:
+  - left at start
+  - right at end
+  - up on first line (textarea)
+  - down on last line (textarea)
+
+- Backspace at start MUST yield `DELETE_BOUNDARY backward`.
+- Delete at end MUST yield `DELETE_BOUNDARY forward`.
+
+Notes:
+
+- Yielding is semantic; it does not rely on bubbling raw key events.
+
+Target integration:
+
+Rules:
+
+- `buildTextField` MUST attach its target via `ctx.target`.
+- `defaultTextCaret()` SHOULD be used for caret placement.
+
+Pointer rule:
+
+- On `pointerdown`, the editor MUST focus its own target and stop propagation.
+
+### Shared header control: `buildItemHeader`
+
+`buildItemHeader` renders the canonical header subtree for an item.
+
+It is view-agnostic and is intended to be used by outer views and table schema contexts.
+
+`buildItemHeader` behavior:
+
+Rules:
+
+- The label field MUST exist and MUST attach `LABEL_TARGET`.
+- If the item mode is connected, connected fields MUST be rendered.
+- Connected fields MUST be keyed by field key and mounted via `ctx.list`.
+
+Connected field semantics:
+
+- Field order MUST be derived from `fieldsFromConn(conn)`.
+- Each field MUST attach target `conn:<fieldKey>`.
+
+Connected field model:
+
+A connected definition is represented as:
+
+- `formula` -> one field: `expr`
+- `query` -> three fields: `from`, `where`, `orderBy`
+
+Rules:
+
+- These keys MUST be treated as canonical.
+- Views MUST NOT invent alternate keys for the same meaning.
+
+Helpers:
+
+- `fieldsFromConn(conn)` returns the field list with labels and multiline flags.
+- `patchConn(conn, key, text)` applies a single-field patch.
+
+## Keyboard routing and focus rules
+
+### Global keyboard routing
+
+Rules:
+
+- Core MUST own the global `keydown` listener.
+- Core MUST parse key events into intents.
+- Core MUST route view intents to the active view handler.
+- If Core routes an intent, it MUST consume/prevent the original DOM key event.
+
+Notes:
+
+- Native editors (`input`, `textarea`) will process local edits first.
+- Core MAY still handle explicit global commands while focus is in a native editor.
+
+### Programmatic focus
+
+Rules:
+
+- Focus targets MUST be applied programmatically from Core selection.
+- Inputs MUST NOT participate in browser tab-order traversal.
+- `.ui-main` MUST be the only tabbable element.
+
+### Pointer routing
+
+Frame pointerdown:
+
+Rules:
+
+- `.ui-frame` SHOULD focus `DEFAULT_TARGET`.
+- Frames SHOULD capture caret when pointerdown hits text-editing surfaces.
+- Frame handling SHOULD stop propagation.
+
+`bindItemFrame` is the canonical implementation.
+
+Editor/control pointerdown:
+
+Rules:
+
+- Editors and controls SHOULD focus their own target.
+- Editors SHOULD use caret-from-target logic for caret placement.
+- Editor/control handling SHOULD stop propagation.
 
 ## Universal interaction rules
 
-Escape ladder:
+These rules are shared across views. Views MAY refine them, but MUST remain consistent with them.
 
-- If focused on a non-default target, Core SHOULD focus `DEFAULT_TARGET`.
-- Otherwise, Core SHOULD blur selection.
+### Escape ladder
 
-Typing from `DEFAULT_TARGET`:
+Rules:
 
-- `TYPE` SHOULD enter the first item edit target when available.
-- Entering by `TYPE` SHOULD select all and insert the typed character.
+- `CANCEL` SHOULD call `escapeLadder(core)`.
+- If focused on a non-default target, it exits to `DEFAULT_TARGET`.
+- Otherwise it blurs.
 
-Confirm from `DEFAULT_TARGET`:
+### Type-to-edit from `DEFAULT_TARGET`
 
-- `CONFIRM` SHOULD enter first item edit target when available.
-- If no edit target exists, `CONFIRM` SHOULD run the view structural default.
+Rules:
 
-Navigation rule:
+- When focused on `DEFAULT_TARGET`, `TYPE` SHOULD:
+  - enter the primary edit target
+  - select all
+  - insert the typed character using `insertTextIntoActiveEditor(...)`
 
-- Navigation MUST NOT implicitly enter edit mode.
+Primary edit target order:
 
-Tab routing context:
+1. first connected definition field (`conn:*`) when connected
+2. otherwise `value` when plain scalar
+3. otherwise none
 
-- Outer-focused targets MUST route `TAB` to the outer view.
-- Inner-focused targets MUST route `TAB` to the item view.
+### Confirm-to-edit from `DEFAULT_TARGET`
+
+Rules:
+
+- When focused on `DEFAULT_TARGET`, `CONFIRM` SHOULD:
+  - enter the primary edit target if one exists
+  - otherwise run the view's structural default action
+
+### Navigation
+
+Rules:
+
+- `NAV` MUST NOT implicitly enter edit mode.
+
+## Shared view authoring conventions
+
+This section is an implementation checklist for view code.
+
+Rules:
+
+- Views MUST use the shared runtime primitives in this document (`ctx.target`, `ctx.slot`, `ctx.list`, `buildTextField`, `buildItemHeader`) instead of ad-hoc equivalents.
+- Views MUST attach targets through `ctx.target(...)`.
+- Views MUST respect frame/header versus body target ownership from `Target ownership contract`.
+- Every rendered item MUST expose `DEFAULT_TARGET`.
+- Frames SHOULD use shared frame behavior (for example `bindItemFrame`) and keep pointer/selection/state-class behavior consistent.
+- Selection changes MUST NOT remount frames.
+- Selection changes MUST NOT rebuild lists.
+- Selection changes MUST NOT switch body subtrees.
+- Conditional subtree mounting MUST use `ctx.slot`.
+- Repeated keyed subtree mounting MUST use `ctx.list`.
+- Manual child reconciliation in effects SHOULD be avoided.
+- Views SHOULD avoid direct raw `keydown` handling for behavior semantics.
+- Views SHOULD implement behavior by interpreting shared intents.
+- Text editing SHOULD use `buildTextField`.
+- Value and connected editors SHOULD enable yielding where appropriate.
+- Label editors SHOULD keep yielding disabled.
 
 ## Visual language invariants
+
+This section defines the cross-view visual language. Views must compose within it.
 
 ### Visual foundations
 
@@ -432,7 +850,7 @@ Token categories:
 - Geometry.
 - Colors.
 
-## Two visual layers
+### Two visual layers
 
 Frame layer:
 
@@ -444,11 +862,11 @@ Frame layer:
 Body layer:
 
 - Item-view-owned.
-- Contains the `.ui-body.<view-name>` subtree.
+- Contains `.ui-body.<view-name>`.
 - SHOULD remain neutral by default.
 - MUST NOT redefine shared rail/header language.
 
-## Universal state classes
+### Universal state classes
 
 State classes:
 
@@ -463,7 +881,7 @@ Rules:
 - Path context SHOULD be local and subtle.
 - Siblings MUST NOT inherit another item's state styling.
 
-## Rail and header state derivation
+### Rail and header state derivation
 
 Rules:
 
@@ -472,7 +890,7 @@ Rules:
 - Header MUST consume `--header-fill`.
 - `.is-issue` MUST override `.is-focused` for both rail and header derived values.
 
-## Rail language
+### Rail language
 
 Rules:
 
@@ -486,7 +904,7 @@ Rules:
 - Selection overlays (for example a pill effect) MUST be local to the frame segment and MUST NOT alter sibling segment geometry.
 - Rail hit targets MAY be wider than the visible rail strip to preserve pointer usability without changing visible geometry.
 
-## Styling boundaries and invariants
+### Styling boundaries and invariants
 
 Rules:
 
@@ -497,7 +915,7 @@ Rules:
 - CSS values SHOULD be token-driven.
 - In shrinkable flex/grid layouts, text overflow handling SHOULD be applied on text elements with `min-width: 0` on shrinkable containers.
 
-## Recommended CSS structure
+### Recommended CSS structure
 
 Layer order:
 
@@ -507,54 +925,60 @@ Layer order:
 4. Components (`.ui-header`).
 5. Views (layout/composition only).
 
-## Shared view authoring conventions
+## Public UI runtime API surface (`dom/index.ts`)
 
-### Targets and focus surfaces
+This is the supported export surface of the UI runtime module.
+
+Component + mounting:
+
+- `createComponent`
+- `bindItemFrame`
+- `setBodyClasses`
+- `el`
+
+Targets + focus helpers:
+
+- `LABEL_TARGET`
+- `VALUE_TARGET`
+- `connTarget`
+- `caret0`
+- `caretAt`
+- `SELECT_ALL`
+- `escapeLadder`
+
+Types:
+
+- `Intent`
+- `NavDir`
+
+Intent + editor helpers:
+
+- `parseKeydownIntent`
+- `insertTextIntoActiveEditor`
+
+Shared controls:
+
+- `buildTextField`
+- `buildItemHeader`
+
+Connected helpers:
+
+- `fieldsFromConn`
+- `patchConn`
 
 Rules:
 
-- Views MUST attach targets through `ctx.target(...)`.
-- Views MUST respect frame/header versus body target ownership.
-- Every rendered item MUST expose `DEFAULT_TARGET`.
-
-### Standard frame behavior
-
-Rules:
-
-- Frames SHOULD use shared frame behavior (for example `bindItemFrame`).
-- Frames SHOULD keep pointer, selection, and state-class behavior consistent.
-
-### Selection-driven performance
-
-Rules:
-
-- Selection changes MUST NOT remount frames.
-- Selection changes MUST NOT rebuild lists.
-- Selection changes MUST NOT switch body subtrees.
-
-### Dynamic subtree mounting
-
-Rules:
-
-- Conditional subtree mounting MUST use `ctx.slot`.
-- Repeated keyed subtree mounting MUST use `ctx.list`.
-- Manual child reconciliation in effects SHOULD be avoided.
-
-### Shared intent usage
-
-Rules:
-
-- Views SHOULD avoid direct raw `keydown` handling for behavior semantics.
-- Views SHOULD implement behavior by interpreting shared intents.
-
-### Shared text control usage
-
-Rules:
-
-- Text editing SHOULD use `buildTextField`.
-- Value and connected editors SHOULD enable yielding where appropriate.
-- Label editors SHOULD keep yielding disabled.
+- View code SHOULD treat these exports as the canonical shared UI building blocks.
+- View code SHOULD NOT re-implement variants unless view-specific behavior requires it.
 
 ## Rationale
 
-This system avoids common editor failure modes: focus instability, inconsistent keyboard behavior, leaked effects/listeners, and styling drift. It remains robust by keeping a small set of contracts strict and view-local behavior explicit.
+This UI system avoids common editor failure modes:
+
+- Focus instability.
+- Inconsistent keyboard behavior.
+- Leaked listeners/effects.
+- Selection-driven remount churn.
+- Styling drift across views.
+
+It stays robust by keeping a small set of contracts strict, and making view-specific behavior explicit in `docs/ui-views.md`.
