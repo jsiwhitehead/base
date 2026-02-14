@@ -2,7 +2,7 @@ import type { Core, ItemId, Value, ViewKind, ViewName } from "./core";
 import { createCore } from "./core";
 import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV, devAssert, devWarn } from "./dev";
-import { bindUiItemShell, createComponent, el } from "./dom";
+import { bindItemFrame, createComponent, el } from "./dom";
 import { viewFactories } from "./views";
 
 type App = {
@@ -41,22 +41,22 @@ function createApp(opts: CreateAppOpts = {}): App {
   const focus = { container: rootId, item: rootId };
 
   const appRoot = createComponent(core, (ctx) => {
-    const rootShell = el("div", "ui-app");
+    const rootFrame = el("div");
+    rootFrame.classList.add("ui-main");
+    rootFrame.tabIndex = 0;
 
-    bindUiItemShell(ctx, { core, focus }, rootShell);
+    bindItemFrame(ctx, { core, focus }, rootFrame);
 
-    ctx.slot(rootShell, () => {
+    ctx.slot(rootFrame, () => {
       const wanted = core.view(rootId);
       return core.mountView({ id: rootId, focus, view: wanted });
     });
 
-    return rootShell;
+    return rootFrame;
   });
 
-  const shell = el("div", "ui-shell");
-  const main = el("div", "ui-shell-main");
-
-  main.tabIndex = 0;
+  const root = el("div", "ui-root");
+  const main = appRoot.el;
 
   main.addEventListener(
     "pointerdown",
@@ -72,8 +72,7 @@ function createApp(opts: CreateAppOpts = {}): App {
     { capture: true },
   );
 
-  main.append(appRoot.el);
-  shell.append(main);
+  root.append(main);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
@@ -84,10 +83,10 @@ function createApp(opts: CreateAppOpts = {}): App {
       probeRoot: main,
       className: "ui-debug",
     });
-    shell.append(debugPanel.el);
+    root.append(debugPanel.el);
   }
 
-  hostEl.replaceChildren(shell);
+  hostEl.replaceChildren(root);
   main.focus();
 
   const app: App = {

@@ -265,12 +265,12 @@ type ShellSpec = {
   focus: Focus;
 };
 
-export function bindUiItemShell(
+export function bindItemFrame(
   ctx: Ctx,
   spec: ShellSpec,
   shell: HTMLElement,
 ): void {
-  shell.classList.add("ui-item");
+  shell.classList.add("ui-frame");
   shell.dataset.id = spec.focus.item;
   if (!shell.hasAttribute("tabindex")) shell.tabIndex = -1;
 
@@ -301,6 +301,6 @@ export function bindUiItemShell(
   });
 }
 
-export function stampBody(root: HTMLElement, view: ViewName): void {
+export function setBodyClasses(root: HTMLElement, view: ViewName): void {
   root.classList.add("ui-body", `ui-${String(view)}`);
 }

@@ -14,8 +14,8 @@ import type { Intent, NavDir } from "../dom";
 import {
   SELECT_ALL,
   VALUE_TARGET,
-  bindUiItemShell,
-  buildItemMeta,
+  bindItemFrame,
+  buildItemHeader,
   caret0,
   caretAt,
   createComponent,
@@ -23,7 +23,7 @@ import {
   escapeLadder,
   insertTextIntoActiveEditor,
   patchConn,
-  stampBody,
+  setBodyClasses,
 } from "../dom";
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
@@ -154,7 +154,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
 
   return createComponent(core, (ctx) => {
     const header = el("div", "ui-table-header");
-    const metaHead = el("div", "ui-table-col ui-table-meta-col");
+    const metaHead = el("div", "ui-table-col ui-table-header-col");
     header.append(metaHead);
 
     ctx.list<number>(
@@ -195,7 +195,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
               core.commit((t) => t.setConnected(cellId, next));
             };
 
-            return buildItemMeta(core, {
+            return buildItemHeader(core, {
               focus,
               id: cellId,
               dispatch,
@@ -222,7 +222,7 @@ function buildDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
     const host = el("div", "ui-table-cell");
 
     const focus: Focus = { container: rowId, item: cellId };
-    bindUiItemShell(ctx, { core, focus }, host);
+    bindItemFrame(ctx, { core, focus }, host);
 
     ctx.slot(host, () => {
       const wanted = core.view(cellId);
@@ -238,13 +238,13 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
   return createComponent(core, (ctx) => {
     const row = el("div", "ui-table-row");
-    bindUiItemShell(
+    bindItemFrame(
       ctx,
       { core, focus: { container: tableId, item: rowId } },
       row,
     );
 
-    const metaCell = el("div", "ui-table-cell ui-table-meta-col");
+    const metaCell = el("div", "ui-table-cell ui-table-header-col");
     row.append(metaCell);
 
     ctx.slot(metaCell, () => {
@@ -264,7 +264,7 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
         core.commit((t) => t.setConnected(rowId, next));
       };
 
-      return buildItemMeta(core, {
+      return buildItemHeader(core, {
         focus: { container: tableId, item: rowId },
         id: rowId,
         dispatch,
@@ -565,13 +565,13 @@ export function createTableView(args: {
 
   const content = createComponent(core, (ctx) => {
     const root = el("div");
-    stampBody(root, "table");
+    setBodyClasses(root, "table");
 
     const tableFocus: Focus = args.focus ?? {
       container: tableId,
       item: tableId,
     };
-    bindUiItemShell(ctx, { core, focus: tableFocus }, root);
+    bindItemFrame(ctx, { core, focus: tableFocus }, root);
 
     const mountCtx: TableMountCtx = { core, tableId, sig, dispatch };
     ctx.mount(root, buildHeader(mountCtx));

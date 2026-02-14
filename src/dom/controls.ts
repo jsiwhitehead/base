@@ -465,7 +465,7 @@ export function patchConn(
   return conn;
 }
 
-export function buildItemMeta(
+export function buildItemHeader(
   core: Core,
   args: {
     focus: Focus;
@@ -479,10 +479,10 @@ export function buildItemMeta(
   const id = args.id;
 
   return createComponent(core, (ctx) => {
-    const meta = el("div", "ui-meta");
+    const meta = el("div", "ui-header");
 
-    const labelWrap = el("div", "ui-meta-label");
-    const connWrap = el("div", "ui-meta-conn");
+    const labelWrap = el("div", "ui-header-label");
+    const connWrap = el("div", "ui-header-conn");
     meta.append(labelWrap, connWrap);
 
     const labelComp = buildTextField(core, {
@@ -516,9 +516,9 @@ export function buildItemMeta(
       () => fieldsSignal.value.map((field) => field.key),
       (key) =>
         createComponent(core, (rowCtx) => {
-          const row = el("div", "ui-meta-conn-row");
-          const keyEl = el("div", "ui-meta-conn-key");
-          const valEl = el("div", "ui-meta-conn-val");
+          const row = el("div", "ui-header-conn-row");
+          const keyEl = el("div", "ui-header-conn-key");
+          const valEl = el("div", "ui-header-conn-val");
           row.append(keyEl, valEl);
 
           const targetKey = connTarget(key);

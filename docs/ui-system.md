@@ -68,9 +68,8 @@ Canonical app frame (debug panel omitted):
 ```text
 #root
   .ui-root
-    .ui-main                                    (tabIndex=0; only tabbable element)
-      .ui-frame                                 (root item frame; target: DEFAULT_TARGET)
-        [.ui-body.<root-view> subtree]          (mounted root view body)
+    .ui-main.ui-frame                           (tabIndex=0; only tabbable element; root item frame target: DEFAULT_TARGET)
+      [.ui-body.<root-view> subtree]            (mounted root view body)
 ```
 
 Rules:
@@ -81,6 +80,7 @@ Rules:
 Notes:
 
 - The root `.ui-root` wrapper is optional but recommended as a stable styling boundary.
+- `.ui-main` and the root `.ui-frame` MAY be the same element.
 - `.ui-body.<root-view>` is the view root for routing and intent handling.
 
 ## Mental model: rail, header, body
@@ -112,7 +112,7 @@ Rules:
 
 Notes:
 
-- Shared frame behavior SHOULD be implemented via a helper (for example `bindUiFrame(ctx, { core, focus }, frameEl)`), to keep pointer/selection/state logic consistent across views.
+- Shared frame behavior SHOULD be implemented via a helper (for example `bindItemFrame(ctx, { core, focus }, frameEl)`), to keep pointer/selection/state logic consistent across views.
 
 ## Header and body ownership
 
@@ -521,7 +521,7 @@ Rules:
 
 Rules:
 
-- Frames SHOULD use shared frame behavior (for example `bindUiFrame`).
+- Frames SHOULD use shared frame behavior (for example `bindItemFrame`).
 - Frames SHOULD keep pointer, selection, and state-class behavior consistent.
 
 ### Selection-driven performance

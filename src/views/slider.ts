@@ -7,7 +7,7 @@ import type {
   ValueOrBlank,
 } from "../core";
 import type { Intent } from "../dom";
-import { createComponent, el, escapeLadder, stampBody } from "../dom";
+import { createComponent, el, escapeLadder, setBodyClasses } from "../dom";
 
 type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -90,7 +90,7 @@ type SliderMountCtx = {
 function buildSliderBody({ core, id, opts }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
     const root = el("div");
-    stampBody(root, "slider");
+    setBodyClasses(root, "slider");
 
     const input = document.createElement("input");
     input.type = "range";

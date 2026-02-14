@@ -236,14 +236,14 @@ export function requireTargetInput(
   return targetInput;
 }
 
-export function findItemEl(root: ParentNode, id: ItemId): HTMLElement | null {
-  return root.querySelector(`.ui-item[data-id="${id}"]`) as HTMLElement | null;
+export function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
+  return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
 }
 
-export function requireItemEl(root: ParentNode, id: ItemId): HTMLElement {
-  const itemEl = findItemEl(root, id);
-  if (!itemEl) throw new Error(`Missing item element for id=${String(id)}`);
-  return itemEl;
+export function requireFrameEl(root: ParentNode, id: ItemId): HTMLElement {
+  const frameEl = findFrameEl(root, id);
+  if (!frameEl) throw new Error(`Missing frame element for id=${String(id)}`);
+  return frameEl;
 }
 
 export function pointerDown(element: HTMLElement): void {
@@ -253,21 +253,21 @@ export function pointerDown(element: HTMLElement): void {
 }
 
 export function findPresenterSurface(
-  fromItemEl: HTMLElement | null,
+  fromFrameEl: HTMLElement | null,
 ): HTMLElement | null {
-  if (!fromItemEl) return null;
+  if (!fromFrameEl) return null;
 
-  const directHost = fromItemEl.parentElement;
-  if (directHost instanceof HTMLElement && directHost !== fromItemEl)
+  const directHost = fromFrameEl.parentElement;
+  if (directHost instanceof HTMLElement && directHost !== fromFrameEl)
     return directHost;
 
-  let cur: HTMLElement | null = fromItemEl;
+  let cur: HTMLElement | null = fromFrameEl;
 
   while (cur) {
     const parent: HTMLElement | null = cur.parentElement;
     if (!parent) return cur;
 
-    if (parent.classList.contains("ui-item")) {
+    if (parent.classList.contains("ui-frame")) {
       cur = parent;
       continue;
     }
@@ -275,13 +275,13 @@ export function findPresenterSurface(
     return parent;
   }
 
-  return fromItemEl;
+  return fromFrameEl;
 }
 
 export function requirePresenterSurface(
-  fromItemEl: HTMLElement | null,
+  fromFrameEl: HTMLElement | null,
 ): HTMLElement {
-  const presenterSurface = findPresenterSurface(fromItemEl);
+  const presenterSurface = findPresenterSurface(fromFrameEl);
   if (!presenterSurface) throw new Error("Missing presenter surface");
   return presenterSurface;
 }
@@ -302,12 +302,12 @@ export function nodeOrderByDataId(
   return els.map((e) => e.dataset.id ?? "");
 }
 
-export function requireFocusedItemEl(root: ParentNode): HTMLElement {
-  const focusedItemEl = root.querySelector(
-    `.ui-item.is-focused`,
+export function requireFocusedFrameEl(root: ParentNode): HTMLElement {
+  const focusedFrameEl = root.querySelector(
+    `.ui-frame.is-focused`,
   ) as HTMLElement | null;
-  if (!focusedItemEl) throw new Error("Missing focused item element");
-  return focusedItemEl;
+  if (!focusedFrameEl) throw new Error("Missing focused frame element");
+  return focusedFrameEl;
 }
 
 export function requireNotSameEl(a: Element | null, b: Element | null): void {

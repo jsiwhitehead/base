@@ -16,7 +16,7 @@ import {
   LABEL_TARGET,
   SELECT_ALL,
   VALUE_TARGET,
-  bindUiItemShell,
+  bindItemFrame,
   caret0,
   caretAt,
   createComponent,
@@ -24,10 +24,10 @@ import {
   escapeLadder,
   fieldsFromConn,
   insertTextIntoActiveEditor,
-  buildItemMeta,
+  buildItemHeader,
   patchConn,
   connTarget,
-  stampBody,
+  setBodyClasses,
   buildTextField,
 } from "../dom";
 
@@ -408,8 +408,8 @@ function buildOutlineNodeShell(
   const id = focus.item;
 
   return createComponent(core, (ctx) => {
-    const shell = el("div", "ui-outline-node");
-    bindUiItemShell(ctx, { core, focus }, shell);
+    const shell = el("div", "ui-outline-child");
+    bindItemFrame(ctx, { core, focus }, shell);
 
     if (withMeta) {
       const canEditLabel = () => core.item(id).mode.kind !== "readonly";
@@ -453,7 +453,7 @@ function buildOutlineNodeShell(
           hasLabel.value || hasFields.value || labelFocused.value;
         if (!shouldShow) return null;
 
-        return buildItemMeta(core, {
+        return buildItemHeader(core, {
           focus,
           id,
           dispatch: mountCtx.dispatch,
@@ -515,7 +515,7 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
   return createComponent(core, (ctx) => {
     const root = el("div");
-    stampBody(root, "outline");
+    setBodyClasses(root, "outline");
 
     const kind = computed<"group" | "value">(() => {
       const snap = core.item(id);

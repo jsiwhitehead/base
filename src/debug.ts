@@ -164,12 +164,12 @@ function lastText(last: DebugLast | null): string {
   return "last: blur";
 }
 
-function probeUiItem(
+function probeUiFrame(
   probeRoot: HTMLElement,
   id: ItemId,
 ): { mounted: boolean; dataset?: Record<string, string> } {
   const ui = probeRoot.querySelector(
-    `.ui-item[data-id="${CSS.escape(id)}"]`,
+    `.ui-frame[data-id="${CSS.escape(id)}"]`,
   ) as HTMLElement | null;
   if (!ui) return { mounted: false };
   const ds: Record<string, string> = {};
@@ -234,7 +234,7 @@ export function buildDebugPanel(opts: DebugPanelOpts) {
     secItem.append(hItem, bItem);
 
     const secDom = el("div", "ui-debug-section");
-    const hDom = el("div", "ui-debug-title", "DOM Probe (.ui-item)");
+    const hDom = el("div", "ui-debug-title", "DOM Probe (.ui-frame)");
     const bDom = el("pre", "ui-debug-pre");
     secDom.append(hDom, bDom);
 
@@ -259,7 +259,7 @@ export function buildDebugPanel(opts: DebugPanelOpts) {
       const snap = core.item(selection.focus.item);
       bItem.textContent = safeJson(snap);
 
-      const probe = probeUiItem(probeRoot, selection.focus.item);
+      const probe = probeUiFrame(probeRoot, selection.focus.item);
       if (!probe.mounted) {
         bDom.textContent = "mounted: no";
         return;

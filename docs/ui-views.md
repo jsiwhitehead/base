@@ -382,7 +382,7 @@ Rules:
 - Schema row SHOULD resolve as `rows[0] ?? null`.
 - `colCount` SHOULD follow `schemaRow.children.length` when schema row exists.
 - Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
-- Schema header cells SHOULD mount header content via `buildItemMeta` (or its direct equivalent) to preserve shared header target semantics.
+- Schema header cells SHOULD mount header content via `buildItemHeader` (or its direct equivalent) to preserve shared header target semantics.
 
 ### Intent handling
 
