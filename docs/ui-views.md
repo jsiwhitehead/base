@@ -9,7 +9,7 @@ For each view, it specifies:
 - Which **targets** the view introduces (if any).
 - How the view interprets **intents** into Core operations and focus transitions.
 
-Shared UI runtime architecture, ownership boundaries, interaction invariants, and visual language belong in `docs/ui-system.md`. Core API semantics belong in `docs/core-api.md`.
+Shared UI architecture, ownership boundaries, interaction invariants, and visual language belong in `docs/ui-contracts.md`. Shared UI runtime APIs and controls belong in `docs/ui-runtime.md`. Core API semantics belong in `docs/core-api.md`.
 
 ## Scope
 
@@ -25,9 +25,10 @@ This document does not cover:
 
 - The shared frame/header/body ownership contract.
 - Global intent parsing and routing.
-- Shared editor behavior (`buildTextField`, yielding rules, etc.).
+- Shared editor and header controls (`buildTextField`, `buildItemHeader`), yielding rules, and intent helper behavior (see `docs/ui-runtime.md`).
+- Cross-view UI contracts (ownership, stability, focus model, visual language) (see `docs/ui-contracts.md`).
 
-## Shared assumptions (from `docs/ui-system.md`)
+## Shared assumptions (from `docs/ui-contracts.md`)
 
 All views in this file inherit these rules:
 
@@ -141,7 +142,7 @@ Edit targets by item type:
   - `value`
 
 - Connected leaf:
-  - `conn:*` in `fieldsFromConn` order
+  - `conn:*` in `fieldsFromConn` order (see `docs/ui-runtime.md`)
   - (optionally) `value` if the view supports showing it (usually no)
 
 - Label editing:
@@ -151,7 +152,7 @@ Notes:
 
 - Outline defines a traversal space for `NAV` while editing.
 - Groups participate in navigation but not in edit traversal.
-- Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/ui-system.md`.
+- Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/ui-contracts.md`.
 
 ### Edit traversal space
 
@@ -163,7 +164,7 @@ Leaf participation:
 
 Edit stops per leaf:
 
-- Connected leaf: `conn:*` in `fieldsFromConn` order.
+- Connected leaf: `conn:*` in `fieldsFromConn` order (see `docs/ui-runtime.md`).
 - Plain scalar leaf: `value`.
 - Other kinds: no edit stops.
 
@@ -196,7 +197,7 @@ Precondition shorthand:
 
 | Intent   | Preconditions | Action               | Focus result                     |
 | -------- | ------------- | -------------------- | -------------------------------- |
-| `CANCEL` | Always        | `escapeLadder(core)` | Exit to `DEFAULT_TARGET` or blur |
+| `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `NAV` from container focus
 
@@ -259,7 +260,7 @@ Tab focus rules:
 
 | Intent                             | Preconditions                              | Action                                    | Focus result                            |
 | ---------------------------------- | ------------------------------------------ | ----------------------------------------- | --------------------------------------- |
-| `DELETE`                           | Focused, container focus                   | Equivalent to `DELETE_BOUNDARY`           | View-local result                       |
+| `DELETE`                           | Focused, container focus                   | Equivalent to `DELETE_BOUNDARY` in the same direction | View-local result                       |
 | `DELETE_BOUNDARY backward/forward` | Focused, non-plain-scalar item             | Remove item                               | Focus neighbor `DEFAULT_TARGET` or blur |
 | `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with empty value     | Remove item                               | Focus neighbor `DEFAULT_TARGET` or blur |
 | `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with non-empty value | Join neighbor when both are plain scalars | Focus joined item `value` at boundary   |
@@ -303,7 +304,7 @@ Outline-local styling:
 - Header capsule aligns to item rail start.
 - Nodes stack with vertical gap.
 
-Rail geometry and selection pill behavior are defined in `docs/ui-system.md`.
+Rail geometry, state classes, and derived token behavior are defined in `docs/ui-contracts.md`.
 
 ## Table view (`table`)
 
@@ -382,7 +383,7 @@ Rules:
 - Schema row SHOULD resolve as `rows[0] ?? null`.
 - `colCount` SHOULD follow `schemaRow.children.length` when schema row exists.
 - Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
-- Schema header cells SHOULD mount header content via `buildItemHeader` (or its direct equivalent) to preserve shared header target semantics.
+- Schema header cells SHOULD use `buildItemHeader` to preserve shared header target semantics (see `docs/ui-runtime.md`).
 
 ### Intent handling
 
@@ -408,7 +409,7 @@ Precondition shorthand:
 
 | Intent   | Preconditions | Action               | Focus result                     |
 | -------- | ------------- | -------------------- | -------------------------------- |
-| `CANCEL` | Always        | `escapeLadder(core)` | Exit to `DEFAULT_TARGET` or blur |
+| `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `NAV` from row container focus
 
@@ -495,7 +496,7 @@ Table-local styling:
 - Data cells present top rail segments.
 - Header column presents a left block rail region.
 
-Rail geometry and derived token behavior are defined in `docs/ui-system.md`.
+Rail geometry, state classes, and derived token behavior are defined in `docs/ui-contracts.md`.
 
 ## Slider view (`slider`)
 
@@ -533,7 +534,7 @@ Rules:
 
 | Intent   | Preconditions | Action               | Focus result                     |
 | -------- | ------------- | -------------------- | -------------------------------- |
-| `CANCEL` | Always        | `escapeLadder(core)` | Exit to `DEFAULT_TARGET` or blur |
+| `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `NAV` nudging
 
@@ -588,14 +589,14 @@ Slider-local styling:
 - Flexible range control.
 - Compact muted value readout.
 
-Rail geometry and derived token behavior are defined in `docs/ui-system.md`.
+Rail geometry, state classes, and derived token behavior are defined in `docs/ui-contracts.md`.
 
 ## Adding a new view
 
 Rules:
 
 - New view sections SHOULD follow the template in this file.
-- New sections MUST reference `docs/ui-system.md` for shared semantics instead of duplicating them.
+- New sections MUST reference `docs/ui-contracts.md` for shared semantics and invariants, and `docs/ui-runtime.md` for shared controls/helpers, instead of duplicating them.
 
 A new view specification MUST define:
 
@@ -603,6 +604,6 @@ A new view specification MUST define:
 - Meaning of `DEFAULT_TARGET` in that view context.
 - Edit-entry behavior from container focus.
 - Type-to-edit behavior.
-- Yielding behavior from editors (per `docs/ui-system.md`).
+- Yielding behavior from editors (per `docs/ui-runtime.md`).
 - `DELETE`/`DELETE_BOUNDARY` handling (or explicit no-op).
-- Styling notes describing view-local rail composition (not shared rail geometry).
+- Styling notes describing view-local rail composition (shared rail geometry in `docs/ui-contracts.md`).
