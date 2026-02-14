@@ -1,6 +1,14 @@
 import { computed } from "@preact/signals-core";
 
-import type { Caret, Component, Connected, Core, Focus, ItemId } from "../core";
+import type {
+  Caret,
+  Component,
+  Connected,
+  Core,
+  Focus,
+  ItemId,
+  Selection,
+} from "../core";
 import { DEFAULT_TARGET, defaultTextCaret } from "../core";
 import { caretFromTarget, createComponent, el } from "./base";
 
@@ -34,6 +42,10 @@ export const caret0: () => Caret = () => ({ start: 0, end: 0 });
 export const caretAt: (pos: number) => Caret = (pos) => ({
   start: pos,
   end: pos,
+});
+export const caretEnd: () => Caret = () => ({
+  start: Number.MAX_SAFE_INTEGER,
+  end: Number.MAX_SAFE_INTEGER,
 });
 
 export const LABEL_TARGET = "label";
@@ -103,7 +115,7 @@ export function insertTextIntoActiveEditor(text: string): void {
   activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
 }
 
-export function escapeLadder(core: Core): void {
+function escapeLadder(core: Core): void {
   const sel = core.selection();
   if (sel.type !== "focused") {
     core.blur();
@@ -114,6 +126,113 @@ export function escapeLadder(core: Core): void {
     return;
   }
   core.blur();
+}
+
+type IntentDispatcherHandlers = Partial<{
+  CANCEL: (intent: Extract<Intent, { type: "CANCEL" }>) => void;
+  NAV: (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "NAV" }>,
+  ) => void;
+  TAB: (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "TAB" }>,
+  ) => void;
+  CONFIRM: (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "CONFIRM" }>,
+  ) => void;
+  TYPE: (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "TYPE" }>,
+  ) => void;
+  DELETE: (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "DELETE" }>,
+  ) => void;
+  DELETE_BOUNDARY: (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "DELETE_BOUNDARY" }>,
+  ) => void;
+}>;
+
+export function makeIntentDispatcher(
+  core: Core,
+  handlers: IntentDispatcherHandlers,
+): (intent: Intent) => void {
+  return (intent: Intent): void => {
+    if (intent.type === "CANCEL") {
+      if (handlers.CANCEL) handlers.CANCEL(intent);
+      else escapeLadder(core);
+      return;
+    }
+
+    const sel = core.selection();
+    if (sel.type !== "focused") return;
+
+    switch (intent.type) {
+      case "NAV":
+        handlers.NAV?.(sel, intent);
+        return;
+      case "TAB":
+        handlers.TAB?.(sel, intent);
+        return;
+      case "CONFIRM":
+        handlers.CONFIRM?.(sel, intent);
+        return;
+      case "TYPE":
+        handlers.TYPE?.(sel, intent);
+        return;
+      case "DELETE":
+        handlers.DELETE?.(sel, intent);
+        return;
+      case "DELETE_BOUNDARY":
+        handlers.DELETE_BOUNDARY?.(sel, intent);
+        return;
+    }
+  };
+}
+
+export function enterEditOnType(args: {
+  core: Core;
+  sel: Extract<Selection, { type: "focused" }>;
+  char: string;
+  getPrimaryTarget: (id: ItemId) => string | null;
+}): boolean {
+  const { core, sel, char, getPrimaryTarget } = args;
+
+  if (sel.target !== DEFAULT_TARGET) return false;
+
+  const id = sel.focus.item;
+  const target = getPrimaryTarget(id);
+  if (!target || target === DEFAULT_TARGET) return false;
+
+  core.focus(sel.focus, target, { caret: SELECT_ALL });
+  queueMicrotask(() => insertTextIntoActiveEditor(char));
+  return true;
+}
+
+export function toggleEditOnConfirm(args: {
+  core: Core;
+  sel: Extract<Selection, { type: "focused" }>;
+  getPrimaryTarget: (id: ItemId) => string | null;
+  caretForTarget?: (id: ItemId, target: string) => Caret;
+}): boolean {
+  const { core, sel, getPrimaryTarget } = args;
+
+  if (sel.target !== DEFAULT_TARGET) {
+    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+    return true;
+  }
+
+  const id = sel.focus.item;
+  const target = getPrimaryTarget(id);
+  if (!target || target === DEFAULT_TARGET) return false;
+
+  const caret = args.caretForTarget?.(id, target) ?? caretEnd();
+
+  core.focus(sel.focus, target, { caret });
+  return true;
 }
 
 function textInput(multiline: boolean): TextInputElement {
@@ -496,10 +615,7 @@ export function buildItemHeader(
       commit: args.commitLabel,
       getState: () => {
         const snap = core.item(id);
-        return {
-          text: snap.label ?? "",
-          readOnly: !args.canEditLabel(),
-        };
+        return { text: snap.label ?? "", readOnly: !args.canEditLabel() };
       },
       onIntent: args.dispatch,
     });

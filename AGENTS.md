@@ -32,7 +32,8 @@ Primary architecture and contracts live in:
 
 - `conventions.md`
 - `docs/core-api.md`
-- `docs/ui-system.md`
+- `docs/ui-contracts.md`
+- `docs/ui-runtime.md`
 - `docs/ui-views.md`
 
 ## Hard invariants
@@ -147,7 +148,8 @@ Rules:
 Update docs in the same change when contracts or behavior change.
 
 - Core API/types/semantics changed: update `docs/core-api.md`.
-- Shared UI runtime/targets/interaction contracts changed: update `docs/ui-system.md`.
+- Shared UI contracts changed: update `docs/ui-contracts.md`.
+- Shared UI runtime/targets/interaction contracts changed: update `docs/ui-runtime.md`.
 - View behavior/key handling/DOM shape changed: update `docs/ui-views.md`.
 - Naming/structure/docs-formatting conventions changed: update `conventions.md`.
 

@@ -17,11 +17,11 @@ import {
   bindItemFrame,
   buildItemHeader,
   caret0,
-  caretAt,
+  caretEnd,
   createComponent,
   el,
-  escapeLadder,
   insertTextIntoActiveEditor,
+  makeIntentDispatcher,
   patchConn,
   setBodyClasses,
 } from "../dom";
@@ -34,12 +34,6 @@ const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
   ...childrenOf(core, tableId),
 ];
-
-function isFocused(
-  sel: Selection,
-): sel is Extract<Selection, { type: "focused" }> {
-  return sel.type === "focused";
-}
 
 function isRowContainerSel(
   sel: Extract<Selection, { type: "focused" }>,
@@ -208,10 +202,6 @@ function buildHeader(mountCtx: TableMountCtx): Component {
           return col;
         }),
     );
-
-    ctx.on(header, "pointerdown", (e: PointerEvent) => {
-      e.stopPropagation();
-    });
 
     return header;
   });
@@ -473,95 +463,75 @@ export function createTableView(args: {
     colCount: colCountSignal,
   };
 
-  const dispatch = (intent: Intent): void => {
-    const selection = core.selection();
+  const dispatch = makeIntentDispatcher(core, {
+    NAV(selection, intent) {
+      if (selection.target !== DEFAULT_TARGET) return;
+      const rows = sig.rows.value;
+      const ncols = sig.colCount.value;
 
-    if (intent.type === "CANCEL") {
-      escapeLadder(core);
-      return;
-    }
+      const res = tableNavMove(
+        core,
+        tableId,
+        rows,
+        ncols,
+        selection,
+        intent.dir,
+      );
+      if (!res) return;
+      core.focus(res.focus, res.target, { caret: res.caret });
+    },
 
-    if (!isFocused(selection)) return;
+    TAB(selection, intent) {
+      if (selection.target !== DEFAULT_TARGET) return;
+      const rows = sig.rows.value;
+      const ncols = sig.colCount.value;
 
-    const rows = sig.rows.value;
-    const ncols = sig.colCount.value;
+      const res = tabMove(core, tableId, rows, ncols, selection, intent.shift);
+      if (!res) return;
+      core.focus(res.focus, res.target, { caret: res.caret });
+    },
 
-    switch (intent.type) {
-      case "NAV": {
-        if (selection.target !== DEFAULT_TARGET) return;
-        const res = tableNavMove(
-          core,
-          tableId,
-          rows,
-          ncols,
-          selection,
-          intent.dir,
-        );
-        if (!res) return;
-        core.focus(res.focus, res.target, { caret: res.caret });
+    CONFIRM(selection) {
+      const rows = sig.rows.value;
+
+      if (isRowContainerSel(selection, tableId)) {
+        tableCommands.addRowAfter(core, tableId, selection.focus.item);
         return;
       }
 
-      case "TAB": {
-        if (selection.target !== DEFAULT_TARGET) return;
-        const res = tabMove(
-          core,
-          tableId,
-          rows,
-          ncols,
-          selection,
-          intent.shift,
-        );
-        if (!res) return;
-        core.focus(res.focus, res.target, { caret: res.caret });
+      if (isCellContainerSel(core, tableId, rows, selection)) {
+        core.focus(selection.focus, VALUE_TARGET, { caret: caretEnd() });
         return;
       }
 
-      case "CONFIRM": {
-        if (isRowContainerSel(selection, tableId)) {
-          tableCommands.addRowAfter(core, tableId, selection.focus.item);
-          return;
-        }
-
-        if (isCellContainerSel(core, tableId, rows, selection)) {
-          core.focus(selection.focus, VALUE_TARGET, {
-            caret: caretAt(1_000_000),
-          });
-          return;
-        }
-
-        if (isCellValueSel(core, tableId, rows, selection)) {
-          const next = enterMove(core, rows, selection);
-          const dest = next ?? {
-            focus: selection.focus,
-            target: DEFAULT_TARGET,
-            caret: caret0(),
-          };
-          core.focus(dest.focus, dest.target, { caret: dest.caret });
-          return;
-        }
-
+      if (isCellValueSel(core, tableId, rows, selection)) {
+        const next = enterMove(core, rows, selection);
+        const dest = next ?? {
+          focus: selection.focus,
+          target: DEFAULT_TARGET,
+          caret: caret0(),
+        };
+        core.focus(dest.focus, dest.target, { caret: dest.caret });
         return;
       }
+    },
 
-      case "TYPE": {
-        if (selection.target !== DEFAULT_TARGET) return;
-        if (isRowContainerSel(selection, tableId)) return;
+    TYPE(selection, intent) {
+      if (selection.target !== DEFAULT_TARGET) return;
 
-        if (isCellContainerSel(core, tableId, rows, selection)) {
-          core.focus(selection.focus, VALUE_TARGET, { caret: SELECT_ALL });
-          queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
-          return;
-        }
+      const rows = sig.rows.value;
 
-        return;
+      if (isRowContainerSel(selection, tableId)) return;
+
+      if (isCellContainerSel(core, tableId, rows, selection)) {
+        core.focus(selection.focus, VALUE_TARGET, { caret: SELECT_ALL });
+        queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
       }
+    },
 
-      case "DELETE":
-      case "DELETE_BOUNDARY":
-        return;
-    }
-  };
+    DELETE() {},
+    DELETE_BOUNDARY() {},
+  });
 
   const content = createComponent(core, (ctx) => {
     const root = el("div");

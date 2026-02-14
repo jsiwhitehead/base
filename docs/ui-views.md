@@ -195,8 +195,8 @@ Precondition shorthand:
 
 #### `CANCEL`
 
-| Intent   | Preconditions | Action               | Focus result                     |
-| -------- | ------------- | -------------------- | -------------------------------- |
+| Intent   | Preconditions | Action                                          | Focus result                     |
+| -------- | ------------- | ----------------------------------------------- | -------------------------------- |
 | `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `NAV` from container focus
@@ -258,12 +258,12 @@ Tab focus rules:
 
 #### `DELETE` and `DELETE_BOUNDARY`
 
-| Intent                             | Preconditions                              | Action                                    | Focus result                            |
-| ---------------------------------- | ------------------------------------------ | ----------------------------------------- | --------------------------------------- |
+| Intent                             | Preconditions                              | Action                                                | Focus result                            |
+| ---------------------------------- | ------------------------------------------ | ----------------------------------------------------- | --------------------------------------- |
 | `DELETE`                           | Focused, container focus                   | Equivalent to `DELETE_BOUNDARY` in the same direction | View-local result                       |
-| `DELETE_BOUNDARY backward/forward` | Focused, non-plain-scalar item             | Remove item                               | Focus neighbor `DEFAULT_TARGET` or blur |
-| `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with empty value     | Remove item                               | Focus neighbor `DEFAULT_TARGET` or blur |
-| `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with non-empty value | Join neighbor when both are plain scalars | Focus joined item `value` at boundary   |
+| `DELETE_BOUNDARY backward/forward` | Focused, non-plain-scalar item             | Remove item                                           | Focus neighbor `DEFAULT_TARGET` or blur |
+| `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with empty value     | Remove item                                           | Focus neighbor `DEFAULT_TARGET` or blur |
+| `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with non-empty value | Join neighbor when both are plain scalars             | Focus joined item `value` at boundary   |
 
 ### Commands and state transitions
 
@@ -282,7 +282,8 @@ Outline-local commands:
 `changeNesting(sel, dir)` rules:
 
 - `in`: wraps item in a new group and moves it inside.
-- `out`: unwraps item from its parent wrapper.
+- `out`: moves item to the wrapper's parent.
+- `out`: unwraps and removes the wrapper only when the wrapper has exactly one child (the moved item).
 
 ### Edge cases and invariants
 
@@ -407,8 +408,8 @@ Precondition shorthand:
 
 #### `CANCEL`
 
-| Intent   | Preconditions | Action               | Focus result                     |
-| -------- | ------------- | -------------------- | -------------------------------- |
+| Intent   | Preconditions | Action                                          | Focus result                     |
+| -------- | ------------- | ----------------------------------------------- | -------------------------------- |
 | `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `NAV` from row container focus
@@ -451,7 +452,7 @@ Rule:
 | Intent    | Preconditions           | Action                  | Focus result                                                     |
 | --------- | ----------------------- | ----------------------- | ---------------------------------------------------------------- |
 | `CONFIRM` | Row container           | Insert row after        | Focus new row container                                          |
-| `CONFIRM` | Cell container          | Enter edit              | Focus `value`; caret at end                                      |
+| `CONFIRM` | Cell container          | Enter edit              | Focus `value`; caret at end (`caretEnd()`)                       |
 | `CONFIRM` | Cell `value` edit focus | Exit edit and move down | Focus next-row same-col cell container; else same cell container |
 
 #### `TYPE`
@@ -516,7 +517,7 @@ Slider body:
 
 ```text
 .ui-body.ui-slider
-  input[type="range"]                            (body control; not a separate Core target)
+  input[type="range"]                            (target: value)
   .ui-slider-value
 ```
 
@@ -524,17 +525,25 @@ Slider body:
 
 Rules:
 
-- Slider introduces no additional Core targets beyond the frame `DEFAULT_TARGET`.
-- The `<input type="range">` is a local pointer control, not a Core target.
+- Slider uses:
+  - `DEFAULT_TARGET` on the slider frame.
+  - `value` (`VALUE_TARGET`) on the `<input type="range">`.
 - Keyboard semantics are interpreted at view level.
 
 ### Intent handling
 
 #### `CANCEL`
 
-| Intent   | Preconditions | Action               | Focus result                     |
-| -------- | ------------- | -------------------- | -------------------------------- |
+| Intent   | Preconditions | Action                                          | Focus result                     |
+| -------- | ------------- | ----------------------------------------------- | -------------------------------- |
 | `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
+
+#### `CONFIRM`
+
+| Intent    | Preconditions                      | Action                   | Focus result                     |
+| --------- | ---------------------------------- | ------------------------ | -------------------------------- |
+| `CONFIRM` | Focused on slider `DEFAULT_TARGET` | Enter slider value focus | Focus same item `value`          |
+| `CONFIRM` | Focused on slider `value`          | Exit slider value focus  | Focus same item `DEFAULT_TARGET` |
 
 #### `NAV` nudging
 
@@ -550,9 +559,10 @@ Mode mapping:
 - `step` mode SHOULD nudge by `+-1` step.
 - `jump` mode SHOULD nudge by `+-10` steps.
 
+- Pointerdown on the range input SHOULD focus `value` (`VALUE_TARGET`) before native slider interaction.
+
 Ignored intents:
 
-- `CONFIRM`
 - `TAB`
 - `TYPE`
 - `DELETE`

@@ -6,8 +6,16 @@ import type {
   ItemId,
   ValueOrBlank,
 } from "../core";
-import type { Intent } from "../dom";
-import { createComponent, el, escapeLadder, setBodyClasses } from "../dom";
+import { DEFAULT_TARGET } from "../core";
+import {
+  VALUE_TARGET,
+  bindItemFrame,
+  caret0,
+  createComponent,
+  el,
+  makeIntentDispatcher,
+  setBodyClasses,
+} from "../dom";
 
 type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -84,13 +92,15 @@ const sliderCommands = {
 type SliderMountCtx = {
   core: Core;
   id: ItemId;
+  focus: Focus;
   opts: SliderResolvedOpts;
 };
 
-function buildSliderBody({ core, id, opts }: SliderMountCtx): Component {
+function buildSliderBody({ core, id, focus, opts }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
     const root = el("div");
     setBodyClasses(root, "slider");
+    bindItemFrame(ctx, { core, focus }, root);
 
     const input = document.createElement("input");
     input.type = "range";
@@ -108,6 +118,7 @@ function buildSliderBody({ core, id, opts }: SliderMountCtx): Component {
     };
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
+      core.focus(focus, VALUE_TARGET, { caret: caret0() });
       e.stopPropagation();
     });
 
@@ -115,6 +126,8 @@ function buildSliderBody({ core, id, opts }: SliderMountCtx): Component {
       event.stopPropagation();
       commitValue(Number(input.value));
     });
+
+    ctx.target(focus, VALUE_TARGET, () => input);
 
     ctx.effect(() => {
       const currentValue = getValueOr(core, id, opts.min);
@@ -143,33 +156,43 @@ export function createSliderView(args: {
 
   const resolved = DEFAULT_SLIDER_OPTS;
 
-  const content = buildSliderBody({
-    core,
-    id,
-    opts: resolved,
-  });
+  const viewFocus: Focus = args.focus ?? { container: id, item: id };
 
-  const dispatch = (intent: Intent) => {
-    switch (intent.type) {
-      case "CANCEL":
-        escapeLadder(core);
-        return;
+  const dispatch = makeIntentDispatcher(core, {
+    NAV(sel, intent) {
+      if (sel.focus.item !== id) return;
 
-      case "NAV": {
-        const multiplier = intent.mode === "jump" ? 10 : 1;
-        const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-        sliderCommands.nudgeValue(core, id, dir * multiplier, resolved);
+      const multiplier = intent.mode === "jump" ? 10 : 1;
+      const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
+      sliderCommands.nudgeValue(core, id, dir * multiplier, resolved);
+    },
+
+    CONFIRM(sel) {
+      if (sel.focus.item !== id) return;
+
+      if (sel.target === DEFAULT_TARGET) {
+        core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
         return;
       }
 
-      case "CONFIRM":
-      case "TAB":
-      case "TYPE":
-      case "DELETE":
-      case "DELETE_BOUNDARY":
+      if (sel.target === VALUE_TARGET) {
+        core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
         return;
-    }
-  };
+      }
+    },
+
+    TAB() {},
+    TYPE() {},
+    DELETE() {},
+    DELETE_BOUNDARY() {},
+  });
+
+  const content = buildSliderBody({
+    core,
+    id,
+    focus: viewFocus,
+    opts: resolved,
+  });
 
   return {
     id: `slider:${String(id)}`,

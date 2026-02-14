@@ -8,7 +8,7 @@ It is the authoritative reference for:
 - Safe mounting (`createComponent`, `Ctx`).
 - Region-based dynamic mounting (`ctx.slot`, `ctx.list`).
 - Target binding (`ctx.target`) and focus helpers.
-- Shared intent helpers (`parseKeydownIntent`, `escapeLadder`, `insertTextIntoActiveEditor`).
+- Shared intent helpers (`parseKeydownIntent`, `escapeLadder`, `insertTextIntoActiveEditor`, `makeIntentDispatcher`, `enterEditOnType`, `toggleEditOnConfirm`).
 - Shared controls (`buildTextField`, `buildItemHeader`).
 - Connected definition helpers (`fieldsFromConn`, `patchConn`).
 - The supported export surface (`dom/index`).
@@ -295,7 +295,7 @@ type Intent =
 
 Rules:
 
-- Views MUST interpret intents.
+- Views MUST interpret view-specific intents.
 - Shared controls SHOULD emit intents instead of directly calling view commands.
 
 ### `parseKeydownIntent(e)`
@@ -316,6 +316,11 @@ Rules:
 - Printable keys (no ctrl/meta/alt, `key.length === 1`) -> `TYPE`
 - If no mapping applies, it MUST return `null`.
 
+### CANCEL responsibility (standard policy)
+
+- Default: let `makeIntentDispatcher` handle `CANCEL` with `escapeLadder(core)`.
+- Override `CANCEL` only when a view needs different behavior.
+
 ### Caret helpers
 
 Exports:
@@ -323,11 +328,13 @@ Exports:
 - `SELECT_ALL`
 - `caret0()`
 - `caretAt(pos)`
+- `caretEnd()`
 
 Rules:
 
 - `SELECT_ALL` MUST be treated as "select all text".
 - `caretAt(pos)` MUST represent a collapsed caret.
+- `caretEnd()` MUST represent a collapsed caret at the end of text.
 
 ### Target constants
 
@@ -365,6 +372,40 @@ Rules:
 - If there is no focused selection, it MUST blur (no-op safe).
 - If focused and `sel.target !== DEFAULT_TARGET`, it MUST focus the same item on `DEFAULT_TARGET`.
 - Otherwise it MUST blur.
+
+### `makeIntentDispatcher(core, handlers)`
+
+Shared intent dispatcher with default selection guards.
+
+Rules:
+
+- `CANCEL` is handled even when selection is not focused.
+- If `handlers.CANCEL` is missing, it defaults to `escapeLadder(core)`.
+- Other intents no-op when selection is not focused.
+- When focused, only the matching handler is called if present.
+- Prefer this over view-local `switch` dispatch.
+
+### `enterEditOnType({ core, sel, char, getPrimaryTarget })`
+
+Shared type-to-edit helper from container focus.
+
+Rules:
+
+- It only activates from `DEFAULT_TARGET`.
+- It resolves the edit target with `getPrimaryTarget(id)`.
+- It no-ops if no editable target exists.
+- On success, it focuses with `SELECT_ALL` and inserts the typed char in a microtask.
+
+### `toggleEditOnConfirm({ core, sel, getPrimaryTarget, caretForTarget? })`
+
+Shared `CONFIRM` toggle between container and edit targets.
+
+Rules:
+
+- From edit focus (`sel.target !== DEFAULT_TARGET`), it focuses `DEFAULT_TARGET`.
+- From `DEFAULT_TARGET`, it focuses the primary edit target when available.
+- If `caretForTarget` is missing, entry caret defaults to `caretEnd()`.
+- Returns `true` when handled, otherwise `false`.
 
 ## Shared text editing control: `buildTextField`
 
@@ -589,8 +630,8 @@ Targets + focus helpers:
 - `connTarget`
 - `caret0`
 - `caretAt`
+- `caretEnd`
 - `SELECT_ALL`
-- `escapeLadder`
 
 Types:
 
@@ -601,6 +642,9 @@ Intent + editor helpers:
 
 - `parseKeydownIntent`
 - `insertTextIntoActiveEditor`
+- `makeIntentDispatcher`
+- `enterEditOnType`
+- `toggleEditOnConfirm`
 
 Shared controls:
 

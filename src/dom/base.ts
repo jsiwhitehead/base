@@ -124,7 +124,10 @@ class RegionChildManager<Id extends string | number> {
 
   update(ids: readonly Id[]): void {
     if (DEV) {
-      devAssert(new Set(ids).size === ids.length, "ctx.list requires unique keys");
+      devAssert(
+        new Set(ids).size === ids.length,
+        "ctx.list requires unique keys",
+      );
     }
 
     const keep = new Set(ids);

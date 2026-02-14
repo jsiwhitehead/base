@@ -23,7 +23,7 @@ This document intentionally does not cover:
 - Code formatting (handled by Prettier).
 - Runtime behavior or UI semantics (covered by the system docs).
 - Contribution workflow / process (covered by `AGENTS.md`).
-- Styling system design (covered by the UI system docs).
+- Styling system design (covered by the UI contracts/runtime docs).
 
 ## Design principles
 
@@ -550,7 +550,7 @@ Avoid advanced or inconsistent Markdown features unless there is a clear need.
 ### Links and references
 
 - Links are allowed when they improve navigation.
-- Prefer plain backticked repo paths for internal references (`docs/ui-system.md`).
+- Prefer plain backticked repo paths for internal references (`docs/ui-contracts.md`).
 - Use Markdown links for external references.
 
 ### Whitespace
