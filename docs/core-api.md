@@ -30,7 +30,7 @@ Rules:
 - The root item MUST always exist.
 - The root item MUST NOT be removed.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
-- `createCore` MAY receive a view-factory registry used by `core.mountView(...)`.
+- `createCore` MUST receive a view-factory registry used by `core.mountView(...)` (it MAY be empty).
 - A Core instance owns all state and MUST be explicitly disposed.
 
 ## Reactivity model
@@ -451,14 +451,19 @@ Core exports:
 Type exports:
 
 - `ItemId`
-- `Item`
+- `Value`
+- `ValueOrBlank`
 - `Content`
-- `Mode`
 - `Connected`
+- `ApplyResult`
+- `Core`
 - `Selection`
 - `Focus`
 - `Caret`
 - `Component`
+- `DomView`
+- `Transaction`
+- `ViewFactory`
 - `ViewName`
 - `ViewKind`
 
@@ -468,4 +473,5 @@ Constant exports:
 
 Helper exports:
 
-- `parseValue(text): Value | null`
+- `parseValue(text): ValueOrBlank`
+- `defaultTextCaret(...)`
