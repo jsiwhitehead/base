@@ -29,6 +29,7 @@ Rules:
 - `rootId` MUST reference the root item.
 - The root item MUST always exist.
 - The root item MUST NOT be removed.
+- Core MUST be the single source of truth for state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
 - `createCore` MUST receive a view-factory registry used by `core.mountView(...)` (it MAY be empty).
 - A Core instance owns all state and MUST be explicitly disposed.
@@ -49,6 +50,7 @@ Rules:
 - A reactive read MUST return the current snapshot at evaluation time.
 - When underlying state changes, dependent reactive contexts MUST re-run.
 - All other Core methods SHOULD be treated as non-reactive commands.
+- Callers MUST treat Core read results as snapshots, not mutable shared state.
 
 ## Item IDs
 
@@ -84,16 +86,16 @@ Returns the current item snapshot.
 Fallback behavior:
 
 - If `id` cannot be resolved, `core.item(id)` MUST still return an `Item`.
-- The fallback item MUST use `content.kind === "issue"`.
-- The fallback item MUST use `mode.kind === "readonly"`.
+- The fallback item MUST use `content.type === "issue"`.
+- The fallback item MUST use `mode.type === "readonly"`.
 
 ## Item content
 
 ```ts
 type Content =
-  | { kind: "value"; value: Value | null }
-  | { kind: "group"; children: readonly ItemId[] }
-  | { kind: "issue"; message: string };
+  | { type: "value"; value: Value | null }
+  | { type: "group"; children: readonly ItemId[] }
+  | { type: "issue"; message: string };
 ```
 
 Kinds:
@@ -110,15 +112,15 @@ Rules:
 
 ```ts
 type Mode =
-  | { kind: "readonly" }
-  | { kind: "plain" }
-  | { kind: "connected"; conn: Connected };
+  | { type: "readonly" }
+  | { type: "plain" }
+  | { type: "connected"; conn: Connected };
 ```
 
 Editability rule:
 
 ```ts
-item.mode.kind !== "readonly";
+item.mode.type !== "readonly";
 ```
 
 Rules:
@@ -142,8 +144,8 @@ Notes:
 
 ```ts
 type Connected =
-  | { kind: "formula"; expr: string }
-  | { kind: "query"; from: string; where: string; orderBy: string };
+  | { type: "formula"; expr: string }
+  | { type: "query"; from: string; where: string; orderBy: string };
 ```
 
 Connected definitions describe how item content is generated.
@@ -166,6 +168,7 @@ core.commit((tx) => {
 
 Commit rules:
 
+- All state changes MUST flow through `core.commit(...)`.
 - Transaction operations MUST apply atomically.
 - If any operation in a transaction fails validation or execution, the commit MUST throw and Core state MUST remain unchanged.
 - A successful commit MUST trigger reactive updates.
@@ -208,6 +211,7 @@ All transaction operations:
 `setView`:
 
 - Sets the preferred view for the item.
+- Accepts `ViewName | null` (`null` clears stored preference).
 
 `setValue`:
 
@@ -291,8 +295,8 @@ Rules:
 
 ```ts
 type Selection =
-  | { kind: "idle" }
-  | { kind: "focused"; focus: Focus; target: string; caret?: Caret };
+  | { type: "idle" }
+  | { type: "focused"; focus: Focus; target: string; caret?: Caret };
 
 type Focus = { container: ItemId; item: ItemId };
 type Caret = { start: number; end: number };
@@ -317,8 +321,9 @@ Rules:
 - If `target` is omitted, Core MUST use `DEFAULT_TARGET`.
 - If `opts` or `opts.caret` is omitted, selection MUST remain focused without a caret.
 - If edits invalidate selection, Core MUST repair selection to a valid state.
+- Selection MUST be the single source of truth for focus state.
 
-## Focus binding
+## Target binding
 
 ```ts
 core.attachTarget({
@@ -329,7 +334,7 @@ core.attachTarget({
 })
 ```
 
-Registers a focus binding for a `(focus, target)` pair.
+Registers a target binding for a `(focus, target)` pair.
 
 Rules:
 
@@ -383,6 +388,7 @@ Rules:
 - Global keyboard input MUST be parsed and routed by Core to the active view intent handler.
 - Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
 - Core MAY still handle explicit global commands while focus is in native text editors.
+- View behavior MUST remain intent-driven (semantic), not raw-key driven.
 
 ### Table view semantics (Core-enforced)
 
@@ -433,7 +439,7 @@ Disposes Core resources.
 Rules:
 
 - Core MUST release all reactive resources.
-- Core MUST detach all focus bindings.
+- Core MUST detach all target bindings.
 - After disposal, Core methods MUST NOT be used.
 
 ## Public Core API surface
@@ -471,7 +477,6 @@ Type exports:
 - `Transaction`
 - `ViewFactory`
 - `ViewName`
-- `ViewKind`
 
 Constant exports:
 

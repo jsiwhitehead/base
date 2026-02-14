@@ -53,8 +53,8 @@ describe("views", () => {
     requireSameEl(bElBefore, bElAfter);
 
     const sel = core.selection();
-    expect(sel.kind).toBe("focused");
-    if (sel.kind === "focused") {
+    expect(sel.type).toBe("focused");
+    if (sel.type === "focused") {
       expect([a, b, g, rootId]).toContain(sel.focus.item);
     }
   });
@@ -125,7 +125,7 @@ describe("views", () => {
     fireViewKey(view, "=");
     await flushDomEffects();
 
-    expect(core.item(x).mode.kind).toBe("connected");
+    expect(core.item(x).mode.type).toBe("connected");
     expectSel(core, { container: rootId, item: x, target: "conn:expr" });
 
     const itemElAfter = requireFrameEl(view.root, x);
@@ -228,14 +228,14 @@ describe("views", () => {
 
     const beforeRows = core.item(tableId);
     const beforeCount =
-      beforeRows.content.kind === "group"
+      beforeRows.content.type === "group"
         ? beforeRows.content.children.length
         : 0;
     fireViewKey(view, "Enter");
     await flushDomEffects();
     const sel = core.selection();
-    expect(sel.kind).toBe("focused");
-    if (sel.kind === "focused") {
+    expect(sel.type).toBe("focused");
+    if (sel.type === "focused") {
       expect(sel.focus.container).toBe(tableId);
       expect(sel.focus.item).not.toBe(rowB);
       expect(sel.target).toBe(DEFAULT_TARGET);
@@ -243,7 +243,7 @@ describe("views", () => {
 
     const afterRows = core.item(tableId);
     const afterCount =
-      afterRows.content.kind === "group"
+      afterRows.content.type === "group"
         ? afterRows.content.children.length
         : 0;
     expect(afterCount).toBe(beforeCount + 1);

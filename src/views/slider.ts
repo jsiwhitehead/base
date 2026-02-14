@@ -52,12 +52,12 @@ function formatNumberForStep(n: number, step: number): string {
 
 const canSetValue = (core: Core, id: ItemId): boolean => {
   const item = core.item(id);
-  return item.mode.kind === "plain" && item.content.kind === "value";
+  return item.mode.type === "plain" && item.content.type === "value";
 };
 
 const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
   const item = core.item(id);
-  if (item.content.kind === "value")
+  if (item.content.type === "value")
     return toNumberOr(item.content.value, fallback);
   return fallback;
 };

@@ -3,143 +3,6 @@ import { computed, effect } from "@preact/signals-core";
 import type { Caret, Component, Core, Focus, ViewName } from "../core";
 import { DEFAULT_TARGET } from "../core";
 
-class Disposer {
-  private fns: (() => void)[] = [];
-
-  add(fn: (() => void) | null | undefined): (() => void) | undefined {
-    if (!fn) return undefined;
-    this.fns.push(fn);
-    return fn;
-  }
-
-  run(): void {
-    for (let i = this.fns.length - 1; i >= 0; i--) this.fns[i]?.();
-    this.fns = [];
-  }
-}
-
-export function el(
-  tag: string,
-  className?: string,
-  text?: string,
-): HTMLElement {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  if (text != null) element.textContent = text;
-  return element;
-}
-
-type Region = {
-  host: HTMLElement;
-  start: Comment;
-  end: Comment;
-  clear(): void;
-  reconcile(desired: readonly HTMLElement[]): void;
-  dispose(): void;
-};
-
-function createRegion(host: HTMLElement): Region {
-  const start = document.createComment("region:start");
-  const end = document.createComment("region:end");
-  host.append(start, end);
-
-  const clear = () => {
-    let n = start.nextSibling;
-    while (n && n !== end) {
-      const next = n.nextSibling;
-      n.remove();
-      n = next;
-    }
-  };
-
-  const reconcile = (desired: readonly HTMLElement[]) => {
-    let anchor: ChildNode = end;
-
-    for (let i = desired.length - 1; i >= 0; i--) {
-      const next = desired[i]!;
-      if (next.parentNode !== host || next.nextSibling !== anchor)
-        host.insertBefore(next, anchor);
-      anchor = next;
-    }
-
-    let cur = start.nextSibling;
-    const keep = new Set(desired);
-
-    while (cur && cur !== end) {
-      const next = cur.nextSibling;
-      if (cur instanceof HTMLElement && keep.has(cur)) {
-        cur = next;
-        continue;
-      }
-      cur.remove();
-      cur = next;
-    }
-  };
-
-  const dispose = () => {
-    clear();
-    start.remove();
-    end.remove();
-  };
-
-  return { host, start, end, clear, reconcile, dispose };
-}
-
-type ChildRec = { element: HTMLElement; dispose: () => void };
-
-class RegionChildManager<Id extends string | number> {
-  private cache = new Map<Id, ChildRec>();
-
-  constructor(
-    private region: Region,
-    private create: (id: Id) => { element: HTMLElement; dispose(): void },
-  ) {}
-
-  update(ids: readonly Id[]) {
-    const keep = new Set(ids);
-
-    for (const [id, rec] of this.cache) {
-      if (keep.has(id)) continue;
-      rec.dispose();
-      this.cache.delete(id);
-    }
-
-    const desired: HTMLElement[] = ids.map((id) => {
-      let rec = this.cache.get(id);
-      if (!rec) {
-        const child = this.create(id);
-        rec = { element: child.element, dispose: child.dispose.bind(child) };
-        this.cache.set(id, rec);
-      }
-      return rec.element;
-    });
-
-    this.region.reconcile(desired);
-  }
-
-  clear() {
-    for (const rec of this.cache.values()) rec.dispose();
-    this.cache.clear();
-  }
-
-  dispose() {
-    this.clear();
-  }
-}
-
-export function caretFromTarget(target: EventTarget | null): Caret {
-  const targetEl = target instanceof HTMLElement ? target : null;
-  if (
-    targetEl instanceof HTMLInputElement ||
-    targetEl instanceof HTMLTextAreaElement
-  ) {
-    const start = targetEl.selectionStart ?? 0;
-    const end = targetEl.selectionEnd ?? start;
-    return { start, end };
-  }
-  return { start: 0, end: 0 };
-}
-
 type Ctx = {
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
     target: T,
@@ -167,6 +30,141 @@ type Ctx = {
     opts?: { caret?: { set(pos: number): void; getLength(): number } },
   ): void;
 };
+
+type Region = {
+  host: HTMLElement;
+  start: Comment;
+  end: Comment;
+  clear(): void;
+  reconcile(desired: readonly HTMLElement[]): void;
+  dispose(): void;
+};
+
+class Disposer {
+  private fns: (() => void)[] = [];
+
+  add(fn: (() => void) | null | undefined): (() => void) | undefined {
+    if (!fn) return undefined;
+    this.fns.push(fn);
+    return fn;
+  }
+
+  run(): void {
+    for (let i = this.fns.length - 1; i >= 0; i--) this.fns[i]?.();
+    this.fns = [];
+  }
+}
+
+export function el(
+  tag: string,
+  className?: string,
+  text?: string,
+): HTMLElement {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text != null) element.textContent = text;
+  return element;
+}
+
+function createRegion(host: HTMLElement): Region {
+  const start = document.createComment("region:start");
+  const end = document.createComment("region:end");
+  host.append(start, end);
+
+  const clear = (): void => {
+    let n = start.nextSibling;
+    while (n && n !== end) {
+      const next = n.nextSibling;
+      n.remove();
+      n = next;
+    }
+  };
+
+  const reconcile = (desired: readonly HTMLElement[]): void => {
+    let anchor: ChildNode = end;
+
+    for (let i = desired.length - 1; i >= 0; i--) {
+      const next = desired[i]!;
+      if (next.parentNode !== host || next.nextSibling !== anchor)
+        host.insertBefore(next, anchor);
+      anchor = next;
+    }
+
+    let cur = start.nextSibling;
+    const keep = new Set(desired);
+
+    while (cur && cur !== end) {
+      const next = cur.nextSibling;
+      if (cur instanceof HTMLElement && keep.has(cur)) {
+        cur = next;
+        continue;
+      }
+      cur.remove();
+      cur = next;
+    }
+  };
+
+  const dispose = (): void => {
+    clear();
+    start.remove();
+    end.remove();
+  };
+
+  return { host, start, end, clear, reconcile, dispose };
+}
+
+class RegionChildManager<Id extends string | number> {
+  private cache = new Map<Id, { element: HTMLElement; dispose: () => void }>();
+
+  constructor(
+    private region: Region,
+    private create: (id: Id) => { element: HTMLElement; dispose(): void },
+  ) {}
+
+  update(ids: readonly Id[]): void {
+    const keep = new Set(ids);
+
+    for (const [id, rec] of this.cache) {
+      if (keep.has(id)) continue;
+      rec.dispose();
+      this.cache.delete(id);
+    }
+
+    const desired: HTMLElement[] = ids.map((id) => {
+      let rec = this.cache.get(id);
+      if (!rec) {
+        const child = this.create(id);
+        rec = { element: child.element, dispose: child.dispose.bind(child) };
+        this.cache.set(id, rec);
+      }
+      return rec.element;
+    });
+
+    this.region.reconcile(desired);
+  }
+
+  clear(): void {
+    for (const rec of this.cache.values()) rec.dispose();
+    this.cache.clear();
+  }
+
+  dispose(): void {
+    this.clear();
+  }
+}
+
+export function caretFromTarget(target: EventTarget | null): Caret {
+  const targetEl = target instanceof HTMLElement ? target : null;
+  if (
+    targetEl instanceof HTMLInputElement ||
+    targetEl instanceof HTMLTextAreaElement
+  ) {
+    const start = targetEl.selectionStart ?? 0;
+    const end = targetEl.selectionEnd ?? start;
+    return { start, end };
+  }
+  return { start: 0, end: 0 };
+}
 
 export function createComponent(
   core: Core,
@@ -260,14 +258,9 @@ export function createComponent(
   };
 }
 
-type ShellSpec = {
-  core: Core;
-  focus: Focus;
-};
-
 export function bindItemFrame(
   ctx: Ctx,
-  spec: ShellSpec,
+  spec: { core: Core; focus: Focus },
   shell: HTMLElement,
 ): void {
   shell.classList.add("ui-frame");
@@ -277,13 +270,13 @@ export function bindItemFrame(
   const isFocused = computed(() => {
     const sel = spec.core.selection();
     return (
-      sel.kind === "focused" &&
+      sel.type === "focused" &&
       sel.focus.item === spec.focus.item &&
       sel.focus.container === spec.focus.container
     );
   });
   const isIssue = computed(
-    () => spec.core.item(spec.focus.item).content.kind === "issue",
+    () => spec.core.item(spec.focus.item).content.type === "issue",
   );
 
   ctx.target(spec.focus, DEFAULT_TARGET, () => shell);

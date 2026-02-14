@@ -8,7 +8,7 @@ import type {
   Focus,
   ItemId,
   Selection,
-  ViewKind,
+  ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
 import { parseKeydownIntent } from "../src/dom";
@@ -33,8 +33,8 @@ export function makeCoreRuntime(): { core: Core; rootId: ItemId } {
 }
 
 export function scalarOf(content: Content): true | number | string | null {
-  if (content.kind === "issue") throw new Error(content.message);
-  if (content.kind === "group") throw new Error("Expected value content");
+  if (content.type === "issue") throw new Error(content.message);
+  if (content.type === "group") throw new Error("Expected value content");
   return content.value;
 }
 
@@ -47,12 +47,12 @@ export function scalarOfId(
 
 export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {
   const content = core.item(id).content;
-  return content.kind === "group" ? content.children : [];
+  return content.type === "group" ? content.children : [];
 }
 
 export function groupLabels(core: Core, id: ItemId): string[] {
   const item = core.item(id);
-  if (item.content.kind !== "group") return [];
+  if (item.content.type !== "group") return [];
   return item.content.children.map((childId) => core.item(childId).label ?? "");
 }
 
@@ -60,36 +60,36 @@ type TreeShape =
   | {
       label: string;
       mode: string;
-      kind: "value";
+      type: "value";
       value: true | number | string | null;
     }
-  | { label: string; mode: string; kind: "issue"; message: string }
-  | { label: string; mode: string; kind: "group"; children: TreeShape[] };
+  | { label: string; mode: string; type: "issue"; message: string }
+  | { label: string; mode: string; type: "group"; children: TreeShape[] };
 
 export function tree(core: Core, id: ItemId): TreeShape {
   const item = core.item(id);
   const label = item.label ?? "";
-  const mode = item.mode.kind;
+  const mode = item.mode.type;
   const content = item.content;
 
-  if (content.kind === "value")
-    return { label, mode, kind: "value", value: content.value };
-  if (content.kind === "issue")
-    return { label, mode, kind: "issue", message: content.message };
+  if (content.type === "value")
+    return { label, mode, type: "value", value: content.value };
+  if (content.type === "issue")
+    return { label, mode, type: "issue", message: content.message };
 
   return {
     label,
     mode,
-    kind: "group",
+    type: "group",
     children: content.children.map((childId) => tree(core, childId)),
   };
 }
 
 export function expectFocused(
   sel: Selection,
-): asserts sel is Extract<Selection, { kind: "focused" }> {
-  expect(sel.kind).toBe("focused");
-  if (sel.kind !== "focused") throw new Error("Expected focused selection");
+): asserts sel is Extract<Selection, { type: "focused" }> {
+  expect(sel.type).toBe("focused");
+  if (sel.type !== "focused") throw new Error("Expected focused selection");
 }
 
 export function expectSel(
@@ -129,7 +129,7 @@ export function mkBlank(
 export function mkGroup(
   core: Core,
   parentId: ItemId,
-  args?: { at?: number; label?: string; view?: ViewKind },
+  args?: { at?: number; label?: string; view?: ViewName | null },
 ): ItemId {
   let id: ItemId = "";
   core.commit((t) => {
@@ -146,7 +146,7 @@ export function mkGroup(
 
 export function setFormula(core: Core, id: ItemId, expr: string): void {
   core.commit((t) => {
-    t.setConnected(id, { kind: "formula", expr });
+    t.setConnected(id, { type: "formula", expr });
   });
 }
 
@@ -157,7 +157,7 @@ export function setQuery(
 ): void {
   core.commit((t) => {
     t.setConnected(id, {
-      kind: "query",
+      type: "query",
       from: args.from,
       where: args.where ?? "",
       orderBy: args.orderBy ?? "",
@@ -165,7 +165,7 @@ export function setQuery(
   });
 }
 
-export function setView(core: Core, id: ItemId, view: ViewKind): void {
+export function setView(core: Core, id: ItemId, view: ViewName | null): void {
   core.commit((t) => t.setView(id, view));
 }
 

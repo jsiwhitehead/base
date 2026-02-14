@@ -10,7 +10,7 @@ import { makeBlankEntry, normalizeLabel } from "./model";
 
 export type Rule = (
   model: Model,
-  input: ApplyResult,
+  applyResult: ApplyResult,
   meta?: Transaction["meta"],
 ) => readonly Op[];
 
@@ -36,22 +36,22 @@ export function createShapeSyncGroup(opts: {
   const { model } = opts;
   const groupIds = new Set<EntryId>();
 
-  const rule: Rule = (model, input) => {
+  const rule: Rule = (model, applyResult) => {
     if (groupIds.size <= 1) return [];
 
     const candidatesTo = new Set<EntryId>();
     const candidatesFrom = new Set<EntryId>();
     const candidatesTouched = new Set<EntryId>();
 
-    for (const moved of input.moved) {
+    for (const moved of applyResult.moved) {
       if (moved.toParentId != null && groupIds.has(moved.toParentId))
         candidatesTo.add(moved.toParentId);
       if (moved.fromParentId != null && groupIds.has(moved.fromParentId))
         candidatesFrom.add(moved.fromParentId);
     }
 
-    for (const id of input.touched) {
-      if (input.moved.length === 0 && groupIds.has(id)) {
+    for (const id of applyResult.touched) {
+      if (applyResult.moved.length === 0 && groupIds.has(id)) {
         candidatesTouched.add(id);
         continue;
       }

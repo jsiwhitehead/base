@@ -11,8 +11,8 @@ export type Focus = { container: ItemId; item: ItemId };
 export type Caret = { start: number; end: number };
 
 export type Selection =
-  | { kind: "idle" }
-  | { kind: "focused"; focus: Focus; target: string; caret?: Caret };
+  | { type: "idle" }
+  | { type: "focused"; focus: Focus; target: string; caret?: Caret };
 
 type Anchor = "top" | "bottom";
 
@@ -47,8 +47,11 @@ export type DomView = {
   dispose(): void;
 };
 
-type ViewFactoryArgs<C> = { core: C; id: ItemId; focus?: Focus };
-export type ViewFactory<C> = (args: ViewFactoryArgs<C>) => DomView;
+export type ViewFactory<C> = (args: {
+  core: C;
+  id: ItemId;
+  focus?: Focus;
+}) => DomView;
 
 const itemKey = (id: ItemId): string => id;
 const keyOf = (f: Focus): string =>
@@ -62,6 +65,10 @@ const isTextInput = (
 ): el is HTMLInputElement | HTMLTextAreaElement =>
   (el instanceof HTMLInputElement && el.type === "text") ||
   el instanceof HTMLTextAreaElement;
+
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
+}
 
 type TextCaret = {
   read(): Caret;
@@ -167,7 +174,7 @@ function normalizeEffectsForSelection(
   const hasClear = effects.some((e) => e.type === "CLEAR_FOCUS");
   const hasFocus = effects.some((e) => e.type === "FOCUS");
 
-  if (sel.kind === "idle")
+  if (sel.type === "idle")
     return hasClear ? effects : [...effects, { type: "CLEAR_FOCUS" }];
 
   if (hasClear) return effects;
@@ -216,9 +223,22 @@ type TargetBinding = {
   caret?: { set(pos: number): void; getLength(): number };
 };
 
-type TargetBindingRec = {
+type TargetBindingRecord = {
   binding: TargetBinding;
   token: number;
+};
+
+type AttachTargetOpts = {
+  focus: Focus;
+  target: string;
+  getEl: () => HTMLElement | null;
+  caret?: { set(pos: number): void; getLength(): number };
+};
+
+type MountViewOpts = {
+  id: ItemId;
+  focus?: Focus;
+  view: ViewName;
 };
 
 type Runtime = {
@@ -228,14 +248,9 @@ type Runtime = {
 
   setSelection(next: Selection, effects?: RuntimeEffect[]): void;
 
-  attachTarget(opts: {
-    focus: Focus;
-    target: string;
-    getEl: () => HTMLElement | null;
-    caret?: { set(pos: number): void; getLength(): number };
-  }): () => void;
+  attachTarget(opts: AttachTargetOpts): () => void;
 
-  mountView(opts: { id: ItemId; focus?: Focus; view: ViewName }): Component;
+  mountView(opts: MountViewOpts): Component;
 
   installGlobalListeners(win?: Window): () => void;
 
@@ -252,16 +267,16 @@ export function createRuntime<C>(opts: {
   const views = opts.views;
 
   const selectionSignal = signal<Selection>(
-    opts.initialSelection ?? { kind: "idle" },
+    opts.initialSelection ?? { type: "idle" },
   );
 
-  const bindings = new Map<string, Map<string, TargetBindingRec>>();
+  const bindings = new Map<string, Map<string, TargetBindingRecord>>();
 
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
   const viewsSet = new Set<ViewHandle>();
   let activeView: ViewHandle | null = null;
 
-  let pending: { sel: Selection; effects: RuntimeEffect[] } | null = null;
+  let pending: { selection: Selection; effects: RuntimeEffect[] } | null = null;
   let flushScheduled = false;
 
   const getActiveView = (): ViewHandle | null => activeView;
@@ -270,7 +285,7 @@ export function createRuntime<C>(opts: {
     activeView = v;
   };
 
-  const focusMapFor = (focus: Focus): Map<string, TargetBindingRec> => {
+  const focusMapFor = (focus: Focus): Map<string, TargetBindingRecord> => {
     const focusKey = keyOf(focus);
     let targetBindings = bindings.get(focusKey);
     if (!targetBindings) {
@@ -297,7 +312,7 @@ export function createRuntime<C>(opts: {
     sel: Selection,
     focusEff: Extract<RuntimeEffect, { type: "FOCUS" }>,
   ): void => {
-    if (sel.kind !== "focused") return;
+    if (sel.type !== "focused") return;
 
     const binding = resolveBinding(sel.focus, sel.target);
     const targetEl = (binding?.getEl() as HTMLElement | null) ?? null;
@@ -334,11 +349,17 @@ export function createRuntime<C>(opts: {
 
   const applyDomEffects = (sel: Selection, effects: RuntimeEffect[]): void => {
     for (const eff of effects) {
-      if (eff.type === "FOCUS") {
-        applyDomFocus(sel, eff);
-      } else {
-        const active = document.activeElement;
-        if (active instanceof HTMLElement) active.blur();
+      switch (eff.type) {
+        case "FOCUS":
+          applyDomFocus(sel, eff);
+          break;
+        case "CLEAR_FOCUS": {
+          const active = document.activeElement;
+          if (active instanceof HTMLElement) active.blur();
+          break;
+        }
+        default:
+          assertNever(eff, "Unhandled runtime effect");
       }
     }
   };
@@ -347,8 +368,8 @@ export function createRuntime<C>(opts: {
     if (!effects.length) return;
 
     pending = pending
-      ? { sel, effects: [...pending.effects, ...effects] }
-      : { sel, effects };
+      ? { selection: sel, effects: [...pending.effects, ...effects] }
+      : { selection: sel, effects };
 
     if (flushScheduled) return;
     flushScheduled = true;
@@ -357,7 +378,7 @@ export function createRuntime<C>(opts: {
       flushScheduled = false;
       const next = pending;
       pending = null;
-      if (next) applyDomEffects(next.sel, next.effects);
+      if (next) applyDomEffects(next.selection, next.effects);
     });
   };
 
@@ -380,7 +401,7 @@ export function createRuntime<C>(opts: {
   };
 
   const repairSelection = (sel: Selection): Selection => {
-    if (sel.kind === "idle") return sel;
+    if (sel.type === "idle") return sel;
 
     if (canReadItem(sel.focus.item) && canReadItem(sel.focus.container))
       return sel;
@@ -390,12 +411,12 @@ export function createRuntime<C>(opts: {
       model.peekEntry(rootEntryId);
       const rootId = itemIdFromEntryId(rootEntryId);
       return {
-        kind: "focused",
+        type: "focused",
         focus: { container: rootId, item: rootId },
         target: DEFAULT_TARGET,
       };
     } catch {
-      return { kind: "idle" };
+      return { type: "idle" };
     }
   };
 
@@ -427,12 +448,7 @@ export function createRuntime<C>(opts: {
     };
   };
 
-  const attachTarget = (target: {
-    focus: Focus;
-    target: string;
-    getEl: () => HTMLElement | null;
-    caret?: { set(pos: number): void; getLength(): number };
-  }): (() => void) => {
+  const attachTarget = (target: AttachTargetOpts): (() => void) => {
     const targetBindings = focusMapFor(target.focus);
     const prev = targetBindings.get(target.target);
     const nextToken = (prev?.token ?? 0) + 1;
@@ -460,7 +476,7 @@ export function createRuntime<C>(opts: {
 
       const sel = selectionSignal.peek();
       if (
-        sel.kind === "focused" &&
+        sel.type === "focused" &&
         keyOf(sel.focus) === focusKey &&
         (sel.target === targetKey || targetKey === DEFAULT_TARGET)
       ) {
@@ -472,20 +488,20 @@ export function createRuntime<C>(opts: {
   const runGlobalCommand = (intent: KeyIntent): boolean => {
     if (intent.type !== "CANCEL") return false;
     const sel = selectionSignal.peek();
-    if (sel.kind !== "focused") {
-      setSelection({ kind: "idle" });
+    if (sel.type !== "focused") {
+      setSelection({ type: "idle" });
       return true;
     }
     if (sel.target !== DEFAULT_TARGET) {
       setSelection({
-        kind: "focused",
+        type: "focused",
         focus: sel.focus,
         target: DEFAULT_TARGET,
         caret: { start: 0, end: 0 },
       });
       return true;
     }
-    setSelection({ kind: "idle" });
+    setSelection({ type: "idle" });
     return true;
   };
 
@@ -521,11 +537,7 @@ export function createRuntime<C>(opts: {
     return () => win.removeEventListener("keydown", onKeyDown);
   };
 
-  const mountView = (mountOpts: {
-    id: ItemId;
-    focus?: Focus;
-    view: ViewName;
-  }): Component => {
+  const mountView = (mountOpts: MountViewOpts): Component => {
     const id = mountOpts.id;
     const focus: Focus = mountOpts.focus ?? { container: id, item: id };
 

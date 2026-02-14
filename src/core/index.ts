@@ -3,6 +3,7 @@ import { batch, computed } from "@preact/signals-core";
 
 import type { Result } from "./eval";
 import {
+  Results,
   createEvaluator,
   isBlankResult,
   isEntryGroupResult,
@@ -19,7 +20,6 @@ import type {
   Op,
   Transaction,
   TransactionMeta,
-  ViewKind,
   ViewName,
 } from "./model";
 import {
@@ -49,18 +49,18 @@ export type Value = true | number | string;
 export type ValueOrBlank = Value | null;
 
 export type Content =
-  | { kind: "value"; value: ValueOrBlank }
-  | { kind: "issue"; message: string }
-  | { kind: "group"; children: readonly ItemId[] };
+  | { type: "value"; value: ValueOrBlank }
+  | { type: "issue"; message: string }
+  | { type: "group"; children: readonly ItemId[] };
 
 export type Connected =
-  | { kind: "formula"; expr: string }
-  | { kind: "query"; from: string; where: string; orderBy: string };
+  | { type: "formula"; expr: string }
+  | { type: "query"; from: string; where: string; orderBy: string };
 
 type Mode =
-  | { kind: "readonly" }
-  | { kind: "plain" }
-  | { kind: "connected"; conn: Connected };
+  | { type: "readonly" }
+  | { type: "plain" }
+  | { type: "connected"; conn: Connected };
 
 type Item = {
   id: ItemId;
@@ -107,27 +107,31 @@ const entryIdFromItemId = (id: ItemId): EntryId | null => {
   return ref && ref.path.length === 0 ? ref.entryId : null;
 };
 
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
+}
+
 function storedFromValue(v: ValueOrBlank): EntryContent {
-  return v === null ? { kind: "blank" } : { kind: "scalar", value: v };
+  return v === null ? { type: "blank" } : { type: "scalar", value: v };
 }
 
 export const parseValue: (text: string) => ValueOrBlank = parseScalar;
 
 function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
-  if (ref.path.length) return { kind: "readonly" };
+  if (ref.path.length) return { type: "readonly" };
   if (isFormulaContent(c))
-    return { kind: "connected", conn: { kind: "formula", expr: c.expr } };
+    return { type: "connected", conn: { type: "formula", expr: c.expr } };
   if (isQueryContent(c))
     return {
-      kind: "connected",
+      type: "connected",
       conn: {
-        kind: "query",
+        type: "query",
         from: c.from,
         where: c.where,
         orderBy: c.orderBy,
       },
     };
-  return { kind: "plain" };
+  return { type: "plain" };
 }
 
 export type ApplyResult = {
@@ -143,7 +147,7 @@ export type ApplyResult = {
 
 type Tx = {
   setLabel(id: ItemId, label: string): void;
-  setView(id: ItemId, view: ViewKind): void;
+  setView(id: ItemId, view: ViewName | null): void;
 
   setValue(id: ItemId, value: ValueOrBlank): void;
   setConnected(id: ItemId, conn: Connected): void;
@@ -155,15 +159,12 @@ type Tx = {
   remove(id: ItemId): void;
 };
 
+type FocusOpts = { caret?: Caret };
+
 type LocateResult = {
   parentId: ItemId;
   index: number;
   siblings: readonly ItemId[];
-};
-
-type HistoryEntry = {
-  user: Transaction;
-  inverse: Transaction;
 };
 
 export type Core = {
@@ -179,7 +180,7 @@ export type Core = {
   redo(): ApplyResult;
 
   selection(): Selection;
-  focus(focus: Focus, target?: string, opts?: { caret?: Caret }): void;
+  focus(focus: Focus, target?: string, opts?: FocusOpts): void;
   blur(): void;
 
   locate(id: ItemId): LocateResult | null;
@@ -203,7 +204,10 @@ type CollabWire = {
 export function createCore(opts: {
   views: Partial<Record<ViewName, ViewFactory<Core>>>;
   collab?: CollabWire;
-}): { core: Core; rootId: ItemId } {
+}): {
+  core: Core;
+  rootId: ItemId;
+} {
   const model = createModel();
 
   const rootEntryId = model.createId();
@@ -223,7 +227,7 @@ export function createCore(opts: {
     getCore: () => core,
     views: opts.views,
     initialSelection: {
-      kind: "focused",
+      type: "focused",
       focus: { container: rootId, item: rootId },
       target: DEFAULT_TARGET,
     },
@@ -232,7 +236,10 @@ export function createCore(opts: {
   const rules: { id: string; run: SyncRule }[] = [];
   let nextRuleId = 1;
 
-  const history: { undo: HistoryEntry[]; redo: HistoryEntry[] } = {
+  const history: {
+    undo: { user: Transaction; inverse: Transaction }[];
+    redo: { user: Transaction; inverse: Transaction }[];
+  } = {
     undo: [],
     redo: [],
   };
@@ -267,7 +274,7 @@ export function createCore(opts: {
   };
 
   const selectionStillValid = (sel: Selection): boolean => {
-    if (sel.kind === "idle") return true;
+    if (sel.type === "idle") return true;
     const a = entryIdFromItemId(sel.focus.item);
     const b = entryIdFromItemId(sel.focus.container);
     if (a == null || b == null) return false;
@@ -278,7 +285,7 @@ export function createCore(opts: {
     const source = meta?.source;
     if (source === "remote") {
       const sel = runtime.selectionSignal.peek();
-      if (!selectionStillValid(sel)) runtime.setSelection({ kind: "idle" });
+      if (!selectionStillValid(sel)) runtime.setSelection({ type: "idle" });
       return;
     }
     runtime.setSelection(runtime.selectionSignal.peek());
@@ -300,10 +307,9 @@ export function createCore(opts: {
     for (let i = 0; i < ref.path.length; i++) {
       const idx = ref.path[i]!;
       if (!isResultGroupResult(cur))
-        return { result: { kind: "issue", message: "Invalid path" } as any };
+        return { result: Results.issue("Invalid path") };
       const item = cur.items[idx];
-      if (!item)
-        return { result: { kind: "issue", message: "Invalid path" } as any };
+      if (!item) return { result: Results.issue("Invalid path") };
       label = item.label?.trim() || undefined;
       cur = item.result;
     }
@@ -312,19 +318,19 @@ export function createCore(opts: {
   };
 
   const toContent = (ref: ItemRef, v: Result): Content => {
-    if (isBlankResult(v)) return { kind: "value", value: null };
-    if (isIssueResult(v)) return { kind: "issue", message: v.message };
+    if (isBlankResult(v)) return { type: "value", value: null };
+    if (isIssueResult(v)) return { type: "issue", message: v.message };
     if (isScalarResult(v)) {
       const x = v.result;
       return {
-        kind: "value",
+        type: "value",
         value:
           x === true || typeof x === "number" || typeof x === "string"
             ? x
             : null,
       };
     }
-    return { kind: "group", children: childrenOfResolved(ref, v) };
+    return { type: "group", children: childrenOfResolved(ref, v) };
   };
 
   const item = (id: ItemId): Item => {
@@ -333,7 +339,7 @@ export function createCore(opts: {
       const resolved = resolve(ref);
       const content = toContent(ref, resolved.result);
 
-      let mode: Mode = { kind: "readonly" };
+      let mode: Mode = { type: "readonly" };
       if (!ref.path.length) {
         const stored = model.readEntry(ref.entryId).content;
         mode = modeFromContent(ref, stored);
@@ -349,8 +355,8 @@ export function createCore(opts: {
       const msg = e instanceof Error ? e.message : String(e);
       return {
         id,
-        content: { kind: "issue", message: msg },
-        mode: { kind: "readonly" },
+        content: { type: "issue", message: msg },
+        mode: { type: "readonly" },
       };
     }
   };
@@ -380,15 +386,15 @@ export function createCore(opts: {
     const inverses: Op[] = [];
 
     for (const op of txn.ops) {
-      if (op.kind === "create") {
+      if (op.type === "create") {
         inverses.push(model.ops.remove(op.entry.id));
         continue;
       }
 
-      if (op.kind === "patch") {
+      if (op.type === "patch") {
         if (!model.hasEntry(op.id)) continue;
         const cur = model.peekEntry(op.id);
-        const next: any = {};
+        const next: Parameters<typeof model.ops.patch>[1] = {};
         if (op.next.label !== undefined) next.label = cur.label;
         if (op.next.view !== undefined) next.view = cur.view;
         if (op.next.content !== undefined) next.content = cur.content;
@@ -396,7 +402,7 @@ export function createCore(opts: {
         continue;
       }
 
-      if (op.kind === "move") {
+      if (op.type === "move") {
         const childId = op.spec.childId;
         if (!model.hasEntry(childId)) continue;
         const child = model.peekEntry(childId);
@@ -412,7 +418,7 @@ export function createCore(opts: {
         continue;
       }
 
-      if (op.kind === "remove") {
+      if (op.type === "remove") {
         const id0 = op.id;
         if (!model.hasEntry(id0)) continue;
 
@@ -448,7 +454,7 @@ export function createCore(opts: {
             model.ops.create({
               ...cur,
               parentId: null,
-              content: { kind: "group", childIds: [] },
+              content: { type: "group", childIds: [] },
             }),
           );
         } else {
@@ -465,8 +471,7 @@ export function createCore(opts: {
         continue;
       }
 
-      const never: never = op;
-      throw new Error(`Unknown op: ${String((never as any).kind)}`);
+      assertNever(op, "Unhandled op");
     }
 
     return inverses;
@@ -604,7 +609,7 @@ export function createCore(opts: {
       if (!isGroupContent(t.content)) {
         opsOut.push(
           model.ops.patch(tableId, {
-            content: { kind: "group", childIds: [] },
+            content: { type: "group", childIds: [] },
           }),
         );
         continue;
@@ -621,7 +626,7 @@ export function createCore(opts: {
         if (!isGroupContent(row.content)) {
           opsOut.push(
             model.ops.patch(rid, {
-              content: { kind: "group", childIds: [] },
+              content: { type: "group", childIds: [] },
             }),
           );
         }
@@ -774,10 +779,10 @@ export function createCore(opts: {
       setConnected: (id, conn) => {
         const eid = requireTxEntryId(id, "setConnected");
 
-        if (conn.kind === "formula") {
+        if (conn.type === "formula") {
           ops.push(
             model.ops.patch(eid, {
-              content: { kind: "formula", expr: conn.expr },
+              content: { type: "formula", expr: conn.expr },
             }),
           );
           return;
@@ -786,7 +791,7 @@ export function createCore(opts: {
         ops.push(
           model.ops.patch(eid, {
             content: {
-              kind: "query",
+              type: "query",
               from: conn.from,
               where: conn.where,
               orderBy: conn.orderBy,
@@ -798,7 +803,7 @@ export function createCore(opts: {
       setGroup: (id) => {
         const eid = requireTxEntryId(id, "setGroup");
         ops.push(
-          model.ops.patch(eid, { content: { kind: "group", childIds: [] } }),
+          model.ops.patch(eid, { content: { type: "group", childIds: [] } }),
         );
       },
 
@@ -868,14 +873,14 @@ export function createCore(opts: {
   };
 
   const focus = (
-    focus: Focus,
+    nextFocus: Focus,
     target: string = DEFAULT_TARGET,
-    focusOpts: { caret?: Caret } = {},
+    focusOpts: FocusOpts = {},
   ) => {
     runtime.setSelection(
       {
-        kind: "focused",
-        focus,
+        type: "focused",
+        focus: nextFocus,
         target,
         ...(focusOpts.caret ? { caret: focusOpts.caret } : {}),
       },
@@ -884,7 +889,7 @@ export function createCore(opts: {
   };
 
   const blur = (): void => {
-    runtime.setSelection({ kind: "idle" });
+    runtime.setSelection({ type: "idle" });
   };
 
   const selection = (): Selection => runtime.selection();
@@ -958,7 +963,6 @@ export type {
   Selection,
   Transaction,
   ViewFactory,
-  ViewKind,
   ViewName,
 };
 export { DEFAULT_TARGET, defaultTextCaret };

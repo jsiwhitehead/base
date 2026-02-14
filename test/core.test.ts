@@ -91,8 +91,8 @@ describe("core/eval", () => {
     setFormula(core, a, "b");
     setFormula(core, b, "a");
 
-    expect(core.item(a).content.kind).toBe("issue");
-    expect(core.item(b).content.kind).toBe("issue");
+    expect(core.item(a).content.type).toBe("issue");
+    expect(core.item(b).content.type).toBe("issue");
   });
 
   test("formula entry-group materializes into readonly value-group children (paths) and cannot be located", () => {
@@ -106,8 +106,8 @@ describe("core/eval", () => {
     setFormula(core, d, "rows");
 
     const snap = core.item(d);
-    expect(snap.content.kind).toBe("group");
-    if (snap.content.kind !== "group")
+    expect(snap.content.type).toBe("group");
+    if (snap.content.type !== "group")
       throw new Error("Expected group content");
 
     expect(snap.content.children.length).toBe(2);
@@ -115,8 +115,8 @@ describe("core/eval", () => {
     const c0 = snap.content.children[0]!;
     const c1 = snap.content.children[1]!;
 
-    expect(core.item(c0).mode.kind).toBe("readonly");
-    expect(core.item(c1).mode.kind).toBe("readonly");
+    expect(core.item(c0).mode.type).toBe("readonly");
+    expect(core.item(c1).mode.type).toBe("readonly");
 
     expect(scalarOf(core.item(c0).content)).toBe(1);
     expect(scalarOf(core.item(c1).content)).toBe(2);
@@ -148,14 +148,14 @@ describe("core/eval", () => {
     });
 
     const s1 = core.item(listId);
-    expect(s1.content.kind).toBe("group");
-    if (s1.content.kind !== "group") throw new Error("Expected group content");
+    expect(s1.content.type).toBe("group");
+    if (s1.content.type !== "group") throw new Error("Expected group content");
 
     const labels1 = s1.content.children.map((id) => core.item(id).label ?? "");
     expect(labels1).toEqual(["a", "c"]);
 
     for (const cid of s1.content.children) {
-      expect(core.item(cid).mode.kind).not.toBe("readonly");
+      expect(core.item(cid).mode.type).not.toBe("readonly");
       expect(core.locate(cid)).not.toBe(null);
     }
 
@@ -166,8 +166,8 @@ describe("core/eval", () => {
     });
 
     const s2 = core.item(listId);
-    expect(s2.content.kind).toBe("group");
-    if (s2.content.kind !== "group") throw new Error("Expected group content");
+    expect(s2.content.type).toBe("group");
+    if (s2.content.type !== "group") throw new Error("Expected group content");
 
     const labels2 = s2.content.children.map((id) => core.item(id).label ?? "");
     expect(labels2).toEqual(["a", "c"]);
@@ -283,14 +283,14 @@ describe("core/invariants & rules", () => {
     });
     setView(core, tableId, "table");
 
-    expect(core.item(tableId).content.kind).toBe("group");
+    expect(core.item(tableId).content.type).toBe("group");
 
     const rowA = mkBlank(core, tableId, { label: "rowA", value: 1 });
     const rowB = mkGroup(core, tableId, { label: "rowB" });
     setView(core, rowB, "slider");
 
-    expect(core.item(rowA).content.kind).toBe("group");
-    expect(core.item(rowB).content.kind).toBe("group");
+    expect(core.item(rowA).content.type).toBe("group");
+    expect(core.item(rowB).content.type).toBe("group");
   });
 
   test("shape sync across table rows: adding/reordering/removing columns propagates by label", () => {
@@ -398,9 +398,9 @@ describe("core/collab", () => {
     const remoteTxn: Transaction = {
       ops: [
         {
-          kind: "patch",
+          type: "patch",
           id: entryId,
-          next: { content: { kind: "scalar", value: 99 } },
+          next: { content: { type: "scalar", value: 99 } },
         },
       ],
       meta: { origin: "someone-else", seq: 1 },

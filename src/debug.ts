@@ -4,6 +4,7 @@ import { signal } from "@preact/signals-core";
 import type {
   ApplyResult,
   Caret,
+  Component,
   Core,
   Focus,
   ItemId,
@@ -14,13 +15,13 @@ import { createComponent, el } from "./dom";
 
 type DebugLast =
   | {
-      kind: "commit" | "undo" | "redo";
+      type: "commit" | "undo" | "redo";
       selectionBefore: Selection;
       selectionAfter: Selection;
       result: ApplyResult;
     }
   | {
-      kind: "focus";
+      type: "focus";
       selectionBefore: Selection;
       selectionAfter: Selection;
       focus: Focus;
@@ -28,11 +29,11 @@ type DebugLast =
       caret?: Caret;
     }
   | {
-      kind: "blur";
+      type: "blur";
       selectionBefore: Selection;
       selectionAfter: Selection;
     }
-  | { kind: "dispose" };
+  | { type: "dispose" };
 
 type DebugState = {
   lastSignal: ReadonlySignal<DebugLast | null>;
@@ -64,7 +65,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
     const selectionBefore = readSelection();
     const result = commitCore(run);
     const selectionAfter = readSelection();
-    debug.setLast({ kind: "commit", selectionBefore, selectionAfter, result });
+    debug.setLast({ type: "commit", selectionBefore, selectionAfter, result });
     return result;
   };
 
@@ -72,7 +73,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
     const selectionBefore = readSelection();
     const result = undoCore();
     const selectionAfter = readSelection();
-    debug.setLast({ kind: "undo", selectionBefore, selectionAfter, result });
+    debug.setLast({ type: "undo", selectionBefore, selectionAfter, result });
     return result;
   };
 
@@ -80,7 +81,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
     const selectionBefore = readSelection();
     const result = redoCore();
     const selectionAfter = readSelection();
-    debug.setLast({ kind: "redo", selectionBefore, selectionAfter, result });
+    debug.setLast({ type: "redo", selectionBefore, selectionAfter, result });
     return result;
   };
 
@@ -89,7 +90,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
     focusCore(focus, target, opts);
     const selectionAfter = readSelection();
     debug.setLast({
-      kind: "focus",
+      type: "focus",
       selectionBefore,
       selectionAfter,
       focus,
@@ -102,11 +103,11 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
     const selectionBefore = readSelection();
     blurCore();
     const selectionAfter = readSelection();
-    debug.setLast({ kind: "blur", selectionBefore, selectionAfter });
+    debug.setLast({ type: "blur", selectionBefore, selectionAfter });
   };
 
   core.dispose = () => {
-    debug.setLast({ kind: "dispose" });
+    debug.setLast({ type: "dispose" });
     disposeCore();
   };
 
@@ -129,7 +130,7 @@ function safeJson(x: unknown): string {
 }
 
 function selectionText(selection: Selection): string {
-  if (selection.kind === "idle") return "idle";
+  if (selection.type === "idle") return "idle";
   const caret = selection.caret
     ? `caret: { start: ${selection.caret.start}, end: ${selection.caret.end} }`
     : "caret: (none)";
@@ -148,13 +149,13 @@ function applyResultSummary(r: ApplyResult): string {
 
 function lastText(last: DebugLast | null): string {
   if (!last) return "last: (none)";
-  if (last.kind === "dispose") return "last: dispose";
+  if (last.type === "dispose") return "last: dispose";
 
-  if (last.kind === "commit" || last.kind === "undo" || last.kind === "redo") {
-    return `last: ${last.kind} (${applyResultSummary(last.result)})`;
+  if (last.type === "commit" || last.type === "undo" || last.type === "redo") {
+    return `last: ${last.type} (${applyResultSummary(last.result)})`;
   }
 
-  if (last.kind === "focus") {
+  if (last.type === "focus") {
     const caret = last.caret
       ? ` caret:${last.caret.start}-${last.caret.end}`
       : "";
@@ -181,7 +182,7 @@ function probeUiFrame(
 
 function formatDataset(ds: Record<string, string> | undefined): string {
   if (!ds) return "";
-  const keys = ["id", "view", "kind", "mode", "focused", "part"].filter(
+  const keys = ["id", "view", "type", "mode", "focused", "part"].filter(
     (k) => k in ds,
   );
   const rest = Object.keys(ds)
@@ -206,7 +207,7 @@ function activeDomFocusText(): string {
   return `active: ${tag}${type}\ntarget: ${target}`;
 }
 
-export function buildDebugPanel(opts: DebugPanelOpts) {
+export function buildDebugPanel(opts: DebugPanelOpts): Component {
   const { core, debug, probeRoot } = opts;
 
   return createComponent(core, (ctx) => {
@@ -250,7 +251,7 @@ export function buildDebugPanel(opts: DebugPanelOpts) {
       bSel.textContent = selectionText(selection);
       bActive.textContent = activeDomFocusText();
 
-      if (selection.kind !== "focused") {
+      if (selection.type !== "focused") {
         bItem.textContent = "(none)";
         bDom.textContent = "(none)";
         return;

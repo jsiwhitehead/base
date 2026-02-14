@@ -37,7 +37,7 @@ function valueToText(v: ValueOrBlank): string {
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const content = core.item(id).content;
-  return content.kind === "group" ? content.children : [];
+  return content.type === "group" ? content.children : [];
 };
 
 function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
@@ -94,16 +94,16 @@ function prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
 
 function isLeafForEditTraversal(core: Core, id: ItemId): boolean {
   const item = core.item(id);
-  if (item.mode.kind === "connected") return true;
-  return item.mode.kind === "plain" && item.content.kind === "value";
+  if (item.mode.type === "connected") return true;
+  return item.mode.type === "plain" && item.content.type === "value";
 }
 
 function editStopsForItem(core: Core, id: ItemId): string[] {
   const item = core.item(id);
-  if (item.mode.kind === "connected") {
+  if (item.mode.type === "connected") {
     return fieldsFromConn(item.mode.conn).map((field) => connTarget(field.key));
   }
-  if (item.mode.kind === "plain" && item.content.kind === "value")
+  if (item.mode.type === "plain" && item.content.type === "value")
     return [VALUE_TARGET];
   return [];
 }
@@ -115,10 +115,10 @@ function primaryEditTarget(core: Core, id: ItemId): string | null {
 function textForTarget(core: Core, id: ItemId, target: string): string {
   const item = core.item(id);
   if (target === VALUE_TARGET) {
-    return item.content.kind === "value" ? valueToText(item.content.value) : "";
+    return item.content.type === "value" ? valueToText(item.content.value) : "";
   }
   if (target.startsWith("conn:")) {
-    if (item.mode.kind !== "connected") return "";
+    if (item.mode.type !== "connected") return "";
     const key = target.slice("conn:".length);
     return (
       fieldsFromConn(item.mode.conn).find((field) => field.key === key)?.text ??
@@ -150,7 +150,7 @@ function moveEditPoint(
   core: Core,
   rootId: ItemId,
   points: readonly EditPoint[],
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
   dir: NavDir,
 ): { focus: Focus; target: string; caret: Caret } | null {
   if (points.length === 0) return null;
@@ -209,19 +209,19 @@ const outlineCommands = {
   },
 
   setFormula(core: Core, id: ItemId): void {
-    core.commit((t) => t.setConnected(id, { kind: "formula", expr: "" }));
+    core.commit((t) => t.setConnected(id, { type: "formula", expr: "" }));
   },
 
   commitConnField(core: Core, id: ItemId, key: string, text: string): void {
     const item = core.item(id);
-    if (item.mode.kind !== "connected") return;
+    if (item.mode.type !== "connected") return;
     const next = patchConn(item.mode.conn, key, text);
     core.commit((t) => t.setConnected(id, next));
   },
 
   insertSibling(
     core: Core,
-    sel: Extract<Selection, { kind: "focused" }>,
+    sel: Extract<Selection, { type: "focused" }>,
     side: "before" | "after",
   ): ItemId | null {
     const loc = core.locate(sel.focus.item);
@@ -240,7 +240,7 @@ const outlineCommands = {
 
   splitAt(
     core: Core,
-    sel: Extract<Selection, { kind: "focused" }>,
+    sel: Extract<Selection, { type: "focused" }>,
     caretStart: number,
     caretEnd = caretStart,
   ): ItemId | null {
@@ -252,7 +252,7 @@ const outlineCommands = {
 
     const { parentId, index: idx } = loc;
 
-    if (!(snap.mode.kind === "plain" && snap.content.kind === "value")) {
+    if (!(snap.mode.type === "plain" && snap.content.type === "value")) {
       return outlineCommands.insertSibling(core, sel, "after");
     }
 
@@ -278,7 +278,7 @@ const outlineCommands = {
 
   joinBoundary(
     core: Core,
-    sel: Extract<Selection, { kind: "focused" }>,
+    sel: Extract<Selection, { type: "focused" }>,
     dir: "backward" | "forward",
   ): { id: ItemId; caret: Caret } | null {
     const loc = core.locate(sel.focus.item);
@@ -298,10 +298,10 @@ const outlineCommands = {
     const leftItem = core.item(leftId);
     const rightItem = core.item(rightId);
 
-    if (!(leftItem.mode.kind === "plain" && leftItem.content.kind === "value"))
+    if (!(leftItem.mode.type === "plain" && leftItem.content.type === "value"))
       return null;
     if (
-      !(rightItem.mode.kind === "plain" && rightItem.content.kind === "value")
+      !(rightItem.mode.type === "plain" && rightItem.content.type === "value")
     )
       return null;
 
@@ -318,7 +318,7 @@ const outlineCommands = {
 
   removeItem(
     core: Core,
-    sel: Extract<Selection, { kind: "focused" }>,
+    sel: Extract<Selection, { type: "focused" }>,
     prefer: "prev" | "next",
   ): ItemId | null {
     const loc = core.locate(sel.focus.item);
@@ -340,7 +340,7 @@ const outlineCommands = {
   changeNesting(
     core: Core,
     rootId: ItemId,
-    sel: Extract<Selection, { kind: "focused" }>,
+    sel: Extract<Selection, { type: "focused" }>,
     dir: "in" | "out",
   ): Focus | null {
     const id = sel.focus.item;
@@ -375,7 +375,7 @@ const outlineCommands = {
     if (!grandparentId) return null;
 
     const grandparentSnap = core.item(grandparentId);
-    if (grandparentSnap.content.kind !== "group") return null;
+    if (grandparentSnap.content.type !== "group") return null;
 
     const wrapperIdx = grandparentSnap.content.children.indexOf(wrapperId);
     if (wrapperIdx < 0) return null;
@@ -412,7 +412,7 @@ function buildOutlineNodeShell(
     bindItemFrame(ctx, { core, focus }, shell);
 
     if (withMeta) {
-      const canEditLabel = () => core.item(id).mode.kind !== "readonly";
+      const canEditLabel = () => core.item(id).mode.type !== "readonly";
 
       const commitLabel = (text: string) => {
         if (!canEditLabel()) return;
@@ -428,7 +428,7 @@ function buildOutlineNodeShell(
       const labelFocused = computed(() => {
         const sel = core.selection();
         return (
-          sel.kind === "focused" &&
+          sel.type === "focused" &&
           sel.focus.item === focus.item &&
           sel.focus.container === focus.container &&
           sel.target === LABEL_TARGET
@@ -441,7 +441,7 @@ function buildOutlineNodeShell(
 
       const fieldsSignal = computed(() => {
         const snap = core.item(id);
-        return snap.mode.kind === "connected"
+        return snap.mode.type === "connected"
           ? fieldsFromConn(snap.mode.conn)
           : [];
       });
@@ -491,11 +491,11 @@ function buildOutlineScalarBody(
       const snap = core.item(id);
       const c = snap.content;
 
-      if (c.kind === "issue")
+      if (c.type === "issue")
         return { text: c.message ?? "", readOnly: true, isIssue: true };
 
-      if (c.kind === "value") {
-        const editable = snap.mode.kind === "plain";
+      if (c.type === "value") {
+        const editable = snap.mode.type === "plain";
         return {
           text: valueToText(c.value),
           readOnly: !editable,
@@ -519,7 +519,7 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
 
     const kind = computed<"group" | "value">(() => {
       const snap = core.item(id);
-      return snap.content.kind === "group" ? "group" : "value";
+      return snap.content.type === "group" ? "group" : "value";
     });
 
     ctx.list<ItemId>(
@@ -528,7 +528,7 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
         if (kind.value !== "group") return [];
         const snap = core.item(id);
         const c = snap.content;
-        return c.kind === "group" ? [...c.children] : [];
+        return c.type === "group" ? [...c.children] : [];
       },
       (childId) => {
         const childFocus = focusFor(core, rootId, childId);
@@ -558,7 +558,7 @@ export function createOutlineView(args: {
 
     switch (intent.type) {
       case "TAB": {
-        if (sel.kind !== "focused") return;
+        if (sel.type !== "focused") return;
 
         const wasEditing = sel.target !== DEFAULT_TARGET;
         const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
@@ -597,7 +597,7 @@ export function createOutlineView(args: {
       }
 
       case "NAV": {
-        if (sel.kind !== "focused") return;
+        if (sel.type !== "focused") return;
 
         if (sel.target === DEFAULT_TARGET) {
           const fromId = sel.focus.item;
@@ -631,7 +631,7 @@ export function createOutlineView(args: {
       }
 
       case "TYPE": {
-        if (sel.kind !== "focused") return;
+        if (sel.type !== "focused") return;
 
         const id = sel.focus.item;
         const item = core.item(id);
@@ -639,8 +639,8 @@ export function createOutlineView(args: {
         if (
           intent.char === "=" &&
           (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
-          item.mode.kind === "plain" &&
-          item.content.kind === "value" &&
+          item.mode.type === "plain" &&
+          item.content.type === "value" &&
           valueToText(item.content.value).trim() === ""
         ) {
           outlineCommands.setFormula(core, id);
@@ -661,7 +661,7 @@ export function createOutlineView(args: {
       }
 
       case "CONFIRM": {
-        if (sel.kind !== "focused") return;
+        if (sel.type !== "focused") return;
 
         if (sel.target !== DEFAULT_TARGET) {
           if (sel.target === VALUE_TARGET && intent.caret) {
@@ -700,12 +700,12 @@ export function createOutlineView(args: {
       }
 
       case "DELETE_BOUNDARY": {
-        if (sel.kind !== "focused") return;
+        if (sel.type !== "focused") return;
 
         const prefer = intent.dir === "backward" ? "prev" : "next";
         const item = core.item(sel.focus.item);
 
-        if (!(item.mode.kind === "plain" && item.content.kind === "value")) {
+        if (!(item.mode.type === "plain" && item.content.type === "value")) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();
@@ -738,7 +738,7 @@ export function createOutlineView(args: {
       }
 
       case "DELETE": {
-        if (sel.kind !== "focused") return;
+        if (sel.type !== "focused") return;
         if (sel.target !== DEFAULT_TARGET) return;
         dispatch({ type: "DELETE_BOUNDARY", dir: intent.dir });
         return;

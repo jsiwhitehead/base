@@ -10,6 +10,13 @@ type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
 };
 
+type ConnField = {
+  key: string;
+  label: string;
+  multiline: boolean;
+  text: string;
+};
+
 export type NavDir = "left" | "right" | "up" | "down";
 type NavMode = "step" | "jump";
 
@@ -23,12 +30,15 @@ export type Intent =
   | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
 
 export const SELECT_ALL: Caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
-export const caret0 = (): Caret => ({ start: 0, end: 0 });
-export const caretAt = (pos: number): Caret => ({ start: pos, end: pos });
+export const caret0: () => Caret = () => ({ start: 0, end: 0 });
+export const caretAt: (pos: number) => Caret = (pos) => ({
+  start: pos,
+  end: pos,
+});
 
 export const LABEL_TARGET = "label";
 export const VALUE_TARGET = "value";
-export const connTarget = (key: string): string => `conn:${key}`;
+export const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
 function consume(e: Event): void {
   e.preventDefault?.();
@@ -95,7 +105,7 @@ export function insertTextIntoActiveEditor(text: string): void {
 
 export function escapeLadder(core: Core): void {
   const sel = core.selection();
-  if (sel.kind !== "focused") {
+  if (sel.type !== "focused") {
     core.blur();
     return;
   }
@@ -121,7 +131,7 @@ function textInput(multiline: boolean): TextInputElement {
   return inputEl;
 }
 
-function syncValue(inp: TextInputElement, next: string) {
+function syncValue(inp: TextInputElement, next: string): void {
   if (inp.value === next) return;
 
   if (document.activeElement !== inp) {
@@ -208,20 +218,20 @@ export function buildTextField(
     const isThisTargetFocused = (): boolean => {
       const sel = core.selection();
       return (
-        sel.kind === "focused" &&
+        sel.type === "focused" &&
         sel.focus.item === opts.focus.item &&
         sel.focus.container === opts.focus.container &&
         sel.target === opts.target
       );
     };
 
-    const syncMirror = (text: string) => {
+    const syncMirror = (text: string): void => {
       if (!mirror) return;
       const next = text.endsWith("\n") ? text + "\u200B" : text;
       if (mirror.textContent !== next) mirror.textContent = next;
     };
 
-    const beginDraftSession = () => {
+    const beginDraftSession = (): void => {
       if (editModel !== "draft") return;
       if (editing) return;
 
@@ -257,7 +267,7 @@ export function buildTextField(
       syncMirror(baseline);
     };
 
-    const handleIntent = (intent: Intent) => {
+    const handleIntent = (intent: Intent): void => {
       if (editModel === "draft") {
         if (intent.type === "CANCEL") {
           cancelDraft();
@@ -425,15 +435,8 @@ export function buildTextField(
   return { ...c, focusEl };
 }
 
-type ConnField = {
-  key: string;
-  label: string;
-  multiline: boolean;
-  text: string;
-};
-
 export function fieldsFromConn(conn: Connected): ConnField[] {
-  if (conn.kind === "formula") {
+  if (conn.type === "formula") {
     return [
       { key: "expr", label: "=", multiline: true, text: conn.expr ?? "" },
     ];
@@ -455,8 +458,8 @@ export function patchConn(
   key: string,
   text: string,
 ): Connected {
-  if (conn.kind === "formula") {
-    if (key === "expr") return { kind: "formula", expr: text };
+  if (conn.type === "formula") {
+    if (key === "expr") return { type: "formula", expr: text };
     return conn;
   }
   if (key === "from") return { ...conn, from: text };
@@ -506,7 +509,7 @@ export function buildItemHeader(
 
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
-      return snap.mode.kind === "connected"
+      return snap.mode.type === "connected"
         ? fieldsFromConn(snap.mode.conn)
         : [];
     });
@@ -525,7 +528,7 @@ export function buildItemHeader(
 
           const specForKey = (): ConnField | null => {
             const snap = core.item(id);
-            if (snap.mode.kind !== "connected") return null;
+            if (snap.mode.type !== "connected") return null;
             return (
               fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ?? null
             );
@@ -543,7 +546,7 @@ export function buildItemHeader(
             commit: (text) => args.commitConnField(key, text),
             getState: () => {
               const snap = core.item(id);
-              if (snap.mode.kind !== "connected")
+              if (snap.mode.type !== "connected")
                 return { text: "", readOnly: true, isIssue: false };
               const txt =
                 fieldsFromConn(snap.mode.conn).find((x) => x.key === key)

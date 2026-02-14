@@ -28,7 +28,7 @@ import {
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const content = core.item(id).content;
-  return content.kind === "group" ? content.children : [];
+  return content.type === "group" ? content.children : [];
 };
 
 const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
@@ -37,12 +37,12 @@ const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
 
 function isFocused(
   sel: Selection,
-): sel is Extract<Selection, { kind: "focused" }> {
-  return sel.kind === "focused";
+): sel is Extract<Selection, { type: "focused" }> {
+  return sel.type === "focused";
 }
 
 function isRowContainerSel(
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
   tableId: ItemId,
 ): boolean {
   return sel.focus.container === tableId && sel.target === DEFAULT_TARGET;
@@ -52,7 +52,7 @@ function isCellSel(
   core: Core,
   tableId: ItemId,
   rows: readonly ItemId[],
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
 ): boolean {
   const rowId = sel.focus.container;
   if (rowId === tableId) return false;
@@ -64,7 +64,7 @@ function isCellContainerSel(
   core: Core,
   tableId: ItemId,
   rows: readonly ItemId[],
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
 ): boolean {
   return sel.target === DEFAULT_TARGET && isCellSel(core, tableId, rows, sel);
 }
@@ -73,7 +73,7 @@ function isCellValueSel(
   core: Core,
   tableId: ItemId,
   rows: readonly ItemId[],
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
 ): boolean {
   return sel.target === VALUE_TARGET && isCellSel(core, tableId, rows, sel);
 }
@@ -179,7 +179,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
             const focus: Focus = { container: schemaRowId, item: cellId };
 
             const canEditLabel = () =>
-              core.item(cellId).mode.kind !== "readonly";
+              core.item(cellId).mode.type !== "readonly";
 
             const commitLabel = (text: string) => {
               if (!canEditLabel()) return;
@@ -190,7 +190,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
 
             const commitConnField = (key: string, text: string) => {
               const snap = core.item(cellId);
-              if (snap.mode.kind !== "connected") return;
+              if (snap.mode.type !== "connected") return;
               const next = patchConn(snap.mode.conn, key, text);
               core.commit((t) => t.setConnected(cellId, next));
             };
@@ -248,7 +248,7 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
     row.append(metaCell);
 
     ctx.slot(metaCell, () => {
-      const canEditLabel = () => core.item(rowId).mode.kind !== "readonly";
+      const canEditLabel = () => core.item(rowId).mode.type !== "readonly";
 
       const commitLabel = (text: string) => {
         if (!canEditLabel()) return;
@@ -259,7 +259,7 @@ function buildRowShell(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
       const commitConnField = (key: string, text: string) => {
         const snap = core.item(rowId);
-        if (snap.mode.kind !== "connected") return;
+        if (snap.mode.type !== "connected") return;
         const next = patchConn(snap.mode.conn, key, text);
         core.commit((t) => t.setConnected(rowId, next));
       };
@@ -315,7 +315,7 @@ function tableNavMove(
   tableId: ItemId,
   rows: readonly ItemId[],
   ncols: number,
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
   dir: NavDir,
 ): { focus: Focus; target: string; caret: Caret } | null {
   if (rows.length === 0) return null;
@@ -383,7 +383,7 @@ function tabMove(
   tableId: ItemId,
   rows: readonly ItemId[],
   ncols: number,
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
   shift: boolean,
 ): { focus: Focus; target: string; caret: Caret } | null {
   if (rows.length === 0) return null;
@@ -435,7 +435,7 @@ function tabMove(
 function enterMove(
   core: Core,
   rows: readonly ItemId[],
-  sel: Extract<Selection, { kind: "focused" }>,
+  sel: Extract<Selection, { type: "focused" }>,
 ): { focus: Focus; target: string; caret: Caret } | null {
   const rowId = sel.focus.container;
   const cellId = sel.focus.item;

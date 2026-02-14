@@ -6,12 +6,12 @@ import { DEV, devAssert } from "../dev";
 export type EntryId = number;
 export type Scalar = true | number | string;
 
-const NUM_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+const NUMERIC_SCALAR_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
 export function parseScalar(text: string): Scalar | null {
   const t = text.trim();
   if (!t) return null;
-  if (NUM_RE.test(t)) {
+  if (NUMERIC_SCALAR_RE.test(t)) {
     const n = Number(t);
     if (Number.isFinite(n)) return n;
   }
@@ -20,14 +20,16 @@ export function parseScalar(text: string): Scalar | null {
 }
 
 export type ViewName = "outline" | "table" | "slider";
-export type ViewKind = ViewName | null;
 
-type BlankContent = { kind: "blank" };
-type ScalarContent = { kind: "scalar"; value: Scalar };
-type GroupContent = { kind: "group"; childIds: readonly EntryId[] };
-type FormulaContent = { kind: "formula"; expr: string };
+type BlankContent = { type: "blank" };
+type ScalarContent = { type: "scalar"; value: Scalar };
+type GroupContent = {
+  type: "group";
+  childIds: readonly EntryId[];
+};
+type FormulaContent = { type: "formula"; expr: string };
 type QueryContent = {
-  kind: "query";
+  type: "query";
   from: string;
   where: string;
   orderBy: string;
@@ -40,44 +42,53 @@ export type Entry = {
   readonly id: EntryId;
   readonly parentId: EntryId | null;
   readonly label: string;
-  readonly view: ViewKind;
+  readonly view: ViewName | null;
   readonly content: EntryContent;
 };
 
 type GroupEntry = Entry & { content: GroupContent };
 
 function isBlankContent(content: EntryContent): content is BlankContent {
-  return content.kind === "blank";
+  return content.type === "blank";
 }
 
 function isScalarContent(content: EntryContent): content is ScalarContent {
-  return content.kind === "scalar";
+  return content.type === "scalar";
 }
 
 export function isGroupContent(content: EntryContent): content is GroupContent {
-  return content.kind === "group";
+  return content.type === "group";
 }
 
 export function isFormulaContent(
   content: EntryContent,
 ): content is FormulaContent {
-  return content.kind === "formula";
+  return content.type === "formula";
 }
 
 export function isQueryContent(content: EntryContent): content is QueryContent {
-  return content.kind === "query";
+  return content.type === "query";
 }
 
 function isGroupEntry(entry: Entry): entry is GroupEntry {
   return isGroupContent(entry.content);
 }
 
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
+}
+
 type SnapshotContent =
-  | { kind: "blank" }
-  | { kind: "scalar"; value: Scalar }
-  | { kind: "group"; childIds: SnapshotEntry[] }
-  | { kind: "formula"; expr: string }
-  | { kind: "query"; from: string; where: string; orderBy: string };
+  | { type: "blank" }
+  | { type: "scalar"; value: Scalar }
+  | { type: "group"; childIds: SnapshotEntry[] }
+  | { type: "formula"; expr: string }
+  | {
+      type: "query";
+      from: string;
+      where: string;
+      orderBy: string;
+    };
 
 type SnapshotEntry = {
   label?: string;
@@ -100,15 +111,15 @@ type MoveResult = {
 
 type EntryPatch = {
   label?: string;
-  view?: ViewKind;
+  view?: ViewName | null;
   content?: EntryContent;
 };
 
 export type Op =
-  | { kind: "create"; entry: Entry }
-  | { kind: "patch"; id: EntryId; next: EntryPatch }
-  | { kind: "move"; spec: MoveSpec }
-  | { kind: "remove"; id: EntryId };
+  | { type: "create"; entry: Entry }
+  | { type: "patch"; id: EntryId; next: EntryPatch }
+  | { type: "move"; spec: MoveSpec }
+  | { type: "remove"; id: EntryId };
 
 export type TransactionMeta = {
   source?: "user" | "remote" | "rule" | "undo" | "redo" | string;
@@ -155,7 +166,7 @@ export type Model = {
   readEntry(id: EntryId): Entry;
   peekEntry(id: EntryId): Entry;
 
-  contentKindOf(id: EntryId): EntryContent["kind"];
+  contentTypeOf(id: EntryId): EntryContent["type"];
   canEditScalarText(id: EntryId): boolean;
 
   childIdsOf(groupId: EntryId): EntryId[];
@@ -168,13 +179,13 @@ export type Model = {
   pruneUnreachable(): { removed: number; removedIds: EntryId[] };
 };
 
-type EntryRec = {
+type EntryRecord = {
   entrySignal: Signal<Entry>;
   childLabelIndexSignal?: ReadonlySignal<Map<string, EntryId>>;
 };
 
-type EntrySnapshotRec = {
-  rec: EntryRec;
+type EntrySnapshotRecord = {
+  record: EntryRecord;
   entry: Entry;
 };
 
@@ -182,8 +193,8 @@ function clampIndex(i: number, len: number): number {
   return Math.max(0, Math.min(i, len));
 }
 
-export function normalizeLabel(s: string): string {
-  return s.trim();
+export function normalizeLabel(label: string): string {
+  return label.trim();
 }
 
 export function makeBlankEntry(id: EntryId): Entry {
@@ -192,7 +203,7 @@ export function makeBlankEntry(id: EntryId): Entry {
     parentId: null,
     label: "",
     view: null,
-    content: { kind: "blank" },
+    content: { type: "blank" },
   };
 }
 
@@ -202,12 +213,12 @@ export function makeGroupEntry(id: EntryId): Entry {
     parentId: null,
     label: "",
     view: null,
-    content: { kind: "group", childIds: [] },
+    content: { type: "group", childIds: [] },
   };
 }
 
 export function createModel(): Model {
-  const entries = new Map<EntryId, EntryRec>();
+  const entries = new Map<EntryId, EntryRecord>();
 
   let root: EntryId | null = null;
   let nextId = 1;
@@ -228,14 +239,14 @@ export function createModel(): Model {
 
   const hasEntry = (id: EntryId): boolean => entries.has(id);
 
-  const entryRec = (id: EntryId): EntryRec => {
-    const rec = entries.get(id);
-    if (!rec) throw new Error(`Unknown entry id: ${String(id)}`);
-    return rec;
+  const entryRecord = (id: EntryId): EntryRecord => {
+    const record = entries.get(id);
+    if (!record) throw new Error(`Unknown entry id: ${String(id)}`);
+    return record;
   };
 
   const entrySignal = (id: EntryId): ReadonlySignal<Entry> =>
-    entryRec(id).entrySignal;
+    entryRecord(id).entrySignal;
 
   const readEntry = (id: EntryId): Entry => entrySignal(id).value;
   const peekEntry = (id: EntryId): Entry => entrySignal(id).peek();
@@ -246,20 +257,22 @@ export function createModel(): Model {
     entries.set(initial.id, { entrySignal: signal(initial) });
   };
 
-  const snapshotEntries = (): Map<EntryId, EntrySnapshotRec> =>
+  const snapshotEntries = (): Map<EntryId, EntrySnapshotRecord> =>
     new Map(
-      [...entries].map(([id, rec]) => [
+      [...entries].map(([id, record]) => [
         id,
-        { rec, entry: rec.entrySignal.peek() },
+        { record, entry: record.entrySignal.peek() },
       ]),
     );
 
-  const restoreEntries = (snapshot: Map<EntryId, EntrySnapshotRec>): void => {
+  const restoreEntries = (
+    snapshot: Map<EntryId, EntrySnapshotRecord>,
+  ): void => {
     batch(() => {
       entries.clear();
       for (const [id, snap] of snapshot) {
-        entries.set(id, snap.rec);
-        snap.rec.entrySignal.value = snap.entry;
+        entries.set(id, snap.record);
+        snap.record.entrySignal.value = snap.entry;
       }
     });
   };
@@ -267,8 +280,8 @@ export function createModel(): Model {
   const childLabelIndexSignal = (
     groupId: EntryId,
   ): ReadonlySignal<Map<string, EntryId>> => {
-    const groupRec = entryRec(groupId);
-    return (groupRec.childLabelIndexSignal ??= computed(() => {
+    const groupRecord = entryRecord(groupId);
+    return (groupRecord.childLabelIndexSignal ??= computed(() => {
       const groupEntry = entrySignal(groupId).value;
       if (!isGroupContent(groupEntry.content))
         return new Map<string, EntryId>();
@@ -290,19 +303,19 @@ export function createModel(): Model {
       childIds?: readonly EntryId[];
       override?: { childId: EntryId; label: string };
     } = {},
-  ) {
+  ): void {
     const parent = entrySignal(parentId).peek();
     if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
 
     const childIds = opts.childIds ?? parent.content.childIds;
 
     const seen = new Set<string>();
-    for (const cid of childIds) {
-      if (!entries.has(cid)) continue;
+    for (const childId of childIds) {
+      if (!entries.has(childId)) continue;
 
-      const childEntry = entrySignal(cid).peek();
+      const childEntry = entrySignal(childId).peek();
       const raw =
-        opts.override && opts.override.childId === cid
+        opts.override && opts.override.childId === childId
           ? opts.override.label
           : childEntry.label;
 
@@ -316,25 +329,27 @@ export function createModel(): Model {
   }
 
   const ops = {
-    create: (entry: Entry): Op => ({ kind: "create", entry }),
+    create: (entry: Entry): Op => ({ type: "create", entry }),
     patch: (id: EntryId, next: EntryPatch): Op => ({
-      kind: "patch",
+      type: "patch",
       id,
       next,
     }),
-    move: (spec: MoveSpec): Op => ({ kind: "move", spec }),
-    remove: (id: EntryId): Op => ({ kind: "remove", id }),
+    move: (spec: MoveSpec): Op => ({ type: "move", spec }),
+    remove: (id: EntryId): Op => ({ type: "remove", id }),
     transaction: (
-      ops2: readonly Op[],
+      opList: readonly Op[],
       meta?: Transaction["meta"],
-    ): Transaction => (meta ? { ops: ops2, meta } : { ops: ops2 }),
+    ): Transaction => (meta ? { ops: opList, meta } : { ops: opList }),
   } as const;
 
-  const expectGroupParent = (parentId: EntryId) => {
-    const s = entryRec(parentId).entrySignal;
-    const parent = s.peek();
+  const expectGroupParent = (
+    parentId: EntryId,
+  ): { entrySignal: Signal<Entry>; parent: GroupEntry } => {
+    const parentSignal = entryRecord(parentId).entrySignal;
+    const parent = parentSignal.peek();
     if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
-    return { entrySignal: s, parent };
+    return { entrySignal: parentSignal, parent };
   };
 
   const getGroupEntry = (id: EntryId | null): GroupEntry | null => {
@@ -348,8 +363,8 @@ export function createModel(): Model {
 
     if (!entries.has(childId)) throw new Error("Unknown child");
 
-    const childRec = entryRec(childId);
-    const child = childRec.entrySignal.peek();
+    const childRecord = entryRecord(childId);
+    const child = childRecord.entrySignal.peek();
     const fromParentId = child.parentId;
 
     let fromIndex: number | null = null;
@@ -403,7 +418,7 @@ export function createModel(): Model {
         parentSignal.value = {
           ...parent,
           content: {
-            kind: "group",
+            type: "group",
             childIds: preparedChildIds,
           },
         };
@@ -416,7 +431,7 @@ export function createModel(): Model {
           parentSignal.value = {
             ...parent,
             content: {
-              kind: "group",
+              type: "group",
               childIds: parent.content.childIds.filter((x) => x !== childId),
             },
           };
@@ -425,7 +440,7 @@ export function createModel(): Model {
 
       const nextParentId = toParentId ?? null;
       if (child.parentId !== nextParentId) {
-        childRec.entrySignal.value = { ...child, parentId: nextParentId };
+        childRecord.entrySignal.value = { ...child, parentId: nextParentId };
       }
     });
 
@@ -433,12 +448,12 @@ export function createModel(): Model {
   }
 
   const patch = (id: EntryId, next: EntryPatch): void => {
-    const rec = entryRec(id);
-    const cur = rec.entrySignal.peek();
+    const record = entryRecord(id);
+    const currentEntry = record.entrySignal.peek();
     let nextContent = next.content;
 
     if (next.label !== undefined) {
-      const parentId = cur.parentId;
+      const parentId = currentEntry.parentId;
       if (parentId != null) {
         assertUniqueChildLabels(parentId, {
           override: { childId: id, label: next.label },
@@ -447,24 +462,27 @@ export function createModel(): Model {
     }
 
     if (nextContent !== undefined) {
-      const curC = cur.content;
-      const nextC = nextContent;
+      const currentContent = currentEntry.content;
+      const requestedContent = nextContent;
 
-      if (isGroupContent(nextC)) {
-        if (nextC.childIds.length !== 0)
+      if (isGroupContent(requestedContent)) {
+        if (requestedContent.childIds.length !== 0)
           throw new Error("Group membership must be modified via move");
 
-        if (isGroupContent(curC)) {
+        if (isGroupContent(currentContent)) {
           nextContent = undefined;
         }
       } else {
-        if (isGroupContent(curC) && curC.childIds.length !== 0)
+        if (
+          isGroupContent(currentContent) &&
+          currentContent.childIds.length !== 0
+        )
           throw new Error("Cannot convert non-empty group to non-group");
       }
     }
 
-    rec.entrySignal.value = {
-      ...cur,
+    record.entrySignal.value = {
+      ...currentEntry,
       ...(next.label !== undefined ? { label: next.label } : {}),
       ...(next.view !== undefined ? { view: next.view } : {}),
       ...(nextContent !== undefined ? { content: nextContent } : {}),
@@ -481,10 +499,10 @@ export function createModel(): Model {
     if (!entries.has(id)) throw new Error("Unknown entry");
     if (id === rootId()) throw new Error("Cannot remove root");
 
-    const rec = entryRec(id);
-    const cur = rec.entrySignal.peek();
+    const record = entryRecord(id);
+    const currentEntry = record.entrySignal.peek();
 
-    const parentId = cur.parentId;
+    const parentId = currentEntry.parentId;
     const orphanedChildren: EntryId[] = [];
 
     batch(() => {
@@ -499,21 +517,21 @@ export function createModel(): Model {
           parentSignal.value = {
             ...parentVal,
             content: {
-              kind: "group",
+              type: "group",
               childIds: parentVal.content.childIds.filter((x) => x !== id),
             },
           };
         }
       }
 
-      if (isGroupEntry(cur)) {
-        for (const cid of cur.content.childIds) {
-          if (!entries.has(cid)) continue;
-          const childRec = entryRec(cid);
-          const child = childRec.entrySignal.peek();
+      if (isGroupEntry(currentEntry)) {
+        for (const childId of currentEntry.content.childIds) {
+          if (!entries.has(childId)) continue;
+          const childRecord = entryRecord(childId);
+          const child = childRecord.entrySignal.peek();
           if (child.parentId === id) {
-            childRec.entrySignal.value = { ...child, parentId: null };
-            orphanedChildren.push(cid);
+            childRecord.entrySignal.value = { ...child, parentId: null };
+            orphanedChildren.push(childId);
           }
         }
       }
@@ -533,7 +551,7 @@ export function createModel(): Model {
     try {
       batch(() => {
         for (const op of txn.ops) {
-          switch (op.kind) {
+          switch (op.type) {
             case "create":
               createEntryInternal(op.entry);
               created.push(op.entry.id);
@@ -562,10 +580,8 @@ export function createModel(): Model {
               break;
             }
 
-            default: {
-              const never: never = op;
-              throw new Error(`Unknown op: ${String((never as any).kind)}`);
-            }
+            default:
+              return assertNever(op, "Unknown op");
           }
         }
       });
@@ -578,8 +594,8 @@ export function createModel(): Model {
     return { created, touched: [...touched], moved };
   };
 
-  const contentKindOf = (id: EntryId): EntryContent["kind"] =>
-    entrySignal(id).value.content.kind;
+  const contentTypeOf = (id: EntryId): EntryContent["type"] =>
+    entrySignal(id).value.content.type;
 
   const canEditScalarText = (id: EntryId): boolean => {
     const content = readEntry(id).content;
@@ -654,9 +670,10 @@ export function createModel(): Model {
     return { removed: removedIds.length, removedIds };
   };
 
-  function assertValidInternal() {
+  function assertValidInternal(): void {
     devAssert(root != null, "Root not set");
-    devAssert(entries.has(root!), `Root entry missing: ${String(root)}`);
+    if (root == null) return;
+    devAssert(entries.has(root), `Root entry missing: ${String(root)}`);
 
     const groupChildIdsOf = (id: EntryId): readonly EntryId[] | null => {
       const entry = entries.get(id)?.entrySignal.peek();
@@ -664,96 +681,100 @@ export function createModel(): Model {
       return isGroupEntry(entry) ? entry.content.childIds : null;
     };
 
-    for (const [gid, rec] of entries) {
-      const groupEntry = rec.entrySignal.peek();
+    for (const [groupId, record] of entries) {
+      const groupEntry = record.entrySignal.peek();
       if (!isGroupEntry(groupEntry)) continue;
 
       const childIds = groupEntry.content.childIds;
 
       const seenIds = new Set<EntryId>();
-      for (const cid of childIds) {
+      for (const childId of childIds) {
         devAssert(
-          !seenIds.has(cid),
-          `Group ${gid} contains duplicate child id ${cid}`,
+          !seenIds.has(childId),
+          `Group ${groupId} contains duplicate child id ${childId}`,
         );
-        seenIds.add(cid);
+        seenIds.add(childId);
 
         devAssert(
-          entries.has(cid),
-          `Group ${gid} references missing child id ${cid}`,
+          entries.has(childId),
+          `Group ${groupId} references missing child id ${childId}`,
         );
 
-        const child = entries.get(cid)!.entrySignal.peek();
+        const child = entries.get(childId)!.entrySignal.peek();
         devAssert(
-          child.parentId === gid,
-          `Child ${cid} has parentId=${String(child.parentId)} but is listed under group ${gid}`,
+          child.parentId === groupId,
+          `Child ${childId} has parentId=${String(child.parentId)} but is listed under group ${groupId}`,
         );
       }
 
       const seenLabels = new Set<string>();
-      for (const cid of childIds) {
-        const child = entries.get(cid)!.entrySignal.peek();
+      for (const childId of childIds) {
+        const child = entries.get(childId)!.entrySignal.peek();
         const label = normalizeLabel(child.label);
         if (!label) continue;
         devAssert(
           !seenLabels.has(label),
-          `Duplicate label '${label}' in group ${gid}`,
+          `Duplicate label '${label}' in group ${groupId}`,
         );
         seenLabels.add(label);
       }
     }
 
-    for (const [cid, rec] of entries) {
-      const child = rec.entrySignal.peek();
+    for (const [childId, record] of entries) {
+      const child = record.entrySignal.peek();
       const parentId = child.parentId;
       if (parentId == null) continue;
 
       devAssert(
         entries.has(parentId),
-        `Entry ${cid} has missing parent ${parentId}`,
+        `Entry ${childId} has missing parent ${parentId}`,
       );
 
       const parentChildIds = groupChildIdsOf(parentId);
       devAssert(
         parentChildIds != null,
-        `Entry ${cid} parent ${parentId} is not a group`,
+        `Entry ${childId} parent ${parentId} is not a group`,
       );
 
       const count = parentChildIds!.reduce(
-        (n, x) => n + (x === cid ? 1 : 0),
+        (n, x) => n + (x === childId ? 1 : 0),
         0,
       );
       devAssert(
         count === 1,
-        `Entry ${cid} parent ${parentId} contains it ${count} times (expected 1)`,
+        `Entry ${childId} parent ${parentId} contains it ${count} times (expected 1)`,
       );
     }
   }
 
   const snapshotContent = (content: EntryContent): SnapshotContent => {
-    if (isBlankContent(content)) return { kind: "blank" };
-    if (isScalarContent(content))
-      return { kind: "scalar", value: content.value };
-    if (isFormulaContent(content))
-      return { kind: "formula", expr: content.expr };
-    if (isQueryContent(content)) {
-      return {
-        kind: "query",
-        from: content.from,
-        where: content.where,
-        orderBy: content.orderBy,
-      };
+    switch (content.type) {
+      case "blank":
+        return { type: "blank" };
+      case "scalar":
+        return { type: "scalar", value: content.value };
+      case "formula":
+        return { type: "formula", expr: content.expr };
+      case "query":
+        return {
+          type: "query",
+          from: content.from,
+          where: content.where,
+          orderBy: content.orderBy,
+        };
+      case "group":
+        return {
+          type: "group",
+          childIds: content.childIds.map(snapshot),
+        };
+      default:
+        return assertNever(content, "Unknown entry content");
     }
-    if (isGroupContent(content)) {
-      return { kind: "group", childIds: content.childIds.map(snapshot) };
-    }
-    const unreachable: never = content;
-    return unreachable;
   };
 
   const snapshot = (id: EntryId): SnapshotEntry => {
     const entry = entrySignal(id).value;
-    const label = entry.label.trim() ? entry.label : undefined;
+    const label = normalizeLabel(entry.label) ? entry.label : undefined;
     const view = entry.view ?? undefined;
     return {
       ...(label ? { label } : {}),
@@ -777,7 +798,7 @@ export function createModel(): Model {
     readEntry,
     peekEntry,
 
-    contentKindOf,
+    contentTypeOf,
     canEditScalarText,
 
     childIdsOf,

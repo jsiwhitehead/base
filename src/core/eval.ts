@@ -6,12 +6,12 @@ import { normalizeLabel } from "./model";
 
 type LabeledResult = { label?: string; result: Result };
 
-type BlankResult = { kind: "blank" };
-type IssueResult = { kind: "issue"; message: string };
-type ScalarResult = { kind: "scalar"; result: Scalar };
-type EntryGroupResult = { kind: "entry-group"; entryIds: readonly EntryId[] };
+type BlankResult = { type: "blank" };
+type IssueResult = { type: "issue"; message: string };
+type ScalarResult = { type: "scalar"; result: Scalar };
+type EntryGroupResult = { type: "entry-group"; entryIds: readonly EntryId[] };
 type ResultGroupResult = {
-  kind: "result-group";
+  type: "result-group";
   items: readonly LabeledResult[];
 };
 
@@ -23,42 +23,46 @@ export type Result =
   | ResultGroupResult;
 
 export const Results = {
-  blank: (): Result => ({ kind: "blank" }),
-  issue: (message: string): Result => ({ kind: "issue", message }),
-  scalar: (scalar: Scalar): Result => ({ kind: "scalar", result: scalar }),
+  blank: (): Result => ({ type: "blank" }),
+  issue: (message: string): Result => ({ type: "issue", message }),
+  scalar: (scalar: Scalar): Result => ({ type: "scalar", result: scalar }),
   entryGroup: (entryIds: readonly EntryId[]): Result => ({
-    kind: "entry-group",
+    type: "entry-group",
     entryIds,
   }),
   resultGroup: (items: readonly LabeledResult[]): Result => ({
-    kind: "result-group",
+    type: "result-group",
     items,
   }),
 } as const;
 
-export const isPresent = (v: Result): boolean =>
-  v.kind !== "blank" && v.kind !== "issue";
-export const isTrue = (v: Result): boolean =>
-  v.kind === "scalar" && v.result === true;
+export const isPresent = (result: Result): boolean =>
+  result.type !== "blank" && result.type !== "issue";
+export const isTrue = (result: Result): boolean =>
+  result.type === "scalar" && result.result === true;
 
 export function isBlankResult(v: Result): v is BlankResult {
-  return v.kind === "blank";
+  return v.type === "blank";
 }
 
 export function isIssueResult(v: Result): v is IssueResult {
-  return v.kind === "issue";
+  return v.type === "issue";
 }
 
 export function isScalarResult(v: Result): v is ScalarResult {
-  return v.kind === "scalar";
+  return v.type === "scalar";
 }
 
 export function isEntryGroupResult(v: Result): v is EntryGroupResult {
-  return v.kind === "entry-group";
+  return v.type === "entry-group";
 }
 
 export function isResultGroupResult(v: Result): v is ResultGroupResult {
-  return v.kind === "result-group";
+  return v.type === "result-group";
+}
+
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
 }
 
 export type EvalEnv = {
@@ -89,33 +93,44 @@ function withVisiting(ctx: EvalCtx, id: EntryId, run: () => Result): Result {
 
 const SORT_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 
-const sortRank = (v: Result): [number, unknown] => {
-  if (isBlankResult(v) || isIssueResult(v)) return [4, null];
-  if (isScalarResult(v)) {
-    const lit = v.result;
-    if (typeof lit === "number") return [0, lit];
-    if (typeof lit === "string") return [1, lit];
-    if (lit === true) return [2, 1];
+type SortKey =
+  | { rank: 0; value: number }
+  | { rank: 1; value: string }
+  | { rank: 2 }
+  | { rank: 3 }
+  | { rank: 4 };
+
+const sortKeyFor = (result: Result): SortKey => {
+  if (isBlankResult(result) || isIssueResult(result)) return { rank: 4 };
+  if (isScalarResult(result)) {
+    if (typeof result.result === "number")
+      return { rank: 0, value: result.result };
+    if (typeof result.result === "string")
+      return { rank: 1, value: result.result };
+    if (result.result === true) return { rank: 2 };
+    return assertNever(result.result, "Unhandled scalar variant");
   }
-  return [3, null];
+  if (isEntryGroupResult(result) || isResultGroupResult(result))
+    return { rank: 3 };
+  return assertNever(result, "Unhandled result variant");
 };
 
 const compareSortKey = (a: Result, b: Result): number => {
-  const [ra, va] = sortRank(a);
-  const [rb, vb] = sortRank(b);
-  if (ra !== rb) return ra - rb;
+  const aKey = sortKeyFor(a);
+  const bKey = sortKeyFor(b);
+  if (aKey.rank !== bKey.rank) return aKey.rank - bKey.rank;
 
-  if (ra === 0) {
-    const d = (va as number) - (vb as number);
-    if (d) return d;
-  } else if (ra === 1) {
-    const d = SORT_COLLATOR.compare(String(va), String(vb));
-    if (d) return d;
+  if (aKey.rank === 0 && bKey.rank === 0) {
+    const delta = aKey.value - bKey.value;
+    if (delta) return delta;
+  } else if (aKey.rank === 1 && bKey.rank === 1) {
+    const delta = SORT_COLLATOR.compare(aKey.value, bKey.value);
+    if (delta) return delta;
   }
   return 0;
 };
 
-type CacheRec = { resultSignal?: ReadonlySignal<Result> };
+type CacheRecord = { resultSignal?: ReadonlySignal<Result> };
 
 type Evaluator = {
   resultSignal(id: EntryId): ReadonlySignal<Result>;
@@ -132,15 +147,15 @@ export function createEvaluator(opts: {
   const { model } = opts;
   const interpretExpr = opts.interpret;
 
-  const cache = new Map<EntryId, CacheRec>();
+  const cache = new Map<EntryId, CacheRecord>();
 
-  const cacheRecFor = (id: EntryId): CacheRec => {
-    let cacheRec = cache.get(id);
-    if (!cacheRec) {
-      cacheRec = {};
-      cache.set(id, cacheRec);
+  const cacheRecordFor = (id: EntryId): CacheRecord => {
+    let cacheRecord = cache.get(id);
+    if (!cacheRecord) {
+      cacheRecord = {};
+      cache.set(id, cacheRecord);
     }
-    return cacheRec;
+    return cacheRecord;
   };
 
   const baseEnvFor = (parentId: EntryId, ctx: EvalCtx): EvalEnv => ({
@@ -196,18 +211,18 @@ export function createEvaluator(opts: {
   };
 
   type UnwrapEntryGroupResult =
-    | { kind: "blank" }
-    | { kind: "issue"; result: Result }
-    | { kind: "ok"; entryIds: readonly EntryId[] };
+    | { type: "blank" }
+    | { type: "issue"; result: Result }
+    | { type: "ok"; entryIds: readonly EntryId[] };
 
   const unwrapEntryGroup = (
     v: Result,
     typeMessage: string,
   ): UnwrapEntryGroupResult => {
-    if (isBlankResult(v)) return { kind: "blank" };
-    if (isIssueResult(v)) return { kind: "issue", result: v };
-    if (isEntryGroupResult(v)) return { kind: "ok", entryIds: v.entryIds };
-    return { kind: "issue", result: Results.issue(typeMessage) };
+    if (isBlankResult(v)) return { type: "blank" };
+    if (isIssueResult(v)) return { type: "issue", result: v };
+    if (isEntryGroupResult(v)) return { type: "ok", entryIds: v.entryIds };
+    return { type: "issue", result: Results.issue(typeMessage) };
   };
 
   const forkCtx = (base: EvalCtx): EvalCtx => ({
@@ -216,7 +231,7 @@ export function createEvaluator(opts: {
 
   function evaluateQuery(
     parentId: EntryId,
-    spec: Extract<EntryContent, { kind: "query" }>,
+    spec: Extract<EntryContent, { type: "query" }>,
     ctx: EvalCtx,
   ): Result {
     const from = spec.from.trim();
@@ -229,14 +244,14 @@ export function createEvaluator(opts: {
       "Query 'from' must evaluate to an entry-group",
     );
 
-    if (unwrapped.kind === "blank") return Results.blank();
-    if (unwrapped.kind === "issue") return unwrapped.result;
+    if (unwrapped.type === "blank") return Results.blank();
+    if (unwrapped.type === "issue") return unwrapped.result;
 
     let entryIds: EntryId[] = [...unwrapped.entryIds].filter((id) =>
       model.hasEntry(id),
     );
 
-    const evalRowExpr = (
+    const evaluateRowExpression = (
       expr: string,
       rowId: EntryId,
       i: number,
@@ -272,7 +287,7 @@ export function createEvaluator(opts: {
       for (let i = 0; i < entryIds.length; i++) {
         const rowId = entryIds[i]!;
         const rowCtx = forkCtx(ctx);
-        const pred = evalRowExpr(where, rowId, i, rowCtx);
+        const pred = evaluateRowExpression(where, rowId, i, rowCtx);
         if (isIssueResult(pred)) return pred;
         if (isTrue(pred)) next.push(rowId);
       }
@@ -285,7 +300,7 @@ export function createEvaluator(opts: {
       for (let i = 0; i < entryIds.length; i++) {
         const rowId = entryIds[i]!;
         const rowCtx = forkCtx(ctx);
-        const key = evalRowExpr(orderBy, rowId, i, rowCtx);
+        const key = evaluateRowExpression(orderBy, rowId, i, rowCtx);
         rows.push({ rowId, i, key });
       }
       rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);
@@ -302,7 +317,7 @@ export function createEvaluator(opts: {
       if (!model.hasEntry(id)) return Results.issue(MISSING_ENTRY_MESSAGE);
 
       const entry = model.readEntry(id);
-      switch (entry.content.kind) {
+      switch (entry.content.type) {
         case "blank":
           return Results.blank();
         case "scalar":
@@ -319,13 +334,15 @@ export function createEvaluator(opts: {
         }
         case "query":
           return evaluateQuery(id, entry.content, ctx);
+        default:
+          return assertNever(entry.content, "Unhandled entry content");
       }
     });
   }
 
   const resultSignal = (id: EntryId): ReadonlySignal<Result> => {
-    const cacheRec = cacheRecFor(id);
-    return (cacheRec.resultSignal ??= computed(() =>
+    const cacheRecord = cacheRecordFor(id);
+    return (cacheRecord.resultSignal ??= computed(() =>
       evaluateResult(id, createEvalCtx()),
     ));
   };

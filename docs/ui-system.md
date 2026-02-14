@@ -29,7 +29,7 @@ This document does not cover:
 - Core API semantics and data invariants.
 - View-local styling.
 
-## Core principles
+## Rules summary
 
 Rules:
 
@@ -246,18 +246,18 @@ Rules:
 - `build(ctx)` MUST be called exactly once.
 - The returned `HTMLElement` MUST be the component root.
 - `dispose()` MUST:
-  - run all registered cleanups
-  - dispose mounted child components
-  - detach all targets
-  - stop all reactive effects
-  - remove all region anchors
-  - empty the root element (`replaceChildren()`)
+  - run all registered cleanups.
+  - dispose mounted child components.
+  - detach all targets.
+  - stop all reactive effects.
+  - remove all region anchors.
+  - empty the root element (`replaceChildren()`).
 
 Notes:
 
 - Cleanup ordering is last-in-first-out (reverse registration order).
 
-### `Ctx` API
+### The `Ctx` API
 
 `createComponent` provides a minimal safe mounting API via `Ctx`.
 
@@ -328,9 +328,9 @@ Rules:
 
 - `getComponent()` MUST be evaluated in a reactive effect.
 - When the returned component instance changes:
-  - the previous component MUST be disposed
-  - the region MUST be cleared
-  - the new component MUST be inserted into the region
+  - the previous component MUST be disposed.
+  - the region MUST be cleared.
+  - the new component MUST be inserted into the region.
 
 - If `getComponent()` returns `null`, the region MUST become empty.
 
@@ -397,7 +397,7 @@ Caret support:
 - A caret adapter MAY be provided for text targets.
 - Caret application is best-effort.
 
-### Shared DOM helpers (`dom/base.ts`)
+### Shared DOM helpers (`dom/base`)
 
 `el(tag, className?, text?)`:
 
@@ -447,7 +447,7 @@ Rules:
 
 - Frame state classes MUST be applied:
   - `.is-focused` when selection matches the item focus
-  - `.is-issue` when `item.content.kind === "issue"`
+  - `.is-issue` when `item.content.type === "issue"`
 
 `setBodyClasses(root, view)`:
 
@@ -458,7 +458,7 @@ Rules:
 - MUST add `.ui-body`.
 - MUST add `.ui-${view}`.
 
-### Shared controls (`dom/controls.ts`)
+### Shared controls (`dom/controls`)
 
 Intent vocabulary:
 
@@ -835,7 +835,7 @@ Rules:
 
 ## Visual language invariants
 
-This section defines the cross-view visual language. Views must compose within it.
+This section defines the cross-view visual language. Views MUST compose within it.
 
 ### Visual foundations
 
@@ -925,7 +925,7 @@ Layer order:
 4. Components (`.ui-header`).
 5. Views (layout/composition only).
 
-## Public UI runtime API surface (`dom/index.ts`)
+## Public UI runtime API surface (`dom/index`)
 
 This is the supported export surface of the UI runtime module.
 

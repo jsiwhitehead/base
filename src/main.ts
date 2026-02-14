@@ -1,4 +1,4 @@
-import type { Core, ItemId, Value, ViewKind, ViewName } from "./core";
+import type { Core, ItemId, Value, ViewName } from "./core";
 import { createCore } from "./core";
 import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV, devAssert, devWarn } from "./dev";
@@ -35,7 +35,7 @@ function createApp(opts: CreateAppOpts = {}): App {
   const core = instrumentCore(rawCore, debug);
 
   core.commit((t) => {
-    t.setView(rootId, rootView as ViewKind);
+    t.setView(rootId, rootView);
   });
 
   const focus = { container: rootId, item: rootId };
@@ -117,7 +117,7 @@ function seedDemo(app: App): void {
   const mkGroup = (
     parentId: ItemId,
     label: string,
-    view: ViewKind = null,
+    view: ViewName | null = null,
   ): ItemId => {
     let id: ItemId = "";
     core.commit((t) => {
@@ -144,7 +144,7 @@ function seedDemo(app: App): void {
     core.commit((t) => {
       id = t.insertChild(parentId);
       t.setLabel(id, label);
-      t.setConnected(id, { kind: "formula", expr });
+      t.setConnected(id, { type: "formula", expr });
     });
     return id;
   };
@@ -159,7 +159,7 @@ function seedDemo(app: App): void {
       id = t.insertChild(parentId);
       t.setLabel(id, label);
       t.setConnected(id, {
-        kind: "query",
+        type: "query",
         from: spec.from,
         where: spec.where ?? "",
         orderBy: spec.orderBy ?? "",

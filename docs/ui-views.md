@@ -118,7 +118,7 @@ Structural rules:
 
 - `.ui-frame.ui-outline-child` instances MUST stay stable per visible child item.
 - `.ui-header` subtree in `.ui-frame.ui-outline-child` MAY mount/unmount by header visibility policy.
-- Mounted child body subtree MAY swap by child view kind, but `.ui-frame.ui-outline-child` MUST not.
+- Mounted child body subtree MAY swap by child view name, but `.ui-frame.ui-outline-child` MUST NOT.
 
 Notes:
 
@@ -135,7 +135,7 @@ Outline focus surfaces:
   - `conn:*` (header-owned)
   - `label` (header-owned)
 
-Edit targets by item kind:
+Edit targets by item type:
 
 - Plain scalar leaf:
   - `value`
@@ -188,7 +188,7 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 
 Precondition shorthand:
 
-- Focused selection: `core.selection().kind === "focused"`.
+- Focused selection: `core.selection().type === "focused"`.
 - Editing: `sel.target !== DEFAULT_TARGET`.
 - Container focus: `sel.target === DEFAULT_TARGET`.
 
@@ -342,7 +342,7 @@ Table body:
 Structural rules:
 
 - `.ui-frame.ui-table-row` and `.ui-frame.ui-table-cell` wrappers MUST stay stable for visible rows/cells.
-- Cell bodies MAY swap by view kind.
+- Cell bodies MAY swap by view name.
 
 Notes:
 
@@ -474,7 +474,7 @@ Table-local commands:
 
 Notes:
 
-- `removeRow` may exist but is not necessarily bound to intents.
+- `removeRow` MAY exist but is not necessarily bound to intents.
 
 ### Edge cases and invariants
 
