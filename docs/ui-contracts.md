@@ -25,6 +25,7 @@ Rules:
 - Core MUST be the single source of truth for state.
 - Selection MUST be the single source of truth for focus.
 - The UI MUST be target-driven, not tab-order-driven.
+- CSS MUST NOT treat `:focus` / `:focus-visible` as authoritative.
 - UI structure MUST be stable across selection changes.
 - Interaction SHOULD be semantic (intent-driven), not raw DOM-key-driven.
 
@@ -126,7 +127,7 @@ Rules:
 - Header root MUST use `.ui-header`.
 - Header MUST NOT attach the `value` target.
 - Label editing MUST keep yielding disabled.
-- This DOM/class structure is canonical for system header chrome.
+- This DOM/class structure is canonical for the system header UI.
 - Views MAY style or conditionally mount header parts.
 - Target ownership and connected-row semantics MUST remain consistent.
 
@@ -242,6 +243,7 @@ Rules:
 
 Rules:
 
+- Focus is defined by `(itemId, target)`.
 - Focus targets MUST be applied programmatically from Core selection.
 - Inputs MUST NOT participate in browser tab-order traversal.
 - `.ui-main` MUST be the only tabbable element.
@@ -291,7 +293,7 @@ Rules:
 Primary edit target order:
 
 1. first connected definition field (`conn:*`) when connected
-2. otherwise `value` when plain scalar
+2. otherwise `value` when plain scalar and editable
 3. otherwise none
 
 ### Confirm-to-edit from `DEFAULT_TARGET`
@@ -351,9 +353,9 @@ Token categories:
 - SHOULD remain neutral by default.
 - MUST NOT redefine shared rail/header language.
 
-### Header: stable chrome identity
+### Header: stable system identity
 
-Header is a first-class chrome area with a consistent identity.
+Header is a first-class system header area with a consistent identity.
 
 **Header principles**
 
@@ -410,18 +412,25 @@ Rules:
 
 - State classes MUST apply on `.ui-frame`.
 - Frame state MUST use one priority stack: issue overrides focus.
-- Focus indication SHOULD be rail-tint based.
-- Path context SHOULD be local and subtle.
+- Focus indication MUST be rail-tint based.
 - Siblings MUST NOT inherit another item's state styling.
 
-### Rail and header state derivation
+### Rail, header, and wash state derivation
+
+`.ui-frame` is responsible for deriving the canonical palette variables for its primitives.
+
+Required derived state variables:
+
+- Rail consumes `--rail-tint`
+- Header consumes `--header-fill`
+- Frame wash consumes `--frame-wash`
 
 Rules:
 
 - `.ui-frame` MUST define item state via `.is-focused` and `.is-issue`.
-- Rail MUST consume `--rail-tint`.
-- Header MUST consume `--header-fill`.
-- `.is-issue` MUST override `.is-focused` for both rail and header derived values.
+- `.is-issue` MUST override `.is-focused` for all derived values.
+- Edit focus MUST disable wash by default (`--frame-wash: transparent`).
+- Frame wash MUST be used only as a container-focus signal (that is, only when focused on `DEFAULT_TARGET`).
 
 ### Focus language (item vs target)
 
@@ -429,7 +438,7 @@ Focus is expressed in two layers:
 
 **Tier 1: Item focus**
 
-- Expressed through rails tint (chrome-level).
+- Expressed through rail tint (frame-level).
 - Indicates: **"this is the active item."**
 
 **Tier 2: Target focus (field-level)**
@@ -443,63 +452,122 @@ Rules:
 
 ### Container focus vs edit focus
 
-The system must clearly distinguish:
+Focus must clearly distinguish **container selection** from **targeted editing**.
 
-**Container focus (`DEFAULT_TARGET`)**
+#### Container focus (`DEFAULT_TARGET`)
 
-- Rails tinted
-- No field highlight
-- No rings or washes
+When the selected target is `DEFAULT_TARGET`:
 
-**Value edit focus (`value`)**
+- Rail tint is active.
+- Frame wash is active (very gentle).
+- No rings anywhere.
 
-- Rails tinted
-- Value wash appears (editor-like views)
-- Caret visible
-- No focus ring at all (only the background wash)
+This represents: **"item selected, not editing."**
 
-**Header edit focus (`label` / `conn:*`)**
+#### Edit focus (any non-default target)
 
-- Rails tinted
-- Focus affordance appears on the specific header field
+When the selected target is not `DEFAULT_TARGET` (for example `value`, `label`, `conn:*`):
 
-This is simple, quiet, and unambiguous.
+- Rail tint remains active.
+- Frame wash is removed (neutral background).
+- A local affordance is applied on the active target only:
+  - editor targets -> caret (no ring)
+  - control targets -> halo/ring/outline
 
-### Target focus styles
+This represents: **"editing / targeted input."**
 
-Target focus uses two styles depending on the surface type.
+Rails must never be expected to communicate which field is active.
 
-**A) Control focus (header + control-like surfaces)**
+### Issue state (broken connection)
 
-Used for:
+#### Meaning
+
+`.is-issue` indicates a broken connection definition.
+
+Rules:
+
+- Issue items are scalar (no children).
+- Body is not directly editable.
+- Relevant edit targets are header-owned: `label`, `conn:*`.
+
+Issue is a persistent state, not a transient focus mode.
+
+#### Visual rules
+
+Issue state overrides normal focus-derived palette values for:
+
+- rail tint
+- header fill
+- frame wash
+- control halo/ring palette
+
+Issue must remain visible while editing; focus must not replace error signalling.
+
+#### Issue grammar
+
+**Persistent (even when not focused):**
+
+- gentle issue rail tint
+- gentle issue header fill tint
+- no wash
+
+**Focused + container target (`DEFAULT_TARGET`):**
+
+- stronger issue rail/header tints
+- subtle issue wash on the frame (container-focus signal)
+
+**Focused + edit target (`label` / `conn:*`):**
+
+- stronger issue rail/header tints
+- wash removed
+- local control halo/ring on the active control
+
+### Target focus styles (control vs editor)
+
+Target focus is expressed locally on the active target and must be **selection-driven**, not DOM-focus-driven.
+
+The UI uses two focus styles depending on surface type.
+
+#### A) Control focus (halo/ring)
+
+Applies to:
 
 - `label`
 - `conn:*`
-- sliders, checkboxes, toggles, dropdowns, and other widgets
+- sliders, toggles, dropdowns, and other widget-like controls
 
-Pattern:
+Rules:
 
-- A control-local focus affordance consistent with modern best practice.
-- Typically expressed as a ring/halo/outline, or as a native control highlight (for example a thumb halo for sliders).
-- Applied only to the focused control, not the whole item.
+- The halo/ring is local-only: it appears only on the focused control.
+- No container-level rings are permitted.
+- Styling must not depend on `:focus` / `:focus-visible` being present.
+- Controls may differ in exact shape, but must share consistent intensity and palette logic.
 
-Consistency principle:
+#### B) Editor focus (caret-only)
 
-- Controls may differ in exact shape (ring around a textfield vs halo on a slider thumb), but should feel like part of one system through consistent intensity, spacing, and color logic.
-
-**B) Editor focus (document-like value editing)**
-
-Used for:
+Applies to:
 
 - `value` in editor-like views (for example outline scalar editing)
 
-Pattern:
+Rules:
 
-- A faint background wash behind the editing region.
-- Caret remains primary.
-- No focus ring at all (including no boxed input ring around the whole value).
+- No ring at all.
+- No value wash.
+- Caret and text selection highlight are the primary indicators.
 
-This preserves the mental model of a notes/outliner editor rather than a form.
+This preserves the mental model of a document editor rather than a form.
+
+### Read-only policy
+
+Read-only is enforced per target surface.
+
+Rules:
+
+- Fully read-only items MUST only allow DEFAULT_TARGET and MUST NOT expose any edit targets.
+- Connected definition items (for example issue/formula) MUST expose only header edit targets (label, conn:\*) and MUST NOT expose value.
+- The body of a connected definition item is always read-only output; if it renders a tree, all subitems are read-only.
+
+This prevents "read-only edit focus" states.
 
 ### Rail structure
 
