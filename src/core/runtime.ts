@@ -110,24 +110,6 @@ export function defaultTextCaret(
   };
 }
 
-function isNativeEditorTarget(target: EventTarget | null): boolean {
-  for (
-    let el = target instanceof HTMLElement ? target : null;
-    el;
-    el = el.parentElement
-  ) {
-    if (el.isContentEditable) return true;
-    if (
-      el instanceof HTMLTextAreaElement ||
-      el instanceof HTMLInputElement ||
-      el instanceof HTMLSelectElement
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function parseKeydownIntent(e: KeyboardEvent): Intent | null {
   if (e.key === "Escape") return { type: "CANCEL" };
   if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
@@ -493,8 +475,6 @@ export function createRuntime<C>(opts: {
   };
 
   const dispatchKeyDown = (e: KeyboardEvent) => {
-    if (isNativeEditorTarget(e.target) && !e.defaultPrevented) return;
-
     const intent = parseKeydownIntent(e);
     if (!intent) return;
 

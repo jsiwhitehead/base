@@ -53,12 +53,12 @@ The architecture guarantees predictable focus and selection behavior, stable DOM
 
 ### Allowed dependencies
 
-| Layer | May depend on |
-| ----- | ------------- |
-| core | (none) |
-| dom | core |
-| views | core, dom |
-| main | core, dom, views |
+| Layer | May depend on    |
+| ----- | ---------------- |
+| core  | (none)           |
+| dom   | core             |
+| views | core, dom        |
+| main  | core, dom, views |
 
 ### Outer view vs item view split
 

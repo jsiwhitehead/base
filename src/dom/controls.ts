@@ -263,6 +263,7 @@ export function buildTextField(
 
         if (e.key === "Escape") {
           if (editModel === "draft") cancelDraft();
+          prevent(e);
           return;
         }
 
@@ -306,11 +307,13 @@ export function buildTextField(
             return;
           }
 
+          e.stopPropagation();
           return;
         }
 
         if (e.key === "Enter") {
           if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey)) {
+            e.stopPropagation();
             return;
           }
           commitDraft();
@@ -329,6 +332,8 @@ export function buildTextField(
           prevent(e);
           return;
         }
+
+        e.stopPropagation();
       });
     }
 

@@ -130,11 +130,7 @@
       var(--ui-color-focus) 18%,
       var(--ui-color-surface) 82%
     );
-    --frame-wash: color-mix(
-      in oklch,
-      var(--ui-color-bg) 90%,
-      var(--ui-color-focus) 10%
-    );
+    --frame-wash: transparent;
   }
 
   .ui-frame.is-issue {
@@ -164,20 +160,23 @@
       var(--ui-color-issue) 18%,
       var(--ui-color-surface) 82%
     );
-    --frame-wash: color-mix(
-      in oklch,
-      var(--ui-color-bg) 90%,
-      var(--ui-color-issue) 10%
-    );
-  }
-
-  .ui-frame.is-focused:focus-within,
-  .ui-frame.is-issue:focus-within {
     --frame-wash: transparent;
   }
 
-  .ui-frame.is-focused::after,
-  .ui-frame.is-issue::after {
+  .ui-frame:focus,
+  .ui-frame:focus-visible {
+    outline: none;
+  }
+
+  .ui-frame:focus-visible {
+    --frame-wash: color-mix(
+      in oklch,
+      var(--ui-color-bg) 90%,
+      var(--accent) 10%
+    );
+  }
+
+  .ui-frame::after {
     content: "";
     position: absolute;
     inset: calc(-1 * var(--ui-space-gap));
