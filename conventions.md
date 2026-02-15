@@ -550,7 +550,7 @@ Avoid advanced or inconsistent Markdown features unless there is a clear need.
 ### Links and references
 
 - Links are allowed when they improve navigation.
-- Prefer plain backticked repo paths for internal references (`docs/ui-contracts.md`).
+- Prefer plain backticked repo paths for internal references (`docs/core-api.md`).
 - Use Markdown links for external references.
 
 ### Whitespace

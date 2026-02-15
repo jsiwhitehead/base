@@ -9,8 +9,6 @@ For each view, it specifies:
 - Which **targets** the view introduces (if any).
 - How the view interprets **intents** into Core operations and focus transitions.
 
-Shared UI architecture, ownership boundaries, interaction invariants, and visual language belong in `docs/ui-contracts.md`. Shared UI runtime APIs and controls belong in `docs/dom-runtime.md`. Core API semantics belong in `docs/core-api.md`.
-
 ## Scope
 
 This document covers:
@@ -21,14 +19,7 @@ This document covers:
 - Per-view intent handling.
 - Per-view commands, invariants, and styling notes.
 
-This document does not cover:
-
-- The shared frame/header/body ownership contract.
-- Global intent parsing and routing.
-- Shared editor and header controls (`buildTextField`, `buildItemHeader`), yielding rules, and intent helper behavior (see `docs/dom-runtime.md`).
-- Cross-view UI contracts (ownership, stability, focus model, visual language) (see `docs/ui-contracts.md`).
-
-## Shared assumptions (from `docs/ui-contracts.md`)
+## Shared assumptions (from `docs/dom-runtime.md` and `docs/style-system.md`)
 
 All views in this file inherit these rules:
 
@@ -151,7 +142,7 @@ Notes:
 
 - Outline defines a traversal space for `NAV` while editing.
 - Groups participate in navigation but not in edit traversal.
-- Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/ui-contracts.md`.
+- Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/dom-runtime.md`.
 
 ### Edit traversal space
 
@@ -297,8 +288,6 @@ Outline-local styling:
 - Indentation based on `(rail + pad)` per depth level.
 - Header capsule aligns to item rail start.
 - Nodes stack with vertical gap.
-
-Rail geometry, state classes, and derived token behavior are defined in `docs/ui-contracts.md`.
 
 ## Table view (`table`)
 
@@ -484,8 +473,6 @@ Table-local styling:
 - Data cells present top rail segments.
 - Header column presents a left block rail region.
 
-Rail geometry, state classes, and derived token behavior are defined in `docs/ui-contracts.md`.
-
 ## Slider view (`slider`)
 
 ### Purpose and mental model
@@ -580,14 +567,12 @@ Slider-local styling:
 - Flexible range control.
 - Compact muted value readout.
 
-Rail geometry, state classes, and derived token behavior are defined in `docs/ui-contracts.md`.
-
 ## Adding a new view
 
 Rules:
 
 - New view sections SHOULD follow the template in this file.
-- New sections MUST reference `docs/ui-contracts.md` for shared semantics and invariants, and `docs/dom-runtime.md` for shared controls/helpers, instead of duplicating them.
+- New sections MUST reference `docs/dom-runtime.md` for shared interaction/runtime semantics and `docs/style-system.md` for shared visual language, instead of duplicating them.
 
 A new view specification MUST define:
 
@@ -597,4 +582,4 @@ A new view specification MUST define:
 - Type-to-edit behavior.
 - Yielding behavior from editors (per `docs/dom-runtime.md`).
 - `DELETE`/`DELETE_BOUNDARY` handling (or explicit no-op).
-- Styling notes describing view-local rail composition (shared rail geometry in `docs/ui-contracts.md`).
+- Styling notes describing view-local rail composition (shared rail geometry in `docs/style-system.md`).

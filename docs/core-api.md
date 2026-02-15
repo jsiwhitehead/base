@@ -1,6 +1,6 @@
 # Core API Overview
 
-This document defines the supported Core API contract and the behavior that callers can rely on. It is the authoritative reference for Core types, commands, and invariants. UI-layer behavior is documented separately in `docs/dom-runtime.md` and `docs/views-spec.md`.
+This document defines the supported Core API contract and the behavior that callers can rely on. It is the authoritative reference for Core types, commands, and invariants.
 
 ## Scope
 
@@ -9,12 +9,6 @@ This document covers:
 - Public Core types and constants.
 - Core commands and reactive reads.
 - Structural, selection, and view-mounting invariants.
-
-This document does not cover:
-
-- UI ownership and DOM conventions.
-- Styling behavior.
-- View-specific interaction semantics beyond Core-enforced rules.
 
 ## Creating Core
 

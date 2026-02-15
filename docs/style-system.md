@@ -13,14 +13,6 @@ This document defines:
 - Focus language (item vs target, container vs edit, control vs editor).
 - Issue language and issue/focus interaction.
 
-## Non-goals
-
-This document does not define:
-
-- DOM runtime structure, reconciliation, or lifecycle (see `docs/dom-runtime.md`).
-- Selection mechanics, intent routing, target ownership, or key/pointer policy (see `docs/ui-contracts.md`).
-- Per-view behavior or layout rules beyond shared primitives (see `docs/views-spec.md`).
-
 ## Mental model
 
 ### Frame layer and body layer

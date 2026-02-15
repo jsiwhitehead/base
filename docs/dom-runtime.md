@@ -10,13 +10,6 @@ This document defines:
 - Required DOM/class outputs for runtime-provided subtrees.
 - Observable runtime behavior (focus integration, yielding, disposal, reconciliation).
 
-This document does not define:
-
-- View composition rules.
-- System-wide UI policy.
-- Ownership boundaries between outer and item views.
-- Global styling language.
-
 ## Audience
 
 Primary audience:
@@ -391,6 +384,7 @@ Canonical produced structure:
 Rules:
 
 - Label text field uses target `LABEL_TARGET`.
+- The label text field MUST use `buildTextField` with `yieldNav=false` (label editing does not yield).
 - Connected rows render only when `item.mode.type === "connected"`.
 - Each connected field MUST use `connTarget(field.key)` as target.
 - Each connected field MUST use `buildTextField` with autosize enabled.
