@@ -48,38 +48,35 @@ Rules:
 
 - Tokens MUST be defined globally (typically on `:root`).
 - Views SHOULD NOT use raw hex values, arbitrary radii, or ad hoc spacing values.
-- Token names SHOULD reflect intent (for example `--ui-radius-sm`) rather than view-specific usage.
+- Token names SHOULD reflect semantic role (for example `--ui-size-meta`, `--ui-space-pad`) rather than numeric scales, unless a numeric scale is genuinely needed.
 
 Token categories:
 
 - Typography:
-  - Font families.
-  - Font sizes.
-  - Weights.
-  - Line heights.
+  - Families (for example `--ui-font-sans`, `--ui-font-mono`).
+  - Sizes/leading (for example `--ui-size-body`, `--ui-leading-meta`).
+  - Weights (for example `--ui-weight-regular`, `--ui-weight-strong`).
 - Geometry:
-  - Spacing scale.
-  - Radii.
-  - Stroke widths.
+  - Spacing (for example `--ui-space-gap`, `--ui-space-pad`).
+  - Shape/measure (for example `--ui-radius`, `--ui-ring`).
 - Colors:
-  - Base neutrals.
-  - Semantic colors (`focus`, `issue`).
-  - Surface fills.
+  - Base/surface (for example `--ui-color-bg`, `--ui-color-surface`).
+  - Semantic state (for example `--ui-color-focus`, `--ui-color-issue`).
 
 ### CSS layering order
 
 Rules:
 
 - CSS SHOULD be structured in a stable layer order.
+- Base layer SHOULD contain shared primitives (including header) when they are stable and minimal.
 - Views SHOULD limit their layer to composition/layout and local affordances.
 
 Recommended order:
 
 1. Reset/normalization.
 2. Tokens (`:root`).
-3. Base primitives (`.ui-frame`, `.ui-body`, `.ui-textfield`).
-4. Components (`.ui-header`, `.ui-rail`).
-5. Views (layout/composition only).
+3. Base primitives (`.ui-frame`, `.ui-body`, `.ui-header`, `.ui-textfield`).
+4. Views (layout/composition only).
 
 ### View styling boundaries
 
@@ -331,5 +328,4 @@ CSS layering:
 1. Reset.
 2. Tokens.
 3. Base primitives.
-4. Components.
-5. Views (layout/composition only).
+4. Views (layout/composition only).
