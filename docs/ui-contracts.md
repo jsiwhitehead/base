@@ -432,6 +432,7 @@ The system must clearly distinguish:
 - Rails tinted
 - Value wash appears (editor-like views)
 - Caret visible
+- No focus ring at all (only the background wash)
 
 **Header edit focus (`label` / `conn:*`)**
 
@@ -472,7 +473,7 @@ Pattern:
 
 - A faint background wash behind the editing region.
 - Caret remains primary.
-- No large "boxed input" ring around the whole value.
+- No focus ring at all (including no boxed input ring around the whole value).
 
 This preserves the mental model of a notes/outliner editor rather than a form.
 
