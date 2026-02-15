@@ -1,30 +1,55 @@
 # UI Runtime (`dom/`)
 
-This document defines the **shared UI runtime** in `dom/`.
+This document is the normative external specification for the `dom/` layer.
 
-It is the authoritative reference for:
+## Scope
 
-- The component model (`Component`).
-- Safe mounting (`createComponent`, `Ctx`).
-- Region-based dynamic mounting (`ctx.slot`, `ctx.list`).
-- Target binding (`ctx.target`) and focus helpers.
-- Shared intent helpers (`insertTextIntoActiveEditor`, `enterEditOnType`, `toggleEditOnConfirm`).
-- Shared controls (`buildTextField`, `buildItemHeader`).
-- Connected definition helpers (`fieldsFromConn`, `patchConn`).
-- The supported export surface (`dom/index`).
+This document defines:
 
-This document does **not** define:
+- Public API exported from `dom/index`.
+- Required DOM/class outputs for runtime-provided subtrees.
+- Observable runtime behavior (focus integration, yielding, disposal, reconciliation).
 
-- Frame/header/body ownership rules.
-- Cross-view structural invariants.
-- Cross-view visual language.
-- Per-view behavior.
+This document does not define:
 
-Those belong in `docs/ui-contracts.md` and `docs/ui-views.md`.
+- View composition rules.
+- System-wide UI policy.
+- Ownership boundaries between outer and item views.
+- Global styling language.
+
+## Audience
+
+Primary audience:
+
+- Authors of views/components consuming `dom/`.
+- Authors extending shared `dom/` helpers.
+
+## Exports index (`dom/index`)
+
+Base helpers:
+
+- `createComponent`: lifecycle-safe component factory.
+- `el`: small DOM element constructor helper.
+- `bindItemFrame`: canonical `.ui-frame` binding helper.
+- `setBodyClasses`: canonical body-root class helper.
+
+Controls/editing helpers:
+
+- `buildTextField`: canonical shared text editor component.
+- `caret0`, `caretAt`, `caretEnd`: caret constructors.
+- `insertTextIntoActiveEditor`: text insertion helper for active native editors.
+- `enterEditOnType`: shared type-to-edit transition helper.
+- `toggleEditOnConfirm`: shared confirm-toggle helper between default/edit targets.
+
+Connected header helpers:
+
+- `buildItemHeader`: canonical header subtree component.
+- `fieldsFromConn`: connected-mode field derivation helper.
+- `patchConn`: single-field connected patch helper.
 
 ## Component model
 
-A UI component is the smallest disposable unit of UI.
+A component is the smallest disposable UI unit:
 
 ```ts
 type Component = { el: HTMLElement; dispose(): void };
@@ -33,14 +58,15 @@ type Component = { el: HTMLElement; dispose(): void };
 Rules:
 
 - A component MUST expose exactly one root element (`el`).
-- A component MUST release all resources on `dispose()`.
-- A disposed component MUST leave no component-owned DOM nodes mounted.
+- `dispose()` MUST stop all effects registered via `ctx.effect`.
+- `dispose()` MUST remove all event listeners registered via `ctx.on`.
+- `dispose()` MUST dispose all mounted children registered via `ctx.mount`, `ctx.slot`, and `ctx.list`.
+- `dispose()` MUST detach all targets registered via `ctx.target`.
+- `dispose()` MUST remove any component-owned DOM under the component root element.
 
 ## `createComponent(core, build)`
 
-`createComponent` is the canonical way to build UI components.
-
-Signature:
+Canonical component factory:
 
 ```ts
 createComponent(core: Core, build: (ctx: Ctx) => HTMLElement): Component
@@ -48,23 +74,11 @@ createComponent(core: Core, build: (ctx: Ctx) => HTMLElement): Component
 
 Rules:
 
-- `build(ctx)` MUST be called exactly once.
-- The returned `HTMLElement` MUST be the component root.
-- `dispose()` MUST:
-  - run all registered cleanups
-  - dispose mounted child components
-  - detach all targets
-  - stop all reactive effects
-  - remove all region anchors
-  - empty the root element (`replaceChildren()`)
+- `build(ctx)` MUST be called once per component instance.
+- The returned `HTMLElement` is the component root.
+- All resource lifetime MUST be bound to `dispose()` through `Ctx` APIs.
 
-Notes:
-
-- Cleanup ordering is last-in-first-out (reverse registration order).
-
-## `Ctx` (safe mounting context)
-
-`createComponent` provides a minimal safe mounting API via `Ctx`.
+## `Ctx` runtime contract
 
 ```ts
 type Ctx = {
@@ -77,28 +91,24 @@ type Ctx = {
 };
 ```
 
-The `Ctx` API exists to make cleanup correct by default.
-
 ### `ctx.on(target, type, handler, opts?)`
 
-Registers a DOM listener with automatic cleanup.
+Registers a DOM listener and guarantees cleanup on disposal.
 
 Rules:
 
-- The listener MUST be removed on component disposal.
-- View code SHOULD use `ctx.on` instead of raw `addEventListener`.
+- Listener MUST be removed when the parent component is disposed.
+- Handler receives the typed DOM event for the registered event name.
 
 ### `ctx.effect(run)`
 
-Registers a reactive effect with automatic cleanup.
+Registers a reactive effect.
 
 Rules:
 
-- The effect MUST stop on component disposal.
-- The effect MUST re-run when reactive dependencies change.
-- If `run()` returns a cleanup function, it MUST be invoked:
-  - before re-running
-  - on disposal
+- Effect MUST rerun when its reactive dependencies change.
+- If `run` returns a cleanup function, that cleanup MUST run before reruns.
+- Effect cleanup MUST run on component disposal.
 
 ### `ctx.mount(host, child)`
 
@@ -106,306 +116,142 @@ Mounts a static child component.
 
 Rules:
 
-- `child.el` MUST be appended to `host`.
-- `child.dispose()` MUST be called on parent disposal.
-
-## Regions: `ctx.slot` and `ctx.list`
-
-`ctx.slot` and `ctx.list` provide region-based dynamic mounting.
-
-A **region** is a stable insertion boundary inside a host element.
-
-Rules:
-
-- Regions MUST preserve DOM order relative to static siblings and other regions.
-- Regions MUST dispose removed children.
-- Once a region exists in a host, callers MUST NOT clear or replace host children manually.
-
-Implementation note:
-
-- Regions are anchored using comment boundary nodes:
-  - `<!-- region:start -->`
-  - `<!-- region:end -->`
-
-This enables multiple independent regions inside one host.
+- `child.el` is appended to `host`.
+- `child.dispose()` MUST run when the parent component disposes.
 
 ### `ctx.slot(host, getComponent)`
 
-Mounts zero or one reactive child subtree.
+Manages an optional child component region inside `host`.
 
 Rules:
 
-- `getComponent()` MUST be evaluated in a reactive effect.
-- On each reactive evaluation:
-  - the previous component MUST be disposed
-  - the region MUST be cleared
-  - if non-null, the new component MUST be inserted into the region
-
-- If `getComponent()` returns `null`, the region MUST become empty.
-
-Use cases:
-
-- Conditional mounting.
-- Swapping one subtree by discriminator.
+- At most one child component is mounted at a time.
+- On recompute, the runtime clears the region, disposes the previous child, then mounts the next child if non-null.
+- If `getComponent()` returns `null`, the slot region becomes empty.
+- Runtime guarantees no stale child components remain mounted.
+- The slot occupies a stable position in host; only the slot's contents are managed/cleared.
 
 ### `ctx.list(host, getIds, buildById)`
 
-Mounts a keyed reactive list of child components.
-
-Signature:
-
-```ts
-ctx.list<Id extends string | number>(
-  host,
-  getIds: () => readonly Id[],
-  buildById: (id: Id) => Component,
-)
-```
+Manages a keyed child component list inside `host`.
 
 Rules:
 
-- `getIds()` MUST be evaluated in a reactive effect.
-- Keys MUST be `string | number`.
-- Keys MUST be unique within the list.
-- Keys MUST be stable across updates for the same logical child.
-- Child components MUST be cached by key.
-- Removed keys MUST be disposed immediately.
-- DOM order MUST exactly match the order returned by `getIds()`.
-- When order changes, DOM nodes MUST be moved, not recreated.
+- Keys MUST be unique per render.
+- Keys SHOULD be stable across updates for the same logical child.
+- Child identity is stable per key.
+- Removing a key MUST dispose that child component.
+- DOM order MUST match `getIds()` order.
+- Reordering MUST move existing nodes; it MUST NOT force remount for retained keys.
+- The list occupies a stable position in host; only the list's contents are reconciled.
 
-Key stability policy (critical):
+### `ctx.target(focus, target, getEl, opts?)`
 
-- The system assumes keys represent identity, not position.
-- Using unstable keys (for example array indices) will cause focus loss, incorrect caching, and disposal churn.
-
-## Target integration: `ctx.target(...)`
-
-`ctx.target` binds a Core focus surface to a DOM element.
-
-Signature:
-
-```ts
-ctx.target(
-  focus: Focus,
-  target: string,
-  getEl: () => HTMLElement | null,
-  opts?: { caret?: { set(pos: number): void; getLength(): number } },
-)
-```
+Registers a focus target with Core.
 
 Rules:
 
-- `ctx.target` MUST call `core.attachTarget(...)`.
-- The returned cleanup MUST run on component disposal.
-- `getEl()` MUST return the element that should receive DOM focus.
-- Only one active binding may exist per `(focus, target)` pair.
+- The target registration lifetime is bound to component disposal.
+- `getEl()` resolves the element Core should focus.
+- If `opts.caret` is provided, it is used for caret/selection restore behavior.
 
-Caret support:
+## Regions (`ctx.slot`, `ctx.list`)
 
-- A caret adapter MAY be provided for text targets.
-- Caret application is best-effort.
+Consumer policy:
 
-## Base DOM helpers (`dom/base`)
+- Once a host contains a runtime-managed region (`slot` or `list`), consumers SHOULD NOT clear that host manually or replace its children wholesale.
+- Avoid manually inserting/removing nodes intended to live inside a runtime-managed region; let slot/list own that subtree.
+- Doing so bypasses region reconciliation/disposal behavior and can leave the UI in an inconsistent state.
+
+## Base DOM helpers
 
 ### `el(tag, className?, text?)`
 
-Creates a DOM element.
+Creates an element with optional class/text.
 
 Rules:
 
-- If `className` is provided, it MUST be applied.
-- If `text` is provided (including empty string), it MUST be applied as `textContent`.
+- Creates `document.createElement(tag)`.
+- If `className` is provided, sets `element.className = className`.
+- If `text` is provided (including empty string), sets `element.textContent = text`.
 
-### `caretFromTarget(target)`
-
-Extracts a text caret from an event target.
-
-Rules:
-
-- If `target` is an `HTMLInputElement` or `HTMLTextAreaElement`, it MUST return:
-  - `{ start: selectionStart, end: selectionEnd }` (best-effort)
-
-- Otherwise it MUST return `{ start: 0, end: 0 }`.
-
-Notes:
-
-- This is used for pointerdown focus so caret placement feels natural.
-- It intentionally does not attempt to support `contenteditable`.
-
-## Frame binding helpers
+## Frame binding (`bindItemFrame`)
 
 ### `bindItemFrame(ctx, spec, frameEl)`
 
-`bindItemFrame` implements the canonical `.ui-frame` behavior for an item.
-
-Signature:
-
-```ts
-bindItemFrame(ctx, { core, focus }, frameEl);
-```
+Canonical `.ui-frame` behavior contract.
 
 Rules:
 
-- `frameEl` MUST receive `.ui-frame`.
-- `frameEl.dataset.id` MUST be set to `focus.item`.
-- If `frameEl` does not have `tabindex`, it MUST be assigned `tabIndex = -1`.
-- The frame MUST attach `DEFAULT_TARGET` via `ctx.target`.
-- On `pointerdown`:
-  - the frame MUST focus `DEFAULT_TARGET`
-  - caret MUST be derived via `caretFromTarget(e.target)`
-  - propagation MUST be stopped
+- Adds class `ui-frame`.
+- Sets `data-id = focus.item`.
+- If `tabindex` is absent, sets `tabIndex = -1`.
+- Registers `DEFAULT_TARGET` on `frameEl` via `ctx.target`.
+- On `pointerdown`, MUST focus Core on `DEFAULT_TARGET` for the same focus surface.
+- On `pointerdown`, MUST NOT set caret.
+- On `pointerdown`, MUST call `stopPropagation()`.
+- Pointerdown handling MUST apply only when the event reaches the frame (that is, it was not already handled/stopped by an inner control).
+- MUST reactively toggle `.is-focused`.
+- MUST reactively toggle `.is-issue`.
 
-- Frame state classes MUST be applied:
-  - `.is-focused` when selection matches the item focus
-  - `.is-issue` when `item.content.type === "issue"`
+## Body/root helper
 
 ### `setBodyClasses(root, view)`
 
-Applies the canonical body classes to a view root.
-
 Rules:
 
-- MUST add `.ui-body`.
-- MUST add `.ui-${view}`.
+- Adds `ui-body`.
+- Adds `ui-${view}`.
 
-## Shared controls (`dom/controls`)
+## Editing helpers
 
-### Intent vocabulary
+Intent routing:
 
-Intent vocabulary is defined in Core and used by:
+- Views MUST NOT receive `CANCEL` intents.
 
-- Core keyboard routing.
-- View intent handlers.
-- Shared controls (for target/caret behavior).
+### Caret constructors
 
-```ts
-type Intent =
-  | {
-      type: "NAV";
-      dir: "left" | "right" | "up" | "down";
-      mode: "step" | "jump";
-    }
-  | { type: "CONFIRM"; caret?: Caret }
-  | { type: "CANCEL" }
-  | { type: "TAB"; shift: boolean }
-  | { type: "TYPE"; char: string }
-  | { type: "DELETE"; dir: "backward" | "forward" }
-  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
-
-type ViewIntent = Exclude<Intent, { type: "CANCEL" }>;
-```
-
-Rules:
-
-- Core MUST handle `CANCEL` before dispatching to views.
-- Views MUST receive only `ViewIntent` (no `CANCEL`).
-- Shared controls MUST NOT route intents directly.
-
-### Core key parsing (`parseKeydownIntent(e)`)
-
-Parses a `KeyboardEvent` into an `Intent`.
-
-Rules:
-
-- `Escape` -> `CANCEL`
-- `Tab` -> `TAB`
-- `Enter` -> `CONFIRM`
-- `Backspace` -> `DELETE backward`
-- `Delete` -> `DELETE forward`
-- Arrow keys -> `NAV`
-  - `mode = "jump"` when `ctrlKey` or `metaKey` is held
-  - otherwise `mode = "step"`
-
-- Printable keys (no ctrl/meta/alt, `key.length === 1`) -> `TYPE`
-- If no mapping applies, it MUST return `null`.
-
-### Caret helpers
-
-Exports:
-
-- `SELECT_ALL`
-- `caret0()`
-- `caretAt(pos)`
-- `caretEnd()`
-
-Rules:
-
-- `SELECT_ALL` MUST be treated as "select all text".
-- `caretAt(pos)` MUST represent a collapsed caret.
-- `caretEnd()` MUST represent a collapsed caret at the end of text.
-
-### Target constants
-
-Exports:
-
-- `DEFAULT_TARGET = "default"`
-- `LABEL_TARGET = "label"`
-- `VALUE_TARGET = "value"`
-- `connTarget(key) = "conn:" + key`
-
-Rules:
-
-- These strings are canonical and MUST be used consistently across views.
-- Canonical ownership is Core (`core/runtime`), and `dom/index` re-exports them for convenience.
+- `caret0()` returns `{ start: 0, end: 0 }`.
+- `caretAt(pos)` returns `{ start: pos, end: pos }`.
+- `caretEnd()` returns end-sentinel caret (`Number.MAX_SAFE_INTEGER`).
 
 ### `insertTextIntoActiveEditor(text)`
 
-Inserts text into the currently focused native editor.
-
 Rules:
 
-- It MUST only operate when `document.activeElement` is an `<input>` or `<textarea>`.
-- It MUST no-op for readonly or disabled inputs.
-- It MUST insert via `setRangeText`.
-- It MUST dispatch a bubbling `InputEvent("input")`.
-
-Use cases:
-
-- Implementing type-to-edit from container focus.
+- Only affects active `input`/`textarea` (`document.activeElement`).
+- No-op unless the active element is an `input` or `textarea`, and it is not `readOnly`/`disabled`.
+- Inserts with `setRangeText`.
+- Dispatches bubbling `InputEvent("input")`.
 
 ### `enterEditOnType({ core, sel, char, getPrimaryTarget })`
 
-Shared type-to-edit helper from container focus.
+Preconditions:
 
-Rules:
+- Selection is focused.
+- Current target is `DEFAULT_TARGET`.
+- Primary target exists and is not `DEFAULT_TARGET`.
 
-- It only activates from `DEFAULT_TARGET`.
-- It resolves the edit target with `getPrimaryTarget(id)`.
-- It no-ops if no editable target exists.
-- On success, it focuses with `SELECT_ALL` and inserts the typed char in a microtask.
+Behavior:
+
+- Focuses primary target with `SELECT_ALL`.
+- Queues microtask insertion of typed character into the active editor.
+- Returns `true` when handled, else `false`.
 
 ### `toggleEditOnConfirm({ core, sel, getPrimaryTarget, caretForTarget? })`
 
-Shared `CONFIRM` toggle between container and edit targets.
+Behavior:
 
-Rules:
+- If current target is not `DEFAULT_TARGET`, focuses `DEFAULT_TARGET` and returns `true`.
+- Otherwise, focuses primary target when available.
+- Entry caret defaults to `caretEnd()` when `caretForTarget` is not provided.
+- Returns `true` when focus changed, else `false`.
 
-- From edit focus (`sel.target !== DEFAULT_TARGET`), it focuses `DEFAULT_TARGET`.
-- From `DEFAULT_TARGET`, it focuses the primary edit target when available.
-- If `caretForTarget` is missing, entry caret defaults to `caretEnd()`.
-- Returns `true` when handled, otherwise `false`.
+## `buildTextField` contract
 
-## Shared text editing control: `buildTextField`
+Canonical shared text-editing component.
 
-`buildTextField` is the canonical shared text editor control.
-
-It provides:
-
-- Single-line (`<input>`) or multiline (`<textarea>`).
-- Optional autosize via a mirror element.
-- Two commit models: `live` and `draft`.
-- Optional yielding of boundary/navigation keys to Core intent routing.
-
-DOM/class contract:
-
-- The canonical DOM/class structure for this control is defined in `docs/ui-contracts.md`.
-
-Rules:
-
-- The input element MUST set `tabIndex = -1`.
-- The input element MUST have `data-target = <target>`.
-
-### Options
+### Signature and return
 
 ```ts
 buildTextField(core, {
@@ -415,258 +261,157 @@ buildTextField(core, {
   autosize?,
   className?,
   inputClassName?,
-  editModel?,      // "draft" | "live"
-  yieldNav?,       // default true
+  editModel?, // "draft" | "live"
+  yieldNav?,
   commit(text),
-  getState(),
-})
-```
-
-`getState()` returns:
-
-```ts
-{
-  text: string;
-  readOnly: boolean;
-}
+  getState(), // { text: string; readOnly: boolean }
+}): Component & { focusEl: HTMLInputElement | HTMLTextAreaElement };
 ```
 
 Rules:
 
-- The editor MUST set `readOnly` based on state.
-- The editor MUST synchronise its visible value from `state.text`.
+- Returns a `Component` plus `focusEl` pointing to the input/textarea element.
 
-### Edit models
+### DOM/class contract
 
-#### Live model
+Canonical produced structure:
 
-Rules:
-
-- Commits MUST occur on every `input`.
-- No draft state MUST be maintained.
-- `CANCEL` MUST NOT revert.
-
-#### Draft model (default)
-
-Draft model maintains a local editing session.
-
-Lifecycle rules:
-
-- When the target becomes focused and is editable:
-  - a draft session MUST begin
-  - baseline MUST be set from committed text
-
-- On `input`:
-  - draft MUST update
-  - dirty MUST become true
-
-- On commit triggers:
-  - if dirty, `commit(draft)` MUST be called
-  - dirty MUST reset
-
-Commit triggers:
-
-- yielded `CONFIRM`/`TAB`/`NAV`
-- `blur`
-
-Cancel trigger:
-
-- local `Escape` MUST revert to baseline and clear dirty.
-
-Focus loss rule:
-
-- When the target is no longer focused, draft state MUST reset to committed state.
-
-### Yielding and key handling
-
-Yielding applies only when:
-
-- `yieldNav !== false`
-
-Keyboard-driven draft commit/cancel uses preventDefault-based yielding; `blur` commit remains independent.
+```text
+.ui-textfield[.<opts.className>?]
+  .ui-textfield-mirror (optional; aria-hidden="true")
+  input.ui-textfield-input[.<opts.inputClassName>?] | textarea.ui-textfield-input[.<opts.inputClassName>?]
+```
 
 Rules:
 
-- `Tab` MUST commit draft and call `preventDefault()`.
+- Wrapper MUST always have `.ui-textfield`.
+- Wrapper MUST include `opts.className` when provided.
+- Input element MUST always have `.ui-textfield-input`.
+- Input MUST include `opts.inputClassName` when provided.
+- Input MUST set `data-target = opts.target`.
+- Input MUST always have `tabIndex = -1`.
+- Input MUST disable `autocomplete`, `autocorrect`, and spellcheck.
+- In autosize mode, `.ui-textfield-mirror` MUST be present and set `aria-hidden="true"`.
 
-- `Escape` MUST cancel local draft and MUST NOT call `preventDefault()`.
+### Behavioral contract
 
-- `Enter` MUST commit draft and call `preventDefault()`
-  - except: multiline editor with `ctrlKey` or `metaKey` MUST insert newline
+Edit models:
 
-- Arrow keys MAY yield when caret is at the boundary:
-  - left at start
-  - right at end
-  - up on first line (textarea)
-  - down on last line (textarea)
+- `live`: commit on every `input`; no draft session.
+- `draft` (default): local session with baseline/draft/dirty state.
 
-- Backspace at start MUST commit draft and call `preventDefault()`.
+Draft model semantics:
 
-- Delete at end MUST commit draft and call `preventDefault()`.
+- Session starts when focused and editable.
+- Baseline captures committed text at session start.
+- `input` updates draft and sets dirty.
+- Cancel resets draft to baseline.
+- Commit sends current draft and clears dirty.
 
-Notes:
+Read-only semantics:
 
-- Yielding is semantic via `preventDefault()` and bubbling to Core's global keydown handler.
+- Read-only state prevents opening/editing draft sessions.
+- Commit operations are ignored while read-only.
 
-### Target integration
+Sync rules:
 
-Rules:
+- When not focused on this target, input value syncs from committed state.
+- When focused, local draft is preserved except when committed state changes while draft is clean.
 
-- `buildTextField` MUST attach its target via `ctx.target`.
-- `defaultTextCaret()` SHOULD be used for caret placement.
+Mirror rules:
 
-Pointer rule:
+- Mirror reflects current displayed text (draft or committed).
+- When text ends with newline, mirror appends a trailing zero-width space (`\u200B`) for sizing.
 
-- On `pointerdown`, the editor MUST focus its own target and stop propagation.
+### Yield navigation (`yieldNav=true`)
 
-## Shared header control: `buildItemHeader`
+Events that trigger commit/yield behavior:
 
-`buildItemHeader` renders the canonical header subtree for an item.
+- `Escape`: Cancels the draft session in draft mode and MUST NOT call `preventDefault()`.
+- `Tab`: Commits the draft and MUST call `preventDefault()`.
+- `Enter`: Commits the draft and MUST call `preventDefault()`. Exception: a `textarea` with `metaKey` or `ctrlKey` allows newline.
+- Arrow keys: MUST yield only at text boundaries. Left yields at absolute start, right yields at absolute end, up yields on the first line for `textarea` (always for single-line input), and down yields on the last line for `textarea` (always for single-line input). When yielding, the runtime MUST commit the draft and call `preventDefault()`.
+- `Backspace` at start: MUST commit the draft and call `preventDefault()`.
+- `Delete` at end: MUST commit the draft and call `preventDefault()`.
 
-It is view-agnostic and is intended to be used by:
-
-- outer views
-- table schema contexts
-
-DOM/class contract:
-
-- The canonical header DOM/class structure is defined in `docs/ui-contracts.md`.
-
-Behavior:
-
-Rules:
-
-- The label field MUST exist and MUST attach `LABEL_TARGET`.
-- If the item mode is connected, connected fields MUST be rendered.
-- Connected fields MUST be keyed by field key and mounted via `ctx.list`.
-
-Connected field semantics:
-
-- Field order MUST be derived from `fieldsFromConn(conn)`.
-- Each field MUST attach target `conn:<fieldKey>`.
-
-Connected field model:
-
-A connected definition is represented as:
-
-- `formula` -> one field: `expr`
-- `query` -> three fields: `from`, `where`, `orderBy`
+### Pointerdown + focus integration
 
 Rules:
 
-- These keys MUST be treated as canonical.
-- Views MUST NOT invent alternate keys for the same meaning.
+- On `pointerdown`, focuses Core on this target and calls `stopPropagation()`.
+- Pointer interactions inside a textfield therefore do not trigger enclosing frame pointerdown behavior.
+- Caret placement is handled by the native input/textarea (browser default) when it receives focus.
+- Pointerdown on the input/textarea MUST NOT override the browser's selection behavior.
+- `focus` MUST start the draft session when applicable.
+- Target MUST be registered via `ctx.target` with the default text caret adapter.
 
-Helpers:
-
-- `fieldsFromConn(conn)` returns the field list with labels and multiline flags.
-- `patchConn(conn, key, text)` applies a single-field patch.
-
-## Connected helpers
+## Connected header helpers
 
 ### `fieldsFromConn(conn)`
 
-`fieldsFromConn` returns the connected definition field list for a connected item.
+Canonical connected field derivation.
 
 Rules:
 
-- Field order MUST match the canonical connected model:
-  - formula: `expr`
-  - query: `from`, `where`, `orderBy`
-
-- Returned fields MUST include:
-  - stable `key`
-  - display label
-  - multiline flag (when needed)
+- For `formula`: returns one field `expr`.
+- For non-formula connected definitions: returns `from`, `where`, `orderBy`.
+- Field metadata includes key, label text, multiline flag, and current text.
+- Field order MUST be canonical and stable.
 
 ### `patchConn(conn, key, text)`
 
-`patchConn` applies a single-field patch to a connected definition.
+Single-field patch helper.
 
 Rules:
 
-- It MUST treat the canonical field keys as authoritative.
-- It MUST apply only the targeted field change.
+- Returns an updated connected object when `key` is recognized.
+- For unknown keys, returns the original object unchanged.
 
-## Public UI runtime API surface (`dom/index`)
+### `buildItemHeader(core, args)`
 
-This is the supported export surface of the UI runtime module.
+Canonical header component for item UI.
 
-Component + mounting:
+#### DOM/class contract
 
-- `createComponent`
-- `bindItemFrame`
-- `setBodyClasses`
-- `el`
+Canonical produced structure:
 
-Targets + focus helpers:
+```text
+.ui-header
+  .ui-header-label
+    [.ui-textfield subtree for label]
+  .ui-header-conn
+    .ui-header-conn-row (0..n)
+      .ui-header-conn-key
+      .ui-header-conn-val
+        [.ui-textfield subtree for connected field]
+```
 
-- `LABEL_TARGET`
-- `VALUE_TARGET`
-- `connTarget`
-- `caret0`
-- `caretAt`
-- `caretEnd`
-- `SELECT_ALL`
-
-Types:
-
-- `Intent`
-- `ViewIntent`
-- `NavDir`
-
-Intent + editor helpers:
-
-- `insertTextIntoActiveEditor`
-- `enterEditOnType`
-- `toggleEditOnConfirm`
-
-Shared controls:
-
-- `buildTextField`
-- `buildItemHeader`
-
-Connected helpers:
-
-- `fieldsFromConn`
-- `patchConn`
+#### Behavioral contract
 
 Rules:
 
-- View code SHOULD treat these exports as the canonical shared UI building blocks.
-- View code SHOULD NOT re-implement variants unless view-specific behavior requires it.
+- Label text field uses target `LABEL_TARGET`.
+- Connected rows render only when `item.mode.type === "connected"`.
+- Each connected field MUST use `connTarget(field.key)` as target.
+- Each connected field MUST use `buildTextField` with autosize enabled.
+- Each connected field MUST commit through `commitConnField(field.key, text)`.
+- Connected rows are keyed by `field.key` and reconciled with `ctx.list`.
+- Render order matches `fieldsFromConn(conn)`.
 
-## Usage patterns (recommended)
+## Key parsing boundary
 
-### Conditional subtree mounting
+Key parsing is part of Core/system routing docs.
 
-Use `ctx.slot` for a conditional subtree that must dispose cleanly.
+## Non-goals and integration points
 
-Rules:
+Runtime (`dom/`) provides:
 
-- Callers MUST NOT clear the host manually.
-- Callers MUST NOT "toggle" by replacing host children.
+- Safe component lifecycle/disposal primitives.
+- Safe dynamic mounting primitives (`slot`, `list`).
+- Canonical editing and header widgets.
 
-(Implementation details are handled by the region.)
+System design docs define:
 
-### Keyed lists
-
-Use `ctx.list` for any dynamic list where children have stable identity.
-
-Rules:
-
-- Callers MUST NOT use array indices as keys.
-- Callers MUST NOT manually reconcile DOM in effects.
-
-### Text editing
-
-Use `buildTextField` for any inline editor that must participate in:
-
-- target-driven focus
-- semantic yielding
-- correct disposal
-
-Rules:
-
-- The editor MUST NOT be tabbable.
-- The editor MUST stop pointer propagation.
+- View architecture and composition.
+- Focus/selection routing policy.
+- Visual language and layout rules.

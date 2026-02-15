@@ -16,7 +16,7 @@ import {
   connTarget,
   defaultTextCaret,
 } from "../core";
-import { caretFromTarget, createComponent, el } from "./base";
+import { createComponent, el } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -333,7 +333,7 @@ export function buildTextField(
     }
 
     ctx.on(inp, "pointerdown", (e: PointerEvent) => {
-      core.focus(opts.focus, opts.target, { caret: caretFromTarget(e.target) });
+      core.focus(opts.focus, opts.target);
       e.stopPropagation();
     });
 

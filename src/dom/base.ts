@@ -1,6 +1,6 @@
 import { computed, effect } from "@preact/signals-core";
 
-import type { Caret, Component, Core, Focus, ViewName } from "../core";
+import type { Component, Core, Focus, ViewName } from "../core";
 import { DEFAULT_TARGET } from "../core";
 import { DEV, devAssert } from "../dev";
 
@@ -161,19 +161,6 @@ class RegionChildManager<Id extends string | number> {
   }
 }
 
-export function caretFromTarget(target: EventTarget | null): Caret {
-  const targetEl = target instanceof HTMLElement ? target : null;
-  if (
-    targetEl instanceof HTMLInputElement ||
-    targetEl instanceof HTMLTextAreaElement
-  ) {
-    const start = targetEl.selectionStart ?? 0;
-    const end = targetEl.selectionEnd ?? start;
-    return { start, end };
-  }
-  return { start: 0, end: 0 };
-}
-
 export function createComponent(
   core: Core,
   build: (ctx: Ctx) => HTMLElement,
@@ -290,9 +277,7 @@ export function bindItemFrame(
   ctx.target(spec.focus, DEFAULT_TARGET, () => frameEl);
 
   ctx.on(frameEl, "pointerdown", (e: PointerEvent) => {
-    spec.core.focus(spec.focus, DEFAULT_TARGET, {
-      caret: caretFromTarget(e.target),
-    });
+    spec.core.focus(spec.focus, DEFAULT_TARGET);
     e.stopPropagation();
   });
 

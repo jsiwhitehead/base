@@ -8,9 +8,10 @@ import type {
   Focus,
   ItemId,
   Selection,
+  ViewIntent,
 } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
-import type { NavDir, ViewIntent } from "../dom";
+import type { NavDir } from "../dom";
 import {
   SELECT_ALL,
   bindItemFrame,

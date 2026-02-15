@@ -9,6 +9,7 @@ import type {
   ItemId,
   Selection,
   ValueOrBlank,
+  ViewIntent,
 } from "../core";
 import {
   DEFAULT_TARGET,
@@ -17,7 +18,7 @@ import {
   connTarget,
   parseValue,
 } from "../core";
-import type { NavDir, ViewIntent } from "../dom";
+import type { NavDir } from "../dom";
 import {
   bindItemFrame,
   buildItemHeader,

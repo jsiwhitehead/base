@@ -1,5 +1,3 @@
-export type { Intent, ViewIntent } from "../core";
-export { connTarget, LABEL_TARGET, VALUE_TARGET } from "../core";
 export type { NavDir } from "./controls";
 
 export { bindItemFrame, createComponent, el, setBodyClasses } from "./base";

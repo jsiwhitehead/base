@@ -128,7 +128,7 @@ function isNativeEditorTarget(target: EventTarget | null): boolean {
   return false;
 }
 
-export function parseKeydownIntent(e: KeyboardEvent): Intent | null {
+function parseKeydownIntent(e: KeyboardEvent): Intent | null {
   if (e.key === "Escape") return { type: "CANCEL" };
   if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
   if (e.key === "Enter") return { type: "CONFIRM" };
