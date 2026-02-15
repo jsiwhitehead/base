@@ -170,7 +170,6 @@ Rules:
 - `plain` versus `connected` MUST determine available edit targets:
   - `value` for plain
   - `conn:*` for connected
-
 - Mode conversion MAY occur but SHOULD be explicit.
 
 ## Structural stability rules (selection + rendering)
@@ -328,6 +327,54 @@ Token categories:
 - SHOULD remain neutral by default.
 - MUST NOT redefine shared rail/header language.
 
+### Header: stable chrome identity
+
+Header is a first-class chrome area with a consistent identity.
+
+**Header principles**
+
+- Header is visually contained (capsule-like).
+- Header uses subtle fill (not border-driven).
+- Header is visually distinct from body content, but not loud.
+- Header uses consistent typography scale and spacing rhythm across views.
+
+**Header meaning**
+
+- **Label** = identity (title-like)
+- **Conn** = derivation/configuration (inspector-like)
+
+Header is designed to remain recognizable regardless of where it is placed.
+
+### Header placement and alignment
+
+Header should always be structurally anchored.
+
+**If header belongs to a single item**
+
+- Header should visually attach/dock to that item's rail.
+
+**If header represents multiple items (aggregation)**
+
+- Header cannot dock to one rail.
+- Header should instead be visually aligned with the set of items it describes.
+
+Example:
+
+- In table view, column header appears in the header row and aligns to the column's cells.
+
+### Layout adaptability
+
+Header and body layout may vary based on view geometry, but the language remains stable.
+
+**Header layout modes**
+
+- **Stacked**: label above conn rows (default)
+- **Inline**: label and conn arranged horizontally (wide layouts)
+
+Key invariant:
+
+- Header must still look like header.
+
 ### Universal state classes
 
 State classes:
@@ -351,6 +398,87 @@ Rules:
 - Rail MUST consume `--rail-tint`.
 - Header MUST consume `--header-fill`.
 - `.is-issue` MUST override `.is-focused` for both rail and header derived values.
+
+### Focus language (item vs target)
+
+Focus is expressed in two layers:
+
+**Tier 1: Item focus**
+
+- Expressed through rails tint (chrome-level).
+- Indicates: **"this is the active item."**
+
+**Tier 2: Target focus (field-level)**
+
+- Expressed locally on the focused field/control.
+- Indicates: **"this is where input will go."**
+
+Rules:
+
+- Rails alone are never expected to communicate which field is active.
+
+### Container focus vs edit focus
+
+The system must clearly distinguish:
+
+**Container focus (`DEFAULT_TARGET`)**
+
+- Rails tinted
+- No field highlight
+- No rings or washes
+
+**Value edit focus (`value`)**
+
+- Rails tinted
+- Value wash appears (editor-like views)
+- Caret visible
+
+**Header edit focus (`label` / `conn:*`)**
+
+- Rails tinted
+- Focus affordance appears on the specific header field
+
+This is simple, quiet, and unambiguous.
+
+### Target focus styles
+
+Target focus uses two styles depending on the surface type.
+
+**A) Control focus (header + control-like surfaces)**
+
+Used for:
+
+- `label`
+- `conn:*`
+- sliders, checkboxes, toggles, dropdowns, and other widgets
+
+Pattern:
+
+- A control-local focus affordance consistent with modern best practice.
+- Typically expressed as a ring/halo/outline, or as a native control highlight (for example a thumb halo for sliders).
+- Applied only to the focused control, not the whole item.
+
+Consistency principle:
+
+- Controls may differ in exact shape (ring around a textfield vs halo on a slider thumb), but should feel like part of one system through consistent intensity, spacing, and color logic.
+
+**B) Editor focus (document-like value editing)**
+
+Used for:
+
+- `value` in editor-like views (for example outline scalar editing)
+
+Pattern:
+
+- A faint background wash behind the editing region.
+- Caret remains primary.
+- No large "boxed input" ring around the whole value.
+
+This preserves the mental model of a notes/outliner editor rather than a form.
+
+### Rail structure
+
+Rails are the primary structural marker and the primary item-focus indicator.
 
 ### Rail language
 
@@ -395,7 +523,6 @@ Rules:
   - targets (`ctx.target`)
   - regions (`ctx.slot`, `ctx.list`)
   - shared controls (`buildTextField`, `buildItemHeader`)
-
 - Views MUST attach targets through `ctx.target(...)`.
 - Views MUST respect frame/header versus body target ownership.
 - Every rendered item MUST expose `DEFAULT_TARGET`.
