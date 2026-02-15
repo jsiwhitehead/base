@@ -81,6 +81,10 @@ Rules:
 
 The frame element is the stable DOM anchor for an item.
 
+DOM/class contract:
+
+- The frame root MUST use `.ui-frame`.
+
 Rules:
 
 - Each rendered item MUST have exactly one `.ui-frame`.
@@ -104,13 +108,7 @@ Header-owned targets:
 - `label`
 - `conn:*`
 
-Rules:
-
-- The header MUST use `.ui-header`.
-- The header MUST NOT attach the `value` target.
-- Label editing MUST keep yielding disabled.
-
-Canonical header DOM contract:
+DOM/class contract:
 
 ```text
 .ui-header
@@ -125,9 +123,31 @@ Canonical header DOM contract:
 
 Rules:
 
-- This structure is the canonical system-level shape for header chrome.
-- Views MAY style or conditionally mount parts of the header.
-- Target ownership and row semantics MUST remain consistent.
+- Header root MUST use `.ui-header`.
+- Header MUST NOT attach the `value` target.
+- Label editing MUST keep yielding disabled.
+- This DOM/class structure is canonical for system header chrome.
+- Views MAY style or conditionally mount header parts.
+- Target ownership and connected-row semantics MUST remain consistent.
+
+### Text field (`.ui-textfield`)
+
+The text field is the canonical shared text editing control subtree.
+
+DOM/class contract:
+
+```text
+.ui-textfield
+  .ui-textfield-mirror                          (optional; aria-hidden="true")
+  input.ui-textfield-input | textarea.ui-textfield-input
+```
+
+Rules:
+
+- `.ui-textfield` is the required root for the text field control.
+- `.ui-textfield-mirror` MAY be present only for autosize; when present it MUST be `aria-hidden="true"`.
+- The input/textarea MUST use `.ui-textfield-input`.
+- Behavioral requirements for targets, focus, yielding, and edit models are defined by the runtime (`buildTextField`).
 
 ### Body (`.ui-body.<view>`)
 
@@ -144,6 +164,10 @@ Body-owned targets:
 
 - `value`.
 - Future body-specific targets.
+
+DOM/class contract:
+
+- The body root MUST include `.ui-body` and `.ui-<view-name>`.
 
 Rules:
 

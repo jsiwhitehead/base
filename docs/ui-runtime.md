@@ -396,13 +396,9 @@ It provides:
 - Two commit models: `live` and `draft`.
 - Optional yielding of boundary/navigation keys to Core intent routing.
 
-Canonical DOM:
+DOM/class contract:
 
-```text
-.ui-textfield
-  .ui-textfield-mirror                          (optional; aria-hidden="true")
-  input.ui-textfield-input | textarea.ui-textfield-input
-```
+- The canonical DOM/class structure for this control is defined in `docs/ui-contracts.md`.
 
 Rules:
 
@@ -531,6 +527,10 @@ It is view-agnostic and is intended to be used by:
 
 - outer views
 - table schema contexts
+
+DOM/class contract:
+
+- The canonical header DOM/class structure is defined in `docs/ui-contracts.md`.
 
 Behavior:
 
