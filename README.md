@@ -60,8 +60,8 @@ Architecture and behavior contracts:
 
 - `docs/core-api.md`
 - `docs/ui-contracts.md`
-- `docs/ui-runtime.md`
-- `docs/ui-views.md`
+- `docs/dom-runtime.md`
+- `docs/views-spec.md`
 
 Repository conventions and contributor workflow:
 

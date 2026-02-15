@@ -14,8 +14,8 @@ It is the authoritative reference for:
 
 This document does **not** define:
 
-- The UI runtime API (`dom/`). See `docs/ui-runtime.md`.
-- View-specific behavior. See `docs/ui-views.md`.
+- The UI runtime API (`dom/`). See `docs/dom-runtime.md`.
+- View-specific behavior. See `docs/views-spec.md`.
 - Core types and semantics. See `docs/core-api.md`.
 
 ## System principles (non-negotiables)
@@ -267,7 +267,7 @@ Rules:
 
 Notes:
 
-- `bindItemFrame` in `ui-runtime.md` is the canonical implementation for frames.
+- `bindItemFrame` in `dom-runtime.md` is the canonical implementation for frames.
 
 ## Universal interaction semantics (intent-level)
 
@@ -318,7 +318,7 @@ Rules:
 - Label editors MAY also yield when view behavior requires it.
 - Yielding MUST be implemented via editor-side `preventDefault()` plus Core global routing.
 
-(Shared editor behavior is defined in `ui-runtime.md`.)
+(Shared editor behavior is defined in `dom-runtime.md`.)
 
 ## Cross-view visual language
 
@@ -636,4 +636,4 @@ This UI contract avoids common editor failure modes:
 - Leaked listeners/effects.
 - Styling drift across views.
 
-It stays robust by keeping a small set of contracts strict, and making view-specific behavior explicit in `docs/ui-views.md`.
+It stays robust by keeping a small set of contracts strict, and making view-specific behavior explicit in `docs/views-spec.md`.

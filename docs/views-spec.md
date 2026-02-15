@@ -9,7 +9,7 @@ For each view, it specifies:
 - Which **targets** the view introduces (if any).
 - How the view interprets **intents** into Core operations and focus transitions.
 
-Shared UI architecture, ownership boundaries, interaction invariants, and visual language belong in `docs/ui-contracts.md`. Shared UI runtime APIs and controls belong in `docs/ui-runtime.md`. Core API semantics belong in `docs/core-api.md`.
+Shared UI architecture, ownership boundaries, interaction invariants, and visual language belong in `docs/ui-contracts.md`. Shared UI runtime APIs and controls belong in `docs/dom-runtime.md`. Core API semantics belong in `docs/core-api.md`.
 
 ## Scope
 
@@ -25,7 +25,7 @@ This document does not cover:
 
 - The shared frame/header/body ownership contract.
 - Global intent parsing and routing.
-- Shared editor and header controls (`buildTextField`, `buildItemHeader`), yielding rules, and intent helper behavior (see `docs/ui-runtime.md`).
+- Shared editor and header controls (`buildTextField`, `buildItemHeader`), yielding rules, and intent helper behavior (see `docs/dom-runtime.md`).
 - Cross-view UI contracts (ownership, stability, focus model, visual language) (see `docs/ui-contracts.md`).
 
 ## Shared assumptions (from `docs/ui-contracts.md`)
@@ -141,7 +141,7 @@ Edit targets by item type:
   - `value`
 
 - Connected leaf:
-  - `conn:*` in `fieldsFromConn` order (see `docs/ui-runtime.md`)
+  - `conn:*` in `fieldsFromConn` order (see `docs/dom-runtime.md`)
   - (optionally) `value` if the view supports showing it (usually no)
 
 - Label editing:
@@ -163,7 +163,7 @@ Leaf participation:
 
 Edit stops per leaf:
 
-- Connected leaf: `conn:*` in `fieldsFromConn` order (see `docs/ui-runtime.md`).
+- Connected leaf: `conn:*` in `fieldsFromConn` order (see `docs/dom-runtime.md`).
 - Plain scalar leaf: `value`.
 - Other kinds: no edit stops.
 
@@ -377,7 +377,7 @@ Rules:
 - Schema row SHOULD resolve as `rows[0] ?? null`.
 - `colCount` SHOULD follow `schemaRow.children.length` when schema row exists.
 - Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
-- Schema header cells SHOULD use `buildItemHeader` to preserve shared header target semantics (see `docs/ui-runtime.md`).
+- Schema header cells SHOULD use `buildItemHeader` to preserve shared header target semantics (see `docs/dom-runtime.md`).
 
 ### Intent handling
 
@@ -587,7 +587,7 @@ Rail geometry, state classes, and derived token behavior are defined in `docs/ui
 Rules:
 
 - New view sections SHOULD follow the template in this file.
-- New sections MUST reference `docs/ui-contracts.md` for shared semantics and invariants, and `docs/ui-runtime.md` for shared controls/helpers, instead of duplicating them.
+- New sections MUST reference `docs/ui-contracts.md` for shared semantics and invariants, and `docs/dom-runtime.md` for shared controls/helpers, instead of duplicating them.
 
 A new view specification MUST define:
 
@@ -595,6 +595,6 @@ A new view specification MUST define:
 - Meaning of `DEFAULT_TARGET` in that view context.
 - Edit-entry behavior from container focus.
 - Type-to-edit behavior.
-- Yielding behavior from editors (per `docs/ui-runtime.md`).
+- Yielding behavior from editors (per `docs/dom-runtime.md`).
 - `DELETE`/`DELETE_BOUNDARY` handling (or explicit no-op).
 - Styling notes describing view-local rail composition (shared rail geometry in `docs/ui-contracts.md`).
