@@ -59,8 +59,8 @@ UI rules:
 Architecture and behavior contracts:
 
 - `docs/core-api.md`
-- `docs/ui-contracts.md`
 - `docs/dom-runtime.md`
+- `docs/style-system.md`
 - `docs/views-spec.md`
 
 Repository conventions and contributor workflow:
