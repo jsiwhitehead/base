@@ -1,504 +1,264 @@
-# UI Architecture & Contracts
+# Architecture
 
-This document defines the **system-level UI contracts** layered on Core.
+This document is the canonical technical contract for the system. It defines the architecture layers, invariants, and extension rules that keep behavior stable across Core, runtime, and views. Specialized API/runtime/style/view details live in referenced docs.
 
-It is the authoritative reference for:
+## Overview
 
-- The cross-cutting UI model (selection, focus, targets).
-- Ownership boundaries between Core, the UI runtime, and views.
-- Structural stability rules (selection-driven rendering constraints).
-- Focus, routing, and pointer contracts.
-- Universal interaction semantics (intent-level).
-- Editability and target exposure rules.
+The architecture guarantees predictable focus and selection behavior, stable DOM structure under selection changes, consistent intent routing, and strict ownership boundaries. Interaction is semantic and intent-driven, not raw DOM-keydown-driven. It also enforces layered dependency direction, target ownership, and structural stability so behavior remains deterministic as features evolve.
 
-This document does **not** define:
+## Core concepts and definitions
 
-- Core types and semantics. See `docs/core-api.md`.
-- The UI runtime API (`dom/`). See `docs/dom-runtime.md`.
-- The visual language, tokens, and styling invariants. See `docs/style-system.md`.
-- View-specific behavior. See `docs/views-spec.md`.
+- Item: the primary state unit rendered in the UI tree.
+- View: behavior and layout logic used to render an item body and interpret view-level intents.
+- Component: reusable UI/runtime building block used inside views or shared DOM runtime utilities.
+- State: canonical application data owned by Core.
+- Rendering/runtime: DOM integration layer that mounts, updates, and disposes UI safely.
+- Layer/boundary: architectural partition (`core/`, `dom/`, `views/`, `main.ts`) with explicit ownership and dependency direction.
+- Selection: Core-owned current location in the item tree; source of truth for focus.
+- Focus: target-level focus state represented as `(itemId, target)`.
+- Target: stable identifier for a focus/edit surface (for example `DEFAULT_TARGET`, `label`, `conn:*`, `value`).
+- Frame/header/body: conceptual UI regions per rendered item; frame is the stable anchor, header is stable identity surface, body is view-specific content. This split defines ownership and stability contracts and does not require rigid DOM shape beyond the documented container/region contracts.
+- Intent: semantic interaction command parsed from input and routed by Core.
 
+## Layering model
 
-## Golden rules (non-negotiables)
+### Layers and ownership
 
-These rules are strict. The system depends on them.
+`core/`
+
+- Owns state and transactions.
+- Owns selection and programmatic focus application.
+- Owns global input parsing (`keydown` to intents).
+- Owns global intent handling and routing to active views.
+
+`dom/`
+
+- Owns shared DOM runtime lifecycle (mount/patch/dispose).
+- Owns stable dynamic mounting primitives (`ctx.slot`, `ctx.list`).
+- Owns shared controls and canonical frame/header binding helpers.
+- Enforces runtime-side structural and focus contracts.
+
+`views/`
+
+- Owns view-specific body layout and interaction behavior.
+- Owns intent interpretation within view semantics.
+- Owns mapping view intent outcomes to Core operations.
+- Owns body target binding and body-local controls.
+
+`main.ts`
+
+- Owns app bootstrap and wiring across layers.
+- Composes Core, runtime, and registered views.
+- Defines root mount and startup lifecycle.
+
+### Allowed dependencies
+
+| Layer | May depend on |
+| ----- | ------------- |
+| core | (none) |
+| dom | core |
+| views | core, dom |
+| main | core, dom, views |
+
+### Outer view vs item view split
+
+Outer view responsibilities:
+
+- Render the stable frame.
+- Render shared outer UI including header surfaces.
+- Mount the item view body subtree.
+- Attach outer-view-owned targets.
+
+Item view responsibilities:
+
+- Render `.ui-body.<view>` as the body root.
+- Render view-specific structure and controls.
+- Interpret routed intents and translate them into Core operations.
+- Attach body-owned targets only.
+- Item views MUST NOT attach header-owned targets (`label`, `conn:*`).
+
+## Invariants (must / must not)
 
 ### Sources of truth
 
 - Core MUST be the single source of truth for state.
 - Selection MUST be the single source of truth for focus.
+- DOM and CSS MUST NOT be treated as authoritative focus/state sources.
 
-Meaning:
+### Target-driven focus model
 
-- The DOM is not authoritative.
-- CSS MUST NOT treat `:focus` / `:focus-visible` as authoritative.
-
-### Target-driven UI model
-
+- Focus MUST be represented as `(itemId, target)`.
 - The UI MUST be target-driven, not tab-order-driven.
-- Focus is defined by `(itemId, target)`.
+- `.ui-main` MUST be the only tabbable element.
+- Targets MUST remain stable across selection changes.
 
-### Structural stability under selection
+### Ownership rules (frame/header/body)
 
-- UI structure MUST be stable across selection changes.
-- Selection-driven updates MUST be styling-only (class toggles), not structural.
-
-### Semantic interaction
-
-- Interaction SHOULD be semantic (intent-driven), not raw DOM-key-driven.
-
-
-## System model (core concepts)
-
-### Items and views
-
-- The UI renders a tree of items.
-- Each item is rendered through a view.
-- Views are responsible for layout and interpreting intents into Core operations.
-
-View-specific behavior is defined in `docs/views-spec.md`.
-
-### UI regions per item (conceptual)
-
-Each rendered item is conceptually split into three regions:
-
-- **Frame**: stable DOM anchor for the item.
-- **Header**: stable, view-agnostic identity surface (label + connected fields).
-- **Body**: view-specific content surface.
-
-This is a conceptual split that defines ownership and stability rules. It does not require a specific DOM structure beyond the minimal contracts below.
-
-### Targets
-
-Targets are the system's canonical focus surfaces.
-
-- Targets are stable identifiers.
-- Core uses targets for:
-  - programmatic focus
-  - intent routing
-  - edit traversal and focus continuity
-
-
-## Ownership boundaries
-
-### Layer responsibilities
-
-Core:
-
-Core owns:
-
-- selection state
-- focus application (via selection -> targets)
-- global keyboard routing:
-  - parse `keydown` into intents
-  - handle global intents
-  - route view intents to the active view handler
-
-Core semantics are defined in `docs/core-api.md`.
-
-UI runtime (`dom/`):
-
-The runtime provides:
-
-- safe mounting and disposal
-- stable dynamic mounting primitives (`ctx.slot`, `ctx.list`)
-- shared controls (text fields, header builder)
-- canonical frame binding behavior
-
-Runtime behavior is defined in `docs/dom-runtime.md`.
-
-Views:
-
-Views own:
-
-- view-level layout and composition
-- the body subtree (`.ui-body.<view>`)
-- body-local controls
-- view intent interpretation (within the global invariants)
-
-View behavior is defined in `docs/views-spec.md`.
-
-
-### Outer view vs item view (layer split)
-
-Rendering is split across two cooperating layers.
-
-Outer view responsibilities:
-
-- Render the stable frame.
-- Render rail UI.
-- Render header UI (label + connected definition fields).
-- Mount the body subtree for the item view.
-- Attach outer-view-owned targets.
-
-Item view responsibilities:
-
-- Render the body root (`.ui-body.<view>`).
-- Render view-specific structure and controls.
-- Interpret intents and translate them into Core operations.
-- Attach body-owned targets.
-
-Rules:
-
-- Views MUST respect this ownership split.
-- View code MUST NOT mix header-owned and body-owned targets.
-
-
-## Target ownership contract (hard rules)
-
-Target ownership is the central system contract.
-
-### Target taxonomy
-
-The system defines these shared targets:
+Shared targets:
 
 - `DEFAULT_TARGET`
 - `label`
 - `conn:*`
 - `value`
 
-### Ownership matrix
-
-- The frame MUST own `DEFAULT_TARGET`.
-- The header MUST own:
-  - `label`
-  - `conn:<fieldKey>`
-
-- The body MUST own:
-  - `value`
-  - any future body-specific targets
-
-### Mutual exclusions
-
-- The body MUST NOT attach `label` or `conn:*`.
-- The header MUST NOT attach `value`.
+- Frame MUST own `DEFAULT_TARGET`.
+- Header MUST own `label` and `conn:*`.
+- Body MUST own `value` and body-specific targets.
+- Body MUST NOT own `label` or `conn:*`.
+- Header MUST NOT own `value`.
 - A target MUST NOT have multiple owners.
 
+### Structural stability under selection
 
-## Structural contracts (stability and composition)
-
-### Frame stability
-
-The frame element is the stable DOM anchor for an item.
-
-Rules:
-
-- Each rendered item MUST have exactly one frame.
-- The frame MUST remain stable across selection changes.
-- Selection-driven effects MUST NOT replace, remount, or reorder frames.
-
-Notes:
-
-- Runtime provides canonical frame behavior via `bindItemFrame(...)`.
-
-### Header stability and purpose
-
-The header is stable, view-agnostic UI rendered by the outer view.
-
-Rules:
-
-- Header MUST NOT attach the `value` target.
-- Header-owned targets MUST remain consistent (`label`, `conn:*`).
-
-Notes:
-
-- The canonical header DOM/control implementation is provided by the runtime (`buildItemHeader`).
-
-### Body ownership and allowed dynamism
-
-The body is view-specific UI rendered by the item view.
-
-Rules:
-
-- The body MUST NOT attach `label` or `conn:*`.
-- The body MUST remain structurally stable across selection changes.
-
-
-### Structural stability rules (selection + rendering)
-
-The UI must remain stable while selection changes.
-
-Rules:
-
+- Each rendered item MUST map to exactly one stable `.ui-frame`.
+- Selection changes MUST be styling-only updates.
 - Selection changes MUST NOT remount frames.
 - Selection changes MUST NOT rebuild lists.
 - Selection changes MUST NOT switch body subtrees.
-- Selection-driven updates MUST be styling-only (class toggles).
-
-Dynamic mounting rules:
-
-When structure must be conditional or keyed, it MUST use runtime regions.
-
-Rules:
-
-- Conditional subtree mounting MUST use runtime regions (`ctx.slot`).
-- Repeated keyed subtree mounting MUST use runtime regions (`ctx.list`).
-- Hosts that contain regions MUST NOT be manually cleared or replaced.
+- The body MUST remain structurally stable across selection changes.
+- Conditional mounting MUST use `ctx.slot`.
+- Repeated keyed mounting MUST use `ctx.list`.
+- Region hosts MUST NOT be manually cleared/replaced.
 - Manual child reconciliation in effects SHOULD be avoided.
 
-
-## Interaction and routing contracts
-
-### Core-driven keyboard routing (global)
-
-Rules:
+### Routing and interaction
 
 - Core MUST own the global `keydown` listener.
-- Core MUST parse key events into intents.
-- Core MUST handle global commands (notably `CANCEL`) before view routing.
+- Core MUST parse keydown events into intents.
+- Core MUST handle global intents first (for example `CANCEL`).
 - Core MUST route non-global view intents to the active view handler.
-- If Core routes an intent, it MUST prevent the original DOM key event.
+- If Core routes an intent, it MUST prevent the original DOM event.
+- Native editors (`input`, `textarea`, `contenteditable`) SHOULD handle keydown locally unless the event is already `defaultPrevented`.
+- Controls MAY yield keys to Core by calling `preventDefault()`; Core then routes yielded intents globally.
 
-Notes:
+### Pointer and propagation rules
 
-- Native editors (`input`, `textarea`, `contenteditable`) SHOULD handle keydown locally unless the event is `defaultPrevented`.
-- Controls MAY yield keys by calling `preventDefault()`; yielded keys are then routed by Core.
+- Frame `pointerdown` MUST focus `DEFAULT_TARGET` and stop propagation.
+- Frame `pointerdown` MUST capture caret when the hit surface is text-editing content.
+- Editors/controls MUST focus their own target and stop propagation.
 
-### Active view resolution
+### Universal semantics (cross-view)
 
-Rules:
+- `CANCEL` MUST be handled by Core dispatch.
+- `CANCEL` MUST follow the escape ladder: non-default target to `DEFAULT_TARGET`, then blur.
+- `TYPE` from `DEFAULT_TARGET` SHOULD enter the primary edit target and insert typed text via `insertTextIntoActiveEditor(...)` (defined in `docs/dom-runtime.md`).
+- `CONFIRM` from `DEFAULT_TARGET` SHOULD enter the primary edit target, else run structural default action.
+- `NAV` MUST NOT implicitly enter edit mode.
 
-- Active view MUST resolve to the closest mounted view root containing the event/focus target.
-- Active view MUST update to the nearest containing view root on both:
-  - pointer interactions
-  - programmatic focus application
+Primary edit target order:
 
-### Programmatic focus
+1. First `conn:*` field when connected and editable.
+2. Otherwise `value` when plain scalar and editable.
+3. Otherwise none.
 
-Rules:
+### Editability and target exposure
 
-- Focus is defined by `(itemId, target)`.
-- Focus targets MUST be applied programmatically from Core selection.
-- Inputs MUST NOT participate in browser tab-order traversal.
-- `.ui-main` MUST be the only tabbable element.
+- `readonly` MUST be a hard stop for editing.
+- Mode MUST determine edit targets: `plain` to `value`, `connected` to `conn:*`.
+- `readonly` items MUST expose only `DEFAULT_TARGET`.
+- Derived/output-only bodies MUST NOT expose body edit targets.
 
-### App container DOM (canonical)
+## Runtime boundary (DOM integration)
 
-Canonical structure:
+The runtime is the contract boundary between Core semantics and DOM behavior. It may manage mounting, patching, scheduling, and lifecycle, but must preserve architecture invariants.
+
+Allowed at this boundary:
+
+- Programmatic focus application from selection/target state.
+- Stable dynamic region mounting via runtime primitives.
+- Shared control behaviors that uphold routing and target contracts.
+
+Forbidden at this boundary:
+
+- Manual reconciliation that bypasses runtime region ownership.
+- Replacing/clearing region hosts owned by runtime primitives.
+- DOM-driven focus authority that diverges from Core selection.
+
+### Canonical container DOM
 
 ```text
 #root
   .ui-root
-    .ui-main.ui-frame                           (tabIndex=0; only tabbable element; root item target: DEFAULT_TARGET)
-      [.ui-body.<root-view> subtree]            (mounted root view body)
+    .ui-main.ui-frame
+      .ui-body.<root-view>
 ```
 
-Rules:
+- `.ui-main` MUST be the root `.ui-frame` for the root item.
+- `.ui-main` MUST be the only tabbable element (`tabIndex=0`).
+- `.ui-body.<root-view>` MUST be the view root used for active view resolution.
 
-- `.ui-main` is the only tabbable element.
-- `.ui-main` is the root `.ui-frame` for the root item.
-- `.ui-body.<root-view>` is the view root used for active view resolution.
+API-level runtime details belong in `docs/dom-runtime.md`.
 
-### Pointer routing
+## Views model
 
-Frame pointerdown:
+Views are the item-level behavior model layered on Core and runtime.
 
-Rules:
+Responsibilities:
 
-- The frame MUST focus `DEFAULT_TARGET`.
-- Frames MUST capture caret when pointerdown hits text-editing surfaces.
-- Frame handling MUST stop propagation.
+- Define body layout and view-specific composition.
+- Interpret routed intents semantically.
+- Translate intents into Core operations.
+- Bind body-owned targets consistently with ownership rules.
 
-Editor/control pointerdown:
+Composition model:
 
-Rules:
+- Outer view renders stable frame/header surfaces and mounts the body root.
+- Item view renders `.ui-body.<view>` and owns view-specific body structure.
 
-- Editors and controls MUST focus their own target.
-- Editor/control handling MUST stop propagation.
+View resolution/routing model:
 
-Notes:
+- Active view resolves to the nearest containing mounted view root.
+- Active view MUST update on pointer interactions.
+- Active view MUST update on programmatic focus application.
+- Core routes view intents to that active view handler.
 
-- `bindItemFrame` in `dom-runtime.md` is the canonical implementation for frames.
+View-specific behavior details belong in `docs/views-spec.md`.
 
-### Yielding contract (system-level)
-
-Yielding is a cross-cutting contract between editors/controls and Core routing.
-
-Rules:
-
-- Value and connected editors SHOULD enable yielding where appropriate.
-- Label editors MAY also yield when view behavior requires it.
-- Yielding MUST be implemented via editor-side `preventDefault()` plus Core global routing.
-
-Notes:
-
-- Shared editor behavior is defined in `docs/dom-runtime.md`.
-
-
-## Universal semantics (cross-view behaviors)
-
-These rules are shared across views.
-
-Views MAY refine them, but MUST remain consistent with them.
-
-### Escape ladder (`CANCEL`)
-
-Rules:
-
-- `CANCEL` MUST be handled by Core dispatch.
-- If focused on a non-default target, it exits to `DEFAULT_TARGET`.
-- Otherwise it blurs.
-
-### Type-to-edit from `DEFAULT_TARGET`
-
-Rules:
-
-- When focused on `DEFAULT_TARGET`, `TYPE` SHOULD:
-  - enter the primary edit target
-  - select all
-  - insert the typed character using `insertTextIntoActiveEditor(...)`
-
-Primary edit target order:
-
-1. first connected definition field (`conn:*`) when connected
-2. otherwise `value` when plain scalar and editable
-3. otherwise none
-
-### Confirm-to-edit from `DEFAULT_TARGET`
-
-Rules:
-
-- When focused on `DEFAULT_TARGET`, `CONFIRM` SHOULD:
-  - enter the primary edit target if one exists
-  - otherwise run the view's structural default action
-
-### Navigation invariant
-
-Rules:
-
-- `NAV` MUST NOT implicitly enter edit mode.
-
-
-## Editability and target exposure policy
-
-Core defines item modes and editability.
-
-This section defines how the UI must interpret them.
-
-### Read-only behavior
-
-Rules:
-
-- `readonly` MUST be treated as a hard stop for editing.
-
-Meaning:
-
-- The UI must not allow entering edit targets for readonly items.
-- This prevents "read-only edit focus" states.
-
-### Mode determines available edit targets
-
-Rules:
-
-- `plain` versus `connected` MUST determine available edit targets:
-  - `value` for plain
-  - `conn:*` for connected
-
-### Target exposure rules (readonly + derived output)
-
-Rules:
-
-- `readonly` items MUST expose only `DEFAULT_TARGET` and MUST NOT expose any edit targets.
-- Items whose body is derived/output-only MUST NOT expose body edit targets (for example `value`).
-- If a derived/output-only body renders a tree, all rendered descendants MUST be treated as `readonly`.
-
-### Mode conversion policy
-
-Rules:
-
-- Mode conversion MAY occur but SHOULD be explicit.
-
-
-## Extension rules (how to add new things safely)
-
-This section defines what is safe to extend, and what must remain invariant.
+## Extension points
 
 ### Adding a new view
 
-A new view:
-
-- MUST obey:
-  - the outer view vs item view split
-  - the target ownership contract
-  - the structural stability rules
-  - the global routing model
-  - the universal semantics
-
-- SHOULD:
-  - interpret intents rather than raw DOM key events
+- MUST preserve outer view vs item view ownership split.
+- MUST preserve target ownership and structural stability invariants.
+- MUST implement behavior via intents, not ad-hoc raw key routing.
 
 ### Adding a new target
 
-A new target:
-
-- MUST have a single owner.
-- MUST fit the header/body ownership model.
-- MUST remain stable across selection changes.
+- MUST define exactly one owner (frame/header/body).
+- MUST remain stable under selection changes.
 - MUST not introduce implicit edit entry via navigation.
 
 ### Adding a new editor/control
 
-An editor/control:
+- MUST participate in target-driven focus (not tab order).
+- MUST follow pointer propagation rules.
+- MUST follow Core routing/yielding behavior.
 
-- MUST attach focus via targets (not tab order).
-- MUST follow pointer propagation rules (stop propagation).
-- MUST obey the yielding contract.
-- MUST remain consistent with the escape ladder.
+### Adding a new subsystem/module
 
+- MUST be placed in the correct layer and respect dependency direction.
+- MUST use stable layer entrypoints instead of deep cross-layer imports.
+- MUST avoid introducing cyclic dependencies.
 
-## Compliance checklist (quick validation)
+Decision rules:
 
-Use this list to validate new views, new editors, and refactors.
+- Introduce a new abstraction when it clarifies ownership, reduces cross-layer coupling, or creates a stable reusable contract.
+- Reuse existing abstractions when behavior already fits without widening public surface area.
+- Promote something to a layer entrypoint only when it is a stable shared contract used across a layer boundary.
 
-### Focus model
+## Design rationale
 
-- Selection is the single source of truth for focus.
-- Focus is expressed as `(itemId, target)`.
-- `.ui-main` is the only tabbable element.
+- Target-driven focus prevents focus instability caused by DOM tab-order drift.
+- Structural stability rules prevent selection-driven remount churn and identity loss.
+- Core-owned intent routing prevents behavior drift across views.
+- Runtime lifecycle constraints prevent leaked listeners/effects and orphan DOM state.
+- Strict dependency direction prevents cyclic coupling and hidden cross-layer breakage.
 
-### Ownership
+## References
 
-- Outer view owns frame + header.
-- Item view owns body subtree.
-- Frame owns `DEFAULT_TARGET`.
-- Header owns `label` and `conn:*`.
-- Body owns `value`.
-
-### Stability
-
-- Selection changes do not remount frames.
-- Selection changes do not rebuild lists.
-- Selection changes do not switch body subtrees.
-- Dynamic mounting uses `ctx.slot` / `ctx.list`.
-
-### Routing
-
-- Core owns global `keydown` parsing and intent routing.
-- If Core routes an intent, it prevents the DOM event.
-- Frames focus `DEFAULT_TARGET` on pointerdown and stop propagation.
-- Editors focus their own targets on pointerdown and stop propagation.
-
-### Universal semantics
-
-- `CANCEL` follows the escape ladder.
-- Type-to-edit works from `DEFAULT_TARGET`.
-- Confirm-to-edit works from `DEFAULT_TARGET`.
-- `NAV` never implicitly enters edit mode.
-
-### Editability
-
-- `readonly` is a hard stop for editing.
-- Mode determines edit target availability (`plain`->`value`, `connected`->`conn:*`).
-
-
-## Rationale (brief)
-
-This UI contract avoids common editor failure modes:
-
-- Focus instability.
-- Inconsistent keyboard behavior.
-- Selection-driven remount churn.
-- Leaked listeners/effects.
-- Behavior drift across views.
-
-It stays robust by keeping a small set of contracts strict, and making view-specific behavior explicit in `docs/views-spec.md`.
+- `docs/core-api.md`
+- `docs/dom-runtime.md`
+- `docs/style-system.md`
+- `docs/views-spec.md`
+- `CONTRIBUTING.md`
+- `AGENTS.md`
