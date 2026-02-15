@@ -5,15 +5,14 @@ import type {
   Focus,
   ItemId,
   ValueOrBlank,
+  ViewIntent,
 } from "../core";
-import { DEFAULT_TARGET } from "../core";
+import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
 import {
-  VALUE_TARGET,
   bindItemFrame,
   caret0,
   createComponent,
   el,
-  makeIntentDispatcher,
   setBodyClasses,
 } from "../dom";
 
@@ -168,34 +167,40 @@ export function createSliderView(args: {
 
   const viewFocus: Focus = args.focus ?? { container: id, item: id };
 
-  const dispatch = makeIntentDispatcher(core, {
-    NAV(sel, intent) {
-      if (sel.focus.item !== id) return;
+  const dispatch = (intent: ViewIntent): void => {
+    const sel0 = core.selection();
+    if (sel0.type !== "focused") return;
+    const sel = sel0;
 
-      const multiplier = intent.mode === "jump" ? 10 : 1;
-      const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-      sliderCommands.nudgeValue(core, id, dir * multiplier, resolvedOpts);
-    },
+    switch (intent.type) {
+      case "NAV": {
+        if (sel.focus.item !== id) return;
 
-    CONFIRM(sel) {
-      if (sel.focus.item !== id) return;
-
-      if (sel.target === DEFAULT_TARGET) {
-        core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
+        const multiplier = intent.mode === "jump" ? 10 : 1;
+        const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
+        sliderCommands.nudgeValue(core, id, dir * multiplier, resolvedOpts);
         return;
       }
+      case "CONFIRM":
+        if (sel.focus.item !== id) return;
 
-      if (sel.target === VALUE_TARGET) {
-        core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+        if (sel.target === DEFAULT_TARGET) {
+          core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
+          return;
+        }
+
+        if (sel.target === VALUE_TARGET) {
+          core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
         return;
-      }
-    },
-
-    TAB() {},
-    TYPE() {},
-    DELETE() {},
-    DELETE_BOUNDARY() {},
-  });
+      case "TAB":
+      case "TYPE":
+      case "DELETE":
+      case "DELETE_BOUNDARY":
+        return;
+    }
+  };
 
   const body = buildSliderBody({
     core,
@@ -205,7 +210,6 @@ export function createSliderView(args: {
   });
 
   return {
-    id: `slider:${String(id)}`,
     root: body.el,
     onIntent: dispatch,
     dispose() {

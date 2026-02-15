@@ -8,10 +8,10 @@ import type {
   Focus,
   ItemId,
   Selection,
+  ViewIntent,
   ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
-import { parseKeydownIntent } from "../src/dom";
 import { viewFactories } from "../src/views";
 
 const cleanups: Array<() => void> = [];
@@ -198,9 +198,45 @@ export function fireViewKey(
   key: string,
   opts?: Partial<KeyboardEventInit>,
 ): void {
-  const intent = parseKeydownIntent(keyEvent(key, opts));
+  const intent = intentFromKey(key, opts);
   if (!intent) return;
   view.onIntent?.(intent);
+}
+
+function intentFromKey(
+  key: string,
+  opts: Partial<KeyboardEventInit> = {},
+): ViewIntent | null {
+  if (key === "Escape") return null;
+  if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
+  if (key === "Enter") return { type: "CONFIRM" };
+  if (key === "Backspace") return { type: "DELETE", dir: "backward" };
+  if (key === "Delete") return { type: "DELETE", dir: "forward" };
+
+  const dir =
+    key === "ArrowLeft"
+      ? "left"
+      : key === "ArrowRight"
+        ? "right"
+        : key === "ArrowUp"
+          ? "up"
+          : key === "ArrowDown"
+            ? "down"
+            : null;
+
+  if (dir) {
+    return {
+      type: "NAV",
+      dir,
+      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
+    };
+  }
+
+  if (!opts.ctrlKey && !opts.metaKey && !opts.altKey && key.length === 1) {
+    return { type: "TYPE", char: key };
+  }
+
+  return null;
 }
 
 export function fireWindowKey(

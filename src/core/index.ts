@@ -36,10 +36,19 @@ import type {
   Component,
   DomView,
   Focus,
+  Intent,
   Selection,
+  ViewIntent,
   ViewFactory,
 } from "./runtime";
-import { DEFAULT_TARGET, createRuntime, defaultTextCaret } from "./runtime";
+import {
+  DEFAULT_TARGET,
+  LABEL_TARGET,
+  VALUE_TARGET,
+  connTarget,
+  createRuntime,
+  defaultTextCaret,
+} from "./runtime";
 import type { Rule as SyncRule } from "./sync";
 import { createShapeSyncGroup } from "./sync";
 
@@ -185,6 +194,8 @@ export type Core = {
 
   locate(id: ItemId): LocateResult | null;
 
+  dispatch(intent: Intent): void;
+
   attachTarget(opts: {
     focus: Focus;
     target: string;
@@ -226,6 +237,7 @@ export function createCore(opts: {
     model,
     getCore: () => core,
     views: opts.views,
+    dispatchIntent: (intent) => core.dispatch(intent),
     initialSelection: {
       type: "focused",
       focus: { container: rootId, item: rootId },
@@ -828,7 +840,6 @@ export function createCore(opts: {
 
       move: (id, toParentId, moveOpts) => {
         const childEid = requireTxEntryId(id, "move");
-
         const toParentEid = requireTxEntryId(toParentId, "move");
 
         ops.push(
@@ -894,11 +905,6 @@ export function createCore(opts: {
 
   const selection = (): Selection => runtime.selection();
 
-  const attachTarget: Core["attachTarget"] = (args) =>
-    runtime.attachTarget(args);
-
-  const mountView: Core["mountView"] = (args) => runtime.mountView(args);
-
   const locate = (id: ItemId): LocateResult | null => {
     const ref = parseItemId(id);
     if (!ref || ref.path.length) return null;
@@ -913,6 +919,11 @@ export function createCore(opts: {
     };
   };
 
+  const attachTarget: Core["attachTarget"] = (args) =>
+    runtime.attachTarget(args);
+
+  const mountView: Core["mountView"] = (args) => runtime.mountView(args);
+
   const uninstallGlobal = runtime.installGlobalListeners(window);
 
   const unsubscribeCollab = opts.collab
@@ -920,6 +931,30 @@ export function createCore(opts: {
         applyRemote(txn);
       })
     : null;
+
+  const dispatch = (intent: Intent): void => {
+    if (intent.type === "CANCEL") {
+      const sel = runtime.selectionSignal.peek();
+      if (sel.type === "idle") {
+        runtime.setSelection({ type: "idle" });
+        return;
+      }
+      if (sel.target !== DEFAULT_TARGET) {
+        runtime.setSelection({
+          type: "focused",
+          focus: sel.focus,
+          target: DEFAULT_TARGET,
+          caret: { start: 0, end: 0 },
+        });
+        return;
+      }
+      runtime.setSelection({ type: "idle" });
+      return;
+    }
+
+    const onIntent = runtime.getActiveViewOnIntent();
+    if (onIntent) onIntent(intent);
+  };
 
   core = {
     dispose() {
@@ -948,6 +983,8 @@ export function createCore(opts: {
 
     locate,
 
+    dispatch,
+
     attachTarget,
     mountView,
   };
@@ -960,9 +997,17 @@ export type {
   Component,
   DomView,
   Focus,
+  Intent,
   Selection,
   Transaction,
+  ViewIntent,
   ViewFactory,
   ViewName,
 };
-export { DEFAULT_TARGET, defaultTextCaret };
+export {
+  DEFAULT_TARGET,
+  LABEL_TARGET,
+  VALUE_TARGET,
+  connTarget,
+  defaultTextCaret,
+};

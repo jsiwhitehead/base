@@ -10,22 +10,24 @@ import type {
   Selection,
   ValueOrBlank,
 } from "../core";
-import { DEFAULT_TARGET, parseValue } from "../core";
-import type { Intent, NavDir } from "../dom";
 import {
+  DEFAULT_TARGET,
   LABEL_TARGET,
   VALUE_TARGET,
+  connTarget,
+  parseValue,
+} from "../core";
+import type { NavDir, ViewIntent } from "../dom";
+import {
   bindItemFrame,
   buildItemHeader,
   buildTextField,
   caret0,
   caretAt,
-  connTarget,
   createComponent,
   el,
   enterEditOnType,
   fieldsFromConn,
-  makeIntentDispatcher,
   patchConn,
   setBodyClasses,
   toggleEditOnConfirm,
@@ -404,7 +406,7 @@ type OutlineMountCtx = {
   core: Core;
   rootId: ItemId;
   editPointsSignal: { value: EditPoint[] };
-  dispatch: (intent: Intent) => void;
+  dispatch: (intent: ViewIntent) => void;
 };
 
 function buildChildOuterFrame(
@@ -464,7 +466,6 @@ function buildChildOuterFrame(
         return buildItemHeader(core, {
           focus,
           id,
-          dispatch: mountCtx.dispatch,
           canEditLabel,
           commitLabel,
           commitConnField,
@@ -485,7 +486,7 @@ function buildOutlineScalarBody(
   mountCtx: OutlineMountCtx,
   focus: Focus,
 ): Component {
-  const { core, dispatch } = mountCtx;
+  const { core } = mountCtx;
   const id = focus.item;
 
   return buildTextField(core, {
@@ -508,7 +509,6 @@ function buildOutlineScalarBody(
 
       return { text: "", readOnly: true };
     },
-    onIntent: dispatch,
   });
 }
 
@@ -556,178 +556,184 @@ export function createOutlineView(args: {
 
   const editPointsSignal = computed(() => collectEditPoints(core, rootId));
 
-  const dispatch = makeIntentDispatcher(core, {
-    TAB(sel, intent) {
-      const wasEditing = sel.target !== DEFAULT_TARGET;
-      const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
-      const fromCaret = wasEditing ? caretFromActiveEditor() : null;
+  const dispatch = (intent: ViewIntent): void => {
+    const sel0 = core.selection();
+    if (sel0.type !== "focused") return;
+    const sel = sel0;
 
-      const nextFocus = outlineCommands.changeNesting(
-        core,
-        rootId,
-        sel,
-        intent.shift ? "out" : "in",
-      );
-      if (!nextFocus) return;
+    switch (intent.type) {
+      case "TAB": {
+        const wasEditing = sel.target !== DEFAULT_TARGET;
+        const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
+        const fromCaret = wasEditing ? caretFromActiveEditor() : null;
 
-      if (!wasEditing) {
-        core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+        const nextFocus = outlineCommands.changeNesting(
+          core,
+          rootId,
+          sel,
+          intent.shift ? "out" : "in",
+        );
+        if (!nextFocus) return;
+
+        if (!wasEditing) {
+          core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
+        const validTargets = new Set(getEditStopsForItem(core, nextFocus.item));
+        const nextTarget = validTargets.has(fromTarget)
+          ? fromTarget
+          : DEFAULT_TARGET;
+
+        if (nextTarget === DEFAULT_TARGET) {
+          core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
+        const txt = getTextForTarget(core, nextFocus.item, nextTarget);
+        const nextCaret = fromCaret
+          ? clampCaretToText(fromCaret, txt)
+          : caretAt(txt.length);
+
+        core.focus(nextFocus, nextTarget, { caret: nextCaret });
         return;
       }
+      case "NAV": {
+        if (sel.target === DEFAULT_TARGET) {
+          const fromId = sel.focus.item;
+          let nextId: ItemId | null = null;
 
-      const validTargets = new Set(getEditStopsForItem(core, nextFocus.item));
-      const nextTarget = validTargets.has(fromTarget)
-        ? fromTarget
-        : DEFAULT_TARGET;
+          if (intent.dir === "left") nextId = parentOf(core, rootId, fromId);
+          else if (intent.dir === "right") nextId = firstChild(core, fromId);
+          else if (intent.dir === "up")
+            nextId = prevVisible(core, rootId, fromId);
+          else if (intent.dir === "down")
+            nextId = nextVisible(core, rootId, fromId);
 
-      if (nextTarget === DEFAULT_TARGET) {
-        core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
-        return;
-      }
-
-      const txt = getTextForTarget(core, nextFocus.item, nextTarget);
-      const nextCaret = fromCaret
-        ? clampCaretToText(fromCaret, txt)
-        : caretAt(txt.length);
-
-      core.focus(nextFocus, nextTarget, { caret: nextCaret });
-    },
-
-    NAV(sel, intent) {
-      if (sel.target === DEFAULT_TARGET) {
-        const fromId = sel.focus.item;
-        let nextId: ItemId | null = null;
-
-        if (intent.dir === "left") nextId = parentOf(core, rootId, fromId);
-        else if (intent.dir === "right") nextId = firstChild(core, fromId);
-        else if (intent.dir === "up")
-          nextId = prevVisible(core, rootId, fromId);
-        else if (intent.dir === "down")
-          nextId = nextVisible(core, rootId, fromId);
-
-        if (!nextId) return;
-
-        core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET, {
-          caret: caret0(),
-        });
-        return;
-      }
-
-      const move = moveEditPoint(
-        core,
-        rootId,
-        editPointsSignal.value,
-        sel,
-        intent.dir,
-      );
-      if (!move) return;
-      core.focus(move.focus, move.target, { caret: move.caret });
-    },
-
-    TYPE(sel, intent) {
-      const id = sel.focus.item;
-      const item = core.item(id);
-
-      if (
-        intent.char === "=" &&
-        (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
-        item.mode.type === "plain" &&
-        item.content.type === "value" &&
-        valueToText(item.content.value).trim() === ""
-      ) {
-        outlineCommands.setFormula(core, id);
-        core.focus(focusFor(core, rootId, id), connTarget("expr"), {
-          caret: caret0(),
-        });
-        return;
-      }
-
-      if (sel.target !== DEFAULT_TARGET) return;
-
-      enterEditOnType({
-        core,
-        sel,
-        char: intent.char,
-        getPrimaryTarget: (itemId) => getPrimaryEditTarget(core, itemId),
-      });
-    },
-
-    CONFIRM(sel, intent) {
-      if (sel.target !== DEFAULT_TARGET) {
-        if (sel.target === VALUE_TARGET && intent.caret) {
-          const nextId = outlineCommands.splitAt(
-            core,
-            sel,
-            intent.caret.start,
-            intent.caret.end,
-          );
           if (!nextId) return;
-          core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
+
+          core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET, {
             caret: caret0(),
           });
           return;
         }
 
-        core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+        const move = moveEditPoint(
+          core,
+          rootId,
+          editPointsSignal.value,
+          sel,
+          intent.dir,
+        );
+        if (!move) return;
+        core.focus(move.focus, move.target, { caret: move.caret });
         return;
       }
+      case "TYPE": {
+        const id = sel.focus.item;
+        const item = core.item(id);
 
-      const did = toggleEditOnConfirm({
-        core,
-        sel,
-        getPrimaryTarget: (itemId) => getPrimaryEditTarget(core, itemId),
-        caretForTarget: (itemId, target) =>
-          caretAt(getTextForTarget(core, itemId, target).length),
-      });
-      if (did) return;
-
-      const nextId = outlineCommands.insertSibling(core, sel, "after");
-      if (!nextId) return;
-      core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
-        caret: caret0(),
-      });
-    },
-
-    DELETE_BOUNDARY(sel, intent) {
-      const prefer = intent.dir === "backward" ? "prev" : "next";
-      const item = core.item(sel.focus.item);
-
-      if (!(item.mode.type === "plain" && item.content.type === "value")) {
-        const chosen = outlineCommands.removeItem(core, sel, prefer);
-        if (!chosen) {
-          core.blur();
+        if (
+          intent.char === "=" &&
+          (sel.target === DEFAULT_TARGET || sel.target === VALUE_TARGET) &&
+          item.mode.type === "plain" &&
+          item.content.type === "value" &&
+          valueToText(item.content.value).trim() === ""
+        ) {
+          outlineCommands.setFormula(core, id);
+          core.focus(focusFor(core, rootId, id), connTarget("expr"), {
+            caret: caret0(),
+          });
           return;
         }
-        core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
+
+        if (sel.target !== DEFAULT_TARGET) return;
+
+        enterEditOnType({
+          core,
+          sel,
+          char: intent.char,
+          getPrimaryTarget: (itemId) => getPrimaryEditTarget(core, itemId),
+        });
+        return;
+      }
+      case "CONFIRM": {
+        if (sel.target !== DEFAULT_TARGET) {
+          if (sel.target === VALUE_TARGET && intent.caret) {
+            const nextId = outlineCommands.splitAt(
+              core,
+              sel,
+              intent.caret.start,
+              intent.caret.end,
+            );
+            if (!nextId) return;
+            core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
+              caret: caret0(),
+            });
+            return;
+          }
+
+          core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
+
+        const did = toggleEditOnConfirm({
+          core,
+          sel,
+          getPrimaryTarget: (itemId) => getPrimaryEditTarget(core, itemId),
+          caretForTarget: (itemId, target) =>
+            caretAt(getTextForTarget(core, itemId, target).length),
+        });
+        if (did) return;
+
+        const nextId = outlineCommands.insertSibling(core, sel, "after");
+        if (!nextId) return;
+        core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
           caret: caret0(),
         });
         return;
       }
+      case "DELETE_BOUNDARY": {
+        const prefer = intent.dir === "backward" ? "prev" : "next";
+        const item = core.item(sel.focus.item);
 
-      if (valueToText(item.content.value).length === 0) {
-        const chosen = outlineCommands.removeItem(core, sel, prefer);
-        if (!chosen) {
-          core.blur();
+        if (!(item.mode.type === "plain" && item.content.type === "value")) {
+          const chosen = outlineCommands.removeItem(core, sel, prefer);
+          if (!chosen) {
+            core.blur();
+            return;
+          }
+          core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
+            caret: caret0(),
+          });
           return;
         }
-        core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
-          caret: caret0(),
+
+        if (valueToText(item.content.value).length === 0) {
+          const chosen = outlineCommands.removeItem(core, sel, prefer);
+          if (!chosen) {
+            core.blur();
+            return;
+          }
+          core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
+            caret: caret0(),
+          });
+          return;
+        }
+
+        const joined = outlineCommands.joinBoundary(core, sel, intent.dir);
+        if (!joined) return;
+        core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
+          caret: joined.caret,
         });
         return;
       }
-
-      const joined = outlineCommands.joinBoundary(core, sel, intent.dir);
-      if (!joined) return;
-      core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
-        caret: joined.caret,
-      });
-    },
-
-    DELETE(sel, intent) {
-      if (sel.target !== DEFAULT_TARGET) return;
-      dispatch({ type: "DELETE_BOUNDARY", dir: intent.dir });
-    },
-  });
+      case "DELETE":
+        if (sel.target !== DEFAULT_TARGET) return;
+        dispatch({ type: "DELETE_BOUNDARY", dir: intent.dir });
+        return;
+    }
+  };
 
   const viewFocus: Focus = args.focus ?? { container: rootId, item: rootId };
   const body = buildOutlineBody(
@@ -736,7 +742,6 @@ export function createOutlineView(args: {
   );
 
   return {
-    id: `outline:${String(rootId)}`,
     root: body.el,
     onIntent: dispatch,
     dispose() {

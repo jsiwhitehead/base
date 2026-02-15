@@ -199,20 +199,21 @@ Rules:
 
 - Core MUST own the global `keydown` listener.
 - Core MUST parse key events into intents.
-- Core MUST route view intents to the active view handler.
-- If Core routes an intent, it MUST consume/prevent the original DOM key event.
+- Core MUST handle global commands (notably `CANCEL`) before view routing.
+- Core MUST route non-global view intents to the active view handler.
+- If Core routes an intent, it MUST prevent the original DOM key event.
 
 Notes:
 
-- Native editors (`input`, `textarea`, `contenteditable`) SHOULD process local edits first.
-- Core MAY still handle explicit global commands while focus is in native editors.
+- Native editors (`input`, `textarea`, `contenteditable`) SHOULD handle keydown locally unless the event is `defaultPrevented`.
+- Controls MAY yield keys by calling `preventDefault()`; yielded keys are then routed by Core.
 
 ### Active view resolution
 
 Rules:
 
-- Active view MUST be derived from the element focused via target binding (`getEl()`), not pointer event targets.
-- Active view MUST resolve to the closest mounted view root containing that element.
+- Active view MUST resolve to the closest mounted view root containing the event/focus target.
+- Active view MUST update to the nearest containing view root on both pointer interactions and programmatic focus application.
 
 ### Programmatic focus
 
@@ -251,7 +252,7 @@ These rules are shared across views. Views MAY refine them, but MUST remain cons
 
 Rules:
 
-- `CANCEL` SHOULD call `escapeLadder(core)`.
+- `CANCEL` MUST be handled by Core dispatch.
 - If focused on a non-default target, it exits to `DEFAULT_TARGET`.
 - Otherwise it blurs.
 
@@ -289,8 +290,8 @@ Rules:
 Rules:
 
 - Value and connected editors SHOULD enable yielding where appropriate.
-- Label editors MUST keep yielding disabled.
-- Yielding MUST be semantic (intent-level), not dependent on bubbling raw DOM key events.
+- Label editors MAY also yield when view behavior requires it.
+- Yielding MUST be implemented via editor-side `preventDefault()` plus Core global routing.
 
 (Shared editor behavior is defined in `ui-runtime.md`.)
 

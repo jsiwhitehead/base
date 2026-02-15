@@ -1,4 +1,6 @@
-export type { Intent, NavDir } from "./controls";
+export type { Intent, ViewIntent } from "../core";
+export { connTarget, LABEL_TARGET, VALUE_TARGET } from "../core";
+export type { NavDir } from "./controls";
 
 export { bindItemFrame, createComponent, el, setBodyClasses } from "./base";
 
@@ -8,15 +10,10 @@ export {
   caret0,
   caretAt,
   caretEnd,
-  connTarget,
   enterEditOnType,
   fieldsFromConn,
   insertTextIntoActiveEditor,
-  LABEL_TARGET,
-  makeIntentDispatcher,
-  parseKeydownIntent,
   patchConn,
   SELECT_ALL,
   toggleEditOnConfirm,
-  VALUE_TARGET,
 } from "./controls";

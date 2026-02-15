@@ -54,7 +54,7 @@ All views in this file inherit these rules:
 
 ### Intent handling
 
-- Views interpret intents only when their item is the focused selection.
+- Views interpret `ViewIntent` (non-`CANCEL`) only when their item is the focused selection.
 - `NAV` MUST NOT implicitly enter edit mode (unless explicitly stated by the view).
 
 ## View specification template
@@ -77,7 +77,6 @@ Intent handling SHOULD describe these intents where applicable:
 - `TYPE`
 - `DELETE`
 - `DELETE_BOUNDARY`
-- `CANCEL`
 
 ## Outline view (`outline`)
 
@@ -192,12 +191,6 @@ Precondition shorthand:
 - Focused selection: `core.selection().type === "focused"`.
 - Editing: `sel.target !== DEFAULT_TARGET`.
 - Container focus: `sel.target === DEFAULT_TARGET`.
-
-#### `CANCEL`
-
-| Intent   | Preconditions | Action                                          | Focus result                     |
-| -------- | ------------- | ----------------------------------------------- | -------------------------------- |
-| `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `NAV` from container focus
 
@@ -406,12 +399,6 @@ Precondition shorthand:
   - container focus: `sel.target === DEFAULT_TARGET`
   - edit focus: `sel.target === "value"`
 
-#### `CANCEL`
-
-| Intent   | Preconditions | Action                                          | Focus result                     |
-| -------- | ------------- | ----------------------------------------------- | -------------------------------- |
-| `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
-
 #### `NAV` from row container focus
 
 | Intent      | Preconditions | Action           | Focus result         |
@@ -531,12 +518,6 @@ Rules:
 - Keyboard semantics are interpreted at view level.
 
 ### Intent handling
-
-#### `CANCEL`
-
-| Intent   | Preconditions | Action                                          | Focus result                     |
-| -------- | ------------- | ----------------------------------------------- | -------------------------------- |
-| `CANCEL` | Always        | `escapeLadder(core)` (see `docs/ui-runtime.md`) | Exit to `DEFAULT_TARGET` or blur |
 
 #### `CONFIRM`
 

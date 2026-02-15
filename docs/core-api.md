@@ -456,6 +456,7 @@ Core exports:
 - `core.redo`
 - `core.focus`
 - `core.blur`
+- `core.dispatch`
 - `core.attachTarget`
 - `core.mountView`
 - `core.dispose`
@@ -469,6 +470,8 @@ Type exports:
 - `Connected`
 - `ApplyResult`
 - `Core`
+- `Intent`
+- `ViewIntent`
 - `Selection`
 - `Focus`
 - `Caret`
@@ -481,6 +484,9 @@ Type exports:
 Constant exports:
 
 - `DEFAULT_TARGET`
+- `LABEL_TARGET`
+- `VALUE_TARGET`
+- `connTarget`
 
 Helper exports:
 

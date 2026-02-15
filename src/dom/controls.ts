@@ -8,8 +8,14 @@ import type {
   Focus,
   ItemId,
   Selection,
+  ViewIntent,
 } from "../core";
-import { DEFAULT_TARGET, defaultTextCaret } from "../core";
+import {
+  DEFAULT_TARGET,
+  LABEL_TARGET,
+  connTarget,
+  defaultTextCaret,
+} from "../core";
 import { caretFromTarget, createComponent, el } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
@@ -25,18 +31,6 @@ type ConnField = {
   text: string;
 };
 
-export type NavDir = "left" | "right" | "up" | "down";
-type NavMode = "step" | "jump";
-
-export type Intent =
-  | { type: "NAV"; dir: NavDir; mode: NavMode }
-  | { type: "CONFIRM"; caret?: Caret }
-  | { type: "CANCEL" }
-  | { type: "TAB"; shift: boolean }
-  | { type: "TYPE"; char: string }
-  | { type: "DELETE"; dir: "backward" | "forward" }
-  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
-
 export const SELECT_ALL: Caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
 export const caret0: () => Caret = () => ({ start: 0, end: 0 });
 export const caretAt: (pos: number) => Caret = (pos) => ({
@@ -48,54 +42,11 @@ export const caretEnd: () => Caret = () => ({
   end: Number.MAX_SAFE_INTEGER,
 });
 
-export const LABEL_TARGET = "label";
-export const VALUE_TARGET = "value";
-export const connTarget: (key: string) => string = (key) => `conn:${key}`;
-
-function consume(e: Event): void {
+function prevent(e: Event): void {
   e.preventDefault?.();
-  e.stopPropagation?.();
 }
 
-function isPrintableKeydown(e: KeyboardEvent): boolean {
-  if (e.ctrlKey || e.metaKey || e.altKey) return false;
-  return e.key.length === 1;
-}
-
-function keyNavMode(e: KeyboardEvent): NavMode {
-  return e.metaKey || e.ctrlKey ? "jump" : "step";
-}
-
-function keyToNavDir(key: string): NavDir | null {
-  switch (key) {
-    case "ArrowLeft":
-      return "left";
-    case "ArrowRight":
-      return "right";
-    case "ArrowUp":
-      return "up";
-    case "ArrowDown":
-      return "down";
-    default:
-      return null;
-  }
-}
-
-export function parseKeydownIntent(e: KeyboardEvent): Intent | null {
-  if (e.key === "Escape") return { type: "CANCEL" };
-  if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
-  if (e.key === "Enter") return { type: "CONFIRM" };
-
-  if (e.key === "Backspace") return { type: "DELETE", dir: "backward" };
-  if (e.key === "Delete") return { type: "DELETE", dir: "forward" };
-
-  const dir = keyToNavDir(e.key);
-  if (dir) return { type: "NAV", dir, mode: keyNavMode(e) };
-
-  if (isPrintableKeydown(e)) return { type: "TYPE", char: e.key };
-
-  return null;
-}
+export type NavDir = Extract<ViewIntent, { type: "NAV" }>["dir"];
 
 export function insertTextIntoActiveEditor(text: string): void {
   const activeEl = document.activeElement;
@@ -113,84 +64,6 @@ export function insertTextIntoActiveEditor(text: string): void {
 
   activeEl.setRangeText(text, start, end, "end");
   activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
-function escapeLadder(core: Core): void {
-  const sel = core.selection();
-  if (sel.type !== "focused") {
-    core.blur();
-    return;
-  }
-  if (sel.target !== DEFAULT_TARGET) {
-    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
-    return;
-  }
-  core.blur();
-}
-
-type IntentDispatcherHandlers = Partial<{
-  CANCEL: (intent: Extract<Intent, { type: "CANCEL" }>) => void;
-  NAV: (
-    sel: Extract<Selection, { type: "focused" }>,
-    intent: Extract<Intent, { type: "NAV" }>,
-  ) => void;
-  TAB: (
-    sel: Extract<Selection, { type: "focused" }>,
-    intent: Extract<Intent, { type: "TAB" }>,
-  ) => void;
-  CONFIRM: (
-    sel: Extract<Selection, { type: "focused" }>,
-    intent: Extract<Intent, { type: "CONFIRM" }>,
-  ) => void;
-  TYPE: (
-    sel: Extract<Selection, { type: "focused" }>,
-    intent: Extract<Intent, { type: "TYPE" }>,
-  ) => void;
-  DELETE: (
-    sel: Extract<Selection, { type: "focused" }>,
-    intent: Extract<Intent, { type: "DELETE" }>,
-  ) => void;
-  DELETE_BOUNDARY: (
-    sel: Extract<Selection, { type: "focused" }>,
-    intent: Extract<Intent, { type: "DELETE_BOUNDARY" }>,
-  ) => void;
-}>;
-
-export function makeIntentDispatcher(
-  core: Core,
-  handlers: IntentDispatcherHandlers,
-): (intent: Intent) => void {
-  return (intent: Intent): void => {
-    if (intent.type === "CANCEL") {
-      if (handlers.CANCEL) handlers.CANCEL(intent);
-      else escapeLadder(core);
-      return;
-    }
-
-    const sel = core.selection();
-    if (sel.type !== "focused") return;
-
-    switch (intent.type) {
-      case "NAV":
-        handlers.NAV?.(sel, intent);
-        return;
-      case "TAB":
-        handlers.TAB?.(sel, intent);
-        return;
-      case "CONFIRM":
-        handlers.CONFIRM?.(sel, intent);
-        return;
-      case "TYPE":
-        handlers.TYPE?.(sel, intent);
-        return;
-      case "DELETE":
-        handlers.DELETE?.(sel, intent);
-        return;
-      case "DELETE_BOUNDARY":
-        handlers.DELETE_BOUNDARY?.(sel, intent);
-        return;
-    }
-  };
 }
 
 export function enterEditOnType(args: {
@@ -295,7 +168,6 @@ type TextFieldOpts = {
   yieldNav?: boolean;
   commit: (text: string) => void;
   getState: () => TextFieldState;
-  onIntent?: (intent: Intent) => void;
 };
 
 export function buildTextField(
@@ -385,53 +257,37 @@ export function buildTextField(
       syncMirror(baseline);
     };
 
-    const handleIntent = (intent: Intent): void => {
-      if (editModel === "draft") {
-        if (intent.type === "CANCEL") {
-          cancelDraft();
-          opts.onIntent?.(intent);
-          return;
-        }
-
-        if (
-          intent.type === "CONFIRM" ||
-          intent.type === "TAB" ||
-          intent.type === "NAV"
-        ) {
-          commitDraft();
-          opts.onIntent?.(intent);
-          return;
-        }
-
-        opts.onIntent?.(intent);
-        return;
-      }
-
-      opts.onIntent?.(intent);
-    };
-
-    if (opts.onIntent && yieldNav) {
+    if (yieldNav) {
       ctx.on(inp, "keydown", (e: KeyboardEvent) => {
-        if (e.key === "Tab") {
-          consume(e);
-          handleIntent({ type: "TAB", shift: !!e.shiftKey });
-          return;
-        }
+        if (e.defaultPrevented) return;
 
         if (e.key === "Escape") {
-          consume(e);
-          handleIntent({ type: "CANCEL" });
+          if (editModel === "draft") cancelDraft();
           return;
         }
 
-        const mode = keyNavMode(e);
+        if (e.key === "Tab") {
+          commitDraft();
+          prevent(e);
+          return;
+        }
 
         const start = inp.selectionStart ?? 0;
         const end = inp.selectionEnd ?? start;
         const hasSel = start !== end;
         const len = inp.value.length;
 
-        const dir = keyToNavDir(e.key);
+        const dir =
+          e.key === "ArrowLeft"
+            ? "left"
+            : e.key === "ArrowRight"
+              ? "right"
+              : e.key === "ArrowUp"
+                ? "up"
+                : e.key === "ArrowDown"
+                  ? "down"
+                  : null;
+
         if (dir) {
           const atStart = !hasSel && start === 0;
           const atEnd = !hasSel && end === len;
@@ -445,29 +301,32 @@ export function buildTextField(
               (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
 
           if (shouldYield) {
-            consume(e);
-            handleIntent({ type: "NAV", dir, mode });
+            commitDraft();
+            prevent(e);
             return;
           }
+
+          return;
         }
 
         if (e.key === "Enter") {
-          if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey))
+          if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey)) {
             return;
-          consume(e);
-          handleIntent({ type: "CONFIRM", caret: { start, end } });
+          }
+          commitDraft();
+          prevent(e);
           return;
         }
 
         if (e.key === "Backspace" && !hasSel && start === 0) {
-          consume(e);
-          handleIntent({ type: "DELETE_BOUNDARY", dir: "backward" });
+          commitDraft();
+          prevent(e);
           return;
         }
 
         if (e.key === "Delete" && !hasSel && end === len) {
-          consume(e);
-          handleIntent({ type: "DELETE_BOUNDARY", dir: "forward" });
+          commitDraft();
+          prevent(e);
           return;
         }
       });
@@ -591,7 +450,6 @@ export function buildItemHeader(
   args: {
     focus: Focus;
     id: ItemId;
-    dispatch: (i: Intent) => void;
     commitLabel: (text: string) => void;
     canEditLabel: () => boolean;
     commitConnField: (key: string, text: string) => void;
@@ -611,13 +469,12 @@ export function buildItemHeader(
       target: LABEL_TARGET,
       multiline: false,
       autosize: true,
-      yieldNav: false,
+      yieldNav: true,
       commit: args.commitLabel,
       getState: () => {
         const snap = core.item(id);
         return { text: snap.label ?? "", readOnly: !args.canEditLabel() };
       },
-      onIntent: args.dispatch,
     });
     ctx.mount(labelWrap, labelComp);
 
@@ -657,6 +514,7 @@ export function buildItemHeader(
             target: targetKey,
             multiline: multilineForKey(),
             autosize: true,
+            yieldNav: true,
             commit: (text) => args.commitConnField(key, text),
             getState: () => {
               const snap = core.item(id);
@@ -667,7 +525,6 @@ export function buildItemHeader(
                   ?.text ?? "";
               return { text: txt, readOnly: false };
             },
-            onIntent: args.dispatch,
           });
           rowCtx.mount(valEl, fc);
 

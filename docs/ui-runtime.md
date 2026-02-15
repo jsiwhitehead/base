@@ -8,7 +8,7 @@ It is the authoritative reference for:
 - Safe mounting (`createComponent`, `Ctx`).
 - Region-based dynamic mounting (`ctx.slot`, `ctx.list`).
 - Target binding (`ctx.target`) and focus helpers.
-- Shared intent helpers (`parseKeydownIntent`, `escapeLadder`, `insertTextIntoActiveEditor`, `makeIntentDispatcher`, `enterEditOnType`, `toggleEditOnConfirm`).
+- Shared intent helpers (`insertTextIntoActiveEditor`, `enterEditOnType`, `toggleEditOnConfirm`).
 - Shared controls (`buildTextField`, `buildItemHeader`).
 - Connected definition helpers (`fieldsFromConn`, `patchConn`).
 - The supported export surface (`dom/index`).
@@ -272,11 +272,11 @@ Rules:
 
 ### Intent vocabulary
 
-The UI runtime defines a shared intent vocabulary used by:
+Intent vocabulary is defined in Core and used by:
 
 - Core keyboard routing.
 - View intent handlers.
-- Shared controls (especially `buildTextField`).
+- Shared controls (for target/caret behavior).
 
 ```ts
 type Intent =
@@ -291,14 +291,17 @@ type Intent =
   | { type: "TYPE"; char: string }
   | { type: "DELETE"; dir: "backward" | "forward" }
   | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
+
+type ViewIntent = Exclude<Intent, { type: "CANCEL" }>;
 ```
 
 Rules:
 
-- Views MUST interpret view-specific intents.
-- Shared controls SHOULD emit intents instead of directly calling view commands.
+- Core MUST handle `CANCEL` before dispatching to views.
+- Views MUST receive only `ViewIntent` (no `CANCEL`).
+- Shared controls MUST NOT route intents directly.
 
-### `parseKeydownIntent(e)`
+### Core key parsing (`parseKeydownIntent(e)`)
 
 Parses a `KeyboardEvent` into an `Intent`.
 
@@ -315,11 +318,6 @@ Rules:
 
 - Printable keys (no ctrl/meta/alt, `key.length === 1`) -> `TYPE`
 - If no mapping applies, it MUST return `null`.
-
-### CANCEL responsibility (standard policy)
-
-- Default: let `makeIntentDispatcher` handle `CANCEL` with `escapeLadder(core)`.
-- Override `CANCEL` only when a view needs different behavior.
 
 ### Caret helpers
 
@@ -340,6 +338,7 @@ Rules:
 
 Exports:
 
+- `DEFAULT_TARGET = "default"`
 - `LABEL_TARGET = "label"`
 - `VALUE_TARGET = "value"`
 - `connTarget(key) = "conn:" + key`
@@ -347,6 +346,7 @@ Exports:
 Rules:
 
 - These strings are canonical and MUST be used consistently across views.
+- Canonical ownership is Core (`core/runtime`), and `dom/index` re-exports them for convenience.
 
 ### `insertTextIntoActiveEditor(text)`
 
@@ -362,28 +362,6 @@ Rules:
 Use cases:
 
 - Implementing type-to-edit from container focus.
-
-### `escapeLadder(core)`
-
-Implements the shared escape ladder.
-
-Rules:
-
-- If there is no focused selection, it MUST blur (no-op safe).
-- If focused and `sel.target !== DEFAULT_TARGET`, it MUST focus the same item on `DEFAULT_TARGET`.
-- Otherwise it MUST blur.
-
-### `makeIntentDispatcher(core, handlers)`
-
-Shared intent dispatcher with default selection guards.
-
-Rules:
-
-- `CANCEL` is handled even when selection is not focused.
-- If `handlers.CANCEL` is missing, it defaults to `escapeLadder(core)`.
-- Other intents no-op when selection is not focused.
-- When focused, only the matching handler is called if present.
-- Prefer this over view-local `switch` dispatch.
 
 ### `enterEditOnType({ core, sel, char, getPrimaryTarget })`
 
@@ -416,7 +394,7 @@ It provides:
 - Single-line (`<input>`) or multiline (`<textarea>`).
 - Optional autosize via a mirror element.
 - Two commit models: `live` and `draft`.
-- Optional yielding of semantic intents (nav/tab/confirm/cancel).
+- Optional yielding of boundary/navigation keys to Core intent routing.
 
 Canonical DOM:
 
@@ -445,7 +423,6 @@ buildTextField(core, {
   yieldNav?,       // default true
   commit(text),
   getState(),
-  onIntent?(intent),
 })
 ```
 
@@ -498,7 +475,7 @@ Commit triggers:
 
 Cancel trigger:
 
-- yielded `CANCEL` MUST revert to baseline and clear dirty.
+- local `Escape` MUST revert to baseline and clear dirty.
 
 Focus loss rule:
 
@@ -508,33 +485,32 @@ Focus loss rule:
 
 Yielding applies only when:
 
-- `opts.onIntent` is provided
 - `yieldNav !== false`
 
-Keyboard-driven draft commit/cancel uses this yielded-intent path; `blur` commit remains independent.
+Keyboard-driven draft commit/cancel uses preventDefault-based yielding; `blur` commit remains independent.
 
 Rules:
 
-- `Tab` MUST be consumed and emitted as `TAB`.
+- `Tab` MUST commit draft and call `preventDefault()`.
 
-- `Escape` MUST be consumed and emitted as `CANCEL`.
+- `Escape` MUST cancel local draft and MUST NOT call `preventDefault()`.
 
-- `Enter` MUST be consumed and emitted as `CONFIRM`
+- `Enter` MUST commit draft and call `preventDefault()`
   - except: multiline editor with `ctrlKey` or `metaKey` MUST insert newline
 
-- Arrow keys MAY yield `NAV` when caret is at the boundary:
+- Arrow keys MAY yield when caret is at the boundary:
   - left at start
   - right at end
   - up on first line (textarea)
   - down on last line (textarea)
 
-- Backspace at start MUST yield `DELETE_BOUNDARY backward`.
+- Backspace at start MUST commit draft and call `preventDefault()`.
 
-- Delete at end MUST yield `DELETE_BOUNDARY forward`.
+- Delete at end MUST commit draft and call `preventDefault()`.
 
 Notes:
 
-- Yielding is semantic; it does not rely on bubbling raw key events.
+- Yielding is semantic via `preventDefault()` and bubbling to Core's global keydown handler.
 
 ### Target integration
 
@@ -636,13 +612,12 @@ Targets + focus helpers:
 Types:
 
 - `Intent`
+- `ViewIntent`
 - `NavDir`
 
 Intent + editor helpers:
 
-- `parseKeydownIntent`
 - `insertTextIntoActiveEditor`
-- `makeIntentDispatcher`
 - `enterEditOnType`
 - `toggleEditOnConfirm`
 

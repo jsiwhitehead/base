@@ -4,6 +4,9 @@ import { signal } from "@preact/signals-core";
 import type { EntryId, Model, ViewName } from "./model";
 
 export const DEFAULT_TARGET = "default" as const;
+export const LABEL_TARGET = "label" as const;
+export const VALUE_TARGET = "value" as const;
+export const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
 type ItemId = string;
 
@@ -20,7 +23,7 @@ type RuntimeEffect =
   | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
   | { type: "CLEAR_FOCUS" };
 
-type KeyIntent =
+export type Intent =
   | {
       type: "NAV";
       dir: "left" | "right" | "up" | "down";
@@ -33,17 +36,18 @@ type KeyIntent =
   | { type: "DELETE"; dir: "backward" | "forward" }
   | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
 
+export type ViewIntent = Exclude<Intent, { type: "CANCEL" }>;
+
 type ViewHandle = {
   root: HTMLElement;
-  onIntent?: (intent: KeyIntent) => void;
+  onIntent?: (intent: ViewIntent) => void;
 };
 
 export type Component = { el: HTMLElement; dispose(): void };
 
 export type DomView = {
-  id: string;
   root: HTMLElement;
-  onIntent?: (intent: KeyIntent) => void;
+  onIntent?: (intent: ViewIntent) => void;
   dispose(): void;
 };
 
@@ -124,12 +128,7 @@ function isNativeEditorTarget(target: EventTarget | null): boolean {
   return false;
 }
 
-function consumeEvent(e: KeyboardEvent): void {
-  e.preventDefault();
-  e.stopPropagation();
-}
-
-function parseKeydownIntent(e: KeyboardEvent): KeyIntent | null {
+export function parseKeydownIntent(e: KeyboardEvent): Intent | null {
   if (e.key === "Escape") return { type: "CANCEL" };
   if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
   if (e.key === "Enter") return { type: "CONFIRM" };
@@ -254,6 +253,10 @@ type Runtime = {
 
   installGlobalListeners(win?: Window): () => void;
 
+  getActiveViewRoot(): HTMLElement | null;
+
+  getActiveViewOnIntent(): ((intent: ViewIntent) => void) | null;
+
   dispose(): void;
 };
 
@@ -261,6 +264,7 @@ export function createRuntime<C>(opts: {
   model: Model;
   getCore: () => C;
   views: Partial<Record<ViewName, ViewFactory<C>>>;
+  dispatchIntent: (intent: Intent) => void;
   initialSelection?: Selection;
 }): Runtime {
   const { model } = opts;
@@ -273,7 +277,6 @@ export function createRuntime<C>(opts: {
   const bindings = new Map<string, Map<string, TargetBindingRecord>>();
 
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
-  const viewsSet = new Set<ViewHandle>();
   let activeView: ViewHandle | null = null;
 
   let pending: { selection: Selection; effects: RuntimeEffect[] } | null = null;
@@ -283,6 +286,11 @@ export function createRuntime<C>(opts: {
 
   const setActiveView = (v: ViewHandle | null): void => {
     activeView = v;
+  };
+
+  const updateActiveViewForTarget = (target: EventTarget | null): void => {
+    const hit = viewAtTarget(viewRoots, target);
+    setActiveView(hit);
   };
 
   const focusMapFor = (focus: Focus): Map<string, TargetBindingRecord> => {
@@ -318,11 +326,10 @@ export function createRuntime<C>(opts: {
     const targetEl = (binding?.getEl() as HTMLElement | null) ?? null;
     if (!binding || !targetEl) return;
 
+    updateActiveViewForTarget(targetEl);
+
     const wasFocused = document.activeElement === targetEl;
     if (!wasFocused) targetEl.focus({ preventScroll: true });
-
-    const hitView = viewAtTarget(viewRoots, targetEl);
-    if (hitView) setActiveView(hitView);
 
     const caret = sel.caret;
     const canCaret = !!caret && !!binding.caret;
@@ -356,6 +363,7 @@ export function createRuntime<C>(opts: {
         case "CLEAR_FOCUS": {
           const active = document.activeElement;
           if (active instanceof HTMLElement) active.blur();
+          setActiveView(null);
           break;
         }
         default:
@@ -433,17 +441,16 @@ export function createRuntime<C>(opts: {
 
   const registerViewRoot = (view: {
     root: HTMLElement;
-    onIntent?: (intent: KeyIntent) => void;
+    onIntent?: (intent: ViewIntent) => void;
   }): (() => void) => {
     const handle: ViewHandle = {
       root: view.root,
       ...(view.onIntent ? { onIntent: view.onIntent } : {}),
     };
+
     viewRoots.set(handle.root, handle);
-    viewsSet.add(handle);
 
     return () => {
-      viewsSet.delete(handle);
       if (getActiveView() === handle) setActiveView(null);
     };
   };
@@ -485,47 +492,14 @@ export function createRuntime<C>(opts: {
     };
   };
 
-  const runGlobalCommand = (intent: KeyIntent): boolean => {
-    if (intent.type !== "CANCEL") return false;
-    const sel = selectionSignal.peek();
-    if (sel.type !== "focused") {
-      setSelection({ type: "idle" });
-      return true;
-    }
-    if (sel.target !== DEFAULT_TARGET) {
-      setSelection({
-        type: "focused",
-        focus: sel.focus,
-        target: DEFAULT_TARGET,
-        caret: { start: 0, end: 0 },
-      });
-      return true;
-    }
-    setSelection({ type: "idle" });
-    return true;
-  };
-
   const dispatchKeyDown = (e: KeyboardEvent) => {
-    if (e.defaultPrevented) return;
+    if (isNativeEditorTarget(e.target) && !e.defaultPrevented) return;
 
     const intent = parseKeydownIntent(e);
     if (!intent) return;
 
-    if (isNativeEditorTarget(e.target)) {
-      if (!runGlobalCommand(intent)) return;
-      consumeEvent(e);
-      return;
-    }
-
-    if (runGlobalCommand(intent)) {
-      consumeEvent(e);
-      return;
-    }
-
-    const active = getActiveView();
-    if (!active?.onIntent) return;
-    consumeEvent(e);
-    active.onIntent(intent);
+    e.preventDefault();
+    opts.dispatchIntent(intent);
   };
 
   const installGlobalListeners = (win: Window = window): (() => void) => {
@@ -533,8 +507,23 @@ export function createRuntime<C>(opts: {
       dispatchKeyDown(e);
     };
 
+    const onPointerDownCapture = (e: PointerEvent) => {
+      updateActiveViewForTarget(e.target);
+    };
+
+    const onFocusInCapture = (e: FocusEvent) => {
+      updateActiveViewForTarget(e.target);
+    };
+
     win.addEventListener("keydown", onKeyDown);
-    return () => win.removeEventListener("keydown", onKeyDown);
+    win.addEventListener("pointerdown", onPointerDownCapture, true);
+    win.addEventListener("focusin", onFocusInCapture, true);
+
+    return () => {
+      win.removeEventListener("keydown", onKeyDown);
+      win.removeEventListener("pointerdown", onPointerDownCapture, true);
+      win.removeEventListener("focusin", onFocusInCapture, true);
+    };
   };
 
   const mountView = (mountOpts: MountViewOpts): Component => {
@@ -575,9 +564,14 @@ export function createRuntime<C>(opts: {
     };
   };
 
+  const getActiveViewRoot = (): HTMLElement | null =>
+    getActiveView()?.root ?? null;
+
+  const getActiveViewOnIntent = (): ((intent: ViewIntent) => void) | null =>
+    getActiveView()?.onIntent ?? null;
+
   const dispose = (): void => {
     bindings.clear();
-    viewsSet.clear();
     activeView = null;
     pending = null;
     flushScheduled = false;
@@ -590,6 +584,8 @@ export function createRuntime<C>(opts: {
     attachTarget,
     mountView,
     installGlobalListeners,
+    getActiveViewRoot,
+    getActiveViewOnIntent,
     dispose,
   };
 }
