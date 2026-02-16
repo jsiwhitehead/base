@@ -188,7 +188,6 @@ export function buildTextField(
     focusEl = inp;
     inp.classList.add("ui-textfield-input");
     if (opts.inputClassName) inp.classList.add(opts.inputClassName);
-
     inp.dataset.target = opts.target;
 
     const mirror = autosize
@@ -196,7 +195,6 @@ export function buildTextField(
       : null;
 
     if (mirror) mirror.setAttribute("aria-hidden", "true");
-
     if (mirror) wrap.append(mirror, inp);
     else wrap.append(inp);
 
@@ -222,9 +220,7 @@ export function buildTextField(
     };
 
     const beginDraftSession = (): void => {
-      if (editModel !== "draft") return;
-      if (editing) return;
-
+      if (editModel !== "draft" || editing) return;
       const state = opts.getState();
       if (state.readOnly) return;
 
@@ -238,9 +234,7 @@ export function buildTextField(
     };
 
     const commitDraft = (): void => {
-      if (!editing) return;
-      if (!dirty) return;
-
+      if (editModel !== "draft" || !editing || !dirty) return;
       const state = opts.getState();
       if (state.readOnly) return;
 
@@ -250,92 +244,95 @@ export function buildTextField(
     };
 
     const cancelDraft = (): void => {
-      if (!editing) return;
+      if (editModel !== "draft" || !editing) return;
       draft = baseline;
       dirty = false;
       syncValue(inp, baseline);
       syncMirror(baseline);
     };
 
-    if (yieldNav) {
-      ctx.on(inp, "keydown", (e: KeyboardEvent) => {
-        if (e.defaultPrevented) return;
+    const yieldCommit = (e: KeyboardEvent): void => {
+      commitDraft();
+      prevent(e);
+    };
 
-        if (e.key === "Escape") {
-          if (editModel === "draft") cancelDraft();
-          prevent(e);
-          return;
-        }
+    ctx.on(inp, "keydown", (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
 
+      if (e.key === "Escape") {
+        cancelDraft();
+        return;
+      }
+
+      if (!yieldNav) {
         if (e.key === "Tab") {
           commitDraft();
           prevent(e);
-          return;
         }
+        e.stopPropagation();
+        return;
+      }
 
-        const start = inp.selectionStart ?? 0;
-        const end = inp.selectionEnd ?? start;
-        const hasSel = start !== end;
-        const len = inp.value.length;
+      if (e.key === "Tab") {
+        yieldCommit(e);
+        return;
+      }
 
-        const dir =
-          e.key === "ArrowLeft"
-            ? "left"
-            : e.key === "ArrowRight"
-              ? "right"
-              : e.key === "ArrowUp"
-                ? "up"
-                : e.key === "ArrowDown"
-                  ? "down"
-                  : null;
-
-        if (dir) {
-          const atStart = !hasSel && start === 0;
-          const atEnd = !hasSel && end === len;
-
-          const shouldYield =
-            (dir === "left" && atStart) ||
-            (dir === "right" && atEnd) ||
-            (dir === "up" &&
-              (inp instanceof HTMLTextAreaElement ? isFirstLine(inp) : true)) ||
-            (dir === "down" &&
-              (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
-
-          if (shouldYield) {
-            commitDraft();
-            prevent(e);
-            return;
-          }
-
+      if (e.key === "Enter") {
+        if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey)) {
           e.stopPropagation();
           return;
         }
+        yieldCommit(e);
+        return;
+      }
 
-        if (e.key === "Enter") {
-          if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey)) {
-            e.stopPropagation();
-            return;
-          }
-          commitDraft();
-          prevent(e);
-          return;
-        }
+      const start = inp.selectionStart ?? 0;
+      const end = inp.selectionEnd ?? start;
+      const hasSel = start !== end;
+      const len = inp.value.length;
 
-        if (e.key === "Backspace" && !hasSel && start === 0) {
-          commitDraft();
-          prevent(e);
-          return;
-        }
+      const dir =
+        e.key === "ArrowLeft"
+          ? "left"
+          : e.key === "ArrowRight"
+            ? "right"
+            : e.key === "ArrowUp"
+              ? "up"
+              : e.key === "ArrowDown"
+                ? "down"
+                : null;
 
-        if (e.key === "Delete" && !hasSel && end === len) {
-          commitDraft();
-          prevent(e);
+      if (dir) {
+        const shouldYield =
+          (dir === "left" && !hasSel && start === 0) ||
+          (dir === "right" && !hasSel && end === len) ||
+          (dir === "up" &&
+            (inp instanceof HTMLTextAreaElement ? isFirstLine(inp) : true)) ||
+          (dir === "down" &&
+            (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
+
+        if (shouldYield) {
+          yieldCommit(e);
           return;
         }
 
         e.stopPropagation();
-      });
-    }
+        return;
+      }
+
+      if (e.key === "Backspace" && !hasSel && start === 0) {
+        yieldCommit(e);
+        return;
+      }
+
+      if (e.key === "Delete" && !hasSel && end === len) {
+        yieldCommit(e);
+        return;
+      }
+
+      e.stopPropagation();
+    });
 
     ctx.on(inp, "pointerdown", (e: PointerEvent) => {
       core.focus(opts.focus, opts.target);
@@ -360,8 +357,7 @@ export function buildTextField(
     });
 
     ctx.on(inp, "blur", () => {
-      if (editModel !== "draft") return;
-      if (!editing) return;
+      if (editModel !== "draft" || !editing) return;
       commitDraft();
     });
 

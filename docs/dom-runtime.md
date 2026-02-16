@@ -316,18 +316,22 @@ Mirror rules:
 - Mirror reflects current displayed text (draft or committed).
 - When text ends with newline, mirror appends a trailing zero-width space (`\u200B`) for sizing.
 
-### Yield navigation (`yieldNav=true`)
+### Yield navigation (`yieldNav`)
+
+- `yieldNav=false` means the field consumes all keydowns locally (does not bubble), except Escape.
+- `yieldNav=true` means the field yields arrow and delete-boundary keys at boundaries so the active view can handle navigation and structural edits.
 
 Propagation-gating rules:
 
 - Locally handled keydowns MUST call `stopPropagation()` so they do not reach global key routing.
 - Yielded keydowns MUST NOT call `stopPropagation()` so they bubble to Core.
 - When yielding, the runtime MUST perform the listed commit/cancel behavior and call `preventDefault()` where specified.
+- Text fields MUST NOT stop propagation for Escape. Draft fields MAY cancel local edits, but Escape always bubbles to the global Cancel ladder.
 
 Events that trigger commit/yield behavior:
 
 - `Escape`: Cancels the draft session in draft mode and MUST NOT call `preventDefault()`.
-- `Tab`: Commits the draft and MUST call `preventDefault()`.
+- `Tab`: Commits the draft and MUST call `preventDefault()`. If `yieldNav=true`, it MUST bubble (so views may handle indent/outdent). If `yieldNav=false`, it MUST NOT bubble.
 - `Enter`: Commits the draft and MUST call `preventDefault()`. Exception: a `textarea` with `metaKey` or `ctrlKey` allows newline.
 - Arrow keys: MUST yield only at text boundaries. Left yields at absolute start, right yields at absolute end, up yields on the first line for `textarea` (always for single-line input), and down yields on the last line for `textarea` (always for single-line input). When yielding, the runtime MUST commit the draft and call `preventDefault()`.
 - `Backspace` at start: MUST commit the draft and call `preventDefault()`.
@@ -390,7 +394,7 @@ Canonical produced structure:
 Rules:
 
 - Label text field uses target `LABEL_TARGET`.
-- The label text field MUST use `buildTextField` with `yieldNav=false` (label editing does not yield; nav/confirm/delete keydowns stay local and stop propagation).
+- The label text field MUST use `buildTextField` with `yieldNav=false` (consumes Tab/arrows/Enter/Delete locally; only Escape bubbles).
 - Connected rows render only when `item.mode.type === "connected"`.
 - Each connected field MUST use `connTarget(field.key)` as target.
 - Each connected field MUST use `buildTextField` with autosize enabled.
