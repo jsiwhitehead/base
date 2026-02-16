@@ -3,7 +3,7 @@ import { createCore } from "./core";
 import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV, devAssert, devWarn } from "./dev";
 import { bindItemFrame, createComponent, el } from "./dom";
-import { viewFactories } from "./views";
+import { viewRegistrations } from "./views";
 
 type App = {
   core: Core;
@@ -29,7 +29,7 @@ function createApp(opts: CreateAppOpts = {}): App {
 
   devAssert(hostEl, "Missing app root element (#root)");
 
-  const { core: rawCore, rootId } = createCore({ views: viewFactories });
+  const { core: rawCore, rootId } = createCore({ views: viewRegistrations });
 
   const debug = createDebugState();
   const core = instrumentCore(rawCore, debug);

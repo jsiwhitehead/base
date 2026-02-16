@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_TARGET } from "../src/core";
-import { viewFactories } from "../src/views";
+import { viewRegistrations } from "../src/views";
 import {
   expectSel,
   expectSnapshotSame,
@@ -22,6 +22,12 @@ import {
   setView,
   snapshotEl,
 } from "./test-utils";
+
+const viewFactories = Object.fromEntries(
+  Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),
+) as {
+  [K in keyof typeof viewRegistrations]: (typeof viewRegistrations)[K]["factory"];
+};
 
 describe("views", () => {
   test("outline: selection moves do not replace item roots", async () => {
@@ -174,10 +180,14 @@ describe("views", () => {
     setView(core, tableId, "table");
 
     const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
     const aScoreId = mkBlank(core, rowA, { label: "score", value: 5 });
 
-    const rowB = mkGroup(core, tableId, { label: "rowB" });
-    const bScoreId = mkBlank(core, rowB, { label: "score", value: 6 });
+    const rowBContent = core.item(rowB).content;
+    const bScoreId =
+      rowBContent.type === "group" ? rowBContent.children[0]! : "";
+    core.commit((t) => t.setValue(bScoreId, 6));
 
     const view = viewFactories.table({ core, id: tableId });
     mountDomView(view);
@@ -299,10 +309,13 @@ describe("views", () => {
     setView(core, tableId, "table");
 
     const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
     const aScore = mkBlank(core, rowA, { label: "score", value: 5 });
 
-    const rowB = mkGroup(core, tableId, { label: "rowB" });
-    const bScore = mkBlank(core, rowB, { label: "score", value: 6 });
+    const rowBContent = core.item(rowB).content;
+    const bScore = rowBContent.type === "group" ? rowBContent.children[0]! : "";
+    core.commit((t) => t.setValue(bScore, 6));
 
     const outline = viewFactories.outline({ core, id: rootId });
     mountDomView(outline);

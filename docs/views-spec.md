@@ -133,12 +133,12 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 
 Hierarchical, depth-first over visible items. At the edges of the tree (root parent, childless leaf, first or last visible item), NAV is a no-op.
 
-| NAV | From container focus |
-|---|---|
-| Up | Previous visible item |
-| Down | Next visible item |
-| Left | Parent item |
-| Right | First child |
+| NAV   | From container focus  |
+| ----- | --------------------- |
+| Up    | Previous visible item |
+| Down  | Next visible item     |
+| Left  | Parent item           |
+| Right | First child           |
 
 #### Tab action
 
@@ -276,12 +276,12 @@ Rules:
 
 Grid over rows and cells. Row headers occupy column 0. Column headers occupy row 0. At the edges of the grid (first row, last row, first cell, last cell), NAV is a no-op.
 
-| NAV | From row container | From cell container |
-|---|---|---|
-| Up | Previous row | Same column, previous row |
-| Down | Next row | Same column, next row |
-| Left | No-op | Previous cell (column 0 exits to row container) |
-| Right | First cell | Next cell |
+| NAV   | From row container | From cell container                             |
+| ----- | ------------------ | ----------------------------------------------- |
+| Up    | Previous row       | Same column, previous row                       |
+| Down  | Next row           | Same column, next row                           |
+| Left  | No-op              | Previous cell (column 0 exits to row container) |
+| Right | First cell         | Next cell                                       |
 
 #### Tab action
 

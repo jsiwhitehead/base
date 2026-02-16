@@ -9,6 +9,7 @@ import type {
   ItemId,
   Selection,
   ViewIntent,
+  ViewRegistration,
 } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
 import type { NavDir } from "../dom";
@@ -443,7 +444,7 @@ function enterMove(
   return nextCell ? focusCellContainer(nextRow, nextCell) : null;
 }
 
-export function createTableView(args: {
+function createTableView(args: {
   core: Core;
   id: ItemId;
   focus?: Focus;
@@ -574,3 +575,12 @@ export function createTableView(args: {
     },
   };
 }
+
+export const tableView: ViewRegistration = {
+  factory: createTableView,
+  constraint: {
+    content: "group",
+    children: { content: "group", viewLocked: true },
+    shapeSync: true,
+  },
+};

@@ -1,116 +1,179 @@
-import type {
-  ApplyResult,
-  Entry,
-  EntryId,
-  Model,
-  Op,
-  Transaction,
-} from "./model";
-import { makeBlankEntry, normalizeLabel } from "./model";
+import type { EntryId, Model, Op, ViewName } from "./model";
+import { isGroupContent, makeBlankEntry, normalizeLabel } from "./model";
 
-export type Rule = (
+export type ViewConstraint = {
+  content: "group" | "value" | "any";
+  children?: {
+    content: "group" | "value" | "any";
+    viewLocked?: true;
+  };
+  shapeSync?: true;
+};
+
+export function enforceViewConstraints(
   model: Model,
-  applyResult: ApplyResult,
-  meta?: Transaction["meta"],
-) => readonly Op[];
-
-type SyncGroup = {
-  add(id: EntryId): void;
-  remove(id: EntryId): void;
-  has(id: EntryId): boolean;
-  clear(): void;
-  pruneMissing(): EntryId[];
-  dispose(): void;
-};
-
-const minId = (ids: Iterable<EntryId>): EntryId | null => {
-  let out: EntryId | null = null;
-  for (const id of ids) out = out == null ? id : Math.min(out, id);
-  return out;
-};
-
-export function createShapeSyncGroup(opts: {
-  model: Model;
-  addRule: (rule: Rule) => () => void;
-}): SyncGroup {
-  const { model } = opts;
-  const groupIds = new Set<EntryId>();
-
-  const rule: Rule = (model, applyResult) => {
-    if (groupIds.size <= 1) return [];
-
-    const candidatesTo = new Set<EntryId>();
-    const candidatesFrom = new Set<EntryId>();
-    const candidatesTouched = new Set<EntryId>();
-
-    for (const moved of applyResult.moved) {
-      if (moved.toParentId != null && groupIds.has(moved.toParentId))
-        candidatesTo.add(moved.toParentId);
-      if (moved.fromParentId != null && groupIds.has(moved.fromParentId))
-        candidatesFrom.add(moved.fromParentId);
+  constraints: Partial<Record<ViewName, ViewConstraint>>,
+  touched: readonly EntryId[],
+  applyOps: (ops: Op[]) => void,
+): void {
+  const relevant = new Set<EntryId>();
+  for (const id of touched) {
+    if (!model.hasEntry(id)) continue;
+    relevant.add(id);
+    const parentId = model.peekEntry(id).parentId;
+    if (parentId != null && model.hasEntry(parentId)) {
+      relevant.add(parentId);
     }
+  }
 
-    for (const id of applyResult.touched) {
-      if (applyResult.moved.length === 0 && groupIds.has(id)) {
-        candidatesTouched.add(id);
-        continue;
+  const constrained: { id: EntryId; constraint: ViewConstraint }[] = [];
+  for (const id of relevant) {
+    const entry = model.peekEntry(id);
+    if (!entry.view) continue;
+    const constraint = constraints[entry.view];
+    if (!constraint) continue;
+    constrained.push({ id, constraint });
+  }
+
+  const isPlain = (id: EntryId): boolean => {
+    const content = model.peekEntry(id).content;
+    return (
+      content.type === "blank" ||
+      content.type === "scalar" ||
+      content.type === "group"
+    );
+  };
+
+  const contentOps: Op[] = [];
+  for (const { id, constraint } of constrained) {
+    if (constraint.content === "any") continue;
+    if (!isPlain(id)) continue;
+
+    const content = model.peekEntry(id).content;
+
+    if (constraint.content === "group" && !isGroupContent(content)) {
+      contentOps.push(
+        model.ops.patch(id, { content: { type: "group", childIds: [] } }),
+      );
+    } else if (constraint.content === "value" && isGroupContent(content)) {
+      if (content.childIds.length === 0) {
+        contentOps.push(model.ops.patch(id, { content: { type: "blank" } }));
+      } else {
+        contentOps.push(model.ops.patch(id, { view: null }));
       }
-      if (!model.hasEntry(id)) continue;
-      const parentId = model.peekEntry(id).parentId;
-      if (parentId != null && groupIds.has(parentId))
-        candidatesTouched.add(parentId);
     }
+  }
 
-    const leaderId =
-      minId(candidatesTo) ?? minId(candidatesTouched) ?? minId(candidatesFrom);
-    if (
-      leaderId == null ||
-      !groupIds.has(leaderId) ||
-      !model.hasEntry(leaderId)
-    )
-      return [];
+  if (contentOps.length) applyOps(contentOps);
 
-    const leaderChildIds = model.childIdsOf(leaderId);
-    const desiredLabels: string[] = [];
-    for (const childId of leaderChildIds) {
+  const childOps: Op[] = [];
+  for (const { id, constraint } of constrained) {
+    if (!constraint.children) continue;
+    if (!model.hasEntry(id)) continue;
+
+    const entry = model.peekEntry(id);
+    if (!isGroupContent(entry.content)) continue;
+
+    for (const childId of entry.content.childIds) {
       if (!model.hasEntry(childId)) continue;
-      const normalized = normalizeLabel(model.readEntry(childId).label);
-      if (normalized) desiredLabels.push(normalized);
+
+      if (
+        constraint.children.viewLocked &&
+        model.peekEntry(childId).view != null
+      ) {
+        childOps.push(model.ops.patch(childId, { view: null }));
+      }
+
+      if (constraint.children.content === "any") continue;
+      if (!isPlain(childId)) continue;
+
+      const childContent = model.peekEntry(childId).content;
+
+      if (
+        constraint.children.content === "group" &&
+        !isGroupContent(childContent)
+      ) {
+        childOps.push(
+          model.ops.patch(childId, {
+            content: { type: "group", childIds: [] },
+          }),
+        );
+      } else if (
+        constraint.children.content === "value" &&
+        isGroupContent(childContent)
+      ) {
+        if (childContent.childIds.length === 0) {
+          childOps.push(
+            model.ops.patch(childId, { content: { type: "blank" } }),
+          );
+        }
+      }
+    }
+  }
+
+  if (childOps.length) applyOps(childOps);
+
+  const touchedSet = new Set(touched);
+  const syncOps: Op[] = [];
+
+  for (const { id, constraint } of constrained) {
+    if (!constraint.shapeSync) continue;
+    if (!model.hasEntry(id)) continue;
+
+    const entry = model.peekEntry(id);
+    if (!isGroupContent(entry.content)) continue;
+
+    const rowIds = entry.content.childIds.filter((rid) => model.hasEntry(rid));
+    if (rowIds.length === 0) continue;
+
+    const touchedWithChildren = rowIds.find(
+      (rid) => touchedSet.has(rid) && model.childIdsOf(rid).length > 0,
+    );
+    const anyWithChildren = rowIds.find(
+      (rid) => model.childIdsOf(rid).length > 0,
+    );
+    const leaderId =
+      touchedWithChildren ??
+      anyWithChildren ??
+      rowIds.find((rid) => touchedSet.has(rid)) ??
+      rowIds[0]!;
+    const leaderChildIds = model.childIdsOf(leaderId);
+
+    const schema: string[] = [];
+    for (const cid of leaderChildIds) {
+      if (!model.hasEntry(cid)) continue;
+      const label = normalizeLabel(model.peekEntry(cid).label);
+      if (label) schema.push(label);
     }
 
-    const desiredSet = new Set(desiredLabels);
-    const targetGroupIds = [...groupIds]
-      .filter((groupId) => groupId !== leaderId)
-      .sort((a, b) => a - b);
+    const schemaSet = new Set(schema);
 
-    const ops: Op[] = [];
+    for (const rowId of rowIds) {
+      if (rowId === leaderId) continue;
+      if (!model.hasEntry(rowId)) continue;
 
-    for (const groupId of targetGroupIds) {
-      if (!model.hasEntry(groupId)) continue;
-
-      const childIds = model.childIdsOf(groupId);
+      const childIds = model.childIdsOf(rowId);
       const byLabel = new Map<string, EntryId>();
       const indexOf = new Map<EntryId, number>();
 
       for (let i = 0; i < childIds.length; i++) {
-        const childId = childIds[i]!;
-        indexOf.set(childId, i);
-        if (!model.hasEntry(childId)) continue;
-        const normalized = normalizeLabel(model.readEntry(childId).label);
-        if (normalized) byLabel.set(normalized, childId);
+        const cid = childIds[i]!;
+        indexOf.set(cid, i);
+        if (!model.hasEntry(cid)) continue;
+        const label = normalizeLabel(model.peekEntry(cid).label);
+        if (label) byLabel.set(label, cid);
       }
 
-      for (let i = 0; i < desiredLabels.length; i++) {
-        const label = desiredLabels[i]!;
-        const existing = byLabel.get(label) ?? null;
+      for (let i = 0; i < schema.length; i++) {
+        const label = schema[i]!;
+        const existing = byLabel.get(label);
 
         if (existing != null) {
-          const currentIndex = indexOf.get(existing);
-          if (currentIndex != null && currentIndex !== i) {
-            ops.push(
+          if (indexOf.get(existing) !== i) {
+            syncOps.push(
               model.ops.move({
                 childId: existing,
-                toParentId: groupId,
+                toParentId: rowId,
                 toIndex: i,
               }),
             );
@@ -118,57 +181,22 @@ export function createShapeSyncGroup(opts: {
           continue;
         }
 
-        const id = model.createId();
-        const entry: Entry = { ...makeBlankEntry(id), label };
-        ops.push(model.ops.create(entry));
-        ops.push(
-          model.ops.move({ childId: id, toParentId: groupId, toIndex: i }),
+        const newId = model.createId();
+        syncOps.push(model.ops.create({ ...makeBlankEntry(newId), label }));
+        syncOps.push(
+          model.ops.move({ childId: newId, toParentId: rowId, toIndex: i }),
         );
       }
 
-      for (const childId of childIds) {
-        if (!model.hasEntry(childId)) continue;
-        const normalized = normalizeLabel(model.readEntry(childId).label);
-        if (!normalized) continue;
-        if (!desiredSet.has(normalized)) {
-          ops.push(model.ops.move({ childId, toParentId: null }));
+      for (const cid of childIds) {
+        if (!model.hasEntry(cid)) continue;
+        const label = normalizeLabel(model.peekEntry(cid).label);
+        if (label && !schemaSet.has(label)) {
+          syncOps.push(model.ops.move({ childId: cid, toParentId: null }));
         }
       }
     }
+  }
 
-    return ops;
-  };
-
-  const removeRule = opts.addRule(rule);
-
-  const pruneMissing = (): EntryId[] => {
-    const removed: EntryId[] = [];
-    for (const id of groupIds) {
-      if (!model.hasEntry(id)) {
-        groupIds.delete(id);
-        removed.push(id);
-      }
-    }
-    return removed;
-  };
-
-  return {
-    add(id: EntryId) {
-      groupIds.add(id);
-    },
-    remove(id: EntryId) {
-      groupIds.delete(id);
-    },
-    has(id: EntryId) {
-      return groupIds.has(id);
-    },
-    clear() {
-      groupIds.clear();
-    },
-    pruneMissing,
-    dispose() {
-      groupIds.clear();
-      removeRule();
-    },
-  };
+  if (syncOps.length) applyOps(syncOps);
 }

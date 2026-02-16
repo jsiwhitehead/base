@@ -6,6 +6,7 @@ import type {
   ItemId,
   ValueOrBlank,
   ViewIntent,
+  ViewRegistration,
 } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
 import {
@@ -156,7 +157,7 @@ function buildSliderBody({
   });
 }
 
-export function createSliderView(args: {
+function createSliderView(args: {
   core: Core;
   id: ItemId;
   focus?: Focus;
@@ -216,3 +217,8 @@ export function createSliderView(args: {
     },
   };
 }
+
+export const sliderView: ViewRegistration = {
+  factory: createSliderView,
+  constraint: { content: "value" },
+};

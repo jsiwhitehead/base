@@ -1,10 +1,10 @@
-import type { Core, ViewFactory, ViewName } from "../core";
-import { createOutlineView } from "./outline";
-import { createSliderView } from "./slider";
-import { createTableView } from "./table";
+import type { ViewName, ViewRegistration } from "../core";
+import { outlineView } from "./outline";
+import { sliderView } from "./slider";
+import { tableView } from "./table";
 
-export const viewFactories: Record<ViewName, ViewFactory<Core>> = {
-  outline: createOutlineView,
-  slider: createSliderView,
-  table: createTableView,
+export const viewRegistrations: Record<ViewName, ViewRegistration> = {
+  outline: outlineView,
+  slider: sliderView,
+  table: tableView,
 };

@@ -12,7 +12,7 @@ import type {
   ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
-import { viewFactories } from "../src/views";
+import { viewRegistrations } from "../src/views";
 
 const cleanups: Array<() => void> = [];
 
@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 export function makeCoreRuntime(): { core: Core; rootId: ItemId } {
-  const { core, rootId } = createCore({ views: viewFactories });
+  const { core, rootId } = createCore({ views: viewRegistrations });
   cleanups.push(() => core.dispose());
   return { core, rootId };
 }
@@ -408,4 +408,7 @@ export const targets = {
   DEFAULT: DEFAULT_TARGET,
 };
 
-export { viewFactories };
+export const viewFactories = Object.fromEntries(
+  Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),
+) as Record<ViewName, (typeof viewRegistrations)[ViewName]["factory"]>;
+export { viewRegistrations };

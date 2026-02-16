@@ -10,6 +10,7 @@ import type {
   Selection,
   ValueOrBlank,
   ViewIntent,
+  ViewRegistration,
 } from "../core";
 import {
   DEFAULT_TARGET,
@@ -534,7 +535,7 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
   });
 }
 
-export function createOutlineView(args: {
+function createOutlineView(args: {
   core: Core;
   id: ItemId;
   focus?: Focus;
@@ -740,3 +741,5 @@ export function createOutlineView(args: {
     },
   };
 }
+
+export const outlineView: ViewRegistration = { factory: createOutlineView };

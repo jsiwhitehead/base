@@ -25,7 +25,8 @@ Rules:
 - The root item MUST NOT be removed.
 - Core MUST be the single source of truth for state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
-- `createCore` MUST receive a view-factory registry used by `core.mountView(...)` (it MAY be empty).
+- `createCore` MUST receive a view registration registry used by `core.mountView(...)` and constraint enforcement (it MAY be empty).
+- Each view registration MUST contain a view factory and MAY contain a view constraint.
 - A Core instance owns all state and MUST be explicitly disposed.
 
 ## Reactivity model
@@ -362,6 +363,7 @@ type Component = { el: HTMLElement; dispose(): void };
 
 - Returns current view name for the item.
 - If `id` is missing or stored view cannot be resolved, Core MUST return default view name (`"outline"`).
+- If the stored view has a constraint and the item's resolved content does not satisfy it, Core MUST return `"outline"`. The stored view preference MUST be preserved on the item.
 
 `core.mountView(...)` behavior:
 
@@ -385,28 +387,43 @@ Rules:
 - Core MAY still handle explicit global commands while focus is in native text editors.
 - View behavior MUST remain intent-driven (semantic), not raw-key driven.
 
-### Table view semantics (Core-enforced)
+### View constraints
 
-When item view is `"table"`, Core enforces table structural semantics.
+Views MAY declare structural constraints as part of their registration.
 
-Rules:
+```ts
+type ViewConstraint = {
+  content: "group" | "value" | "any";
+  children?: {
+    content: "group" | "value" | "any";
+    viewLocked?: true;
+  };
+  shapeSync?: true;
+};
+```
 
-- Table item MUST be a `group`.
-- Each direct child row MUST be a `group`.
-- If table item or row is not a group, Core MUST coerce it to an empty group.
-- Coercion MUST occur during edit application and invariant repair (`commit`/`undo`/`redo`), not as a read-time projection.
-- Row children MUST act as columns identified by normalized, non-empty labels.
+```ts
+type ViewRegistration = {
+  factory: ViewFactory;
+  constraint?: ViewConstraint;
+};
+```
 
-Row consistency rules:
+Constraint meanings:
 
-- All rows MUST share the same labeled column set and order.
-- When one row changes, Core MAY create missing columns in other rows as blank entries.
-- When one row changes, Core MAY reorder columns across rows to match table column order.
-- When one row changes, Core MAY detach columns no longer in table shape.
+- `content`: required content shape for the item. `"value"` means non-group.
+- `children.content`: required content shape for direct children of a constrained group.
+- `children.viewLocked`: children MUST have their stored view cleared to `null`.
+- `shapeSync`: direct children MUST share the same labeled column set and order.
 
-Notes:
+Enforcement rules:
 
-- These repairs are automatic and MAY create, move, or touch additional items beyond the initiating edit.
+- Constraint enforcement MUST run after every transaction (`commit`, `undo`, `redo`, remote apply).
+- Enforcement MUST only coerce plain items (blank, scalar, group). Connected items (formula, query) MUST NOT be coerced; mismatches are handled at view resolution time (see `core.view(id)`).
+- Content coercion MUST run before children coercion. Children coercion MUST run before shape sync.
+- If a content constraint cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
+- Shape sync MUST elect a leader row, then create missing columns, reorder mismatched columns, and detach excess columns in other rows.
+- Coercion ops MUST be captured for undo/redo.
 
 ## Undo and redo
 
@@ -475,6 +492,8 @@ Type exports:
 - `Transaction`
 - `ViewFactory`
 - `ViewName`
+- `ViewConstraint`
+- `ViewRegistration`
 
 Constant exports:
 

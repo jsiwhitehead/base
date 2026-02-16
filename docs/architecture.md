@@ -151,11 +151,11 @@ This section defines the complete keyboard interaction semantics shared across a
 
 Every focusable surface is one of three kinds:
 
-| Kind | Targets | `yieldNav` | In edit traversal | Behavior |
-|---|---|---|---|---|
-| Container | `DEFAULT_TARGET` | n/a | No | Structural commands: navigate, enter edit, delete, tab |
-| Isolated | `label` | `false` | No | Self-contained text editing |
-| Traversable | `conn:*`, `value` | `true` | Yes | Text editing with boundary yielding |
+| Kind        | Targets           | `yieldNav` | In edit traversal | Behavior                                               |
+| ----------- | ----------------- | ---------- | ----------------- | ------------------------------------------------------ |
+| Container   | `DEFAULT_TARGET`  | n/a        | No                | Structural commands: navigate, enter edit, delete, tab |
+| Isolated    | `label`           | `false`    | No                | Self-contained text editing                            |
+| Traversable | `conn:*`, `value` | `true`     | Yes               | Text editing with boundary yielding                    |
 
 **Container** is the outer shell for structural interaction. **Traversable** targets are for content editing in flow — they yield keys at text boundaries so the outer view can handle traversal and structural actions. **Isolated** targets are for infrequent identity editing — the label field consumes all input locally with two exceptions: Escape bubbles to the Core escape ladder, and Enter commits text and exits to container focus.
 
@@ -163,12 +163,12 @@ Every focusable surface is one of three kinds:
 
 Every item has an ordered list of traversable edit targets, derived from its mode:
 
-| Item mode | Edit target list |
-|---|---|
-| Connected (formula) | `[conn:expr]` |
-| Connected (query) | `[conn:from, conn:where, conn:orderBy]` |
-| Plain scalar | `[value]` |
-| Readonly or group | `[]` (empty) |
+| Item mode           | Edit target list                        |
+| ------------------- | --------------------------------------- |
+| Connected (formula) | `[conn:expr]`                           |
+| Connected (query)   | `[conn:from, conn:where, conn:orderBy]` |
+| Plain scalar        | `[value]`                               |
+| Readonly or group   | `[]` (empty)                            |
 
 The **primary edit target** is the first entry in this list, or `null` if empty. This determines whether CONFIRM and TYPE from container focus have an edit target to enter.
 
@@ -176,27 +176,27 @@ Readonly items have an empty edit target list. CONFIRM, TYPE, and DELETE from co
 
 #### Intent handler ownership
 
-| Target | Owner | Handler |
-|---|---|---|
-| `DEFAULT_TARGET` | Frame | Outer view |
-| `label` | Header | Self-contained (no view handling needed) |
-| `conn:*` | Header | Field yields at boundaries; outer view handles yielded keys |
-| `value` | Body | Item view mounts the field; outer view handles yielded keys |
+| Target           | Owner  | Handler                                                     |
+| ---------------- | ------ | ----------------------------------------------------------- |
+| `DEFAULT_TARGET` | Frame  | Outer view                                                  |
+| `label`          | Header | Self-contained (no view handling needed)                    |
+| `conn:*`         | Header | Field yields at boundaries; outer view handles yielded keys |
+| `value`          | Body   | Item view mounts the field; outer view handles yielded keys |
 
 #### Behaviors from container focus
 
-| Intent | Condition | Behavior |
-|---|---|---|
-| CONFIRM | Primary target exists | Enter edit on primary target, caret at end |
-| CONFIRM | No primary target | No-op |
-| TYPE char | Primary target exists | Enter edit on primary target, select all, insert char |
-| TYPE char | No primary target | No-op |
-| TYPE `=` | Item not a non-empty group | Convert to formula, focus `conn:expr` at start |
-| NAV | Always | Move by view navigation geometry, stay at container focus |
-| TAB | Always | View-specific structural action |
-| DELETE | Item supports remove | Remove item, focus next sibling at container; then previous sibling; then parent. If no destination, blur. |
-| DELETE | Item supports clear | Clear item to blank, stay on same item at container focus |
-| CANCEL | Always | Core escape ladder (blur from container) |
+| Intent    | Condition                  | Behavior                                                                                                   |
+| --------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                                                                 |
+| CONFIRM   | No primary target          | No-op                                                                                                      |
+| TYPE char | Primary target exists      | Enter edit on primary target, select all, insert char                                                      |
+| TYPE char | No primary target          | No-op                                                                                                      |
+| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                                                             |
+| NAV       | Always                     | Move by view navigation geometry, stay at container focus                                                  |
+| TAB       | Always                     | View-specific structural action                                                                            |
+| DELETE    | Item supports remove       | Remove item, focus next sibling at container; then previous sibling; then parent. If no destination, blur. |
+| DELETE    | Item supports clear        | Clear item to blank, stay on same item at container focus                                                  |
+| CANCEL    | Always                     | Core escape ladder (blur from container)                                                                   |
 
 TYPE `=` overwrites existing content and converts the item to a formula-connected item. It is blocked only when the item is a non-empty group, since Core's group conversion rule prevents converting non-empty groups.
 
@@ -228,9 +228,9 @@ When a boundary nav yields:
 
 **Live and draft edit models**: Traversable fields use one of two edit models. This affects when Core state updates but does not change controls behavior:
 
-| Model | Used by | Core updates | Enter | Escape |
-|---|---|---|---|---|
-| Live | `value` | Every keystroke | Advance | Exit |
+| Model | Used by  | Core updates                           | Enter                | Escape                  |
+| ----- | -------- | -------------------------------------- | -------------------- | ----------------------- |
+| Live  | `value`  | Every keystroke                        | Advance              | Exit                    |
 | Draft | `conn:*` | On commit (Enter, Tab, boundary yield) | Commit, then advance | Cancel draft, then exit |
 
 Draft mode exists because intermediate values of formulas and queries would be invalid. From the user's perspective, all traversable targets behave the same way.

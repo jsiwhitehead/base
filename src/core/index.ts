@@ -49,8 +49,8 @@ import {
   createRuntime,
   defaultTextCaret,
 } from "./runtime";
-import type { Rule as SyncRule } from "./sync";
-import { createShapeSyncGroup } from "./sync";
+import type { ViewConstraint } from "./sync";
+import { enforceViewConstraints } from "./sync";
 
 export type ItemId = string;
 
@@ -212,13 +212,28 @@ type CollabWire = {
   subscribe(onTxn: (txn: Transaction) => void): () => void;
 };
 
+export type ViewRegistration = {
+  factory: ViewFactory<Core>;
+  constraint?: ViewConstraint;
+};
+
 export function createCore(opts: {
-  views: Partial<Record<ViewName, ViewFactory<Core>>>;
+  views: Partial<Record<ViewName, ViewRegistration>>;
   collab?: CollabWire;
 }): {
   core: Core;
   rootId: ItemId;
 } {
+  const factories: Partial<Record<ViewName, ViewFactory<Core>>> = {};
+  const constraints: Partial<Record<ViewName, ViewConstraint>> = {};
+  for (const [name, reg] of Object.entries(opts.views) as [
+    ViewName,
+    ViewRegistration,
+  ][]) {
+    factories[name] = reg.factory;
+    if (reg.constraint) constraints[name] = reg.constraint;
+  }
+
   const model = createModel();
 
   const rootEntryId = model.createId();
@@ -236,7 +251,7 @@ export function createCore(opts: {
   const runtime = createRuntime<Core>({
     model,
     getCore: () => core,
-    views: opts.views,
+    views: factories,
     dispatchIntent: (intent) => core.dispatch(intent),
     initialSelection: {
       type: "focused",
@@ -244,9 +259,6 @@ export function createCore(opts: {
       target: DEFAULT_TARGET,
     },
   });
-
-  const rules: { id: string; run: SyncRule }[] = [];
-  let nextRuleId = 1;
 
   const history: {
     undo: { user: Transaction; inverse: Transaction }[];
@@ -375,6 +387,17 @@ export function createCore(opts: {
 
   const viewSignalCache = new Map<EntryId, ReadonlySignal<ViewName>>();
 
+  const contentSatisfiesConstraint = (
+    id: ItemId,
+    constraint: ViewConstraint | undefined,
+  ): boolean => {
+    if (!constraint || constraint.content === "any") return true;
+    const resolved = item(id);
+    const isGroup = resolved.content.type === "group";
+    if (constraint.content === "group") return isGroup;
+    return !isGroup;
+  };
+
   const view = (id: ItemId): ViewName => {
     const eid = entryIdFromItemId(id);
     if (eid == null) return "outline";
@@ -385,8 +408,11 @@ export function createCore(opts: {
         if (!model.hasEntry(eid)) return "outline";
         const vk = model.entrySignal(eid).value.view;
         const wanted = (vk ?? "outline") as ViewName;
-        const hasFactory = !!opts.views[wanted];
-        return hasFactory ? wanted : "outline";
+        const hasFactory = !!factories[wanted];
+        if (!hasFactory) return "outline";
+        if (!contentSatisfiesConstraint(itemIdOf(eid), constraints[wanted]))
+          return "outline";
+        return wanted;
       });
       viewSignalCache.set(eid, sig);
     }
@@ -497,174 +523,20 @@ export function createCore(opts: {
     return { result, inverseOps };
   };
 
-  const MAX_RULE_PASSES = 25;
-
-  const runRulesFixpoint = (
-    seed: ModelApplyResult,
+  const applyConstraintOps = (
+    touchedIds: readonly EntryId[],
     inverseAcc: Op[],
   ): ModelApplyResult => {
     let merged = emptyModelApply;
-    let input = seed;
 
-    for (let pass = 0; pass < MAX_RULE_PASSES; pass++) {
-      let opsOut: Op[] = [];
-      for (const rule of rules) {
-        const ops0 = rule.run(model, input, { source: "rule" });
-        if (ops0.length) opsOut = opsOut.concat(ops0);
-      }
-      if (!opsOut.length) break;
-
-      const txn = model.ops.transaction(opsOut, { source: "rule" });
+    enforceViewConstraints(model, constraints, touchedIds, (ops) => {
+      const txn = model.ops.transaction(ops, { source: "rule" });
       const { result, inverseOps } = applyTxnWithInverse(txn);
       inverseAcc.push(...inverseOps);
       merged = mergeModelApply(merged, result);
-      input = result;
-    }
+    });
 
     return merged;
-  };
-
-  const addRuleInternal = (
-    ruleFn: SyncRule,
-    addRuleOpts: { id?: string } = {},
-  ): (() => void) => {
-    const id = addRuleOpts.id ?? `rule:${nextRuleId++}`;
-    const rec = { id, run: ruleFn };
-    rules.push(rec);
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const i = rules.indexOf(rec);
-      if (i >= 0) rules.splice(i, 1);
-    };
-  };
-
-  const shapeSync = createShapeSyncGroup({
-    model,
-    addRule: (ruleFn) => addRuleInternal(ruleFn, { id: "sync:shape" }),
-  });
-
-  const tableRowSync = (() => {
-    const rows = new Set<EntryId>();
-
-    const clearDead = () => {
-      for (const id of rows) {
-        if (!model.hasEntry(id)) {
-          rows.delete(id);
-          shapeSync.remove(id);
-        }
-      }
-    };
-
-    const addRow = (id: EntryId) => {
-      if (rows.has(id)) return;
-      rows.add(id);
-      shapeSync.add(id);
-    };
-
-    const removeRow = (id: EntryId) => {
-      if (!rows.has(id)) return;
-      rows.delete(id);
-      shapeSync.remove(id);
-    };
-
-    const setRows = (desired: Set<EntryId>) => {
-      for (const id of rows) {
-        if (!desired.has(id)) removeRow(id);
-      }
-      for (const id of desired) addRow(id);
-    };
-
-    return { clearDead, setRows };
-  })();
-
-  const findTablesAndRows = (): {
-    tableIds: EntryId[];
-    rowIds: Set<EntryId>;
-  } => {
-    const tableIds: EntryId[] = [];
-    const rowIds = new Set<EntryId>();
-
-    const stack: EntryId[] = [model.rootId()];
-    const seen = new Set<EntryId>();
-
-    while (stack.length) {
-      const id = stack.pop()!;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      if (!model.hasEntry(id)) continue;
-
-      const entry = model.peekEntry(id);
-      const isTable = entry.view === "table";
-      if (isTable) tableIds.push(id);
-
-      if (isGroupContent(entry.content)) {
-        for (const cid of entry.content.childIds) {
-          if (isTable) rowIds.add(cid);
-          stack.push(cid);
-        }
-      }
-    }
-
-    return { tableIds, rowIds };
-  };
-
-  const reconcileTablesOps = (): Op[] => {
-    const { tableIds, rowIds } = findTablesAndRows();
-    const opsOut: Op[] = [];
-
-    for (const tableId of tableIds) {
-      if (!model.hasEntry(tableId)) continue;
-      const t = model.peekEntry(tableId);
-
-      if (!isGroupContent(t.content)) {
-        opsOut.push(
-          model.ops.patch(tableId, {
-            content: { type: "group", childIds: [] },
-          }),
-        );
-        continue;
-      }
-
-      for (const rid of t.content.childIds) {
-        if (!model.hasEntry(rid)) continue;
-        const row = model.peekEntry(rid);
-
-        if (row.view != null) {
-          opsOut.push(model.ops.patch(rid, { view: null }));
-        }
-
-        if (!isGroupContent(row.content)) {
-          opsOut.push(
-            model.ops.patch(rid, {
-              content: { type: "group", childIds: [] },
-            }),
-          );
-        }
-      }
-    }
-
-    tableRowSync.clearDead();
-    tableRowSync.setRows(rowIds);
-
-    return opsOut;
-  };
-
-  const applyInvariantOps = (
-    meta: Transaction["meta"] | undefined,
-    inverseAcc: Op[],
-  ): ModelApplyResult => {
-    const opsOut = reconcileTablesOps();
-    if (!opsOut.length) return emptyModelApply;
-
-    const txn = model.ops.transaction(opsOut, { source: "rule" });
-    const { result, inverseOps } = applyTxnWithInverse(txn);
-
-    if (meta?.source !== "remote") inverseAcc.push(...inverseOps);
-
-    evaluator.prune(result.touched);
-    return result;
   };
 
   const applyPipeline = (txn: Transaction): ApplyResult => {
@@ -679,8 +551,8 @@ export function createCore(opts: {
         const res = model.apply(txn);
         final = mergeModelApply(final, res);
 
-        const invRes = applyInvariantOps(txn.meta, inverseAcc);
-        final = mergeModelApply(final, invRes);
+        const constraintRes = applyConstraintOps(res.touched, inverseAcc);
+        final = mergeModelApply(final, constraintRes);
 
         repairSelectionAfterDispatch(txn.meta);
 
@@ -693,14 +565,8 @@ export function createCore(opts: {
       inverseAcc.push(...invUser);
       final = mergeModelApply(final, userRes);
 
-      const invRes1 = applyInvariantOps(txn.meta, inverseAcc);
-      final = mergeModelApply(final, invRes1);
-
-      const ruleRes = runRulesFixpoint(userRes, inverseAcc);
-      final = mergeModelApply(final, ruleRes);
-
-      const invRes2 = applyInvariantOps(txn.meta, inverseAcc);
-      final = mergeModelApply(final, invRes2);
+      const constraintRes = applyConstraintOps(userRes.touched, inverseAcc);
+      final = mergeModelApply(final, constraintRes);
 
       repairSelectionAfterDispatch(txn.meta);
 
@@ -960,7 +826,6 @@ export function createCore(opts: {
     dispose() {
       unsubscribeCollab?.();
       uninstallGlobal();
-      shapeSync.dispose();
       const { removedIds } = model.pruneUnreachable();
       evaluator.prune(removedIds);
       evaluator.dispose();
