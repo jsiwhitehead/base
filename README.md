@@ -13,7 +13,7 @@ bun install
 bun run app
 ```
 
-## Validation (run from repo root):
+## Validation (run from repo root)
 
 ```sh
 bun run typecheck
@@ -28,7 +28,7 @@ bun run format
 - `src/views/`: view implementations (`outline`, `table`, `slider`).
 - `src/main.ts`: bootstrap and top-level wiring.
 
-### Key docs
+## Key docs
 
 - `docs/architecture.md`: canonical architecture and invariant contracts.
 - `CONTRIBUTING.md`: contributor workflow and review expectations.
