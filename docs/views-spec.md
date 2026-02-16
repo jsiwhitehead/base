@@ -328,6 +328,7 @@ Table-local commands:
 
 - `addRowAfter(tableId, afterRowId)`
 - `removeRow(tableId, rowId)`
+- `clearCell(cellId)` — reset cell value to blank.
 
 Notes:
 
@@ -359,8 +360,8 @@ Slider is a scalar control view for numeric-like adjustments.
 Rules:
 
 - Presents a range input and formatted numeric readout.
-- Supports arrow-key nudging with step and jump modes.
-- Slider interprets navigation intents as nudging, not focus movement.
+- Arrow-key nudging is handled natively by the range input, not by view intents.
+- The range input stops propagation for native keys so the runtime never sees them.
 
 ### Body DOM shape
 
@@ -385,7 +386,7 @@ Rules:
 
 Slider is only ever used as an item view, never as an outer view. Its body is a range input rather than a text field.
 
-Arrow keys perform value nudging — the native behavior of a range input. Left and down decrease. Right and up increase. `step` mode nudges by +-1 step. `jump` mode nudges by +-10 steps.
+Arrow keys, Home, End, PageUp, and PageDown are owned by the native range input. The input's `keydown` listener calls `stopPropagation()` for these keys so they never reach the runtime's global handler. The view does not interpret NAV intents.
 
 Enter, Tab, and Escape are not consumed by the slider and bubble to the outer view, which handles them through its normal rules. TYPE and DELETE are no-ops.
 
@@ -396,12 +397,10 @@ Pointerdown on the range input SHOULD focus `value` (`VALUE_TARGET`) before nati
 Slider-local commands:
 
 - `setValue(id, value)`
-- `nudgeValue(id, deltaSteps, opts)`
 
 Rules:
 
 - `setValue` SHOULD commit only when item is an editable plain scalar and value is finite.
-- `nudgeValue` SHOULD read current value, clamp to bounds, and commit.
 
 ### Edge cases and invariants
 

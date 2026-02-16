@@ -334,7 +334,7 @@ describe("views", () => {
     expectSel(core, { container: rowB, item: bScore, target: DEFAULT_TARGET });
   });
 
-  test("slider: input updates scalar; arrow nudge clamps; ctrl/meta jump scales nudge", async () => {
+  test("slider: input event updates scalar; NAV intents are no-ops", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const sliderId = mkBlank(core, rootId, { label: "slider", value: 10 });
@@ -355,17 +355,12 @@ describe("views", () => {
 
     core.focus({ container: rootId, item: sliderId }, DEFAULT_TARGET);
 
-    core.commit((t) => t.setValue(sliderId, 100));
+    core.commit((t) => t.setValue(sliderId, 50));
     fireViewKey(view, "ArrowRight");
-    expect(scalarOfId(core, sliderId)).toBe(100);
+    expect(scalarOfId(core, sliderId)).toBe(50);
 
-    core.commit((t) => t.setValue(sliderId, 50));
-    fireViewKey(view, "ArrowRight", { ctrlKey: true });
-    expect(scalarOfId(core, sliderId)).toBe(60);
-
-    core.commit((t) => t.setValue(sliderId, 50));
-    fireViewKey(view, "ArrowLeft", { metaKey: true });
-    expect(scalarOfId(core, sliderId)).toBe(40);
+    fireViewKey(view, "ArrowLeft", { ctrlKey: true });
+    expect(scalarOfId(core, sliderId)).toBe(50);
   });
 
   test("slider: does not replace input element on selection changes", async () => {

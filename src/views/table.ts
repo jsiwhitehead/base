@@ -276,6 +276,10 @@ const cmd = {
   removeRow(core: Core, rowId: ItemId): void {
     core.commit((t) => t.remove(rowId));
   },
+
+  clearCell(core: Core, cellId: ItemId): void {
+    core.commit((t) => t.setValue(cellId, null));
+  },
 } as const;
 
 function buildHeader(mountCtx: TableMountCtx): Component {
@@ -534,18 +538,24 @@ function createTableView(args: {
         return;
       }
       case "DELETE": {
-        if (!isRowContainerSel(selection, tableId)) return;
-        const nextFocus = resolveFocusAfterRemove(
-          core,
-          selection.focus.item,
-          "next",
-        );
-        cmd.removeRow(core, selection.focus.item);
-        if (nextFocus)
-          core.focus(nextFocus.focus, nextFocus.target, {
-            caret: nextFocus.caret,
-          });
-        else core.blur();
+        if (isRowContainerSel(selection, tableId)) {
+          const nextFocus = resolveFocusAfterRemove(
+            core,
+            selection.focus.item,
+            "next",
+          );
+          cmd.removeRow(core, selection.focus.item);
+          if (nextFocus)
+            core.focus(nextFocus.focus, nextFocus.target, {
+              caret: nextFocus.caret,
+            });
+          else core.blur();
+          return;
+        }
+
+        const rows = signals.rows.value;
+        if (!isCellContainerSel(core, tableId, rows, selection)) return;
+        cmd.clearCell(core, selection.focus.item);
         return;
       }
     }

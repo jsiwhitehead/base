@@ -27,6 +27,17 @@ const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
   step: 1,
 };
 
+const nativeRangeKeys = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+]);
+
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
 
@@ -71,34 +82,10 @@ const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
   return fallback;
 };
 
-const plan = {
-  navDeltaSteps(intent: Extract<ViewIntent, { type: "NAV" }>): number {
-    const multiplier = intent.mode === "jump" ? 10 : 1;
-    const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-    return dir * multiplier;
-  },
-} as const;
-
 const cmd = {
   setValue(core: Core, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetValue(core, id)) return;
     core.commit((t) => t.setValue(id, value));
-  },
-
-  nudgeValue(
-    core: Core,
-    id: ItemId,
-    deltaSteps: number,
-    resolvedOpts: SliderResolvedOpts,
-  ): void {
-    if (!canSetValue(core, id)) return;
-    const currentValue = getValueOr(core, id, resolvedOpts.min);
-    const nextValue = clamp(
-      currentValue + deltaSteps * resolvedOpts.step,
-      resolvedOpts.min,
-      resolvedOpts.max,
-    );
-    cmd.setValue(core, id, nextValue);
   },
 } as const;
 
@@ -138,6 +125,10 @@ function buildSliderBody({
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
       core.focus(focus, VALUE_TARGET, { caret: caret0() });
       e.stopPropagation();
+    });
+
+    ctx.on(input, "keydown", (e: KeyboardEvent) => {
+      if (nativeRangeKeys.has(e.key)) e.stopPropagation();
     });
 
     ctx.on(input, "input", (event: Event) => {
@@ -182,13 +173,6 @@ function createSliderView(args: {
     const sel = sel0;
 
     switch (intent.type) {
-      case "NAV": {
-        if (sel.focus.item !== id) return;
-
-        const deltaSteps = plan.navDeltaSteps(intent);
-        cmd.nudgeValue(core, id, deltaSteps, resolvedOpts);
-        return;
-      }
       case "CONFIRM":
         if (sel.focus.item !== id) return;
 
