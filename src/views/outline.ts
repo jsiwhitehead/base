@@ -181,20 +181,6 @@ function moveEditPoint(
   return { focus: focusFor(core, rootId, next.id), target: next.target, caret };
 }
 
-function caretFromActiveEditor(): Caret | null {
-  const activeEl = document.activeElement;
-  if (
-    !(
-      activeEl instanceof HTMLInputElement ||
-      activeEl instanceof HTMLTextAreaElement
-    )
-  )
-    return null;
-  const start = activeEl.selectionStart ?? 0;
-  const end = activeEl.selectionEnd ?? start;
-  return { start, end };
-}
-
 function clampCaretToText(caret: Caret, text: string): Caret {
   const len = text.length;
   const start = Math.max(0, Math.min(caret.start, len));
@@ -566,7 +552,7 @@ export function createOutlineView(args: {
       case "TAB": {
         const wasEditing = sel.target !== DEFAULT_TARGET;
         const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
-        const fromCaret = wasEditing ? caretFromActiveEditor() : null;
+        const fromCaret = wasEditing ? intent.caret ?? null : null;
 
         const nextFocus = outlineCommands.changeNesting(
           core,

@@ -31,7 +31,7 @@ export type Intent =
     }
   | { type: "CONFIRM"; caret?: Caret }
   | { type: "CANCEL" }
-  | { type: "TAB"; shift: boolean }
+  | { type: "TAB"; shift: boolean; caret?: Caret }
   | { type: "TYPE"; char: string }
   | { type: "DELETE"; dir: "backward" | "forward" }
   | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
@@ -479,6 +479,19 @@ export function createRuntime<C>(opts: {
     if (!intent) return;
 
     e.preventDefault();
+
+    if (intent.type === "CONFIRM" || intent.type === "TAB") {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement
+      ) {
+        const start = active.selectionStart ?? 0;
+        const end = active.selectionEnd ?? start;
+        intent.caret = { start, end };
+      }
+    }
+
     opts.dispatchIntent(intent);
   };
 
