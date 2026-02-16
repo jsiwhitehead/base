@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Core, DomView, Focus, ItemId, ViewIntent, ViewName } from "../src/core";
+import type {
+  Core,
+  DomView,
+  Focus,
+  ItemId,
+  ViewIntent,
+  ViewName,
+} from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
 import { caretAt, caret0 } from "../src/dom";
 import { viewRegistrations } from "../src/views";
@@ -772,5 +779,4 @@ describe("views/slider", () => {
 
     unmount();
   });
-
 });

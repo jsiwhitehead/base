@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Core, ItemId, Transaction, ViewName } from "../src/core";
-import { DEFAULT_TARGET, createCore } from "../src/core";
+import { DEFAULT_TARGET, VALUE_TARGET, createCore } from "../src/core";
+import { viewRegistrations } from "../src/views";
 import {
   childrenOf,
   expectSel,
+  flushDomEffects,
   makeCoreRuntime,
   mkBlank,
   mkGroup,
+  parseEntryId,
   scalarOfId,
   setFormula,
   setQuery,
@@ -77,11 +80,6 @@ function parseItemId(id: ItemId): ItemRef | null {
   if (path.some((n) => !Number.isFinite(n))) return null;
 
   return { entryId, path };
-}
-
-function parseEntryId(id: ItemId): number | null {
-  const ref = parseItemId(id);
-  return ref && ref.path.length === 0 ? ref.entryId : null;
 }
 
 function isDerivedId(id: ItemId): boolean {
@@ -162,7 +160,8 @@ function assertCoreInvariants(core: Core, rootId: ItemId): void {
       if (parseEntryId(childId) != null) {
         const loc = core.locate(childId);
         expect(loc).not.toBeNull();
-        if (!loc) throw new Error(`Invariant failed: locate null for ${childId}`);
+        if (!loc)
+          throw new Error(`Invariant failed: locate null for ${childId}`);
 
         if (!isQuery) expect(loc.parentId).toBe(id);
         expect(loc.index).toBeGreaterThanOrEqual(0);
@@ -600,6 +599,110 @@ describe("core/history", () => {
     ).toBe(true);
 
     assertCoreInvariants(core, rootId);
+  });
+});
+
+describe("core/target binding", () => {
+  test("focus prefers exact target binding and falls back to DEFAULT_TARGET", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "v" });
+    const focus = { container: rootId, item: x };
+
+    const defaultEl = document.createElement("button");
+    const valueEl = document.createElement("input");
+    document.body.append(defaultEl, valueEl);
+
+    const cleanDefault = core.attachTarget({
+      focus,
+      target: DEFAULT_TARGET,
+      getEl: () => defaultEl,
+    });
+
+    core.focus(focus, VALUE_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(defaultEl);
+
+    const cleanValue = core.attachTarget({
+      focus,
+      target: VALUE_TARGET,
+      getEl: () => valueEl,
+    });
+
+    core.focus(focus, VALUE_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(valueEl);
+
+    cleanValue();
+    cleanDefault();
+  });
+
+  test("new binding for same (focus, target) replaces previous binding", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "v" });
+    const focus = { container: rootId, item: x };
+
+    const first = document.createElement("button");
+    const second = document.createElement("button");
+    document.body.append(first, second);
+
+    const c1 = core.attachTarget({
+      focus,
+      target: DEFAULT_TARGET,
+      getEl: () => first,
+    });
+    core.focus(focus, DEFAULT_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(first);
+
+    const c2 = core.attachTarget({
+      focus,
+      target: DEFAULT_TARGET,
+      getEl: () => second,
+    });
+    core.focus(focus, DEFAULT_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(second);
+
+    c2();
+    c1();
+  });
+});
+
+describe("core/view mounting", () => {
+  test("mountView validates id format and existence", () => {
+    const { core } = makeCoreRuntime();
+
+    expect(() =>
+      core.mountView({ id: "not-an-id" as ItemId, view: "outline" }),
+    ).toThrow();
+    expect(() =>
+      core.mountView({ id: "999999:" as ItemId, view: "outline" }),
+    ).toThrow();
+  });
+
+  test("mountView falls back to outline when requested view factory is missing", () => {
+    const { core, rootId } = createCore({ views: viewRegistrations });
+
+    const mounted = core.mountView({
+      id: rootId,
+      view: "nonexistent" as ViewName,
+    });
+
+    expect(mounted.el.classList.contains("ui-body")).toBe(true);
+    expect(mounted.el.classList.contains("ui-outline")).toBe(true);
+
+    mounted.dispose();
+    core.dispose();
+  });
+
+  test("mountView throws when requested view and outline fallback are both missing", () => {
+    const { core, rootId } = createCore({ views: {} });
+
+    expect(() =>
+      core.mountView({ id: rootId, view: "nonexistent" as ViewName }),
+    ).toThrow();
+
+    core.dispose();
   });
 });
 
