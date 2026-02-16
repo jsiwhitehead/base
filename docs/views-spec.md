@@ -52,13 +52,13 @@ Outline is the primary hierarchical editor view.
 
 Rules:
 
-- Items are treated as either:
-  - `group` containers, or
-  - scalar leaves (plain `value` or connected `conn:*`).
-
+- Outline is a lines-of-text editor: scalars are lines, and groups define indentation levels.
+- Items are either `group` containers or scalar leaves (plain `value` or connected `conn:*`).
+- Empty groups are valid Core state, but Outline should not normally show indentation with no lines.
+- Outline uses a placeholder line for empty groups.
 - Navigation is hierarchical and depth-first over visible items.
 - Editing remains inline in the outline context.
-- Outline defines an **edit traversal space** across leaf edit targets.
+- Outline defines an edit traversal space across leaf edit targets.
 
 ### Body DOM shape
 
@@ -85,6 +85,9 @@ Structural rules:
 - `.ui-frame.ui-outline-child` instances MUST stay stable per visible child item.
 - `.ui-header` subtree in `.ui-frame.ui-outline-child` MAY mount/unmount by header visibility policy.
 - Mounted child body subtree MAY swap by child view name, but `.ui-frame.ui-outline-child` MUST NOT.
+- When a group has zero children, Outline MUST render one placeholder line as `.ui-frame.ui-outline-child`.
+- The placeholder line focuses the empty group (`DEFAULT_TARGET`), not a child.
+- The placeholder line adds no edit targets.
 
 Notes:
 
@@ -129,6 +132,17 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 
 ### View-specific behaviors
 
+#### View-specific exceptions
+
+When a group is empty and its placeholder line is focused (container focus on that group):
+
+- `CONFIRM` MUST call `tx.insertChild(groupId)` and then enter edit on the new child's `value`.
+- `TYPE char` MUST do the same, then apply the typed character into the new child's `value`.
+
+New children created this way start as blank value items.
+
+This is an Outline-specific override of the universal "no primary target => no-op" behavior for groups.
+
 #### Navigation geometry
 
 Hierarchical, depth-first over visible items. At the edges of the tree (root parent, childless leaf, first or last visible item), NAV is a no-op.
@@ -160,6 +174,8 @@ Delete at boundary from a `value` target joins adjacent plain scalar items at th
 
 All outline items use remove. After removing an item, focus the next sibling at container; then previous sibling; then parent. If no destination, blur.
 
+Treat pruning removals as part of the same removal outcome; if pruning also removes the initially-chosen focus destination, apply the same remove-focus resolution again until a surviving destination is found; otherwise blur.
+
 When delete-from-`value`-edit-focus removes an empty plain scalar, focus follows the edit traversal rather than the structural neighbor rule: backward (Backspace) focuses the previous item's `value` target with caret at end, forward (Delete) focuses the next item's `value` target with caret at start. If the neighbor has no `value` target, fall back to container focus.
 
 ### Commands and state transitions
@@ -181,6 +197,11 @@ Outline-local commands:
 - `in`: wraps item in a new group and moves it inside.
 - `out`: moves item to the wrapper's parent.
 - `out`: unwraps and removes the wrapper only when the wrapper has exactly one child (the moved item).
+
+### Edge cases and invariants
+
+- Prune invariant: After any Outline structural edit, Outline MUST NOT leave any newly-empty groups in the edited ancestry; newly-empty groups MUST be removed immediately.
+- Outline MAY still encounter pre-existing empty groups (for example, from other views); these are handled by the placeholder line rule.
 
 ### Styling notes
 
