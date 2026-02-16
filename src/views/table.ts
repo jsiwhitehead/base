@@ -545,7 +545,6 @@ export function createTableView(args: {
         }
         return;
       case "DELETE":
-      case "DELETE_BOUNDARY":
         return;
     }
   };

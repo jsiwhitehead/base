@@ -552,7 +552,7 @@ export function createOutlineView(args: {
       case "TAB": {
         const wasEditing = sel.target !== DEFAULT_TARGET;
         const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
-        const fromCaret = wasEditing ? intent.caret ?? null : null;
+        const fromCaret = wasEditing ? (intent.caret ?? null) : null;
 
         const nextFocus = outlineCommands.changeNesting(
           core,
@@ -680,11 +680,10 @@ export function createOutlineView(args: {
         });
         return;
       }
-      case "DELETE_BOUNDARY": {
+      case "DELETE": {
         const prefer = intent.dir === "backward" ? "prev" : "next";
-        const item = core.item(sel.focus.item);
 
-        if (!(item.mode.type === "plain" && item.content.type === "value")) {
+        if (sel.target === DEFAULT_TARGET) {
           const chosen = outlineCommands.removeItem(core, sel, prefer);
           if (!chosen) {
             core.blur();
@@ -696,29 +695,34 @@ export function createOutlineView(args: {
           return;
         }
 
-        if (valueToText(item.content.value).length === 0) {
-          const chosen = outlineCommands.removeItem(core, sel, prefer);
-          if (!chosen) {
-            core.blur();
+        if (sel.target === VALUE_TARGET) {
+          const item = core.item(sel.focus.item);
+          if (!(item.mode.type === "plain" && item.content.type === "value"))
+            return;
+
+          if (valueToText(item.content.value).length === 0) {
+            const chosen = outlineCommands.removeItem(core, sel, prefer);
+            if (!chosen) {
+              core.blur();
+              return;
+            }
+            const text = getTextForTarget(core, chosen, VALUE_TARGET);
+            const caret =
+              intent.dir === "backward" ? caretAt(text.length) : caret0();
+            core.focus(focusFor(core, rootId, chosen), VALUE_TARGET, { caret });
             return;
           }
-          core.focus(focusFor(core, rootId, chosen), DEFAULT_TARGET, {
-            caret: caret0(),
+
+          const joined = outlineCommands.joinBoundary(core, sel, intent.dir);
+          if (!joined) return;
+          core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
+            caret: joined.caret,
           });
           return;
         }
 
-        const joined = outlineCommands.joinBoundary(core, sel, intent.dir);
-        if (!joined) return;
-        core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
-          caret: joined.caret,
-        });
         return;
       }
-      case "DELETE":
-        if (sel.target !== DEFAULT_TARGET) return;
-        dispatch({ type: "DELETE_BOUNDARY", dir: intent.dir });
-        return;
     }
   };
 

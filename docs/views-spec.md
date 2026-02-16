@@ -68,7 +68,6 @@ Intent handling SHOULD describe these intents where applicable:
 - `CONFIRM`
 - `TYPE`
 - `DELETE`
-- `DELETE_BOUNDARY`
 
 ## Outline view (`outline`)
 
@@ -241,14 +240,14 @@ Tab focus rules:
   - Otherwise exit to `DEFAULT_TARGET`.
   - Caret SHOULD be clamped to destination text length.
 
-#### `DELETE` and `DELETE_BOUNDARY`
+#### `DELETE`
 
-| Intent                             | Preconditions                              | Action                                                | Focus result                            |
-| ---------------------------------- | ------------------------------------------ | ----------------------------------------------------- | --------------------------------------- |
-| `DELETE`                           | Focused, container focus                   | Equivalent to `DELETE_BOUNDARY` in the same direction | View-local result                       |
-| `DELETE_BOUNDARY backward/forward` | Focused, non-plain-scalar item             | Remove item                                           | Focus neighbor `DEFAULT_TARGET` or blur |
-| `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with empty value     | Remove item                                           | Focus neighbor `DEFAULT_TARGET` or blur |
-| `DELETE_BOUNDARY backward/forward` | Focused, plain scalar with non-empty value | Join neighbor when both are plain scalars             | Focus joined item `value` at boundary   |
+| Intent   | Preconditions                       | Action                  | Focus result                                                           |
+| -------- | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| `DELETE` | Container focus                     | Remove item             | Neighbor at `DEFAULT_TARGET`; or blur                                  |
+| `DELETE` | Value focus, empty plain scalar     | Remove item             | Neighbor at `VALUE_TARGET`; caret at end (backward) or start (forward) |
+| `DELETE` | Value focus, non-empty plain scalar | Join text with neighbor | Joined item at `VALUE_TARGET`; caret at join point                     |
+| `DELETE` | Other targets (label, conn)         | No-op                   | Unchanged                                                              |
 
 ### Commands and state transitions
 
@@ -439,9 +438,9 @@ Rule:
 | `TYPE`        | Row container  | No-op                     | Unchanged                |
 | `TYPE <char>` | Cell container | Enter edit and select all | Insert char in microtask |
 
-#### `DELETE` and `DELETE_BOUNDARY`
+#### `DELETE`
 
-- Table currently ignores both intents at the table level.
+- Table currently ignores `DELETE` at the table level.
 - Mounted child views MAY still interpret delete locally.
 
 ### Commands and state transitions
@@ -535,7 +534,6 @@ Ignored intents:
 - `TAB`
 - `TYPE`
 - `DELETE`
-- `DELETE_BOUNDARY`
 
 ### Commands and state transitions
 
@@ -582,5 +580,5 @@ A new view specification MUST define:
 - Edit-entry behavior from container focus.
 - Type-to-edit behavior.
 - Yielding behavior from editors (per `docs/dom-runtime.md`).
-- `DELETE`/`DELETE_BOUNDARY` handling (or explicit no-op).
+- `DELETE` handling (or explicit no-op).
 - Styling notes describing view-local rail composition (shared rail geometry in `docs/style-system.md`).

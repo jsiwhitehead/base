@@ -197,7 +197,6 @@ export function createSliderView(args: {
       case "TAB":
       case "TYPE":
       case "DELETE":
-      case "DELETE_BOUNDARY":
         return;
     }
   };

@@ -33,8 +33,7 @@ export type Intent =
   | { type: "CANCEL" }
   | { type: "TAB"; shift: boolean; caret?: Caret }
   | { type: "TYPE"; char: string }
-  | { type: "DELETE"; dir: "backward" | "forward" }
-  | { type: "DELETE_BOUNDARY"; dir: "backward" | "forward" };
+  | { type: "DELETE"; dir: "backward" | "forward" };
 
 export type ViewIntent = Exclude<Intent, { type: "CANCEL" }>;
 
