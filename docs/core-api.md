@@ -380,6 +380,7 @@ Rules:
 - Active view MUST be derived from element focused via target binding (`getEl()`), not pointer event targets.
 - Active view MUST resolve to the closest mounted view root containing that element.
 - Global keyboard input MUST be parsed and routed by Core to the active view intent handler.
+- Core receives editor key events only when editors/controls allow those events to bubble (yield).
 - Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
 - Core MAY still handle explicit global commands while focus is in native text editors.
 - View behavior MUST remain intent-driven (semantic), not raw-key driven.

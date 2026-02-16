@@ -47,6 +47,7 @@ All views in this file inherit these rules:
 
 - Views interpret `ViewIntent` (non-`CANCEL`) only when their item is the focused selection.
 - `NAV` MUST NOT implicitly enter edit mode (unless explicitly stated by the view).
+- Inline editors yield to global routing per `docs/dom-runtime.md`.
 
 ## View specification template
 

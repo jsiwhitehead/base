@@ -318,6 +318,12 @@ Mirror rules:
 
 ### Yield navigation (`yieldNav=true`)
 
+Propagation-gating rules:
+
+- Locally handled keydowns MUST call `stopPropagation()` so they do not reach global key routing.
+- Yielded keydowns MUST NOT call `stopPropagation()` so they bubble to Core.
+- When yielding, the runtime MUST perform the listed commit/cancel behavior and call `preventDefault()` where specified.
+
 Events that trigger commit/yield behavior:
 
 - `Escape`: Cancels the draft session in draft mode and MUST NOT call `preventDefault()`.
@@ -384,7 +390,7 @@ Canonical produced structure:
 Rules:
 
 - Label text field uses target `LABEL_TARGET`.
-- The label text field MUST use `buildTextField` with `yieldNav=false` (label editing does not yield).
+- The label text field MUST use `buildTextField` with `yieldNav=false` (label editing does not yield; nav/confirm/delete keydowns stay local and stop propagation).
 - Connected rows render only when `item.mode.type === "connected"`.
 - Each connected field MUST use `connTarget(field.key)` as target.
 - Each connected field MUST use `buildTextField` with autosize enabled.

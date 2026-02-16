@@ -36,9 +36,9 @@ bun run format
 
 - Add tests when behavior changes are regression-prone or non-trivial.
 - For pull requests:
-  - keep diffs reviewable
-  - describe what changed and which invariants might be impacted
-  - include screenshots for visible UI changes
+  - Keep diffs reviewable.
+  - Describe what changed and which invariants might be impacted.
+  - Include screenshots for visible UI changes.
 
 ## Review standards (definition of done)
 
@@ -61,31 +61,59 @@ PR checklist:
 
 - Spelling: use American English in code and documentation.
 - Naming: keep domain vocabulary stable; avoid synonyms for core concepts.
-- Discriminated unions: use `type` as discriminant; keep variant casing consistent within a union family.
-- Switch/if chains over discriminated unions MUST be exhaustive in core/domain logic.
-- Elsewhere, exhaustive handling SHOULD be preferred.
-- Exhaustive defaults SHOULD use `assertNever(...)`.
+- Constants MUST use `SCREAMING_SNAKE_CASE`.
+- Types:
+  - discriminated unions MUST use `type` as discriminant; keep variant casing consistent within a union family
+  - switch/if chains over discriminated unions MUST be exhaustive in core/domain logic
+  - elsewhere, exhaustive handling SHOULD be preferred
+  - exhaustive defaults SHOULD use `assertNever(...)`
+  - use inline structural types for local, obvious, single-use shapes
+  - use named types for reused shapes (2+ use sites), exported/public contracts, or domain-significant concepts
+  - promote an inline shape to a named type once it is used in 2 or more places
+  - name types by role/meaning (not just structure) and prefer established suffixes (for example `XOpts`, `XState`, `XSpec`)
+  - avoid exporting anonymous inline object types; prefer named exported types
 - Imports:
   - use `import type` for type-only imports
   - prefer layer entrypoints across boundaries
   - avoid deep cross-layer imports when a stable entrypoint exists
+  - group external imports, then one blank line, then internal imports
+  - sort imports by module path alphabetically within each group
+  - sort imported names alphabetically
 - Exports:
   - prefer named exports
   - avoid default exports
   - avoid wildcard re-exports in public surfaces
+  - avoid `export *` in public entrypoints; prefer explicit re-exports
 - Files:
   - prefer `kebab-case.ts`
   - use `index.ts` for intentional entrypoints only
   - name files by responsibility, not implementation detail
   - avoid generic buckets such as `utils.ts`, `helpers.ts`, `misc.ts` unless already established
   - avoid re-export chains that obscure symbol ownership
+- In-file ordering:
+  - imports
+  - local types
+  - local constants
+  - pure helpers
+  - main exported functions
+  - remaining exports
+- Functions:
+  - exported functions MUST declare explicit return types
+  - prefer the prefix vocabulary: `createX`, `buildX`, `bindX`, `parseX`, `formatX`, `isX`, `toX`
+  - avoid boolean parameters in public functions; prefer options objects or separate functions
+- Testing:
+  - tests live in `test/` and use the `.test.ts` suffix
+  - prefer small, focused tests and avoid duplicated helpers
+  - test names SHOULD follow `"<area>: <behaviour>"`
+  - shared test helpers SHOULD live in `test/`, not `src/`
+  - prefer a small number of obvious helper modules (for example `test/test-utils.ts`)
+  - helper naming patterns: `mkX`, `setX`, `expectX`, `requireX`
 - Docs:
   - keep sections short and scannable
   - link to authoritative docs instead of duplicating specs
-- Exported functions MUST declare explicit return types.
-- Constants MUST use `SCREAMING_SNAKE_CASE`.
+  - if something is a technical must/must-not contract, it belongs in `docs/architecture.md`; `CONTRIBUTING.md` should link, not restate
 
-### Public surfaces and entrypoints
+## Public surfaces and entrypoints
 
 - Layer `index.ts` files are treated as public entrypoints.
 - Cross-layer imports SHOULD prefer entrypoints.
@@ -93,23 +121,7 @@ PR checklist:
 - If an internal module becomes widely imported, it SHOULD be promoted into an entrypoint or moved.
 - Widening exports in an entrypoint SHOULD be treated as a contract change.
 
-### Function naming
-
-- Prefer the prefix vocabulary: `createX`, `buildX`, `bindX`, `parseX`, `formatX`, `isX`, `toX`.
-- Avoid boolean parameters in public functions; prefer options objects or separate functions.
-
-### Inline vs named types
-
-- Use inline structural types for local, obvious, single-use shapes.
-- Use named types for:
-  - reused shapes (2+ use sites)
-  - exported/public contracts
-  - domain-significant concepts
-- Promote an inline shape to a named type once it is used in 2 or more places.
-- Name types by role/meaning (not just structure) and prefer established suffixes (for example `XOpts`, `XState`, `XSpec`).
-- Avoid exporting anonymous inline object types; prefer named exported types.
-
-### Canonical vocabulary
+## Canonical vocabulary
 
 Canonical domain terms (do not invent synonyms):
 
@@ -132,15 +144,6 @@ Canonical domain terms (do not invent synonyms):
 - body
 - transaction
 - location
-
-### Testing conventions
-
-- Tests live in `test/` and use the `.test.ts` suffix.
-- Prefer small, focused tests and avoid duplicated helpers.
-- Test names SHOULD follow `"<area>: <behaviour>"`.
-- Shared test helpers SHOULD live in `test/`, not `src/`.
-- Prefer a small number of obvious helper modules (for example `test/test-utils.ts`).
-- Helper naming patterns: `mkX`, `setX`, `expectX`, `requireX`.
 
 ## Common change patterns (how-tos)
 
@@ -181,7 +184,7 @@ Canonical domain terms (do not invent synonyms):
 - Adding targets without clear ownership mapping (`docs/architecture.md`).
 - Expanding public entrypoints casually and increasing surface-area churn (`docs/architecture.md`).
 
-## Appendix: formatting, ordering, and sorting rules
+## Appendix: Markdown formatting details
 
 ### Markdown structure and style
 
@@ -254,39 +257,3 @@ Use backticks for:
 - Prefer ASCII punctuation in technical docs (`'`, `"`, `--`).
 - Typographic punctuation is allowed for prose-heavy sections if used consistently.
 - Avoid mixing punctuation styles within a section.
-
-### Import ordering and sorting (TypeScript)
-
-- Group external imports, then one blank line, then internal imports.
-- Sort imports by module path alphabetically within each group.
-- Sort imported names alphabetically.
-- Use `import type` for type-only imports.
-- Avoid deep cross-layer imports when an entrypoint exists.
-
-### Export discipline
-
-- Prefer named exports.
-- Avoid default exports.
-- Avoid `export *` in public entrypoints; prefer explicit re-exports.
-
-### File naming and entrypoints
-
-- Prefer `kebab-case.ts` for new files.
-- Use `index.ts` only for intentional entrypoints and avoid re-export chains.
-
-### In-file ordering (when doing tidy passes)
-
-Preferred order for new or edited files:
-
-1. imports
-2. local types
-3. local constants
-4. pure helpers
-5. main exported functions
-6. remaining exports
-
-This ordering is a readability preference for consistent navigation.
-
-### Documentation duplication rule
-
-- If something is a technical must/must-not contract, it belongs in `docs/architecture.md`; `CONTRIBUTING.md` should link, not restate.
