@@ -302,6 +302,7 @@ export function buildTextField(
     });
 
     ctx.on(inp, "focus", () => {
+      if (!isThisTargetFocused()) core.focus(opts.focus, opts.target);
       beginDraftSession();
     });
 

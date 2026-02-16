@@ -328,6 +328,7 @@ Rules:
 - Pointer interactions inside a textfield therefore do not trigger enclosing frame pointerdown behavior.
 - Caret placement is handled by the native input/textarea (browser default) when it receives focus.
 - Pointerdown on the input/textarea MUST NOT override the browser's selection behavior.
+- `focus` MUST synchronize Core selection to this field target.
 - `focus` MUST start the draft session when applicable.
 - Target MUST be registered via `ctx.target` with the default text caret adapter.
 
