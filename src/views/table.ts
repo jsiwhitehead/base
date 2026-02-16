@@ -14,17 +14,29 @@ import type {
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
 import type { NavDir } from "../dom";
 import {
-  SELECT_ALL,
   bindItemFrame,
   buildItemHeader,
   caret0,
-  caretEnd,
   createComponent,
   el,
-  insertTextIntoActiveEditor,
+  handleContainerIntent,
   patchConn,
+  resolveFocusAfterRemove,
   setBodyClasses,
 } from "../dom";
+
+type TableSignals = {
+  rows: { value: ItemId[] };
+  schemaRowId: { value: ItemId | null };
+  colCount: { value: number };
+};
+
+type TableMountCtx = {
+  core: Core;
+  tableId: ItemId;
+  signals: TableSignals;
+  dispatch: (intent: ViewIntent) => void;
+};
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
   const content = core.item(id).content;
@@ -98,8 +110,156 @@ function focusCellContainer(
   };
 }
 
-const tableCommands = {
-  addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): void {
+const plan = {
+  navMove(
+    core: Core,
+    tableId: ItemId,
+    rows: readonly ItemId[],
+    colCount: number,
+    sel: Extract<Selection, { type: "focused" }>,
+    dir: NavDir,
+  ): { focus: Focus; target: string; caret: Caret } | null {
+    if (rows.length === 0) return null;
+
+    if (isRowContainerSel(sel, tableId)) {
+      const rowId = sel.focus.item;
+      const rowIdx = rows.indexOf(rowId);
+      if (rowIdx < 0) return null;
+
+      if (dir === "up") {
+        const prev = rows[rowIdx - 1] ?? null;
+        return prev ? focusRowContainer(tableId, prev) : null;
+      }
+
+      if (dir === "down") {
+        const next = rows[rowIdx + 1] ?? null;
+        return next ? focusRowContainer(tableId, next) : null;
+      }
+
+      if (dir === "right") {
+        const firstCell =
+          colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+        return firstCell ? focusCellContainer(rowId, firstCell) : null;
+      }
+
+      return null;
+    }
+
+    if (!isCellSel(core, tableId, rows, sel)) return null;
+
+    const rowId = sel.focus.container;
+    const cellId = sel.focus.item;
+
+    const rowIdx = rows.indexOf(rowId);
+    if (rowIdx < 0) return null;
+
+    const colIdx = cellColIdx(core, rowId, cellId);
+    if (colIdx < 0) return null;
+
+    if (dir === "left") {
+      if (colIdx === 0) return focusRowContainer(tableId, rowId);
+      const prev = childrenOf(core, rowId)[colIdx - 1] ?? null;
+      return prev ? focusCellContainer(rowId, prev) : null;
+    }
+
+    if (dir === "right") {
+      const next = childrenOf(core, rowId)[colIdx + 1] ?? null;
+      return next ? focusCellContainer(rowId, next) : null;
+    }
+
+    if (dir === "up") {
+      const prevRow = rows[rowIdx - 1] ?? null;
+      if (!prevRow) return null;
+      const prevCell = childrenOf(core, prevRow)[colIdx] ?? null;
+      return prevCell ? focusCellContainer(prevRow, prevCell) : null;
+    }
+
+    const nextRow = rows[rowIdx + 1] ?? null;
+    if (!nextRow) return null;
+    const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
+    return nextCell ? focusCellContainer(nextRow, nextCell) : null;
+  },
+
+  tabMove(
+    core: Core,
+    tableId: ItemId,
+    rows: readonly ItemId[],
+    colCount: number,
+    sel: Extract<Selection, { type: "focused" }>,
+    shift: boolean,
+  ): { focus: Focus; target: string; caret: Caret } | null {
+    if (rows.length === 0) return null;
+
+    const dir = shift ? -1 : 1;
+
+    if (isRowContainerSel(sel, tableId)) {
+      if (shift) return null;
+      const rowId = sel.focus.item;
+      const firstCell =
+        colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+      return firstCell ? focusCellContainer(rowId, firstCell) : null;
+    }
+
+    if (!isCellSel(core, tableId, rows, sel)) return null;
+
+    const rowId = sel.focus.container;
+    const cellId = sel.focus.item;
+
+    const rowIdx = rows.indexOf(rowId);
+    if (rowIdx < 0) return null;
+
+    const colIdx = cellColIdx(core, rowId, cellId);
+    if (colIdx < 0) return null;
+
+    const nextCol = colIdx + dir;
+
+    if (nextCol >= 0 && nextCol < colCount) {
+      const nextCell = childrenOf(core, rowId)[nextCol] ?? null;
+      return nextCell ? focusCellContainer(rowId, nextCell) : null;
+    }
+
+    const nextRow = rows[rowIdx + dir] ?? null;
+    if (!nextRow) return null;
+
+    if (dir > 0) {
+      const firstCell =
+        colCount > 0 ? (childrenOf(core, nextRow)[0] ?? null) : null;
+      return firstCell
+        ? focusCellContainer(nextRow, firstCell)
+        : focusRowContainer(tableId, nextRow);
+    }
+
+    const lastCell =
+      colCount > 0 ? (childrenOf(core, nextRow)[colCount - 1] ?? null) : null;
+    return lastCell
+      ? focusCellContainer(nextRow, lastCell)
+      : focusRowContainer(tableId, nextRow);
+  },
+
+  enterMove(
+    core: Core,
+    rows: readonly ItemId[],
+    sel: Extract<Selection, { type: "focused" }>,
+  ): { focus: Focus; target: string; caret: Caret } | null {
+    const rowId = sel.focus.container;
+    const cellId = sel.focus.item;
+
+    const rowIdx = rows.indexOf(rowId);
+    if (rowIdx < 0) return null;
+
+    const colIdx = cellColIdx(core, rowId, cellId);
+    if (colIdx < 0) return null;
+
+    const nextRow = rows[rowIdx + 1] ?? null;
+    if (!nextRow) return null;
+
+    const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
+    return nextCell ? focusCellContainer(nextRow, nextCell) : null;
+  },
+} as const;
+
+const cmd = {
+  addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): ItemId {
     const rows = rowIds(core, tableId);
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
@@ -110,38 +270,13 @@ const tableCommands = {
       t.setGroup(id);
     });
 
-    core.focus({ container: tableId, item: id }, DEFAULT_TARGET, {
-      caret: caret0(),
-    });
+    return id;
   },
 
-  removeRow(core: Core, tableId: ItemId, rowId: ItemId): void {
-    const rows = rowIds(core, tableId);
-    const idx = rows.indexOf(rowId);
-    const nextRow = rows[idx + 1] ?? rows[idx - 1] ?? null;
-
+  removeRow(core: Core, rowId: ItemId): void {
     core.commit((t) => t.remove(rowId));
-
-    if (nextRow)
-      core.focus({ container: tableId, item: nextRow }, DEFAULT_TARGET, {
-        caret: caret0(),
-      });
-    else core.blur();
   },
 } as const;
-
-type TableSignals = {
-  rows: { value: ItemId[] };
-  schemaRowId: { value: ItemId | null };
-  colCount: { value: number };
-};
-
-type TableMountCtx = {
-  core: Core;
-  tableId: ItemId;
-  signals: TableSignals;
-  dispatch: (intent: ViewIntent) => void;
-};
 
 function buildHeader(mountCtx: TableMountCtx): Component {
   const { core, signals } = mountCtx;
@@ -298,152 +433,6 @@ function buildBody(mountCtx: TableMountCtx): Component {
   });
 }
 
-function tableNavMove(
-  core: Core,
-  tableId: ItemId,
-  rows: readonly ItemId[],
-  colCount: number,
-  sel: Extract<Selection, { type: "focused" }>,
-  dir: NavDir,
-): { focus: Focus; target: string; caret: Caret } | null {
-  if (rows.length === 0) return null;
-
-  if (isRowContainerSel(sel, tableId)) {
-    const rowId = sel.focus.item;
-    const rowIdx = rows.indexOf(rowId);
-    if (rowIdx < 0) return null;
-
-    if (dir === "up") {
-      const prev = rows[rowIdx - 1] ?? null;
-      return prev ? focusRowContainer(tableId, prev) : null;
-    }
-
-    if (dir === "down") {
-      const next = rows[rowIdx + 1] ?? null;
-      return next ? focusRowContainer(tableId, next) : null;
-    }
-
-    if (dir === "right") {
-      const firstCell =
-        colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
-      return firstCell ? focusCellContainer(rowId, firstCell) : null;
-    }
-
-    return null;
-  }
-
-  if (!isCellSel(core, tableId, rows, sel)) return null;
-
-  const rowId = sel.focus.container;
-  const cellId = sel.focus.item;
-
-  const rowIdx = rows.indexOf(rowId);
-  if (rowIdx < 0) return null;
-
-  const colIdx = cellColIdx(core, rowId, cellId);
-  if (colIdx < 0) return null;
-
-  if (dir === "left") {
-    if (colIdx === 0) return focusRowContainer(tableId, rowId);
-    const prev = childrenOf(core, rowId)[colIdx - 1] ?? null;
-    return prev ? focusCellContainer(rowId, prev) : null;
-  }
-
-  if (dir === "right") {
-    const next = childrenOf(core, rowId)[colIdx + 1] ?? null;
-    return next ? focusCellContainer(rowId, next) : null;
-  }
-
-  if (dir === "up") {
-    const prevRow = rows[rowIdx - 1] ?? null;
-    if (!prevRow) return null;
-    const prevCell = childrenOf(core, prevRow)[colIdx] ?? null;
-    return prevCell ? focusCellContainer(prevRow, prevCell) : null;
-  }
-
-  const nextRow = rows[rowIdx + 1] ?? null;
-  if (!nextRow) return null;
-  const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
-  return nextCell ? focusCellContainer(nextRow, nextCell) : null;
-}
-
-function tabMove(
-  core: Core,
-  tableId: ItemId,
-  rows: readonly ItemId[],
-  colCount: number,
-  sel: Extract<Selection, { type: "focused" }>,
-  shift: boolean,
-): { focus: Focus; target: string; caret: Caret } | null {
-  if (rows.length === 0) return null;
-
-  const dir = shift ? -1 : 1;
-
-  if (isRowContainerSel(sel, tableId)) {
-    if (shift) return null;
-    const rowId = sel.focus.item;
-    const firstCell =
-      colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
-    return firstCell ? focusCellContainer(rowId, firstCell) : null;
-  }
-
-  if (!isCellSel(core, tableId, rows, sel)) return null;
-
-  const rowId = sel.focus.container;
-  const cellId = sel.focus.item;
-
-  const rowIdx = rows.indexOf(rowId);
-  if (rowIdx < 0) return null;
-
-  const colIdx = cellColIdx(core, rowId, cellId);
-  if (colIdx < 0) return null;
-
-  const nextCol = colIdx + dir;
-
-  if (nextCol >= 0 && nextCol < colCount) {
-    const nextCell = childrenOf(core, rowId)[nextCol] ?? null;
-    return nextCell ? focusCellContainer(rowId, nextCell) : null;
-  }
-
-  const nextRow = rows[rowIdx + dir] ?? null;
-  if (!nextRow) return null;
-
-  if (dir > 0) {
-    const firstCell =
-      colCount > 0 ? (childrenOf(core, nextRow)[0] ?? null) : null;
-    return firstCell
-      ? focusCellContainer(nextRow, firstCell)
-      : focusRowContainer(tableId, nextRow);
-  }
-
-  const lastCell =
-    colCount > 0 ? (childrenOf(core, nextRow)[colCount - 1] ?? null) : null;
-  return lastCell
-    ? focusCellContainer(nextRow, lastCell)
-    : focusRowContainer(tableId, nextRow);
-}
-
-function enterMove(
-  core: Core,
-  rows: readonly ItemId[],
-  sel: Extract<Selection, { type: "focused" }>,
-): { focus: Focus; target: string; caret: Caret } | null {
-  const rowId = sel.focus.container;
-  const cellId = sel.focus.item;
-
-  const rowIdx = rows.indexOf(rowId);
-  if (rowIdx < 0) return null;
-
-  const colIdx = cellColIdx(core, rowId, cellId);
-  if (colIdx < 0) return null;
-
-  const nextRow = rows[rowIdx + 1] ?? null;
-  if (!nextRow) return null;
-
-  const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
-  return nextCell ? focusCellContainer(nextRow, nextCell) : null;
-}
-
 function createTableView(args: {
   core: Core;
   id: ItemId;
@@ -475,7 +464,7 @@ function createTableView(args: {
         const rows = signals.rows.value;
         const colCount = signals.colCount.value;
 
-        const nextFocus = tableNavMove(
+        const nextFocus = plan.navMove(
           core,
           tableId,
           rows,
@@ -494,7 +483,7 @@ function createTableView(args: {
         const rows = signals.rows.value;
         const colCount = signals.colCount.value;
 
-        const nextFocus = tabMove(
+        const nextFocus = plan.tabMove(
           core,
           tableId,
           rows,
@@ -510,43 +499,55 @@ function createTableView(args: {
       }
       case "CONFIRM": {
         const rows = signals.rows.value;
+        if (selection.target !== DEFAULT_TARGET) {
+          if (isCellValueSel(core, tableId, rows, selection)) {
+            const next = plan.enterMove(core, rows, selection);
+            const dest = next ?? {
+              focus: selection.focus,
+              target: DEFAULT_TARGET,
+              caret: caret0(),
+            };
+            core.focus(dest.focus, dest.target, { caret: dest.caret });
+            return;
+          }
+
+          core.focus(selection.focus, DEFAULT_TARGET, { caret: caret0() });
+          return;
+        }
 
         if (isRowContainerSel(selection, tableId)) {
-          tableCommands.addRowAfter(core, tableId, selection.focus.item);
-          return;
-        }
-
-        if (isCellContainerSel(core, tableId, rows, selection)) {
-          core.focus(selection.focus, VALUE_TARGET, { caret: caretEnd() });
-          return;
-        }
-
-        if (isCellValueSel(core, tableId, rows, selection)) {
-          const next = enterMove(core, rows, selection);
-          const dest = next ?? {
-            focus: selection.focus,
-            target: DEFAULT_TARGET,
+          const newId = cmd.addRowAfter(core, tableId, selection.focus.item);
+          core.focus({ container: tableId, item: newId }, DEFAULT_TARGET, {
             caret: caret0(),
-          };
-          core.focus(dest.focus, dest.target, { caret: dest.caret });
+          });
           return;
         }
+        if (!isCellContainerSel(core, tableId, rows, selection)) return;
+        handleContainerIntent({ core, sel: selection, intent });
         return;
       }
-      case "TYPE":
+      case "TYPE": {
         if (selection.target !== DEFAULT_TARGET) return;
-
         const rows = signals.rows.value;
-
-        if (isRowContainerSel(selection, tableId)) return;
-
-        if (isCellContainerSel(core, tableId, rows, selection)) {
-          core.focus(selection.focus, VALUE_TARGET, { caret: SELECT_ALL });
-          queueMicrotask(() => insertTextIntoActiveEditor(intent.char));
-        }
+        if (!isCellContainerSel(core, tableId, rows, selection)) return;
+        handleContainerIntent({ core, sel: selection, intent });
         return;
-      case "DELETE":
+      }
+      case "DELETE": {
+        if (!isRowContainerSel(selection, tableId)) return;
+        const nextFocus = resolveFocusAfterRemove(
+          core,
+          selection.focus.item,
+          "next",
+        );
+        cmd.removeRow(core, selection.focus.item);
+        if (nextFocus)
+          core.focus(nextFocus.focus, nextFocus.target, {
+            caret: nextFocus.caret,
+          });
+        else core.blur();
         return;
+      }
     }
   };
 

@@ -13,6 +13,7 @@ import type {
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
+  VALUE_TARGET,
   connTarget,
   defaultTextCaret,
 } from "../core";
@@ -47,8 +48,9 @@ function prevent(e: Event): void {
 }
 
 export type NavDir = Extract<ViewIntent, { type: "NAV" }>["dir"];
+export type TextFieldKind = "isolated" | "traversable";
 
-export function insertTextIntoActiveEditor(text: string): void {
+function typeCharIntoFocusedTextInput(text: string): void {
   const activeEl = document.activeElement;
   if (
     !(
@@ -64,48 +66,6 @@ export function insertTextIntoActiveEditor(text: string): void {
 
   activeEl.setRangeText(text, start, end, "end");
   activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
-export function enterEditOnType(args: {
-  core: Core;
-  sel: Extract<Selection, { type: "focused" }>;
-  char: string;
-  getPrimaryTarget: (id: ItemId) => string | null;
-}): boolean {
-  const { core, sel, char, getPrimaryTarget } = args;
-
-  if (sel.target !== DEFAULT_TARGET) return false;
-
-  const id = sel.focus.item;
-  const target = getPrimaryTarget(id);
-  if (!target || target === DEFAULT_TARGET) return false;
-
-  core.focus(sel.focus, target, { caret: SELECT_ALL });
-  queueMicrotask(() => insertTextIntoActiveEditor(char));
-  return true;
-}
-
-export function toggleEditOnConfirm(args: {
-  core: Core;
-  sel: Extract<Selection, { type: "focused" }>;
-  getPrimaryTarget: (id: ItemId) => string | null;
-  caretForTarget?: (id: ItemId, target: string) => Caret;
-}): boolean {
-  const { core, sel, getPrimaryTarget } = args;
-
-  if (sel.target !== DEFAULT_TARGET) {
-    core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
-    return true;
-  }
-
-  const id = sel.focus.item;
-  const target = getPrimaryTarget(id);
-  if (!target || target === DEFAULT_TARGET) return false;
-
-  const caret = args.caretForTarget?.(id, target) ?? caretEnd();
-
-  core.focus(sel.focus, target, { caret });
-  return true;
 }
 
 function textInput(multiline: boolean): TextInputElement {
@@ -165,7 +125,8 @@ type TextFieldOpts = {
   className?: string;
   inputClassName?: string;
   editModel?: TextFieldEditModel;
-  yieldNav?: boolean;
+  kind?: TextFieldKind;
+  onExitToContainer?: () => void;
   commit: (text: string) => void;
   getState: () => TextFieldState;
 };
@@ -175,7 +136,7 @@ export function buildTextField(
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
   const editModel: TextFieldEditModel = opts.editModel ?? "draft";
-  const yieldNav = opts.yieldNav ?? true;
+  const kind: TextFieldKind = opts.kind ?? "traversable";
   const autosize = opts.autosize ?? false;
 
   let focusEl!: TextInputElement;
@@ -264,10 +225,11 @@ export function buildTextField(
         return;
       }
 
-      if (!yieldNav) {
-        if (e.key === "Tab") {
+      if (kind === "isolated") {
+        if (e.key === "Enter" || e.key === "Tab") {
           commitDraft();
           prevent(e);
+          opts.onExitToContainer?.();
         }
         e.stopPropagation();
         return;
@@ -431,6 +393,141 @@ export function fieldsFromConn(conn: Connected): ConnField[] {
   ];
 }
 
+export function editTargetsForItem(core: Core, id: ItemId): string[] {
+  const item = core.item(id);
+  if (item.mode.type === "connected") {
+    return fieldsFromConn(item.mode.conn).map((field) => connTarget(field.key));
+  }
+  if (item.mode.type === "plain" && item.content.type === "value")
+    return [VALUE_TARGET];
+  return [];
+}
+
+export function primaryEditTarget(core: Core, id: ItemId): string | null {
+  return editTargetsForItem(core, id)[0] ?? null;
+}
+
+export function getTextForTarget(
+  core: Core,
+  id: ItemId,
+  target: string,
+): string {
+  const item = core.item(id);
+  if (target === VALUE_TARGET) {
+    return item.content.type === "value"
+      ? String(item.content.value ?? "")
+      : "";
+  }
+  if (target === LABEL_TARGET) return item.label ?? "";
+  if (!target.startsWith("conn:") || item.mode.type !== "connected") return "";
+  const key = target.slice("conn:".length);
+  return (
+    fieldsFromConn(item.mode.conn).find((field) => field.key === key)?.text ??
+    ""
+  );
+}
+
+export function clampCaretToText(caret: Caret, text: string): Caret {
+  const len = text.length;
+  const start = Math.max(0, Math.min(caret.start, len));
+  const end = Math.max(0, Math.min(caret.end, len));
+  return { start, end };
+}
+
+export function moveWithinItemEditTargets(
+  core: Core,
+  id: ItemId,
+  fromTarget: string,
+  dir: "backward" | "forward",
+): { target: string; caret: Caret } | null {
+  const targets = editTargetsForItem(core, id);
+  const at = targets.indexOf(fromTarget);
+  if (at < 0) return null;
+  const nextIdx = dir === "backward" ? at - 1 : at + 1;
+  const target = targets[nextIdx] ?? null;
+  if (!target) return null;
+  if (dir === "forward") return { target, caret: caret0() };
+  return { target, caret: caretAt(getTextForTarget(core, id, target).length) };
+}
+
+export function resolveFocusAfterRemove(
+  core: Core,
+  removedId: ItemId,
+  prefer: "prev" | "next",
+): { focus: Focus; target: string; caret: Caret } | null {
+  const loc = core.locate(removedId);
+  if (!loc) return null;
+
+  const prev = loc.siblings[loc.index - 1] ?? null;
+  const next = loc.siblings[loc.index + 1] ?? null;
+  const sibling =
+    prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
+  if (sibling) {
+    return {
+      focus: { container: loc.parentId, item: sibling },
+      target: DEFAULT_TARGET,
+      caret: caret0(),
+    };
+  }
+
+  const parentLoc = core.locate(loc.parentId);
+  if (!parentLoc) {
+    return {
+      focus: { container: loc.parentId, item: loc.parentId },
+      target: DEFAULT_TARGET,
+      caret: caret0(),
+    };
+  }
+  return {
+    focus: { container: parentLoc.parentId, item: loc.parentId },
+    target: DEFAULT_TARGET,
+    caret: caret0(),
+  };
+}
+
+export function handleContainerIntent(args: {
+  core: Core;
+  sel: Extract<Selection, { type: "focused" }>;
+  intent: Extract<ViewIntent, { type: "CONFIRM" | "TYPE" }>;
+}): boolean {
+  const { core, sel, intent } = args;
+  if (sel.target !== DEFAULT_TARGET) return false;
+
+  const id = sel.focus.item;
+
+  if (intent.type === "TYPE") {
+    const item = core.item(id);
+    const valueText =
+      item.content.type === "value" ? String(item.content.value ?? "") : "";
+
+    if (
+      intent.char === "=" &&
+      item.mode.type === "plain" &&
+      item.content.type === "value" &&
+      valueText.trim() === ""
+    ) {
+      core.commit((t) => t.setConnected(id, { type: "formula", expr: "" }));
+      core.focus(sel.focus, connTarget("expr"), { caret: caret0() });
+      return true;
+    }
+
+    const target = primaryEditTarget(core, id);
+    if (!target) return false;
+
+    core.focus(sel.focus, target, { caret: SELECT_ALL });
+    queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+    return true;
+  }
+
+  const target = primaryEditTarget(core, id);
+  if (!target) return false;
+
+  const text = getTextForTarget(core, id, target);
+  const caretPos = text.length;
+  core.focus(sel.focus, target, { caret: caretAt(caretPos) });
+  return true;
+}
+
 export function patchConn(
   conn: Connected,
   key: string,
@@ -465,19 +562,24 @@ export function buildItemHeader(
     const connWrap = el("div", "ui-header-conn");
     headerEl.append(labelWrap, connWrap);
 
-    const labelComp = buildTextField(core, {
-      focus: args.focus,
-      target: LABEL_TARGET,
-      multiline: false,
-      autosize: true,
-      yieldNav: true,
-      commit: args.commitLabel,
-      getState: () => {
-        const snap = core.item(id);
-        return { text: snap.label ?? "", readOnly: !args.canEditLabel() };
-      },
-    });
-    ctx.mount(labelWrap, labelComp);
+    ctx.mount(
+      labelWrap,
+      buildTextField(core, {
+        focus: args.focus,
+        target: LABEL_TARGET,
+        multiline: false,
+        autosize: true,
+        kind: "isolated",
+        onExitToContainer: () => {
+          core.focus(args.focus, DEFAULT_TARGET, { caret: caret0() });
+        },
+        commit: args.commitLabel,
+        getState: () => {
+          const snap = core.item(id);
+          return { text: snap.label ?? "", readOnly: !args.canEditLabel() };
+        },
+      }),
+    );
 
     const fieldsSignal = computed(() => {
       const snap = core.item(id);
@@ -488,7 +590,7 @@ export function buildItemHeader(
 
     ctx.list<string>(
       connWrap,
-      () => fieldsSignal.value.map((field) => field.key),
+      () => fieldsSignal.value.map((f) => f.key),
       (key) =>
         createComponent(core, (rowCtx) => {
           const row = el("div", "ui-header-conn-row");
@@ -496,43 +598,32 @@ export function buildItemHeader(
           const valEl = el("div", "ui-header-conn-val");
           row.append(keyEl, valEl);
 
-          const targetKey = connTarget(key);
-
-          const specForKey = (): ConnField | null => {
-            const snap = core.item(id);
-            if (snap.mode.type !== "connected") return null;
-            return (
-              fieldsFromConn(snap.mode.conn).find((f) => f.key === key) ?? null
-            );
-          };
-
-          const multilineForKey = (): boolean =>
-            specForKey()?.multiline ?? true;
-          const labelForKey = (): string => specForKey()?.label ?? "";
-
-          const fc = buildTextField(core, {
-            focus: args.focus,
-            target: targetKey,
-            multiline: multilineForKey(),
-            autosize: true,
-            yieldNav: true,
-            commit: (text) => args.commitConnField(key, text),
-            getState: () => {
-              const snap = core.item(id);
-              if (snap.mode.type !== "connected")
-                return { text: "", readOnly: true };
-              const txt =
-                fieldsFromConn(snap.mode.conn).find((x) => x.key === key)
-                  ?.text ?? "";
-              return { text: txt, readOnly: false };
-            },
+          const fieldSignal = computed(() => {
+            const fields = fieldsSignal.value;
+            return fields.find((f) => f.key === key) ?? null;
           });
-          rowCtx.mount(valEl, fc);
 
           rowCtx.effect(() => {
-            const lbl = labelForKey();
-            if (keyEl.textContent !== lbl) keyEl.textContent = lbl;
+            const label = fieldSignal.value?.label ?? "";
+            if (keyEl.textContent !== label) keyEl.textContent = label;
           });
+
+          rowCtx.mount(
+            valEl,
+            buildTextField(core, {
+              focus: args.focus,
+              target: connTarget(key),
+              multiline: fieldSignal.value?.multiline ?? true,
+              autosize: true,
+              kind: "traversable",
+              commit: (text) => args.commitConnField(key, text),
+              getState: () => {
+                const field = fieldSignal.value;
+                if (!field) return { text: "", readOnly: true };
+                return { text: field.text ?? "", readOnly: false };
+              },
+            }),
+          );
 
           return row;
         }),

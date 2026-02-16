@@ -109,7 +109,7 @@ describe("views", () => {
     expect(text.includes("A")).toBe(true);
   });
 
-  test("outline: '=' in empty value editor switches to formula and focuses expr without replacing item root", async () => {
+  test("outline: '=' at container focus on empty value switches to formula and focuses expr without replacing item root", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const x = mkBlank(core, rootId, { label: "x" });
@@ -118,15 +118,11 @@ describe("views", () => {
     mountDomView(view);
     await flushDomEffects();
 
-    core.focus({ container: rootId, item: x }, "value");
+    core.focus({ container: rootId, item: x }, DEFAULT_TARGET);
     await flushDomEffects();
 
     const itemElBefore = requireFrameEl(view.root, x);
     const snapBefore = snapshotEl(itemElBefore);
-
-    const valueEl = requireTargetInput(itemElBefore, "value");
-    pointerDown(valueEl);
-    await flushDomEffects();
 
     fireViewKey(view, "=");
     await flushDomEffects();

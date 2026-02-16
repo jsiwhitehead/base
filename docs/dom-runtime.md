@@ -30,9 +30,12 @@ Controls/editing helpers:
 
 - `buildTextField`: canonical shared text editor component.
 - `caret0`, `caretAt`, `caretEnd`: caret constructors.
-- `insertTextIntoActiveEditor`: text insertion helper for active native editors.
-- `enterEditOnType`: shared type-to-edit transition helper.
-- `toggleEditOnConfirm`: shared confirm-toggle helper between default/edit targets.
+- `clampCaretToText`: clamps a caret to text length.
+- `editTargetsForItem`: canonical traversable edit-target derivation.
+- `handleContainerIntent`: shared container-focus `TYPE`/`CONFIRM` adaptor for views.
+- `getTextForTarget`: canonical text lookup by item/target.
+- `moveWithinItemEditTargets`: intra-item traversable-target movement helper.
+- `resolveFocusAfterRemove`: canonical remove-focus destination helper.
 
 Connected header helpers:
 
@@ -208,37 +211,15 @@ Intent routing:
 - `caretAt(pos)` returns `{ start: pos, end: pos }`.
 - `caretEnd()` returns end-sentinel caret (`Number.MAX_SAFE_INTEGER`).
 
-### `insertTextIntoActiveEditor(text)`
-
-Rules:
-
-- Only affects active `input`/`textarea` (`document.activeElement`).
-- No-op unless the active element is an `input` or `textarea`, and it is not `readOnly`/`disabled`.
-- Inserts with `setRangeText`.
-- Dispatches bubbling `InputEvent("input")`.
-
-### `enterEditOnType({ core, sel, char, getPrimaryTarget })`
-
-Preconditions:
-
-- Selection is focused.
-- Current target is `DEFAULT_TARGET`.
-- Primary target exists and is not `DEFAULT_TARGET`.
+### `handleContainerIntent({ core, sel, intent })`
 
 Behavior:
 
-- Focuses primary target with `SELECT_ALL`.
-- Queues microtask insertion of typed character into the active editor.
+- Handles container-focus `TYPE` and `CONFIRM` using canonical edit-target/text helpers.
+- For `TYPE`, enters primary edit target with select-all and inserts the character in a microtask.
+- For `TYPE "="` on an empty plain value item, converts to formula and focuses `conn:expr`.
+- For `CONFIRM`, enters primary edit target with caret at end.
 - Returns `true` when handled, else `false`.
-
-### `toggleEditOnConfirm({ core, sel, getPrimaryTarget, caretForTarget? })`
-
-Behavior:
-
-- If current target is not `DEFAULT_TARGET`, focuses `DEFAULT_TARGET` and returns `true`.
-- Otherwise, focuses primary target when available.
-- Entry caret defaults to `caretEnd()` when `caretForTarget` is not provided.
-- Returns `true` when focus changed, else `false`.
 
 ## `buildTextField` contract
 
@@ -255,7 +236,8 @@ buildTextField(core, {
   className?,
   inputClassName?,
   editModel?, // "draft" | "live"
-  yieldNav?,
+  kind?, // "isolated" | "traversable"
+  onExitToContainer?,
   commit(text),
   getState(), // { text: string; readOnly: boolean }
 }): Component & { focusEl: HTMLInputElement | HTMLTextAreaElement };
@@ -316,10 +298,11 @@ Mirror rules:
 - Mirror reflects current displayed text (draft or committed).
 - When text ends with newline, mirror appends a trailing zero-width space (`\u200B`) for sizing.
 
-### Yield navigation (`yieldNav`)
+### Field kind (`kind`)
 
-- `yieldNav=false` means the field consumes all keydowns locally (does not bubble), except Escape.
-- `yieldNav=true` means the field yields arrow and delete-boundary keys at boundaries so the active view can handle navigation and structural edits.
+- `kind="isolated"` means the field consumes all keydowns locally (does not bubble), except Escape.
+- `kind="traversable"` means the field yields arrow and delete-boundary keys at boundaries so the active view can handle navigation and structural edits.
+- `onExitToContainer` MAY be provided for isolated fields. When Enter or Tab is pressed, the field commits, prevents default, and calls this callback.
 
 Propagation-gating rules:
 
@@ -331,8 +314,8 @@ Propagation-gating rules:
 Events that trigger commit/yield behavior:
 
 - `Escape`: Cancels the draft session in draft mode and MUST NOT call `preventDefault()`.
-- `Tab`: Commits the draft and MUST call `preventDefault()`. If `yieldNav=true`, it MUST bubble (so views may handle indent/outdent). If `yieldNav=false`, it MUST NOT bubble.
-- `Enter`: Commits the draft and MUST call `preventDefault()`. Exception: a `textarea` with `metaKey` or `ctrlKey` allows newline.
+- `Tab`: Commits the draft and MUST call `preventDefault()`. For `traversable` fields it MUST bubble. For `isolated` fields it MUST NOT bubble.
+- `Enter`: Commits the draft and MUST call `preventDefault()`. For `isolated` fields it MUST NOT bubble. For `traversable` multiline fields, `metaKey`/`ctrlKey` allows newline and does not yield.
 - Arrow keys: MUST yield only at text boundaries. Left yields at absolute start, right yields at absolute end, up yields on the first line for `textarea` (always for single-line input), and down yields on the last line for `textarea` (always for single-line input). When yielding, the runtime MUST commit the draft and call `preventDefault()`.
 - `Backspace` at start: MUST commit the draft and call `preventDefault()`.
 - `Delete` at end: MUST commit the draft and call `preventDefault()`.
@@ -394,7 +377,7 @@ Canonical produced structure:
 Rules:
 
 - Label text field uses target `LABEL_TARGET`.
-- The label text field MUST use `buildTextField` with `yieldNav=false` (consumes Tab/arrows/Enter/Delete locally; only Escape bubbles).
+- The label text field MUST use `buildTextField` with `kind="isolated"` (consumes Tab/arrows/Enter/Delete locally; only Escape bubbles).
 - Connected rows render only when `item.mode.type === "connected"`.
 - Each connected field MUST use `connTarget(field.key)` as target.
 - Each connected field MUST use `buildTextField` with autosize enabled.

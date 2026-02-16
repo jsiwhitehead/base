@@ -71,7 +71,15 @@ const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
   return fallback;
 };
 
-const sliderCommands = {
+const plan = {
+  navDeltaSteps(intent: Extract<ViewIntent, { type: "NAV" }>): number {
+    const multiplier = intent.mode === "jump" ? 10 : 1;
+    const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
+    return dir * multiplier;
+  },
+} as const;
+
+const cmd = {
   setValue(core: Core, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetValue(core, id)) return;
     core.commit((t) => t.setValue(id, value));
@@ -90,7 +98,7 @@ const sliderCommands = {
       resolvedOpts.min,
       resolvedOpts.max,
     );
-    sliderCommands.setValue(core, id, nextValue);
+    cmd.setValue(core, id, nextValue);
   },
 } as const;
 
@@ -124,7 +132,7 @@ function buildSliderBody({
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
-      sliderCommands.setValue(core, id, next);
+      cmd.setValue(core, id, next);
     };
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
@@ -177,23 +185,18 @@ function createSliderView(args: {
       case "NAV": {
         if (sel.focus.item !== id) return;
 
-        const multiplier = intent.mode === "jump" ? 10 : 1;
-        const dir = intent.dir === "left" || intent.dir === "down" ? -1 : 1;
-        sliderCommands.nudgeValue(core, id, dir * multiplier, resolvedOpts);
+        const deltaSteps = plan.navDeltaSteps(intent);
+        cmd.nudgeValue(core, id, deltaSteps, resolvedOpts);
         return;
       }
       case "CONFIRM":
         if (sel.focus.item !== id) return;
 
-        if (sel.target === DEFAULT_TARGET) {
-          core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
-          return;
-        }
-
         if (sel.target === VALUE_TARGET) {
           core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
           return;
         }
+
         return;
       case "TAB":
       case "TYPE":
