@@ -342,8 +342,8 @@ const cmd = {
       core.commit((t) => {
         wrapperId = t.insertChild(parentId, { at: idx });
         t.setGroup(wrapperId);
-        t.setLabel(wrapperId, label);
         t.setLabel(id, "");
+        t.setLabel(wrapperId, label);
         t.move(id, wrapperId, { at: 0 });
       });
 

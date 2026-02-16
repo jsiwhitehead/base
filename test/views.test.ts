@@ -1,411 +1,710 @@
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_TARGET } from "../src/core";
-import { viewRegistrations } from "../src/views";
+import type { Core, Focus, ItemId, ViewName } from "../src/core";
+import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
+import { caretAt, caret0 } from "../src/dom";
+
 import {
+  childrenOf,
   expectSel,
-  expectSnapshotSame,
-  fireViewKey,
-  fireWindowKey,
   flushDomEffects,
+  fireViewKey,
   makeCoreRuntime,
   mkBlank,
   mkGroup,
   mountDomView,
-  nodeOrderByDataId,
   pointerDown,
-  requireSameEl,
-  requireEl,
   requireFrameEl,
   requireTargetInput,
   scalarOfId,
+  setFormula,
   setView,
   snapshotEl,
+  expectSnapshotSame,
+  viewFactories,
 } from "./test-utils";
 
-const viewFactories = Object.fromEntries(
-  Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),
-) as {
-  [K in keyof typeof viewRegistrations]: (typeof viewRegistrations)[K]["factory"];
-};
+async function mountView(args: {
+  view: Extract<ViewName, "outline" | "table" | "slider">;
+  core: Core;
+  id: ItemId;
+  focus?: Focus;
+}) {
+  const { view, core, id, focus } = args;
+  const domView = viewFactories[view]({
+    core,
+    id,
+    ...(focus === undefined ? {} : { focus }),
+  });
+  const unmount = mountDomView(domView);
+  await flushDomEffects();
+  return { domView, unmount };
+}
 
-describe("views", () => {
-  test("outline: selection moves do not replace item roots", async () => {
+function dispatchKeyAndCountWindowBubbles(
+  target: Element,
+  key: string,
+  opts: Partial<KeyboardEventInit> = {},
+): { bubbled: number } {
+  let bubbled = 0;
+  const onBubble = () => {
+    bubbled += 1;
+  };
+  window.addEventListener("keydown", onBubble);
+
+  const ev = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...opts,
+  });
+
+  target.dispatchEvent(ev);
+  window.removeEventListener("keydown", onBubble);
+
+  return { bubbled };
+}
+
+describe("views/outline", () => {
+  test("renders placeholder for empty group", async () => {
     const { core, rootId } = makeCoreRuntime();
-
-    const a = mkBlank(core, rootId, { label: "a", value: 1 });
     const g = mkGroup(core, rootId, { label: "g" });
-    const b = mkBlank(core, rootId, { label: "b", value: 3 });
 
-    const view = viewFactories.outline({ core, id: rootId });
-    mountDomView(view);
-    await flushDomEffects();
+    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
 
-    core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
-    await flushDomEffects();
+    const { unmount } = await mountView({ view: "outline", core, id: rootId });
 
-    const aElBefore = requireFrameEl(view.root, a);
-    const bElBefore = requireFrameEl(view.root, b);
+    const placeholder = document.body.querySelector(
+      ".ui-outline-placeholder",
+    ) as HTMLElement | null;
 
-    fireViewKey(view, "ArrowDown");
-    fireViewKey(view, "ArrowDown");
-    fireViewKey(view, "ArrowUp");
-    await flushDomEffects();
+    expect(placeholder).toBeTruthy();
+    expect(placeholder?.classList.contains("ui-frame")).toBe(true);
+    expect(placeholder?.dataset.id).toBe(g);
 
-    const aElAfter = requireFrameEl(view.root, a);
-    const bElAfter = requireFrameEl(view.root, b);
-
-    requireSameEl(aElBefore, aElAfter);
-    requireSameEl(bElBefore, bElAfter);
-
-    const sel = core.selection();
-    expect(sel.type).toBe("focused");
-    if (sel.type === "focused") {
-      expect([a, b, g, rootId]).toContain(sel.focus.item);
-    }
+    unmount();
   });
 
-  test("outline: click focuses item frame; does not replace frame", async () => {
+  test("Enter on empty group inserts first child and enters VALUE", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
 
-    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
 
-    const view = viewFactories.outline({ core, id: rootId });
-    mountDomView(view);
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    fireViewKey(domView, "Enter");
     await flushDomEffects();
 
-    const itemElBefore = requireFrameEl(view.root, x);
+    const kids = childrenOf(core, g);
+    expect(kids.length).toBe(1);
+    expectSel(core, { container: g, item: kids[0]!, target: VALUE_TARGET });
 
-    pointerDown(itemElBefore);
-    await flushDomEffects();
+    requireTargetInput(document.body, VALUE_TARGET);
 
-    expect(document.activeElement === itemElBefore).toBe(true);
-    expectSel(core, { container: rootId, item: x, target: DEFAULT_TARGET });
-
-    const itemElAfter = requireFrameEl(view.root, x);
-    requireSameEl(itemElBefore, itemElAfter);
+    unmount();
   });
 
-  test("outline: printable key at DEFAULT_TARGET enters value editor and inserts", async () => {
+  test("TYPE on empty group inserts first child and types character", async () => {
     const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
 
-    const x = mkBlank(core, rootId, { label: "x" });
+    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
 
-    const view = viewFactories.outline({ core, id: rootId });
-    mountDomView(view);
-    await flushDomEffects();
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
 
-    core.focus({ container: rootId, item: x }, DEFAULT_TARGET);
-    await flushDomEffects();
+    fireViewKey(domView, "a");
+    await flushDomEffects(3);
 
-    fireViewKey(view, "A");
-    await flushDomEffects();
+    const kids = childrenOf(core, g);
+    expect(kids.length).toBe(1);
+    expectSel(core, { container: g, item: kids[0]!, target: VALUE_TARGET });
+    expect(scalarOfId(core, kids[0]!)).toBe("a");
 
-    expectSel(core, { container: rootId, item: x, target: "value" });
-
-    const itemEl = requireFrameEl(view.root, x);
-    const valueEl = requireTargetInput(itemEl, "value");
-    const text = (valueEl as HTMLInputElement | HTMLTextAreaElement).value;
-    expect(text.includes("A")).toBe(true);
+    unmount();
   });
 
-  test("outline: '=' at container focus on empty value switches to formula and focuses expr without replacing item root", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const x = mkBlank(core, rootId, { label: "x" });
-
-    const view = viewFactories.outline({ core, id: rootId });
-    mountDomView(view);
-    await flushDomEffects();
-
-    core.focus({ container: rootId, item: x }, DEFAULT_TARGET);
-    await flushDomEffects();
-
-    const itemElBefore = requireFrameEl(view.root, x);
-    const snapBefore = snapshotEl(itemElBefore);
-
-    fireViewKey(view, "=");
-    await flushDomEffects();
-
-    expect(core.item(x).mode.type).toBe("connected");
-    expectSel(core, { container: rootId, item: x, target: "conn:expr" });
-
-    const itemElAfter = requireFrameEl(view.root, x);
-    expectSnapshotSame(snapBefore, itemElAfter);
-
-    const exprEl = requireTargetInput(itemElAfter, "conn:expr");
-    expect(exprEl).toBeTruthy();
-  });
-
-  test("outline: list reorder preserves child item element identity and updates DOM order", async () => {
+  test("NAV from container focus follows outline geometry", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const g = mkGroup(core, rootId, { label: "g" });
-    const a = mkBlank(core, g, { label: "a", value: 1 });
-    const b = mkBlank(core, g, { label: "b", value: 2 });
-    const c = mkBlank(core, g, { label: "c", value: 3 });
+    const a = mkBlank(core, g, { label: "a", value: "aa" });
+    const b = mkBlank(core, g, { label: "b", value: "bb" });
+    const c = mkBlank(core, rootId, { label: "c", value: "cc" });
 
-    const view = viewFactories.outline({ core, id: rootId });
-    mountDomView(view);
-    await flushDomEffects();
+    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
 
-    const aElBefore = requireFrameEl(view.root, a);
-    const bElBefore = requireFrameEl(view.root, b);
-    const cElBefore = requireFrameEl(view.root, c);
-
-    core.commit((t) => t.move(c, g, { at: 0 }));
-    await flushDomEffects();
-
-    const aElAfter = requireFrameEl(view.root, a);
-    const bElAfter = requireFrameEl(view.root, b);
-    const cElAfter = requireFrameEl(view.root, c);
-
-    requireSameEl(aElBefore, aElAfter);
-    requireSameEl(bElBefore, bElAfter);
-    requireSameEl(cElBefore, cElAfter);
-
-    const order = nodeOrderByDataId(view.root, `.ui-outline-child`);
-    const filtered = order.filter((id) => id === a || id === b || id === c);
-    expect(filtered).toEqual([c, a, b]);
-  });
-
-  test("table: navigation does not replace row item roots or cell frames", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const tableId = mkGroup(core, rootId, { label: "table" });
-    setView(core, tableId, "table");
-
-    const rowA = mkGroup(core, tableId, { label: "rowA" });
-    const rowB = mkGroup(core, tableId, { label: "rowB" });
-
-    const aScoreId = mkBlank(core, rowA, { label: "score", value: 5 });
-
-    const rowBContent = core.item(rowB).content;
-    const bScoreId =
-      rowBContent.type === "group" ? rowBContent.children[0]! : "";
-    core.commit((t) => t.setValue(bScoreId, 6));
-
-    const view = viewFactories.table({ core, id: tableId });
-    mountDomView(view);
-    await flushDomEffects();
-
-    core.focus({ container: tableId, item: rowA }, DEFAULT_TARGET);
-    await flushDomEffects();
-
-    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
-
-    const rowAElBefore = requireFrameEl(view.root, rowA);
-    const rowBElBefore = requireFrameEl(view.root, rowB);
-
-    const cellA0 = requireEl(
-      rowAElBefore.querySelector(
-        `:scope > .ui-table-cell:not(.ui-table-header-col)`,
-      ) as HTMLElement | null,
-      "Missing rowA first data cell",
-    );
-
-    fireViewKey(view, "ArrowRight");
-    await flushDomEffects();
-    expectSel(core, {
-      container: rowA,
-      item: aScoreId,
-      target: DEFAULT_TARGET,
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
     });
 
-    fireViewKey(view, "ArrowRight");
+    fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, {
-      container: rowA,
-      item: aScoreId,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: g, item: a, target: DEFAULT_TARGET });
 
-    fireViewKey(view, "ArrowDown");
+    fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, {
-      container: rowB,
-      item: bScoreId,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
 
-    fireViewKey(view, "ArrowLeft");
+    fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: rowB, target: DEFAULT_TARGET });
+    expectSel(core, { container: rootId, item: c, target: DEFAULT_TARGET });
 
-    const beforeRows = core.item(tableId);
-    const beforeCount =
-      beforeRows.content.type === "group"
-        ? beforeRows.content.children.length
-        : 0;
-    fireViewKey(view, "Enter");
+    fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    const sel = core.selection();
-    expect(sel.type).toBe("focused");
-    if (sel.type === "focused") {
-      expect(sel.focus.container).toBe(tableId);
-      expect(sel.focus.item).not.toBe(rowB);
-      expect(sel.target).toBe(DEFAULT_TARGET);
-    }
-
-    const afterRows = core.item(tableId);
-    const afterCount =
-      afterRows.content.type === "group"
-        ? afterRows.content.children.length
-        : 0;
-    expect(afterCount).toBe(beforeCount + 1);
-
-    const rowAElAfter = requireFrameEl(view.root, rowA);
-    const rowBElAfter = requireFrameEl(view.root, rowB);
-
-    requireSameEl(rowAElBefore, rowAElAfter);
-    requireSameEl(rowBElBefore, rowBElAfter);
-
-    const cellA1 = requireEl(
-      rowAElAfter.querySelector(
-        `:scope > .ui-table-cell:not(.ui-table-header-col)`,
-      ) as HTMLElement | null,
-      "Missing rowA first data cell",
-    );
-
-    requireSameEl(cellA0, cellA1);
-  });
-
-  test("table: printable key from row selection does not enter edit", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const tableId = mkGroup(core, rootId, { label: "table" });
-    setView(core, tableId, "table");
-
-    const rowA = mkGroup(core, tableId, { label: "rowA" });
-    const aScoreId = mkBlank(core, rowA, { label: "score" });
-
-    const view = viewFactories.table({ core, id: tableId });
-    mountDomView(view);
-    await flushDomEffects();
-
-    core.focus({ container: tableId, item: rowA }, DEFAULT_TARGET);
-    await flushDomEffects();
-
-    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
-
-    fireViewKey(view, "7");
-    await flushDomEffects();
-
-    expectSel(core, { container: tableId, item: rowA, target: DEFAULT_TARGET });
-
-    const cellItemEl = requireFrameEl(view.root, aScoreId);
-    const valueEl = requireTargetInput(cellItemEl, "value");
-    expect((valueEl as HTMLInputElement | HTMLTextAreaElement).value).toBe("");
-  });
-
-  test("table: global keydown routes to active nested view (outline hosting a table)", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const tableId = mkGroup(core, rootId, { label: "table" });
-    setView(core, tableId, "table");
-
-    const rowA = mkGroup(core, tableId, { label: "rowA" });
-    const rowB = mkGroup(core, tableId, { label: "rowB" });
-
-    const aScore = mkBlank(core, rowA, { label: "score", value: 5 });
-
-    const rowBContent = core.item(rowB).content;
-    const bScore = rowBContent.type === "group" ? rowBContent.children[0]! : "";
-    core.commit((t) => t.setValue(bScore, 6));
-
-    const outline = viewFactories.outline({ core, id: rootId });
-    mountDomView(outline);
-    await flushDomEffects();
-
-    const nestedCell = requireEl(
-      outline.root.querySelector(
-        `.ui-table .ui-table-row > .ui-table-cell:not(.ui-table-header-col)`,
-      ) as HTMLElement | null,
-      "Missing nested cell",
-    );
-
-    pointerDown(nestedCell);
-    await flushDomEffects();
-
-    expectSel(core, { container: rowA, item: aScore, target: DEFAULT_TARGET });
-
-    fireWindowKey("ArrowDown");
-    await flushDomEffects();
-    expectSel(core, { container: rowB, item: bScore, target: DEFAULT_TARGET });
-  });
-
-  test("slider: input event updates scalar; NAV intents are no-ops", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const sliderId = mkBlank(core, rootId, { label: "slider", value: 10 });
-    setView(core, sliderId, "slider");
-
-    const view = viewFactories.slider({ core, id: sliderId });
-    mountDomView(view);
-    await flushDomEffects();
-
-    const input = requireEl(
-      view.root.querySelector(`input[type="range"]`) as HTMLInputElement | null,
-      "Missing slider input",
-    );
-
-    input.value = "42";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(scalarOfId(core, sliderId)).toBe(42);
-
-    core.focus({ container: rootId, item: sliderId }, DEFAULT_TARGET);
-
-    core.commit((t) => t.setValue(sliderId, 50));
-    fireViewKey(view, "ArrowRight");
-    expect(scalarOfId(core, sliderId)).toBe(50);
-
-    fireViewKey(view, "ArrowLeft", { ctrlKey: true });
-    expect(scalarOfId(core, sliderId)).toBe(50);
-  });
-
-  test("slider: does not replace input element on selection changes", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const sliderId = mkBlank(core, rootId, { label: "slider", value: 10 });
-    setView(core, sliderId, "slider");
-
-    const other = mkBlank(core, rootId, { label: "other", value: 1 });
-
-    const outline = viewFactories.outline({ core, id: rootId });
-    mountDomView(outline);
-    await flushDomEffects();
-
-    core.focus({ container: rootId, item: sliderId }, DEFAULT_TARGET);
-    await flushDomEffects();
-
-    const sliderItemElBefore = requireFrameEl(outline.root, sliderId);
-    const sliderInputBefore = requireEl(
-      sliderItemElBefore.querySelector(
-        `input[type="range"]`,
-      ) as HTMLInputElement | null,
-      "Missing slider input",
-    );
-
-    core.focus({ container: rootId, item: other }, DEFAULT_TARGET);
-    await flushDomEffects();
-    core.focus({ container: rootId, item: sliderId }, DEFAULT_TARGET);
-    await flushDomEffects();
-
     expectSel(core, {
       container: rootId,
-      item: sliderId,
+      item: rootId,
       target: DEFAULT_TARGET,
     });
 
-    const sliderItemElAfter = requireFrameEl(outline.root, sliderId);
-    const sliderInputAfter = requireEl(
-      sliderItemElAfter.querySelector(
-        `input[type="range"]`,
-      ) as HTMLInputElement | null,
-      "Missing slider input",
+    unmount();
+  });
+
+  test("Tab nests in and out", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: "v" });
+
+    core.focus({ container: g, item: x }, VALUE_TARGET, { caret: caret0() });
+
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    fireViewKey(domView, "Tab");
+    await flushDomEffects();
+
+    const kids = childrenOf(core, g);
+    expect(kids.length).toBe(1);
+    const wrapper = kids[0]!;
+    expect(wrapper).not.toBe(x);
+
+    expectSel(core, { container: wrapper, item: x, target: VALUE_TARGET });
+
+    fireViewKey(domView, "Tab", { shiftKey: true });
+    await flushDomEffects();
+
+    expectSel(core, { container: g, item: x, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("Enter in VALUE splits item", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus({ container: rootId, item: a }, VALUE_TARGET, {
+      caret: caretAt(2),
+    });
+
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    domView.onIntent?.({ type: "CONFIRM", caret: caretAt(2) });
+    await flushDomEffects();
+
+    const kids = childrenOf(core, rootId);
+    const aIdx = kids.indexOf(a);
+    expect(aIdx).toBeGreaterThanOrEqual(0);
+
+    const b = kids[aIdx + 1]!;
+    expect(scalarOfId(core, a)).toBe("he");
+    expect(scalarOfId(core, b)).toBe("llo");
+
+    expectSel(core, { container: rootId, item: b, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("Backspace in VALUE joins with previous", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const a = mkBlank(core, rootId, { label: "a", value: "hi" });
+    const b = mkBlank(core, rootId, { label: "b", value: "there" });
+
+    core.focus({ container: rootId, item: b }, VALUE_TARGET, {
+      caret: caret0(),
+    });
+
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    fireViewKey(domView, "Backspace");
+    await flushDomEffects();
+
+    expect(scalarOfId(core, a)).toBe("hithere");
+    expect(core.item(b).content.type).toBe("issue");
+    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("NAV boundaries: up from first top-level item does nothing; left from root does nothing", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const a = mkBlank(core, rootId, { label: "a", value: "x" });
+
+    core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
+
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    fireViewKey(domView, "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { container: rootId, item: a, target: DEFAULT_TARGET });
+
+    core.focus({ container: rootId, item: rootId }, DEFAULT_TARGET);
+    await flushDomEffects();
+
+    fireViewKey(domView, "ArrowLeft");
+    await flushDomEffects();
+    expectSel(core, {
+      container: rootId,
+      item: rootId,
+      target: DEFAULT_TARGET,
+    });
+
+    unmount();
+  });
+
+  test("selection changes do not recreate frame elements", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const a = mkBlank(core, rootId, { label: "a", value: "x" });
+    const b = mkBlank(core, rootId, { label: "b", value: "y" });
+
+    core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
+
+    const { unmount } = await mountView({ view: "outline", core, id: rootId });
+
+    const aFrame0 = requireFrameEl(document.body, a);
+    const bFrame0 = requireFrameEl(document.body, b);
+
+    const snapA = snapshotEl(aFrame0);
+    const snapB = snapshotEl(bFrame0);
+
+    core.focus({ container: rootId, item: b }, DEFAULT_TARGET);
+    await flushDomEffects();
+
+    expectSnapshotSame(snapA, requireFrameEl(document.body, a));
+    expectSnapshotSame(snapB, requireFrameEl(document.body, b));
+
+    unmount();
+  });
+});
+
+describe("views/table", () => {
+  test("renders header columns based on schema row", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c2", value: 2 });
+
+    core.focus({ container: tableId, item: tableId }, DEFAULT_TARGET);
+
+    const { unmount } = await mountView({ view: "table", core, id: tableId });
+
+    const header = document.body.querySelector(
+      ".ui-table-header",
+    ) as HTMLElement | null;
+    expect(header).toBeTruthy();
+
+    const headerCols = [
+      ...(header?.querySelectorAll(":scope > .ui-table-col") ?? []),
+    ] as HTMLElement[];
+    expect(headerCols.length).toBe(3);
+
+    unmount();
+  });
+
+  test("NAV in row container moves rows; right enters first cell", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c2", value: 2 });
+
+    core.focus({ container: tableId, item: r1 }, DEFAULT_TARGET);
+
+    const { domView, unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+    });
+
+    fireViewKey(domView, "ArrowDown");
+    await flushDomEffects();
+    expectSel(core, { container: tableId, item: r2, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { container: tableId, item: r1, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { container: r1, item: c11, target: DEFAULT_TARGET });
+
+    unmount();
+  });
+
+  test("NAV in cells moves in grid; left from first cell exits to row container", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    const c12 = mkBlank(core, r1, { label: "c2", value: 2 });
+
+    const c21 = childrenOf(core, r2)[0]!;
+    const c22 = childrenOf(core, r2)[1]!;
+
+    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+
+    const { domView, unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+    });
+
+    fireViewKey(domView, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { container: r1, item: c12, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowDown");
+    await flushDomEffects();
+    expectSel(core, { container: r2, item: c22, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowLeft");
+    await flushDomEffects();
+    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowLeft");
+    await flushDomEffects();
+    expectSel(core, { container: tableId, item: r2, target: DEFAULT_TARGET });
+
+    unmount();
+  });
+
+  test("TAB moves across cells and wraps rows", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    const c12 = mkBlank(core, r1, { label: "c2", value: 2 });
+
+    const c21 = childrenOf(core, r2)[0]!;
+
+    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+
+    const { domView, unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+    });
+
+    fireViewKey(domView, "Tab");
+    await flushDomEffects();
+    expectSel(core, { container: r1, item: c12, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "Tab");
+    await flushDomEffects();
+    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+
+    unmount();
+  });
+
+  test("Enter from cell VALUE moves to same column next row container", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
+    mkBlank(core, r1, { label: "c2", value: "b" });
+
+    const c21 = childrenOf(core, r2)[0]!;
+
+    core.focus({ container: r1, item: c11 }, VALUE_TARGET, {
+      caret: caretAt(1),
+    });
+
+    const { domView, unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+    });
+
+    fireViewKey(domView, "Enter");
+    await flushDomEffects();
+
+    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+
+    unmount();
+  });
+
+  test("DELETE: row container removes row; cell container clears value", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c2", value: 2 });
+
+    const { domView, unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+    });
+
+    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+    await flushDomEffects();
+
+    fireViewKey(domView, "Backspace");
+    await flushDomEffects();
+    expect(scalarOfId(core, c11)).toBe(null);
+
+    core.focus({ container: tableId, item: r2 }, DEFAULT_TARGET);
+    await flushDomEffects();
+
+    fireViewKey(domView, "Backspace");
+    await flushDomEffects();
+
+    expect(childrenOf(core, tableId).includes(r2)).toBe(false);
+
+    unmount();
+  });
+
+  test("NAV beyond grid edges does nothing", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c2", value: 2 });
+
+    core.focus({ container: tableId, item: r1 }, DEFAULT_TARGET);
+
+    const { domView, unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+    });
+
+    fireViewKey(domView, "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { container: tableId, item: r1, target: DEFAULT_TARGET });
+
+    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+    await flushDomEffects();
+
+    fireViewKey(domView, "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { container: r1, item: c11, target: DEFAULT_TARGET });
+
+    unmount();
+  });
+});
+
+describe("views/slider", () => {
+  test("renders range input and value readout", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, s, "slider");
+
+    core.focus({ container: s, item: s }, DEFAULT_TARGET);
+
+    const { unmount } = await mountView({ view: "slider", core, id: s });
+
+    requireFrameEl(document.body, s);
+
+    const input = document.body.querySelector(
+      'input[type="range"]',
+    ) as HTMLInputElement | null;
+    expect(input).toBeTruthy();
+
+    const valueEl = document.body.querySelector(
+      ".ui-slider-value",
+    ) as HTMLElement | null;
+    expect(valueEl).toBeTruthy();
+
+    unmount();
+  });
+
+  test("pointerdown on input focuses VALUE_TARGET", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, s, "slider");
+
+    core.focus({ container: s, item: s }, DEFAULT_TARGET);
+
+    const { unmount } = await mountView({ view: "slider", core, id: s });
+
+    const input = document.body.querySelector(
+      'input[type="range"]',
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    pointerDown(input);
+    await flushDomEffects();
+
+    expectSel(core, { container: s, item: s, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("native range keys do not bubble", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, s, "slider");
+
+    core.focus({ container: s, item: s }, DEFAULT_TARGET);
+
+    const { unmount } = await mountView({ view: "slider", core, id: s });
+
+    const input = document.body.querySelector(
+      'input[type="range"]',
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowLeft").bubbled).toBe(
+      0,
+    );
+    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowRight").bubbled).toBe(
+      0,
+    );
+    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowUp").bubbled).toBe(0);
+    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowDown").bubbled).toBe(
+      0,
     );
 
-    requireSameEl(sliderItemElBefore, sliderItemElAfter);
-    requireSameEl(sliderInputBefore, sliderInputAfter);
+    unmount();
   });
+
+  test("input updates core value", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const s = mkBlank(core, rootId, { label: "s", value: 0 });
+    setView(core, s, "slider");
+
+    const { unmount } = await mountView({ view: "slider", core, id: s });
+
+    const input = document.body.querySelector(
+      'input[type="range"]',
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    input.value = "42";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await flushDomEffects();
+
+    expect(scalarOfId(core, s)).toBe(42);
+
+    unmount();
+  });
+
+  test("input is disabled when not editable", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, s, "slider");
+
+    const { unmount } = await mountView({ view: "slider", core, id: s });
+
+    setFormula(core, s, "unknown_name");
+    await flushDomEffects();
+
+    const input = document.body.querySelector(
+      'input[type="range"]',
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.disabled).toBe(true);
+
+    unmount();
+  });
+
+  test("CONFIRM toggles VALUE_TARGET to DEFAULT_TARGET only when focused item is slider id", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, s, "slider");
+
+    const other = mkBlank(core, rootId, { label: "o", value: 1 });
+
+    core.focus({ container: s, item: s }, VALUE_TARGET, { caret: caret0() });
+
+    const { domView, unmount } = await mountView({
+      view: "slider",
+      core,
+      id: s,
+    });
+
+    fireViewKey(domView, "Enter");
+    await flushDomEffects();
+    expectSel(core, { container: s, item: s, target: DEFAULT_TARGET });
+
+    core.focus({ container: rootId, item: other }, VALUE_TARGET, {
+      caret: caret0(),
+    });
+    await flushDomEffects();
+
+    fireViewKey(domView, "Enter");
+    await flushDomEffects();
+    expectSel(core, { container: rootId, item: other, target: VALUE_TARGET });
+
+    unmount();
+  });
+
 });
