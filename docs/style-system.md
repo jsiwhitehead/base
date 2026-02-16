@@ -13,6 +13,65 @@ This document defines:
 - Focus language (item vs target, container vs edit, control vs editor).
 - Issue language and issue/focus interaction.
 
+## Deep feel and visual language
+
+This section defines the intended deep feel and visual language for the system. These foundations are normative and SHOULD guide all view design and styling decisions.
+
+### Ethos
+
+The system is oriented towards cumulative learning.
+
+- Understanding is treated as revisable, incomplete, and worth preserving.
+- The system aims to strengthen human judgment with care, continuity, and restraint.
+- The system supports thoughtful engagement rather than speed for its own sake.
+
+### Temperament
+
+The system should feel like quiet confidence.
+
+- Calm, patient, trustworthy, steady.
+- Balanced warmth, expressed through craft and restraint (neither cosy nor clinical).
+- The atmosphere of a good notebook, a good workshop bench, a good library desk.
+
+### Cognitive feel
+
+The system is designed to support understanding that can evolve without losing coherence.
+
+- Meaning develops through local context and relationships.
+- Uncertainty and incompleteness are first-class and safe.
+- Revision is expected and supported as normal.
+- Continuity is protected across change and reorganisation.
+- Connections are treated as threads of meaning: closer to citations and cross-references than diagrams, mostly implicit by default and explicitly revealable when needed.
+
+### Interaction feel
+
+The system should feel stable in the hands.
+
+- Predictable: behaviour is consistent across contexts.
+- Steady: navigation and editing feel deliberate rather than reactive.
+- Reversible: change feels safe and recoverable.
+- Coherent in focus: container focus and edit focus are distinct and visually legible.
+
+### Visual grammar
+
+The system uses a small set of stable primitives that remain consistent across views.
+
+- Frame/body separation: structure is expressed in the frame; content is expressed in the body.
+- Rails: structural markers and continuity cues.
+- Header: a compact, contained identity surface for each item.
+- Wash: the primary indicator of container focus.
+- State language: a consistent vocabulary for focus, selection, editability, and issues.
+- Quiet persistence: structure is legible without being loud.
+
+### Material system
+
+The system's surface character is balanced, durable, and readable.
+
+- Surface tone is balanced (neither overly warm nor overly cool).
+- Typography voice is calm and highly readable (neither overly literary nor overly technical).
+- Density sits between airy and compact, with breathing room at structural levels.
+- Warmth comes through craft: rhythm, proportion, restraint, and careful hierarchy.
+
 ## Mental model
 
 ### Frame layer and body layer
@@ -118,7 +177,7 @@ The header is the stable, system-owned identity marker for an item.
 Rules:
 
 - The header MUST remain visually stable across views.
-- The header MUST read as a contained identity capsule.
+- The header MUST read as a single, contained identity surface.
 - The header MUST use subtle fill and legible contrast.
 - The header MUST NOT look like a view-specific widget.
 - The header MUST remain legible independently of body styling
@@ -141,7 +200,7 @@ The rail is the primary structural marker for boundaries and item focus. Each it
 Rules:
 
 - Each item MUST render a rail segment and it MUST NOT behave as a generic card border.
-- Focus and issue styling MUST be local to the item’s own rail segment.
+- Focus and issue styling MUST be local to the item's own rail segment.
 - Rail segments MUST NOT visually merge or bleed across sibling items (the gap must remain visible).
 - Rail segments SHOULD be square-ended at internal joins (the gaps between siblings).
 - Rail segments MAY be rounded only at the outer ends of a contiguous group (first and last segment).

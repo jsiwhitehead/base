@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-Base is a layered TypeScript system for modeling and interacting with grouped, labeled, and connected information through composable views. It provides a Core state/intent model, a shared DOM runtime, and view implementations intended for developers working on the system internals and behavior contracts.
+Base is a layered TypeScript system for modelling and interacting with grouped, labelled, and connected information through composable views, designed to support cumulative understanding through stable structure, safe revision, and coherent interaction.
 
 Work in progress.
 
@@ -35,7 +35,7 @@ bun run format
 - `AGENTS.md`: coding-agent guardrails for safe, repo-consistent changes.
 - `docs/core-api.md`: Core API and state/transaction semantics.
 - `docs/dom-runtime.md`: runtime lifecycle, mounting, and shared controls.
-- `docs/style-system.md`: style tokens and visual-system conventions.
+- `docs/style-system.md`: deep feel, visual grammar, and styling conventions.
 - `docs/views-spec.md`: view behavior and interaction specifics.
 
 ## Common tasks (links-first)
