@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { signal } from "@preact/signals-core";
 
-import type { Component, Focus, Selection, ViewIntent } from "../src/core";
+import type { Component, Focus, ViewIntent } from "../src/core";
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
@@ -18,11 +18,11 @@ import {
 } from "../src/dom";
 
 import {
+  dispatchKey,
   flushDomEffects,
   makeCoreRuntime,
   mkBlank,
   pointerDown,
-  queryTargetInput,
   requireTargetInput,
   setFormula,
   setQuery,
@@ -44,30 +44,6 @@ function spy<T extends unknown[] = unknown[]>() {
   return { fn, calls, count: () => calls.length };
 }
 
-function dispatchKey(
-  target: Element,
-  key: string,
-  opts: Partial<KeyboardEventInit> = {},
-): { defaultPrevented: boolean; bubbled: number } {
-  let bubbled = 0;
-  const onBubble = () => {
-    bubbled += 1;
-  };
-  window.addEventListener("keydown", onBubble);
-
-  const ev = new KeyboardEvent("keydown", {
-    key,
-    bubbles: true,
-    cancelable: true,
-    ...opts,
-  });
-
-  target.dispatchEvent(ev);
-  window.removeEventListener("keydown", onBubble);
-
-  return { defaultPrevented: ev.defaultPrevented, bubbled };
-}
-
 function setInputValueAndFireInput(
   inp: HTMLInputElement | HTMLTextAreaElement,
   value: string,
@@ -76,10 +52,22 @@ function setInputValueAndFireInput(
   inp.dispatchEvent(new InputEvent("input", { bubbles: true }));
 }
 
-function expectFocusedSelection(sel: Selection) {
+function expectFocused(
+  sel: Selection,
+): asserts sel is Extract<Selection, { type: "focused" }> {
   expect(sel.type).toBe("focused");
   if (sel.type !== "focused") throw new Error("Expected focused selection");
-  return sel;
+}
+
+function queryTargetInput(
+  root: ParentNode,
+  target: string,
+): HTMLTextAreaElement | HTMLInputElement | null {
+  const sel = `textarea[data-target="${target}"], input[data-target="${target}"]`;
+  return root.querySelector(sel) as
+    | HTMLTextAreaElement
+    | HTMLInputElement
+    | null;
 }
 
 function connTargetsInHeaderConn(root: ParentNode): string[] {
@@ -408,7 +396,8 @@ describe("bindItemFrame contract", () => {
     pointerDown(frame);
     await flushDomEffects();
 
-    const sel = expectFocusedSelection(core.selection());
+    const sel = core.selection();
+    expectFocused(sel);
     expect(sel.focus).toEqual(focus);
     expect(sel.target).toBe(DEFAULT_TARGET);
     expect(parentSaw.count()).toBe(0);
@@ -1024,7 +1013,8 @@ describe("smoke: container TYPE intent microtask path", () => {
     core.focus(focus, DEFAULT_TARGET);
     await flushDomEffects();
 
-    const sel0 = expectFocusedSelection(core.selection());
+    const sel0 = core.selection();
+    expectFocused(sel0);
     const ok = handleContainerIntent({
       core,
       sel: sel0,
@@ -1038,7 +1028,8 @@ describe("smoke: container TYPE intent microtask path", () => {
     await flushDomEffects();
     await flushDomEffects();
 
-    const sel1 = expectFocusedSelection(core.selection());
+    const sel1 = core.selection();
+    expectFocused(sel1);
     expect(sel1.focus).toEqual(focus);
     expect(sel1.target).toBe(VALUE_TARGET);
 

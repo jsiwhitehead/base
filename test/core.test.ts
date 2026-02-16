@@ -1,25 +1,180 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Transaction } from "../src/core";
+import type { Core, ItemId, Transaction, ViewName } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
 import {
-  assertCoreInvariants,
   childrenOf,
-  expectCommitThrowsNoChange,
   expectSel,
-  groupLabels,
-  isDerivedId,
   makeCoreRuntime,
   mkBlank,
   mkGroup,
-  parseEntryId,
   scalarOfId,
   setFormula,
   setQuery,
   setView,
-  snapshotState,
-  tree,
 } from "./test-utils";
+
+type TreeShape =
+  | {
+      label: string;
+      mode: string;
+      type: "value";
+      value: true | number | string | null;
+    }
+  | { label: string; mode: string; type: "issue"; message: string }
+  | { label: string; mode: string; type: "group"; children: TreeShape[] };
+
+type SelectionSnapshot =
+  | { type: "idle" }
+  | {
+      type: "focused";
+      focus: { container: ItemId; item: ItemId };
+      target: string;
+      caret?: { start: number; end: number };
+    };
+
+type ItemRef = { entryId: number; path: number[] };
+
+function groupLabels(core: Core, id: ItemId): string[] {
+  const item = core.item(id);
+  if (item.content.type !== "group") return [];
+  return item.content.children.map((childId) => core.item(childId).label ?? "");
+}
+
+function tree(core: Core, id: ItemId): TreeShape {
+  const item = core.item(id);
+  const label = item.label ?? "";
+  const mode = item.mode.type;
+  const content = item.content;
+
+  if (content.type === "value")
+    return { label, mode, type: "value", value: content.value };
+  if (content.type === "issue")
+    return { label, mode, type: "issue", message: content.message };
+
+  return {
+    label,
+    mode,
+    type: "group",
+    children: content.children.map((childId) => tree(core, childId)),
+  };
+}
+
+function parseItemId(id: ItemId): ItemRef | null {
+  const i = id.indexOf(":");
+  if (i === -1) return null;
+
+  const head = id.slice(0, i);
+  const rest = id.slice(i + 1);
+
+  const entryId = Number(head);
+  if (!Number.isFinite(entryId)) return null;
+
+  const trimmed = rest.trim();
+  if (!trimmed) return { entryId, path: [] };
+
+  const path = trimmed.split(",").map((p) => Number(p));
+  if (path.some((n) => !Number.isFinite(n))) return null;
+
+  return { entryId, path };
+}
+
+function parseEntryId(id: ItemId): number | null {
+  const ref = parseItemId(id);
+  return ref && ref.path.length === 0 ? ref.entryId : null;
+}
+
+function isDerivedId(id: ItemId): boolean {
+  const ref = parseItemId(id);
+  return !!ref && ref.path.length > 0;
+}
+
+function snapshotSelection(
+  core: Core,
+  opts: { includeCaret?: boolean } = {},
+): SelectionSnapshot {
+  const sel = core.selection();
+  if (sel.type === "idle") return { type: "idle" };
+
+  if (!opts.includeCaret || !sel.caret)
+    return { type: "focused", focus: sel.focus, target: sel.target };
+
+  return {
+    type: "focused",
+    focus: sel.focus,
+    target: sel.target,
+    caret: { start: sel.caret.start, end: sel.caret.end },
+  };
+}
+
+function snapshotState(
+  core: Core,
+  rootId: ItemId,
+  opts: { viewIds?: readonly ItemId[]; includeCaret?: boolean } = {},
+): {
+  tree: TreeShape;
+  selection: SelectionSnapshot;
+  views?: Record<ItemId, ViewName>;
+} {
+  const caretOpts =
+    opts.includeCaret === undefined ? {} : { includeCaret: opts.includeCaret };
+
+  const views =
+    opts.viewIds && opts.viewIds.length
+      ? Object.fromEntries(opts.viewIds.map((id) => [id, core.view(id)]))
+      : undefined;
+
+  return {
+    tree: tree(core, rootId),
+    selection: snapshotSelection(core, caretOpts),
+    ...(views ? { views } : {}),
+  };
+}
+
+function expectCommitThrowsNoChange(
+  core: Core,
+  rootId: ItemId,
+  run: Parameters<Core["commit"]>[0],
+  opts: { viewIds?: readonly ItemId[]; includeCaret?: boolean } = {},
+): void {
+  const before = snapshotState(core, rootId, opts);
+  expect(() => core.commit(run)).toThrow();
+  expect(snapshotState(core, rootId, opts)).toEqual(before);
+}
+
+function assertCoreInvariants(core: Core, rootId: ItemId): void {
+  const seen = new Set<ItemId>();
+  const stack: ItemId[] = [rootId];
+
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const it = core.item(id);
+    const isQuery =
+      it.mode.type === "connected" && it.mode.conn.type === "query";
+
+    if (it.content.type !== "group") continue;
+    for (const childId of it.content.children) {
+      expect(parseItemId(childId)).not.toBeNull();
+
+      if (parseEntryId(childId) != null) {
+        const loc = core.locate(childId);
+        expect(loc).not.toBeNull();
+        if (!loc) throw new Error(`Invariant failed: locate null for ${childId}`);
+
+        if (!isQuery) expect(loc.parentId).toBe(id);
+        expect(loc.index).toBeGreaterThanOrEqual(0);
+        expect(loc.index).toBeLessThan(loc.siblings.length);
+        expect(loc.siblings[loc.index]).toBe(childId);
+        expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
+      }
+
+      stack.push(childId);
+    }
+  }
+}
 
 describe("core/basics", () => {
   test("boot: root exists, is group; selection is focused on root", () => {

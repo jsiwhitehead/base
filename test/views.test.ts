@@ -1,28 +1,124 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Core, Focus, ItemId, ViewName } from "../src/core";
+import type { Core, DomView, Focus, ItemId, ViewIntent, ViewName } from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
 import { caretAt, caret0 } from "../src/dom";
+import { viewRegistrations } from "../src/views";
 
 import {
   childrenOf,
+  dispatchKey,
   expectSel,
   flushDomEffects,
-  fireViewKey,
   makeCoreRuntime,
   mkBlank,
   mkGroup,
-  mountDomView,
   pointerDown,
-  requireFrameEl,
   requireTargetInput,
   scalarOfId,
   setFormula,
   setView,
-  snapshotEl,
-  expectSnapshotSame,
-  viewFactories,
 } from "./test-utils";
+
+const viewFactories = Object.fromEntries(
+  Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),
+) as Record<ViewName, (typeof viewRegistrations)[ViewName]["factory"]>;
+
+function mountDomView(view: DomView): () => void {
+  document.body.replaceChildren(view.root);
+  return () => {
+    view.dispose();
+    document.body.replaceChildren();
+  };
+}
+
+function fireViewKey(
+  view: DomView,
+  key: string,
+  opts?: Partial<KeyboardEventInit>,
+): void {
+  const intent = intentFromKey(key, opts);
+  if (!intent) return;
+  view.onIntent?.(intent);
+}
+
+function intentFromKey(
+  key: string,
+  opts: Partial<KeyboardEventInit> = {},
+): ViewIntent | null {
+  if (key === "Escape") return null;
+  if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
+  if (key === "Enter") return { type: "CONFIRM" };
+  if (key === "Backspace") return { type: "DELETE", dir: "backward" };
+  if (key === "Delete") return { type: "DELETE", dir: "forward" };
+
+  const dir =
+    key === "ArrowLeft"
+      ? "left"
+      : key === "ArrowRight"
+        ? "right"
+        : key === "ArrowUp"
+          ? "up"
+          : key === "ArrowDown"
+            ? "down"
+            : null;
+
+  if (dir) {
+    return {
+      type: "NAV",
+      dir,
+      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
+    };
+  }
+
+  if (!opts.ctrlKey && !opts.metaKey && !opts.altKey && key.length === 1) {
+    return { type: "TYPE", char: key };
+  }
+
+  return null;
+}
+
+function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
+  return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
+}
+
+function requireFrameEl(root: ParentNode, id: ItemId): HTMLElement {
+  const frameEl = findFrameEl(root, id);
+  if (!frameEl) throw new Error(`Missing frame element for id=${String(id)}`);
+  return frameEl;
+}
+
+type ElSnapshot = {
+  el: Element;
+  keyEls: Element[];
+};
+
+function snapshotEl(element: Element, keySelectors: string[] = []): ElSnapshot {
+  const keyEls: Element[] = [];
+  for (const sel of keySelectors) {
+    const hit = (element as ParentNode).querySelector(sel);
+    if (!hit) throw new Error(`Missing key element selector=${sel}`);
+    keyEls.push(hit);
+  }
+  return { el: element, keyEls };
+}
+
+function expectSnapshotSame(
+  snap: ElSnapshot,
+  el0: Element,
+  keySelectors: string[] = [],
+): void {
+  expect(snap.el === el0).toBe(true);
+  if (keySelectors.length !== snap.keyEls.length)
+    throw new Error("Key selector count mismatch");
+
+  for (let i = 0; i < keySelectors.length; i++) {
+    const sel = keySelectors[i]!;
+    const hit = (el0 as ParentNode).querySelector(sel);
+    if (!hit) throw new Error(`Missing key element selector=${sel}`);
+    expect(snap.keyEls[i] === hit).toBe(true);
+  }
+}
 
 async function mountView(args: {
   view: Extract<ViewName, "outline" | "table" | "slider">;
@@ -39,30 +135,6 @@ async function mountView(args: {
   const unmount = mountDomView(domView);
   await flushDomEffects();
   return { domView, unmount };
-}
-
-function dispatchKeyAndCountWindowBubbles(
-  target: Element,
-  key: string,
-  opts: Partial<KeyboardEventInit> = {},
-): { bubbled: number } {
-  let bubbled = 0;
-  const onBubble = () => {
-    bubbled += 1;
-  };
-  window.addEventListener("keydown", onBubble);
-
-  const ev = new KeyboardEvent("keydown", {
-    key,
-    bubbles: true,
-    cancelable: true,
-    ...opts,
-  });
-
-  target.dispatchEvent(ev);
-  window.removeEventListener("keydown", onBubble);
-
-  return { bubbled };
 }
 
 describe("views/outline", () => {
@@ -619,16 +691,10 @@ describe("views/slider", () => {
     ) as HTMLInputElement;
     expect(input).toBeTruthy();
 
-    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowLeft").bubbled).toBe(
-      0,
-    );
-    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowRight").bubbled).toBe(
-      0,
-    );
-    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowUp").bubbled).toBe(0);
-    expect(dispatchKeyAndCountWindowBubbles(input, "ArrowDown").bubbled).toBe(
-      0,
-    );
+    expect(dispatchKey(input, "ArrowLeft").bubbled).toBe(0);
+    expect(dispatchKey(input, "ArrowRight").bubbled).toBe(0);
+    expect(dispatchKey(input, "ArrowUp").bubbled).toBe(0);
+    expect(dispatchKey(input, "ArrowDown").bubbled).toBe(0);
 
     unmount();
   });

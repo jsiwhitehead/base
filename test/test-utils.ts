@@ -4,11 +4,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type {
   Content,
   Core,
-  DomView,
-  Focus,
   ItemId,
   Selection,
-  ViewIntent,
   ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
@@ -50,42 +47,7 @@ export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {
   return content.type === "group" ? content.children : [];
 }
 
-export function groupLabels(core: Core, id: ItemId): string[] {
-  const item = core.item(id);
-  if (item.content.type !== "group") return [];
-  return item.content.children.map((childId) => core.item(childId).label ?? "");
-}
-
-type TreeShape =
-  | {
-      label: string;
-      mode: string;
-      type: "value";
-      value: true | number | string | null;
-    }
-  | { label: string; mode: string; type: "issue"; message: string }
-  | { label: string; mode: string; type: "group"; children: TreeShape[] };
-
-export function tree(core: Core, id: ItemId): TreeShape {
-  const item = core.item(id);
-  const label = item.label ?? "";
-  const mode = item.mode.type;
-  const content = item.content;
-
-  if (content.type === "value")
-    return { label, mode, type: "value", value: content.value };
-  if (content.type === "issue")
-    return { label, mode, type: "issue", message: content.message };
-
-  return {
-    label,
-    mode,
-    type: "group",
-    children: content.children.map((childId) => tree(core, childId)),
-  };
-}
-
-export function expectFocused(
+function expectFocused(
   sel: Selection,
 ): asserts sel is Extract<Selection, { type: "focused" }> {
   expect(sel.type).toBe("focused");
@@ -101,143 +63,6 @@ export function expectSel(
   expect(sel.focus.container).toBe(want.container);
   expect(sel.focus.item).toBe(want.item);
   expect(sel.target).toBe(want.target ?? DEFAULT_TARGET);
-}
-
-export function focusOf(core: Core): Focus {
-  const sel = core.selection();
-  expectFocused(sel);
-  return sel.focus;
-}
-
-type ItemRef = { entryId: number; path: number[] };
-
-function parseItemId(id: ItemId): ItemRef | null {
-  const i = id.indexOf(":");
-  if (i === -1) return null;
-
-  const head = id.slice(0, i);
-  const rest = id.slice(i + 1);
-
-  const entryId = Number(head);
-  if (!Number.isFinite(entryId)) return null;
-
-  const trimmed = rest.trim();
-  if (!trimmed) return { entryId, path: [] };
-
-  const path = trimmed.split(",").map((p) => Number(p));
-  if (path.some((n) => !Number.isFinite(n))) return null;
-
-  return { entryId, path };
-}
-
-export function parseEntryId(id: ItemId): number | null {
-  const ref = parseItemId(id);
-  return ref && ref.path.length === 0 ? ref.entryId : null;
-}
-
-export function isDerivedId(id: ItemId): boolean {
-  const ref = parseItemId(id);
-  return !!ref && ref.path.length > 0;
-}
-
-type SelectionSnapshot =
-  | { type: "idle" }
-  | {
-      type: "focused";
-      focus: { container: ItemId; item: ItemId };
-      target: string;
-      caret?: { start: number; end: number };
-    };
-
-export function snapshotSelection(
-  core: Core,
-  opts: { includeCaret?: boolean } = {},
-): SelectionSnapshot {
-  const sel = core.selection();
-  if (sel.type === "idle") return { type: "idle" };
-
-  if (!opts.includeCaret || !sel.caret)
-    return { type: "focused", focus: sel.focus, target: sel.target };
-
-  return {
-    type: "focused",
-    focus: sel.focus,
-    target: sel.target,
-    caret: { start: sel.caret.start, end: sel.caret.end },
-  };
-}
-
-export function snapshotState(
-  core: Core,
-  rootId: ItemId,
-  opts: { viewIds?: readonly ItemId[]; includeCaret?: boolean } = {},
-): {
-  tree: TreeShape;
-  selection: SelectionSnapshot;
-  views?: Record<ItemId, ViewName>;
-} {
-  const caretOpts =
-    opts.includeCaret === undefined ? {} : { includeCaret: opts.includeCaret };
-
-  const views =
-    opts.viewIds && opts.viewIds.length
-      ? Object.fromEntries(opts.viewIds.map((id) => [id, core.view(id)]))
-      : undefined;
-
-  return {
-    tree: tree(core, rootId),
-    selection: snapshotSelection(core, caretOpts),
-    ...(views ? { views } : {}),
-  };
-}
-
-export function expectCommitThrowsNoChange(
-  core: Core,
-  rootId: ItemId,
-  run: Parameters<Core["commit"]>[0],
-  opts: { viewIds?: readonly ItemId[]; includeCaret?: boolean } = {},
-): void {
-  const before = snapshotState(core, rootId, opts);
-  expect(() => core.commit(run)).toThrow();
-  expect(snapshotState(core, rootId, opts)).toEqual(before);
-}
-
-export function assertCoreInvariants(core: Core, rootId: ItemId): void {
-  const seen = new Set<ItemId>();
-  const stack: ItemId[] = [rootId];
-
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-
-    const it = core.item(id);
-
-    const isQuery =
-      it.mode.type === "connected" && it.mode.conn.type === "query";
-
-    if (it.content.type === "group") {
-      for (const childId of it.content.children) {
-        expect(parseItemId(childId)).not.toBeNull();
-
-        if (parseEntryId(childId) != null) {
-          const loc = core.locate(childId);
-          expect(loc).not.toBeNull();
-          if (!loc)
-            throw new Error(`Invariant failed: locate null for ${childId}`);
-
-          if (!isQuery) expect(loc.parentId).toBe(id);
-          expect(loc.index).toBeGreaterThanOrEqual(0);
-          expect(loc.index).toBeLessThan(loc.siblings.length);
-          expect(loc.siblings[loc.index]).toBe(childId);
-
-          expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
-        }
-
-        stack.push(childId);
-      }
-    }
-  }
 }
 
 export function mkBlank(
@@ -300,81 +125,28 @@ export function setView(core: Core, id: ItemId, view: ViewName | null): void {
   core.commit((t) => t.setView(id, view));
 }
 
-export function mountDomView(view: DomView): () => void {
-  document.body.replaceChildren(view.root);
-
-  const unmount = () => {
-    view.dispose();
-    document.body.replaceChildren();
-  };
-
-  cleanups.push(unmount);
-  return unmount;
-}
-
-export function keyEvent(
+export function dispatchKey(
+  target: Element,
   key: string,
   opts: Partial<KeyboardEventInit> = {},
-): KeyboardEvent {
-  return new KeyboardEvent("keydown", {
+): { defaultPrevented: boolean; bubbled: number } {
+  let bubbled = 0;
+  const onBubble = () => {
+    bubbled += 1;
+  };
+  window.addEventListener("keydown", onBubble);
+
+  const ev = new KeyboardEvent("keydown", {
     key,
     bubbles: true,
     cancelable: true,
     ...opts,
   });
-}
 
-export function fireViewKey(
-  view: DomView,
-  key: string,
-  opts?: Partial<KeyboardEventInit>,
-): void {
-  const intent = intentFromKey(key, opts);
-  if (!intent) return;
-  view.onIntent?.(intent);
-}
+  target.dispatchEvent(ev);
+  window.removeEventListener("keydown", onBubble);
 
-function intentFromKey(
-  key: string,
-  opts: Partial<KeyboardEventInit> = {},
-): ViewIntent | null {
-  if (key === "Escape") return null;
-  if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
-  if (key === "Enter") return { type: "CONFIRM" };
-  if (key === "Backspace") return { type: "DELETE", dir: "backward" };
-  if (key === "Delete") return { type: "DELETE", dir: "forward" };
-
-  const dir =
-    key === "ArrowLeft"
-      ? "left"
-      : key === "ArrowRight"
-        ? "right"
-        : key === "ArrowUp"
-          ? "up"
-          : key === "ArrowDown"
-            ? "down"
-            : null;
-
-  if (dir) {
-    return {
-      type: "NAV",
-      dir,
-      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
-    };
-  }
-
-  if (!opts.ctrlKey && !opts.metaKey && !opts.altKey && key.length === 1) {
-    return { type: "TYPE", char: key };
-  }
-
-  return null;
-}
-
-export function fireWindowKey(
-  key: string,
-  opts?: Partial<KeyboardEventInit>,
-): void {
-  window.dispatchEvent(keyEvent(key, opts));
+  return { defaultPrevented: ev.defaultPrevented, bubbled };
 }
 
 export async function flushDomEffects(turns = 2): Promise<void> {
@@ -383,7 +155,7 @@ export async function flushDomEffects(turns = 2): Promise<void> {
   }
 }
 
-export function queryTargetInput(
+function queryTargetInput(
   root: ParentNode,
   target: string,
 ): HTMLTextAreaElement | HTMLInputElement | null {
@@ -403,54 +175,10 @@ export function requireTargetInput(
   return targetInput;
 }
 
-export function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
-  return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
-}
-
-export function requireFrameEl(root: ParentNode, id: ItemId): HTMLElement {
-  const frameEl = findFrameEl(root, id);
-  if (!frameEl) throw new Error(`Missing frame element for id=${String(id)}`);
-  return frameEl;
-}
-
 export function pointerDown(element: HTMLElement): void {
   element.dispatchEvent(
     new Event("pointerdown", { bubbles: true, cancelable: true }),
   );
-}
-
-export function findPresenterSurface(
-  fromFrameEl: HTMLElement | null,
-): HTMLElement | null {
-  if (!fromFrameEl) return null;
-
-  const directHost = fromFrameEl.parentElement;
-  if (directHost instanceof HTMLElement && directHost !== fromFrameEl)
-    return directHost;
-
-  let cur: HTMLElement | null = fromFrameEl;
-
-  while (cur) {
-    const parent: HTMLElement | null = cur.parentElement;
-    if (!parent) return cur;
-
-    if (parent.classList.contains("ui-frame")) {
-      cur = parent;
-      continue;
-    }
-
-    return parent;
-  }
-
-  return fromFrameEl;
-}
-
-export function requirePresenterSurface(
-  fromFrameEl: HTMLElement | null,
-): HTMLElement {
-  const presenterSurface = findPresenterSurface(fromFrameEl);
-  if (!presenterSurface) throw new Error("Missing presenter surface");
-  return presenterSurface;
 }
 
 export function requireEl<T extends Element>(
@@ -460,86 +188,3 @@ export function requireEl<T extends Element>(
   if (!element) throw new Error(msg);
   return element;
 }
-
-export function nodeOrderByDataId(
-  root: ParentNode,
-  selector: string,
-): string[] {
-  const els = [...root.querySelectorAll(selector)] as HTMLElement[];
-  return els.map((e) => e.dataset.id ?? "");
-}
-
-export function requireFocusedFrameEl(root: ParentNode): HTMLElement {
-  const focusedFrameEl = root.querySelector(
-    `.ui-frame.is-focused`,
-  ) as HTMLElement | null;
-  if (!focusedFrameEl) throw new Error("Missing focused frame element");
-  return focusedFrameEl;
-}
-
-export function requireNotSameEl(a: Element | null, b: Element | null): void {
-  if (!a || !b) throw new Error("Missing element");
-  expect(a === b).toBe(false);
-}
-
-export function requireSameEl(a: Element | null, b: Element | null): void {
-  if (!a || !b) throw new Error("Missing element");
-  expect(a === b).toBe(true);
-}
-
-export type ElSnapshot = {
-  el: Element;
-  keyEls: Element[];
-};
-
-export function snapshotEl(
-  element: Element,
-  keySelectors: string[] = [],
-): ElSnapshot {
-  const keyEls: Element[] = [];
-  for (const sel of keySelectors) {
-    const hit = (element as ParentNode).querySelector(sel);
-    if (!hit) throw new Error(`Missing key element selector=${sel}`);
-    keyEls.push(hit);
-  }
-  return { el: element, keyEls };
-}
-
-export function expectSnapshotSame(
-  snap: ElSnapshot,
-  el0: Element,
-  keySelectors: string[] = [],
-): void {
-  expect(snap.el === el0).toBe(true);
-
-  if (keySelectors.length !== snap.keyEls.length)
-    throw new Error("Key selector count mismatch");
-
-  for (let i = 0; i < keySelectors.length; i++) {
-    const sel = keySelectors[i]!;
-    const hit = (el0 as ParentNode).querySelector(sel);
-    if (!hit) throw new Error(`Missing key element selector=${sel}`);
-    expect(snap.keyEls[i] === hit).toBe(true);
-  }
-}
-
-export function expectSnapshotKeyChanged(
-  snap: ElSnapshot,
-  el0: Element,
-  keySelector: string,
-): void {
-  expect(snap.el === el0).toBe(true);
-  const hit = (el0 as ParentNode).querySelector(keySelector);
-  if (!hit) throw new Error(`Missing key element selector=${keySelector}`);
-  const anySame = snap.keyEls.some((x) => x === hit);
-  expect(anySame).toBe(false);
-}
-
-export const targets = {
-  DEFAULT: DEFAULT_TARGET,
-};
-
-export const viewFactories = Object.fromEntries(
-  Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),
-) as Record<ViewName, (typeof viewRegistrations)[ViewName]["factory"]>;
-export { viewRegistrations };
