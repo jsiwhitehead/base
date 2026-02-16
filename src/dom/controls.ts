@@ -50,7 +50,7 @@ function prevent(e: Event): void {
 export type NavDir = Extract<ViewIntent, { type: "NAV" }>["dir"];
 export type TextFieldKind = "isolated" | "traversable";
 
-function typeCharIntoFocusedTextInput(text: string): void {
+export function typeCharIntoFocusedTextInput(text: string): void {
   const activeEl = document.activeElement;
   if (
     !(

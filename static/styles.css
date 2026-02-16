@@ -333,6 +333,11 @@
     align-self: flex-start;
   }
 
+  .ui-body.ui-outline .ui-outline-placeholder {
+    opacity: 0.4;
+    font-style: italic;
+  }
+
   .ui-body.ui-table {
     display: table;
     width: 100%;

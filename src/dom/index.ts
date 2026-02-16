@@ -16,4 +16,5 @@ export {
   patchConn,
   resolveFocusAfterRemove,
   getTextForTarget,
+  typeCharIntoFocusedTextInput,
 } from "./controls";

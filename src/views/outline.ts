@@ -36,6 +36,7 @@ import {
   resolveFocusAfterRemove,
   setBodyClasses,
   getTextForTarget,
+  typeCharIntoFocusedTextInput,
 } from "../dom";
 
 type EditPoint = { id: ItemId; target: string };
@@ -46,6 +47,8 @@ type OutlineMountCtx = {
   editPointsSignal: { value: EditPoint[] };
   dispatch: (intent: ViewIntent) => void;
 };
+
+const EMPTY_ROW = "__empty__" as const;
 
 function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
@@ -212,6 +215,14 @@ const cmd = {
     if (item.mode.type !== "connected") return;
     const next = patchConn(item.mode.conn, key, text);
     core.commit((t) => t.setConnected(id, next));
+  },
+
+  insertFirstChild(core: Core, groupId: ItemId): ItemId | null {
+    let id: ItemId = "";
+    core.commit((t) => {
+      id = t.insertChild(groupId, { at: 0 });
+    });
+    return id || null;
   },
 
   insertSibling(
@@ -477,6 +488,22 @@ function buildOutlineScalarBody(
   });
 }
 
+function buildEmptyGroupPlaceholder(
+  mountCtx: OutlineMountCtx,
+  groupId: ItemId,
+): Component {
+  const { core, rootId } = mountCtx;
+  const groupFocus = focusFor(core, rootId, groupId);
+
+  return createComponent(core, (ctx) => {
+    const placeholderEl = el("div", "ui-outline-child ui-outline-placeholder");
+    placeholderEl.textContent = "(empty)";
+    bindItemFrame(ctx, { core, focus: groupFocus }, placeholderEl);
+
+    return placeholderEl;
+  });
+}
+
 function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
   const { core, rootId } = mountCtx;
   const id = focus.item;
@@ -490,15 +517,16 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
       return snap.content.type === "group" ? "group" : "value";
     });
 
-    ctx.list<ItemId>(
+    ctx.list<ItemId | typeof EMPTY_ROW>(
       root,
       () => {
         if (kind.value !== "group") return [];
-        const snap = core.item(id);
-        const c = snap.content;
-        return c.type === "group" ? [...c.children] : [];
+        const kids = childrenOf(core, id);
+        return kids.length > 0 ? [...kids] : [EMPTY_ROW];
       },
       (childId) => {
+        if (childId === EMPTY_ROW)
+          return buildEmptyGroupPlaceholder(mountCtx, id);
         const childFocus = focusFor(core, rootId, childId);
         return buildChildOuterFrame(mountCtx, childFocus, true);
       },
@@ -525,6 +553,27 @@ function createOutlineView(args: {
     const sel0 = core.selection();
     if (sel0.type !== "focused") return;
     const sel = sel0;
+
+    if (
+      (intent.type === "TYPE" || intent.type === "CONFIRM") &&
+      sel.target === DEFAULT_TARGET &&
+      core.item(sel.focus.item).content.type === "group" &&
+      childrenOf(core, sel.focus.item).length === 0
+    ) {
+      const groupId = sel.focus.item;
+      if (core.item(groupId).mode.type === "readonly") return;
+
+      const newId = cmd.insertFirstChild(core, groupId);
+      if (!newId) return;
+
+      const newFocus = focusFor(core, rootId, newId);
+      core.focus(newFocus, VALUE_TARGET, { caret: caret0() });
+
+      if (intent.type === "TYPE") {
+        queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+      }
+      return;
+    }
 
     switch (intent.type) {
       case "TAB": {
