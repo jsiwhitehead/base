@@ -73,9 +73,14 @@ Item view responsibilities:
 
 - Render `.ui-body.<view>` as the body root.
 - Render view-specific structure and controls.
-- Interpret routed intents and translate them into Core operations.
 - Attach body-owned targets only.
 - Item views MUST NOT attach header-owned targets (`label`, `conn:*`).
+
+Intent-handling ownership:
+
+- The outer view handles all container-focus intents and all yielded keys from edit focus.
+- Item views mount the body field and define its input type. For text fields, this means `yieldNav=true` and boundary yielding. For non-text inputs (such as a slider's range input), the native input behavior applies.
+- A view that is only ever used as an item view (like slider) never handles container, label, or conn targets. It only defines behavior for its body-owned targets.
 
 ## Invariants (must / must not)
 
@@ -138,26 +143,97 @@ Shared targets:
 - Frame `pointerdown` MUST capture caret when the hit surface is text-editing content.
 - Editors/controls MUST focus their own target and stop propagation.
 
-### Universal semantics (cross-view)
+### Universal controls model
 
-- `CANCEL` MUST be handled by Core dispatch.
-- `CANCEL` MUST follow the escape ladder: non-default target to `DEFAULT_TARGET`, then blur.
-- `TYPE` from `DEFAULT_TARGET` SHOULD enter the primary edit target and insert typed text via `insertTextIntoActiveEditor(...)` (defined in `docs/dom-runtime.md`).
-- `CONFIRM` from `DEFAULT_TARGET` SHOULD enter the primary edit target, else run structural default action.
-- `NAV` MUST NOT implicitly enter edit mode.
+This section defines the complete keyboard interaction semantics shared across all views. Views inherit these rules and define only their view-specific geometry, traversal scope, and edge behaviors (see `docs/views-spec.md`).
 
-Primary edit target order:
+#### Target classification
 
-1. First `conn:*` field when connected and editable.
-2. Otherwise `value` when plain scalar and editable.
-3. Otherwise none.
+Every focusable surface is one of three kinds:
 
-### Editability and target exposure
+| Kind | Targets | `yieldNav` | In edit traversal | Behavior |
+|---|---|---|---|---|
+| Container | `DEFAULT_TARGET` | n/a | No | Structural commands: navigate, enter edit, delete, tab |
+| Isolated | `label` | `false` | No | Self-contained text editing |
+| Traversable | `conn:*`, `value` | `true` | Yes | Text editing with boundary yielding |
 
-- `readonly` MUST be a hard stop for editing.
-- Mode MUST determine edit targets: `plain` to `value`, `connected` to `conn:*`.
-- `readonly` items MUST expose only `DEFAULT_TARGET`.
-- Derived/output-only bodies MUST NOT expose body edit targets.
+**Container** is the outer shell for structural interaction. **Traversable** targets are for content editing in flow — they yield keys at text boundaries so the outer view can handle traversal and structural actions. **Isolated** targets are for infrequent identity editing — the label field consumes all input locally with two exceptions: Escape bubbles to the Core escape ladder, and Enter commits text and exits to container focus.
+
+#### Edit target list
+
+Every item has an ordered list of traversable edit targets, derived from its mode:
+
+| Item mode | Edit target list |
+|---|---|
+| Connected (formula) | `[conn:expr]` |
+| Connected (query) | `[conn:from, conn:where, conn:orderBy]` |
+| Plain scalar | `[value]` |
+| Readonly or group | `[]` (empty) |
+
+The **primary edit target** is the first entry in this list, or `null` if empty. This determines whether CONFIRM and TYPE from container focus have an edit target to enter.
+
+Readonly items have an empty edit target list. CONFIRM, TYPE, and DELETE from container focus are all no-ops for readonly items.
+
+#### Intent handler ownership
+
+| Target | Owner | Handler |
+|---|---|---|
+| `DEFAULT_TARGET` | Frame | Outer view |
+| `label` | Header | Self-contained (no view handling needed) |
+| `conn:*` | Header | Field yields at boundaries; outer view handles yielded keys |
+| `value` | Body | Item view mounts the field; outer view handles yielded keys |
+
+#### Behaviors from container focus
+
+| Intent | Condition | Behavior |
+|---|---|---|
+| CONFIRM | Primary target exists | Enter edit on primary target, caret at end |
+| CONFIRM | No primary target | No-op |
+| TYPE char | Primary target exists | Enter edit on primary target, select all, insert char |
+| TYPE char | No primary target | No-op |
+| TYPE `=` | Item not a non-empty group | Convert to formula, focus `conn:expr` at start |
+| NAV | Always | Move by view navigation geometry, stay at container focus |
+| TAB | Always | View-specific structural action |
+| DELETE | Item supports remove | Remove item, focus next sibling at container; then previous sibling; then parent. If no destination, blur. |
+| DELETE | Item supports clear | Clear item to blank, stay on same item at container focus |
+| CANCEL | Always | Core escape ladder (blur from container) |
+
+TYPE `=` overwrites existing content and converts the item to a formula-connected item. It is blocked only when the item is a non-empty group, since Core's group conversion rule prevents converting non-empty groups.
+
+NAV and TAB are no-ops when the movement would go beyond the edge of the view's geometry (first item, last item, root parent, childless leaf, etc).
+
+Whether DELETE removes or clears an item is determined by the view. Remove applies to items that are structural participants and can come and go. Clear applies to items that are positional slots in a fixed structure. DELETE is a no-op for readonly items.
+
+#### Behaviors from traversable targets
+
+Traversable fields (`conn:*`, `value`) handle text editing locally. Normal typing, cursor movement, and selection are handled by the native input. When the cursor reaches a text boundary and the user presses a navigation or structural key, the field commits any pending changes, calls `preventDefault`, and lets the event bubble. The outer view then handles the yielded key.
+
+**NAV at boundary**: All four arrow directions collapse to **backward** (left, up) or **forward** (right, down) in a one-dimensional edit traversal. Within a multiline field, up and down move between lines normally and only yield on the first or last line.
+
+When a boundary nav yields:
+
+1. **Intra-item**: if there is an adjacent edit target in the item's edit target list, move to it. Backward places caret at end. Forward places caret at start.
+2. **Inter-item**: if at the edge of the item's edit targets, behavior is view-specific (see `docs/views-spec.md`).
+
+**Enter**: means "commit and advance one edit stop forward." It follows the same two-step resolution as boundary nav:
+
+1. If there is a next edit target in the item's edit target list, move to it with caret at start.
+2. If at the last edit target, behavior is view-specific.
+
+**Tab**: commits and bubbles to the outer view, which performs its standard structural action — the same action as Tab from container focus. The outer view preserves the current target and clamps caret when possible after the structural change.
+
+**Delete at boundary**: Backspace at text start or Delete at text end commits and yields. The outer view decides what to do — behavior is view-specific, default is no-op.
+
+**Escape**: always bubbles to Core. Draft-mode fields cancel the local draft first, then Escape reaches the escape ladder and returns to container focus.
+
+**Live and draft edit models**: Traversable fields use one of two edit models. This affects when Core state updates but does not change controls behavior:
+
+| Model | Used by | Core updates | Enter | Escape |
+|---|---|---|---|---|
+| Live | `value` | Every keystroke | Advance | Exit |
+| Draft | `conn:*` | On commit (Enter, Tab, boundary yield) | Commit, then advance | Cancel draft, then exit |
+
+Draft mode exists because intermediate values of formulas and queries would be invalid. From the user's perspective, all traversable targets behave the same way.
 
 ## Runtime boundary (DOM integration)
 

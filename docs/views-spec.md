@@ -19,35 +19,9 @@ This document covers:
 - Per-view intent handling.
 - Per-view commands, invariants, and styling notes.
 
-## Shared assumptions (from `docs/dom-runtime.md` and `docs/style-system.md`)
+## Shared assumptions
 
-All views in this file inherit these rules:
-
-### Outer view vs item view
-
-- The **outer view** owns the stable `.ui-frame`, rail, header, and mounts the item view body.
-- The **item view** owns the `.ui-body.<view>` subtree and all behavior inside it.
-
-### Target ownership
-
-- `.ui-frame` owns `DEFAULT_TARGET`.
-- `.ui-header` owns:
-  - `label`
-  - `conn:*`
-
-- `.ui-body.<view>` owns:
-  - `value` (when applicable)
-
-### Selection and updates
-
-- Selection-driven updates MUST be styling-only.
-- Frames and mounted bodies MUST NOT be remounted due to selection changes.
-
-### Intent handling
-
-- Views interpret `ViewIntent` (non-`CANCEL`) only when their item is the focused selection.
-- `NAV` MUST NOT implicitly enter edit mode (unless explicitly stated by the view).
-- Inline editors yield to global routing per `docs/dom-runtime.md`.
+All views inherit the universal controls model defined in `docs/architecture.md`, including target classification, edit target lists, container-focus behaviors, traversable-target yielding, and the escape ladder. Shared DOM runtime contracts (`docs/dom-runtime.md`) and visual language (`docs/style-system.md`) also apply.
 
 ## View specification template
 
@@ -56,18 +30,19 @@ Each view section SHOULD follow this structure:
 - Purpose and mental model
 - Body DOM shape
 - Focus surfaces and targets
-- Intent handling
+- View-specific behaviors
 - Commands and state transitions
 - Edge cases and invariants
 - Styling notes
 
-Intent handling SHOULD describe these intents where applicable:
+View-specific behaviors SHOULD define:
 
-- `NAV`
-- `TAB`
-- `CONFIRM`
-- `TYPE`
-- `DELETE`
+- **Navigation geometry**: how NAV moves at container focus.
+- **Tab action**: what Tab does structurally.
+- **Edit traversal scope**: how far the edit target traversal extends across items.
+- **Inter-item edge behavior**: what happens when Enter or boundary NAV overflows an item's edit target list.
+- **DELETE policy**: remove, clear, or no-op, plus any edit-focus refinements.
+- **View-specific exceptions**: split, join, or other behaviors not covered by the universal model.
 
 ## Outline view (`outline`)
 
@@ -144,29 +119,6 @@ Notes:
 - Groups participate in navigation but not in edit traversal.
 - Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/dom-runtime.md`.
 
-### Edit traversal space
-
-Leaf participation:
-
-- Connected items MUST participate as leaf edit nodes.
-- Plain scalar items MUST participate as leaf edit nodes.
-- Groups MUST NOT participate as edit traversal nodes.
-
-Edit stops per leaf:
-
-- Connected leaf: `conn:*` in `fieldsFromConn` order (see `docs/dom-runtime.md`).
-- Plain scalar leaf: `value`.
-- Other kinds: no edit stops.
-
-Traversal order:
-
-- Traversal MUST be depth-first over collected leaf edit stops.
-
-Caret placement policy:
-
-- Backward traversal (`NAV up` / `NAV left`) SHOULD place caret at destination end.
-- Forward traversal (`NAV down` / `NAV right`) SHOULD place caret at destination start.
-
 ### Header visibility policy
 
 Inside `.ui-outline-child`, outline mounts the child header subtree when at least one condition is true:
@@ -175,79 +127,40 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 - Item has connected fields.
 - The `label` target is focused.
 
-### Intent handling
+### View-specific behaviors
 
-Precondition shorthand:
+#### Navigation geometry
 
-- Focused selection: `core.selection().type === "focused"`.
-- Editing: `sel.target !== DEFAULT_TARGET`.
-- Container focus: `sel.target === DEFAULT_TARGET`.
+Hierarchical, depth-first over visible items. At the edges of the tree (root parent, childless leaf, first or last visible item), NAV is a no-op.
 
-#### `NAV` from container focus
+| NAV | From container focus |
+|---|---|
+| Up | Previous visible item |
+| Down | Next visible item |
+| Left | Parent item |
+| Right | First child |
 
-| Intent      | Preconditions            | Action                        | Focus result                     |
-| ----------- | ------------------------ | ----------------------------- | -------------------------------- |
-| `NAV left`  | Focused, container focus | Move to parent item           | Focus parent at `DEFAULT_TARGET` |
-| `NAV right` | Focused, container focus | Move to first child           | Focus child at `DEFAULT_TARGET`  |
-| `NAV up`    | Focused, container focus | Move to previous visible item | Focus item at `DEFAULT_TARGET`   |
-| `NAV down`  | Focused, container focus | Move to next visible item     | Focus item at `DEFAULT_TARGET`   |
+#### Tab action
 
-#### `NAV` while editing
+Nest in (Tab) or nest out (Shift+Tab). Moves the item in the tree hierarchy. Preserves current target and clamps caret to destination text length. No-op when nesting is not possible.
 
-| Intent | Preconditions    | Action                   | Focus result                                         |
-| ------ | ---------------- | ------------------------ | ---------------------------------------------------- |
-| `NAV`  | Focused, editing | Move between edit points | Focus destination target with traversal caret policy |
+#### Edit traversal scope
 
-#### `TYPE`
+Unified across all visible leaf items in depth-first order. Each leaf contributes its edit target list (per `docs/architecture.md`). Groups do not participate. These are concatenated into one continuous sequence of edit stops.
 
-| Intent        | Preconditions                                                       | Action                                   | Focus result                     |
-| ------------- | ------------------------------------------------------------------- | ---------------------------------------- | -------------------------------- |
-| `TYPE "="`    | Focused; container focus or `value`; item is plain scalar and blank | Convert item to formula-connected        | Focus `conn:expr` caret at start |
-| `TYPE <char>` | Focused, container focus                                            | Enter primary edit target and select all | Insert char in microtask         |
+#### Inter-item edge behavior
 
-Primary edit target order:
+Continue to the adjacent leaf's edit target in the unified traversal. Backward moves to the previous leaf's last target with caret at end. Forward moves to the next leaf's first target with caret at start. At the very first or last edit stop in the entire traversal, no-op.
 
-- First `conn:*` if connected.
-- Otherwise `value` if plain scalar.
-- Otherwise none.
+Enter from a plain scalar `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain scalar items, never to `conn:*` fields.
 
-#### `CONFIRM` while editing
+Delete at boundary from a `value` target joins adjacent plain scalar items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join position. Join only applies when both items are plain scalars.
 
-| Intent    | Preconditions                            | Action                             | Focus result                        |
-| --------- | ---------------------------------------- | ---------------------------------- | ----------------------------------- |
-| `CONFIRM` | Focused, editing `value`, caret provided | Split scalar at caret into sibling | Focus new sibling `value` at start  |
-| `CONFIRM` | Focused, editing non-`value` target      | Exit edit                          | Focus same item at `DEFAULT_TARGET` |
+#### DELETE policy
 
-#### `CONFIRM` from container focus
+All outline items use remove. After removing an item, focus the next sibling at container; then previous sibling; then parent. If no destination, blur.
 
-| Intent    | Preconditions                                | Action               | Focus result                       |
-| --------- | -------------------------------------------- | -------------------- | ---------------------------------- |
-| `CONFIRM` | Focused, container focus, edit target exists | Enter edit           | Focus primary target; caret at end |
-| `CONFIRM` | Focused, container focus, no edit target     | Insert sibling after | Focus new sibling `value`          |
-
-#### `TAB` nesting behavior
-
-| Intent      | Preconditions | Action   | Focus result                                         |
-| ----------- | ------------- | -------- | ---------------------------------------------------- |
-| `TAB`       | Focused       | Nest in  | Focus moved item; preserve edit target when possible |
-| `TAB shift` | Focused       | Nest out | Focus moved item; preserve edit target when possible |
-
-Tab focus rules:
-
-- If not editing before tab: remain on `DEFAULT_TARGET`.
-- If editing before tab:
-  - Attempt to preserve same target when valid.
-  - Otherwise exit to `DEFAULT_TARGET`.
-  - Caret SHOULD be clamped to destination text length.
-
-#### `DELETE`
-
-| Intent   | Preconditions                       | Action                  | Focus result                                                           |
-| -------- | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
-| `DELETE` | Container focus                     | Remove item             | Neighbor at `DEFAULT_TARGET`; or blur                                  |
-| `DELETE` | Value focus, empty plain scalar     | Remove item             | Neighbor at `VALUE_TARGET`; caret at end (backward) or start (forward) |
-| `DELETE` | Value focus, non-empty plain scalar | Join text with neighbor | Joined item at `VALUE_TARGET`; caret at join point                     |
-| `DELETE` | Other targets (label, conn)         | No-op                   | Unchanged                                                              |
+When delete-from-`value`-edit-focus removes an empty plain scalar, focus follows the edit traversal rather than the structural neighbor rule: backward (Backspace) focuses the previous item's `value` target with caret at end, forward (Delete) focuses the next item's `value` target with caret at start. If the neighbor has no `value` target, fall back to container focus.
 
 ### Commands and state transitions
 
@@ -268,17 +181,6 @@ Outline-local commands:
 - `in`: wraps item in a new group and moves it inside.
 - `out`: moves item to the wrapper's parent.
 - `out`: unwraps and removes the wrapper only when the wrapper has exactly one child (the moved item).
-
-### Edge cases and invariants
-
-Rules:
-
-- `NAV left` from root MUST no-op.
-- `NAV up/down` MUST use visible depth-first order.
-- `CONFIRM` split MUST apply only to plain scalar values.
-- Join MUST apply only when both items are plain scalars.
-- Removing the last item SHOULD blur selection.
-- Tab indentation SHOULD repair focus by preserving target when possible and clamping caret.
 
 ### Styling notes
 
@@ -368,80 +270,36 @@ Rules:
 - Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
 - Schema header cells SHOULD use `buildItemHeader` to preserve shared header target semantics (see `docs/dom-runtime.md`).
 
-### Intent handling
+### View-specific behaviors
 
-Precondition shorthand:
+#### Navigation geometry
 
-- `tableId`: focused table item id.
-- `rowId`: focused row item id (child of `tableId`).
-- `cellId`: focused cell item id (child of `rowId`).
-- Row container selection:
-  - `sel.focus.container === tableId`
-  - `sel.focus.item === rowId`
-  - `sel.target === DEFAULT_TARGET`
-  - `rowId` is a child of `tableId`
+Grid over rows and cells. Row headers occupy column 0. Column headers occupy row 0. At the edges of the grid (first row, last row, first cell, last cell), NAV is a no-op.
 
-- Cell selection:
-  - `sel.focus.container === rowId`
-  - `sel.focus.item === cellId`
-  - `cellId` is a child of `rowId`
-  - container focus: `sel.target === DEFAULT_TARGET`
-  - edit focus: `sel.target === "value"`
+| NAV | From row container | From cell container |
+|---|---|---|
+| Up | Previous row | Same column, previous row |
+| Down | Next row | Same column, next row |
+| Left | No-op | Previous cell (column 0 exits to row container) |
+| Right | First cell | Next cell |
 
-#### `NAV` from row container focus
+#### Tab action
 
-| Intent      | Preconditions | Action           | Focus result         |
-| ----------- | ------------- | ---------------- | -------------------- |
-| `NAV up`    | Row container | Previous row     | Focus row container  |
-| `NAV down`  | Row container | Next row         | Focus row container  |
-| `NAV right` | Row container | Enter first cell | Focus cell container |
-| `NAV left`  | Row container | No-op            | Unchanged            |
+Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows. From row container, Tab enters the first cell and Shift+Tab is a no-op. Tab from edit focus commits and performs the same cell-to-cell movement, landing at container focus on the destination.
 
-#### `NAV` from cell container focus
+#### Edit traversal scope
 
-| Intent      | Preconditions  | Action                                      | Focus result      |
-| ----------- | -------------- | ------------------------------------------- | ----------------- |
-| `NAV left`  | Cell container | If col=0: row container; else previous cell | Focus destination |
-| `NAV right` | Cell container | Next cell when present                      | Focus destination |
-| `NAV up`    | Cell container | Same column, previous row                   | Focus destination |
-| `NAV down`  | Cell container | Same column, next row                       | Focus destination |
+Scoped to a single item. The traversal moves through that item's edit targets only.
 
-Rule:
+#### Inter-item edge behavior
 
-- `NAV` MUST NOT enter edit mode.
+Enter commits and moves to the same-column cell in the next row at container focus. If there is no next row, no-op. Boundary NAV at the edge of an item's edit targets is a no-op.
 
-#### `TAB`
+All table operations that cross items — NAV, Tab, and Enter — land at container focus on the destination. Edit is always entered explicitly via CONFIRM or TYPE.
 
-| Intent      | Preconditions  | Action                              | Focus result                         |
-| ----------- | -------------- | ----------------------------------- | ------------------------------------ |
-| `TAB`       | Row container  | Enter first cell                    | Focus first cell container           |
-| `TAB shift` | Row container  | No-op                               | Unchanged                            |
-| `TAB`       | Cell container | Next cell; wrap to next row         | Focus next cell or row container     |
-| `TAB shift` | Cell container | Previous cell; wrap to previous row | Focus previous cell or row container |
+#### DELETE policy
 
-Rule:
-
-- Table tab traversal is positional and MUST NOT enter edit mode.
-
-#### `CONFIRM`
-
-| Intent    | Preconditions           | Action                  | Focus result                                                     |
-| --------- | ----------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `CONFIRM` | Row container           | Insert row after        | Focus new row container                                          |
-| `CONFIRM` | Cell container          | Enter edit              | Focus `value`; caret at end (`caretEnd()`)                       |
-| `CONFIRM` | Cell `value` edit focus | Exit edit and move down | Focus next-row same-col cell container; else same cell container |
-
-#### `TYPE`
-
-| Intent        | Preconditions  | Action                    | Focus result             |
-| ------------- | -------------- | ------------------------- | ------------------------ |
-| `TYPE`        | Row container  | No-op                     | Unchanged                |
-| `TYPE <char>` | Cell container | Enter edit and select all | Insert char in microtask |
-
-#### `DELETE`
-
-- Table currently ignores `DELETE` at the table level.
-- Mounted child views MAY still interpret delete locally.
+Rows use remove. After removing a row, focus the next row at row container, then previous row, then table container. Cells use clear — reset the cell to blank and stay on the same cell at container focus.
 
 ### Commands and state transitions
 
@@ -461,8 +319,6 @@ Rules:
 - When there are no rows, navigation operations SHOULD no-op.
 - Schema row MUST resolve from first row when present.
 - Missing cells relative to `colCount` SHOULD render as empty placeholders.
-- `NAV` and `TAB` MUST remain container-focus operations.
-- `TYPE` SHOULD only enter edit from cell container focus.
 
 ### Styling notes
 
@@ -504,36 +360,15 @@ Rules:
   - `value` (`VALUE_TARGET`) on the `<input type="range">`.
 - Keyboard semantics are interpreted at view level.
 
-### Intent handling
+### View-specific behaviors
 
-#### `CONFIRM`
+Slider is only ever used as an item view, never as an outer view. Its body is a range input rather than a text field.
 
-| Intent    | Preconditions                      | Action                   | Focus result                     |
-| --------- | ---------------------------------- | ------------------------ | -------------------------------- |
-| `CONFIRM` | Focused on slider `DEFAULT_TARGET` | Enter slider value focus | Focus same item `value`          |
-| `CONFIRM` | Focused on slider `value`          | Exit slider value focus  | Focus same item `DEFAULT_TARGET` |
+Arrow keys perform value nudging — the native behavior of a range input. Left and down decrease. Right and up increase. `step` mode nudges by +-1 step. `jump` mode nudges by +-10 steps.
 
-#### `NAV` nudging
+Enter, Tab, and Escape are not consumed by the slider and bubble to the outer view, which handles them through its normal rules. TYPE and DELETE are no-ops.
 
-| Intent      | Preconditions | Action     | Focus result        |
-| ----------- | ------------- | ---------- | ------------------- |
-| `NAV left`  | Always        | Nudge down | Selection unchanged |
-| `NAV down`  | Always        | Nudge down | Selection unchanged |
-| `NAV right` | Always        | Nudge up   | Selection unchanged |
-| `NAV up`    | Always        | Nudge up   | Selection unchanged |
-
-Mode mapping:
-
-- `step` mode SHOULD nudge by `+-1` step.
-- `jump` mode SHOULD nudge by `+-10` steps.
-
-- Pointerdown on the range input SHOULD focus `value` (`VALUE_TARGET`) before native slider interaction.
-
-Ignored intents:
-
-- `TAB`
-- `TYPE`
-- `DELETE`
+Pointerdown on the range input SHOULD focus `value` (`VALUE_TARGET`) before native slider interaction.
 
 ### Commands and state transitions
 
