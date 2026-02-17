@@ -218,6 +218,7 @@ Rules:
 
 - Table item children represent rows.
 - Row item children represent cells.
+- Tables MUST always have at least one row.
 - Navigation follows spreadsheet-like row/column movement.
 - Table distinguishes **container focus** from **cell edit focus**.
 
@@ -316,7 +317,12 @@ All table operations that cross items — NAV, Tab, and Enter — land at contai
 
 #### DELETE policy
 
-Rows use remove. After removing a row, focus the next row at row container, then previous row, then table container. Cells use clear — reset the cell to blank and stay on the same cell at container focus.
+Rows use remove with a last-row special case:
+
+- If the table has more than one row, remove the row. After removing a row, focus the next row at row container, then previous row, then table container.
+- If the row is the last remaining row, remove the whole table item.
+
+Cells use clear — reset the cell to blank and stay on the same cell at container focus.
 
 ### Commands and state transitions
 
