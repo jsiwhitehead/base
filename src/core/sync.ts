@@ -11,6 +11,39 @@ export type ViewConstraint = {
   shapeSync?: true;
 };
 
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
+}
+
+export function contentSatisfiesConstraint(
+  facts: { isGroup: boolean; childCount: number },
+  constraint: ViewConstraint | undefined,
+): boolean {
+  if (!constraint) return true;
+
+  switch (constraint.content) {
+    case "any":
+      break;
+    case "group":
+      if (!facts.isGroup) return false;
+      break;
+    case "value":
+      if (facts.isGroup) return false;
+      break;
+    default:
+      return assertNever(
+        constraint.content,
+        "Unhandled constraint content type",
+      );
+  }
+
+  if (constraint.nonEmpty && facts.isGroup) {
+    return facts.childCount > 0;
+  }
+
+  return true;
+}
+
 export function enforceViewConstraints(
   model: Model,
   constraints: Partial<Record<ViewName, ViewConstraint>>,

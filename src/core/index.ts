@@ -50,7 +50,7 @@ import {
   defaultTextCaret,
 } from "./runtime";
 import type { ViewConstraint } from "./sync";
-import { enforceViewConstraints } from "./sync";
+import { contentSatisfiesConstraint, enforceViewConstraints } from "./sync";
 
 export type ItemId = string;
 
@@ -387,38 +387,6 @@ export function createCore(opts: {
 
   const viewSignalCache = new Map<EntryId, ReadonlySignal<ViewName>>();
 
-  const contentSatisfiesConstraint = (
-    id: ItemId,
-    constraint: ViewConstraint | undefined,
-  ): boolean => {
-    if (!constraint) return true;
-
-    const resolved = item(id);
-    const isGroup = resolved.content.type === "group";
-
-    switch (constraint.content) {
-      case "any":
-        break;
-      case "group":
-        if (!isGroup) return false;
-        break;
-      case "value":
-        if (isGroup) return false;
-        break;
-      default:
-        return assertNever(
-          constraint.content,
-          "Unhandled constraint content type",
-        );
-    }
-
-    if (constraint.nonEmpty && resolved.content.type === "group") {
-      return resolved.content.children.length > 0;
-    }
-
-    return true;
-  };
-
   const view = (id: ItemId): ViewName => {
     const eid = entryIdFromItemId(id);
     if (eid == null) return "outline";
@@ -427,13 +395,20 @@ export function createCore(opts: {
     if (!sig) {
       sig = computed(() => {
         if (!model.hasEntry(eid)) return "outline";
+
         const vk = model.entrySignal(eid).value.view;
-        const wanted = (vk ?? "outline") as ViewName;
-        const hasFactory = !!factories[wanted];
-        if (!hasFactory) return "outline";
-        if (!contentSatisfiesConstraint(itemIdOf(eid), constraints[wanted]))
-          return "outline";
-        return wanted;
+        const wanted = vk && factories[vk] ? vk : "outline";
+        if (wanted === "outline") return "outline";
+
+        const content = item(itemIdOf(eid)).content;
+        const isGroup = content.type === "group";
+
+        return contentSatisfiesConstraint(
+          { isGroup, childCount: isGroup ? content.children.length : 0 },
+          constraints[wanted],
+        )
+          ? wanted
+          : "outline";
       });
       viewSignalCache.set(eid, sig);
     }
