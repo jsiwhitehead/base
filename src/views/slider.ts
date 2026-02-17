@@ -177,7 +177,7 @@ function createSliderView(args: {
         if (sel.focus.item !== id) return;
 
         if (sel.target === VALUE_TARGET) {
-          core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+          core.focus(sel.focus, DEFAULT_TARGET);
           return;
         }
 

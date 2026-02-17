@@ -807,12 +807,13 @@ export function createCore(opts: {
     target: string = DEFAULT_TARGET,
     focusOpts: FocusOpts = {},
   ) => {
+    const shouldApplyCaret = target !== DEFAULT_TARGET && !!focusOpts.caret;
     runtime.setSelection(
       {
         type: "focused",
         focus: nextFocus,
         target,
-        ...(focusOpts.caret ? { caret: focusOpts.caret } : {}),
+        ...(shouldApplyCaret ? { caret: focusOpts.caret } : {}),
       },
       [],
     );
@@ -863,7 +864,6 @@ export function createCore(opts: {
           type: "focused",
           focus: sel.focus,
           target: DEFAULT_TARGET,
-          caret: { start: 0, end: 0 },
         });
         return;
       }

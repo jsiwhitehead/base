@@ -632,7 +632,7 @@ function createOutlineView(args: {
         if (!nextFocus) return;
 
         if (!wasEditing) {
-          core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+          core.focus(nextFocus, DEFAULT_TARGET);
           return;
         }
 
@@ -642,7 +642,7 @@ function createOutlineView(args: {
           : DEFAULT_TARGET;
 
         if (nextTarget === DEFAULT_TARGET) {
-          core.focus(nextFocus, DEFAULT_TARGET, { caret: caret0() });
+          core.focus(nextFocus, DEFAULT_TARGET);
           return;
         }
 
@@ -668,9 +668,7 @@ function createOutlineView(args: {
 
           if (!nextId) return;
 
-          core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET, {
-            caret: caret0(),
-          });
+          core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET);
           return;
         }
 
@@ -706,7 +704,7 @@ function createOutlineView(args: {
             return;
           }
 
-          core.focus(sel.focus, DEFAULT_TARGET, { caret: caret0() });
+          core.focus(sel.focus, DEFAULT_TARGET);
           return;
         }
 

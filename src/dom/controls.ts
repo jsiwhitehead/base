@@ -575,7 +575,7 @@ export function buildItemHeader(
         autosize: true,
         kind: "isolated",
         onExitToContainer: () => {
-          core.focus(args.focus, DEFAULT_TARGET, { caret: caret0() });
+          core.focus(args.focus, DEFAULT_TARGET);
         },
         commit: args.commitLabel,
         getState: () => {

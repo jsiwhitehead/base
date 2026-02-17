@@ -504,15 +504,13 @@ function createTableView(args: {
             return;
           }
 
-          core.focus(selection.focus, DEFAULT_TARGET, { caret: caret0() });
+          core.focus(selection.focus, DEFAULT_TARGET);
           return;
         }
 
         if (isRowContainerSel(selection, tableId)) {
           const newId = cmd.addRowAfter(core, tableId, selection.focus.item);
-          core.focus({ container: tableId, item: newId }, DEFAULT_TARGET, {
-            caret: caret0(),
-          });
+          core.focus({ container: tableId, item: newId }, DEFAULT_TARGET);
           return;
         }
         if (!isCellContainerSel(core, tableId, rows, selection)) return;
