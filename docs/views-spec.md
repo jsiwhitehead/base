@@ -164,15 +164,20 @@ Continue to the adjacent leaf's edit target in the unified traversal. Backward m
 
 Enter from a plain scalar `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain scalar items, never to `conn:*` fields.
 
-Delete at boundary from a `value` target joins adjacent plain scalar items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join position. Join only applies when both items are plain scalars.
+Delete at boundary from a `conn:*` target is a no-op.
+
+Delete at boundary from a `value` target is target-specific:
+
+- If the current text is non-empty, boundary delete joins adjacent plain scalar items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join boundary in the surviving item. Join only applies when both items are plain scalars.
+- If the current text is empty, boundary delete removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
 
 #### DELETE policy
 
-All outline items use remove. After removing an item, focus the next sibling at container; then previous sibling; then parent. If no destination, blur.
+All outline items use remove.
 
-Treat pruning removals as part of the same removal outcome; if pruning also removes the initially-chosen focus destination, apply the same remove-focus resolution again until a surviving destination is found; otherwise blur.
+Container delete removes the subtree and does not explicitly resolve focus in the view; Outline relies on Core anchor-based healing.
 
-When delete-from-`value`-edit-focus removes an empty plain scalar, focus follows the edit traversal rather than the structural neighbor rule: backward (Backspace) focuses the previous item's `value` target with caret at end, forward (Delete) focuses the next item's `value` target with caret at start. If the neighbor has no `value` target, fall back to container focus.
+Structural deletes (container delete, empty-`value` delete, and join removal of the absorbed neighbor) must prune newly-empty ancestor groups in the same commit, stopping at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
 
 ### Commands and state transitions
 
@@ -180,12 +185,12 @@ Outline-local commands:
 
 - `setLabel(id, text)`
 - `setText(id, text)`
-- `setFormula(id)`
 - `commitConnField(id, key, text)`
+- `convertEmptyGroupToValue(id)`
 - `insertSibling(sel, side)`
 - `splitAt(sel, caretStart, caretEnd)`
 - `joinBoundary(sel, dir)`
-- `removeItem(sel, prefer)`
+- `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
 
 `changeNesting(sel, dir)` rules:

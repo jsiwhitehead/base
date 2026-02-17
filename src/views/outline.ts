@@ -31,10 +31,9 @@ import {
   el,
   fieldsFromConn,
   handleContainerIntent,
+  getTextForTarget,
   moveWithinItemEditTargets,
   patchConn,
-  resolveFocusAfterRemove,
-  getTextForTarget,
   SELECT_ALL,
   setBodyClasses,
   typeCharIntoFocusedTextInput,
@@ -67,6 +66,32 @@ function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
 function focusFor(core: Core, rootId: ItemId, id: ItemId): Focus {
   const parentId = parentOf(core, rootId, id);
   return { container: parentId ?? rootId, item: id };
+}
+
+function computePruneAncestorsForRemoval(
+  core: Core,
+  rootId: ItemId,
+  removedId: ItemId,
+): ItemId[] {
+  const out: ItemId[] = [];
+  let cur: ItemId = removedId;
+
+  while (true) {
+    const parentId = parentOf(core, rootId, cur);
+    if (!parentId) break;
+
+    const parent = core.item(parentId);
+    if (parent.mode.type === "readonly") break;
+    if (parent.content.type !== "group") break;
+
+    const kids = parent.content.children;
+    if (kids.length !== 1 || kids[0] !== cur) break;
+
+    out.push(parentId);
+    cur = parentId;
+  }
+
+  return out;
 }
 
 function firstChild(core: Core, id: ItemId): ItemId | null {
@@ -181,22 +206,30 @@ const plan = {
     };
   },
 
-  afterRemoveEmptyValue(
+  adjacentEditStopAfterDeletion(
     core: Core,
-    id: ItemId,
-    prefer: "prev" | "next",
-  ): {
-    siblingId: ItemId | null;
-    fallbackFocus: ReturnType<typeof resolveFocusAfterRemove>;
-  } {
-    const loc = core.locate(id);
-    const siblingId =
-      loc &&
-      (prefer === "prev"
-        ? (loc.siblings[loc.index - 1] ?? loc.siblings[loc.index + 1] ?? null)
-        : (loc.siblings[loc.index + 1] ?? loc.siblings[loc.index - 1] ?? null));
-    const fallbackFocus = resolveFocusAfterRemove(core, id, prefer);
-    return { siblingId: siblingId || null, fallbackFocus };
+    rootId: ItemId,
+    points: readonly EditPoint[],
+    sel: Extract<Selection, { type: "focused" }>,
+    dir: "backward" | "forward",
+  ): { focus: Focus; target: string; caret: Caret } | null {
+    const at = points.findIndex(
+      (p) => p.id === sel.focus.item && p.target === sel.target,
+    );
+    if (at < 0) return null;
+
+    const nextIdx = dir === "backward" ? at - 1 : at + 1;
+    const next = points[nextIdx] ?? null;
+    if (!next) return null;
+
+    const text = getTextForTarget(core, next.id, next.target);
+    const caret = dir === "backward" ? caretAt(text.length) : caret0();
+
+    return {
+      focus: focusFor(core, rootId, next.id),
+      target: next.target,
+      caret,
+    };
   },
 } as const;
 
@@ -218,6 +251,14 @@ const cmd = {
 
   convertEmptyGroupToValue(core: Core, id: ItemId): void {
     core.commit((t) => t.setValue(id, parseValue("")));
+  },
+
+  removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
+    const pruneIds = computePruneAncestorsForRemoval(core, rootId, id);
+    core.commit((t) => {
+      t.remove(id);
+      for (const pruneId of pruneIds) t.remove(pruneId);
+    });
   },
 
   insertSibling(
@@ -279,6 +320,7 @@ const cmd = {
 
   joinBoundary(
     core: Core,
+    rootId: ItemId,
     sel: Extract<Selection, { type: "focused" }>,
     dir: "backward" | "forward",
   ): { id: ItemId; caret: Caret } | null {
@@ -308,10 +350,12 @@ const cmd = {
 
     const leftText = valueToText(leftItem.content.value);
     const rightText = valueToText(rightItem.content.value);
+    const pruneIds = computePruneAncestorsForRemoval(core, rootId, rightId);
 
     core.commit((t) => {
       t.setValue(leftId, parseValue(leftText + rightText));
       t.remove(rightId);
+      for (const pruneId of pruneIds) t.remove(pruneId);
     });
 
     return { id: leftId, caret: caretAt(leftText.length) };
@@ -677,63 +721,24 @@ function createOutlineView(args: {
         return;
       }
       case "DELETE": {
-        const prefer = intent.dir === "backward" ? "prev" : "next";
+        const id = sel.focus.item;
 
         if (sel.target === DEFAULT_TARGET) {
-          const nextFocus = resolveFocusAfterRemove(
-            core,
-            sel.focus.item,
-            prefer,
-          );
-          core.commit((t) => t.remove(sel.focus.item));
-          if (!nextFocus) {
-            core.blur();
-            return;
-          }
-          core.focus(nextFocus.focus, nextFocus.target, {
-            caret: nextFocus.caret,
-          });
+          if (core.item(id).mode.type === "readonly") return;
+          cmd.removeAndPruneAncestors(core, rootId, id);
           return;
         }
 
-        if (sel.target === VALUE_TARGET) {
-          const item = core.item(sel.focus.item);
-          if (!(item.mode.type === "plain" && item.content.type === "value"))
-            return;
+        if (sel.target !== VALUE_TARGET) return;
 
-          if (valueToText(item.content.value).length === 0) {
-            const { siblingId, fallbackFocus } = plan.afterRemoveEmptyValue(
-              core,
-              sel.focus.item,
-              prefer,
-            );
+        const snap = core.item(id);
+        if (!(snap.mode.type === "plain" && snap.content.type === "value"))
+          return;
 
-            core.commit((t) => t.remove(sel.focus.item));
+        const text = valueToText(snap.content.value);
 
-            if (
-              siblingId &&
-              editTargetsForItem(core, siblingId).includes(VALUE_TARGET)
-            ) {
-              const text = getTextForTarget(core, siblingId, VALUE_TARGET);
-              const caret =
-                intent.dir === "backward" ? caretAt(text.length) : caret0();
-              core.focus(focusFor(core, rootId, siblingId), VALUE_TARGET, {
-                caret,
-              });
-              return;
-            }
-
-            if (!fallbackFocus) {
-              core.blur();
-              return;
-            }
-            core.focus(fallbackFocus.focus, fallbackFocus.target, {
-              caret: fallbackFocus.caret,
-            });
-            return;
-          }
-
-          const joined = cmd.joinBoundary(core, sel, intent.dir);
+        if (text.length > 0) {
+          const joined = cmd.joinBoundary(core, rootId, sel, intent.dir);
           if (!joined) return;
           core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
             caret: joined.caret,
@@ -741,6 +746,17 @@ function createOutlineView(args: {
           return;
         }
 
+        const dest = plan.adjacentEditStopAfterDeletion(
+          core,
+          rootId,
+          editPointsSignal.value,
+          sel,
+          intent.dir,
+        );
+
+        cmd.removeAndPruneAncestors(core, rootId, id);
+
+        if (dest) core.focus(dest.focus, dest.target, { caret: dest.caret });
         return;
       }
     }
