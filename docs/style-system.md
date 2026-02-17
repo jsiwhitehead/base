@@ -313,6 +313,14 @@ Rules:
 - Editors MUST NOT receive block-level wash/highlight when active.
 - In the default DOM structure, header-owned targets (`label`, `conn:*`) are treated as controls, and body-owned targets (`value`) are treated as editors.
 
+### Cursor semantics
+
+Rules:
+
+- `.ui-frame` SHOULD use `cursor: pointer` to communicate item interactivity.
+- Text targets MUST use `cursor: text`.
+- Other controls SHOULD use `cursor: pointer`.
+
 ## Issue language
 
 Issue state means a connection is broken or invalid and is persistent, not transient.

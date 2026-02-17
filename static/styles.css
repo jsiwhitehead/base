@@ -20,14 +20,6 @@
   body {
     margin: 0;
   }
-
-  input,
-  button,
-  textarea,
-  select {
-    font: inherit;
-    color: inherit;
-  }
 }
 
 @layer tokens {
@@ -103,8 +95,10 @@
   }
 
   .ui-frame {
-    position: relative;
     min-width: 0;
+    border-radius: var(--ui-radius);
+    background: var(--frame-wash);
+    cursor: pointer;
 
     --accent: var(--ui-color-focus);
     --rail-tint: var(--ui-color-surface);
@@ -114,11 +108,6 @@
 
   .ui-frame:focus {
     outline: none;
-  }
-
-  .ui-frame > * {
-    position: relative;
-    z-index: 1;
   }
 
   .ui-frame.is-focused {
@@ -171,16 +160,6 @@
       var(--ui-color-issue) 18%,
       var(--ui-color-surface) 82%
     );
-  }
-
-  .ui-frame::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: var(--frame-wash);
-    border-radius: var(--ui-radius);
-    pointer-events: none;
-    z-index: 0;
   }
 
   .ui-header {
@@ -236,7 +215,6 @@
   .ui-textfield {
     min-width: 0;
     max-width: 100%;
-    position: relative;
   }
 
   .ui-textfield-input,
@@ -246,9 +224,11 @@
     padding: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    cursor: text;
   }
 
   .ui-textfield-input {
+    color: inherit;
     display: block;
     width: 100%;
     background: transparent;
@@ -256,7 +236,6 @@
     margin: 0;
     resize: none;
     outline: none;
-    border-radius: var(--ui-radius);
   }
 
   .ui-textfield-mirror {
@@ -266,6 +245,7 @@
 
   .ui-textfield:has(.ui-textfield-mirror) {
     display: inline-block;
+    position: relative;
     width: fit-content;
     min-width: 1ch;
   }
@@ -280,6 +260,11 @@
   .ui-header-label .ui-textfield-input:focus,
   .ui-header-conn-val .ui-textfield-input:focus {
     box-shadow: 0 0 0 var(--ui-ring) var(--accent);
+    border-radius: var(--ui-radius);
+  }
+
+  input[type="range"] {
+    cursor: pointer;
   }
 
   input[type="range"]:focus {
@@ -385,7 +370,6 @@
   .ui-table .ui-frame.ui-table-cell {
     position: relative;
     padding-top: calc(var(--ui-rail) + var(--ui-space-gap));
-    min-width: 0;
   }
 
   .ui-table .ui-frame.ui-table-cell::before {
