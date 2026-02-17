@@ -303,6 +303,15 @@ Model:
 - Edit focus: `.ui-frame.is-focused:focus-within:not(:focus)` (wash SHOULD be off; local affordance on `:focus`).
 - Target affordances SHOULD use `:focus`, not `:focus-visible`.
 
+### Root focus indicator
+
+Rules:
+
+- Root container focus MAY use a thin edge rail on `.ui-main`.
+- Root rail color SHOULD use frame-derived `--rail-tint` in both base and focused states.
+- Root container focus MAY use the same wash behavior as focused item frames.
+- Root focus styling MUST stay lightweight and MUST NOT imply item header/card framing.
+
 ### Control focus vs editor focus
 
 Rules:

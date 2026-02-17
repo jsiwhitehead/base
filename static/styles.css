@@ -94,6 +94,23 @@
     min-width: 0;
   }
 
+  .ui-main {
+    --ui-main-rail: 3px;
+    position: relative;
+    padding-left: calc(var(--ui-space-pad) + var(--ui-main-rail));
+  }
+
+  .ui-main::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: var(--ui-main-rail);
+    background: var(--rail-tint);
+    border-radius: var(--ui-rail-radius);
+    pointer-events: none;
+  }
+
   .ui-frame {
     min-width: 0;
     border-radius: var(--ui-radius);
