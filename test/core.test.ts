@@ -10,7 +10,7 @@ import {
   makeCoreRuntime,
   mkBlank,
   mkGroup,
-  parseEntryId,
+  requireCreatedEntryId,
   scalarOfId,
   setFormula,
   setQuery,
@@ -36,8 +36,6 @@ type SelectionSnapshot =
       caret?: { start: number; end: number };
     };
 
-type ItemRef = { entryId: number; path: number[] };
-
 function groupLabels(core: Core, id: ItemId): string[] {
   const item = core.item(id);
   if (item.content.type !== "group") return [];
@@ -61,30 +59,6 @@ function tree(core: Core, id: ItemId): TreeShape {
     type: "group",
     children: content.children.map((childId) => tree(core, childId)),
   };
-}
-
-function parseItemId(id: ItemId): ItemRef | null {
-  const i = id.indexOf(":");
-  if (i === -1) return null;
-
-  const head = id.slice(0, i);
-  const rest = id.slice(i + 1);
-
-  const entryId = Number(head);
-  if (!Number.isFinite(entryId)) return null;
-
-  const trimmed = rest.trim();
-  if (!trimmed) return { entryId, path: [] };
-
-  const path = trimmed.split(",").map((p) => Number(p));
-  if (path.some((n) => !Number.isFinite(n))) return null;
-
-  return { entryId, path };
-}
-
-function isDerivedId(id: ItemId): boolean {
-  const ref = parseItemId(id);
-  return !!ref && ref.path.length > 0;
 }
 
 function snapshotSelection(
@@ -155,20 +129,18 @@ function assertCoreInvariants(core: Core, rootId: ItemId): void {
 
     if (it.content.type !== "group") continue;
     for (const childId of it.content.children) {
-      expect(parseItemId(childId)).not.toBeNull();
-
-      if (parseEntryId(childId) != null) {
-        const loc = core.locate(childId);
-        expect(loc).not.toBeNull();
-        if (!loc)
-          throw new Error(`Invariant failed: locate null for ${childId}`);
-
-        if (!isQuery) expect(loc.parentId).toBe(id);
-        expect(loc.index).toBeGreaterThanOrEqual(0);
-        expect(loc.index).toBeLessThan(loc.siblings.length);
-        expect(loc.siblings[loc.index]).toBe(childId);
-        expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
+      const loc = core.locate(childId);
+      if (!loc) {
+        expect(core.item(childId).mode.type).toBe("readonly");
+        stack.push(childId);
+        continue;
       }
+
+      if (!isQuery) expect(loc.parentId).toBe(id);
+      expect(loc.index).toBeGreaterThanOrEqual(0);
+      expect(loc.index).toBeLessThan(loc.siblings.length);
+      expect(loc.siblings[loc.index]).toBe(childId);
+      expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
 
       stack.push(childId);
     }
@@ -193,7 +165,7 @@ describe("core/basics", () => {
     expect(core.item("not-an-id").content.type).toBe("issue");
   });
 
-  test("item(valid format, missing entry) returns issue (does not throw)", () => {
+  test("item(valid format, missing item) returns issue (does not throw)", () => {
     const { core } = makeCoreRuntime();
 
     expect(core.item("999999:").content.type).toBe("issue");
@@ -306,7 +278,7 @@ describe("core/tree editing", () => {
 });
 
 describe("core/locate", () => {
-  test("locate returns parent/index/siblings for entry children", () => {
+  test("locate returns parent/index/siblings for item children", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const g = mkGroup(core, rootId, { label: "g" });
@@ -321,7 +293,7 @@ describe("core/locate", () => {
     expect(locB!.siblings).toEqual([a, b, c]);
   });
 
-  test("locate returns null for derived ids", () => {
+  test("locate returns null for readonly derived children", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
@@ -337,7 +309,7 @@ describe("core/locate", () => {
       throw new Error("Expected group content");
 
     const child0 = snap.content.children[0]!;
-    expect(isDerivedId(child0)).toBe(true);
+    expect(core.item(child0).mode.type).toBe("readonly");
     expect(core.locate(child0)).toBe(null);
   });
 });
@@ -389,7 +361,7 @@ describe("core/formula", () => {
     expect(core.item(b).content.type).toBe("issue");
   });
 
-  test("formula entry-group materialises derived children which are readonly and not locatable", () => {
+  test("formula group materialises derived children which are readonly and not locatable", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
@@ -407,7 +379,6 @@ describe("core/formula", () => {
     expect(snap.content.children.length).toBe(2);
 
     for (const cid of snap.content.children) {
-      expect(isDerivedId(cid)).toBe(true);
       expect(core.item(cid).mode.type).toBe("readonly");
       expect(core.locate(cid)).toBe(null);
     }
@@ -415,7 +386,7 @@ describe("core/formula", () => {
 });
 
 describe("core/query", () => {
-  test("query filters and sorts rows; supports label/position vars; returns entry ids (not derived)", () => {
+  test("query filters and sorts rows; supports label/position vars; returns locatable item ids", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
@@ -447,7 +418,7 @@ describe("core/query", () => {
         throw new Error("Expected group content");
 
       for (const cid of snap.content.children) {
-        expect(parseEntryId(cid)).not.toBeNull();
+        expect(core.item(cid).mode.type).not.toBe("readonly");
         expect(core.locate(cid)).not.toBeNull();
       }
     }
@@ -511,7 +482,7 @@ describe("core/query", () => {
 });
 
 describe("core/view constraints & rules", () => {
-  test("table constraint coerces table entry to group; rows become group", () => {
+  test("table constraint coerces table item to group; rows become group", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkBlank(core, rootId, { label: "table", value: "x" });
@@ -753,9 +724,11 @@ describe("core/collab (wire contract)", () => {
     deliver(localLast!);
     expect(scalarOfId(core, x)).toBe(3);
 
-    const entryId = parseEntryId(x);
-    expect(entryId).not.toBeNull();
-    if (entryId == null) throw new Error("Expected entry id");
+    const createdTxn = sent.find((txn) =>
+      txn.ops.some((op) => op.type === "create"),
+    );
+    if (!createdTxn) throw new Error("Expected a create transaction");
+    const entryId = requireCreatedEntryId(createdTxn);
 
     const remoteTxn: Transaction = {
       ops: [

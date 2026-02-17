@@ -1,7 +1,14 @@
 import { afterEach, beforeAll, expect } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
-import type { Content, Core, ItemId, Selection, ViewName } from "../src/core";
+import type {
+  Content,
+  Core,
+  ItemId,
+  Selection,
+  Transaction,
+  ViewName,
+} from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
 import { viewRegistrations } from "../src/views";
 
@@ -41,14 +48,15 @@ export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {
   return content.type === "group" ? content.children : [];
 }
 
-export function parseEntryId(id: ItemId): number | null {
-  const i = id.indexOf(":");
-  if (i === -1) return null;
-  const head = id.slice(0, i);
-  const rest = id.slice(i + 1).trim();
-  if (rest.length !== 0) return null;
-  const n = Number(head);
-  return Number.isFinite(n) ? n : null;
+export function requireCreatedEntryId(txn: Transaction): number {
+  const created = txn.ops.filter(
+    (op): op is Extract<Transaction["ops"][number], { type: "create" }> =>
+      op.type === "create",
+  );
+  if (created.length !== 1) {
+    throw new Error(`Expected exactly one create op, got ${created.length}`);
+  }
+  return created[0]!.entry.id;
 }
 
 function expectFocused(

@@ -170,7 +170,7 @@ Every item has an ordered list of traversable edit targets, derived from its mod
 | Plain scalar        | `[value]`                               |
 | Readonly or group   | `[]` (empty)                            |
 
-The **primary edit target** is the first entry in this list, or `null` if empty. This determines whether CONFIRM and TYPE from container focus have an edit target to enter.
+The **primary edit target** is the first target in this list, or `null` if empty. This determines whether CONFIRM and TYPE from container focus have an edit target to enter.
 
 Readonly items have an empty edit target list. CONFIRM, TYPE, and DELETE from container focus are all no-ops for readonly items.
 
@@ -303,7 +303,7 @@ View-specific behavior details belong in `docs/views-spec.md`.
 
 - MUST define exactly one owner (frame/header/body).
 - MUST remain stable under selection changes.
-- MUST not introduce implicit edit entry via navigation.
+- MUST not introduce implicit edit target via navigation.
 
 ### Adding a new editor/control
 

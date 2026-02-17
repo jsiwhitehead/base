@@ -13,8 +13,8 @@ import {
   makeCoreRuntime,
   mkBlank,
   mkGroup,
-  parseEntryId,
   pointerDown,
+  requireCreatedEntryId,
   requireTargetInput,
   scalarOfId,
   setView,
@@ -205,9 +205,7 @@ describe("system/collab + local history", () => {
 
     expect(childrenOf(core, rootId).length).toBe(baselineChildren);
 
-    const entryId = parseEntryId(x);
-    expect(entryId).not.toBeNull();
-    if (entryId == null) throw new Error("Expected entry id");
+    const entryId = requireCreatedEntryId(echo);
 
     onRemote({
       ops: [

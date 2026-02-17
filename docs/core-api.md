@@ -25,6 +25,7 @@ Rules:
 - The root item MUST NOT be removed.
 - Core MUST be the single source of truth for state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
+- Collaboration transactions use the exported `Transaction` wire type (model/entry-level ops), while normal editing APIs remain item-based (`core.commit(...)` and `tx.*`).
 - `createCore` MUST receive a view registration registry used by `core.mountView(...)` and constraint enforcement (it MAY be empty).
 - Each view registration MUST contain a view factory and MAY contain a view constraint.
 - A Core instance owns all state and MUST be explicitly disposed.

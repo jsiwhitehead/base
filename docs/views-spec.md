@@ -434,7 +434,7 @@ A new view specification MUST define:
 
 - Body DOM shape (`.ui-body.<view>`) and stable wrappers.
 - Meaning of `DEFAULT_TARGET` in that view context.
-- Edit-entry behavior from container focus.
+- Edit-target behavior from container focus.
 - Type-to-edit behavior.
 - Yielding behavior from editors (per `docs/dom-runtime.md`).
 - `DELETE` handling (or explicit no-op).

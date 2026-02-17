@@ -125,25 +125,12 @@ PR checklist:
 
 Canonical domain terms (do not invent synonyms):
 
-- item
-- entry
-- content
-- value
-- group
-- issue
-- mode
-- connected
-- focus
-- selection
-- target
-- caret
-- intent
-- view
-- frame
-- header
-- body
-- transaction
-- location
+- entry, item, label, mode, view
+- intent, selection, focus, container, target, caret
+- content, group, value, issue
+- parent, child, sibling, location
+- connected, formula, query
+- frame, header, body
 
 ## Common change patterns (how-tos)
 
