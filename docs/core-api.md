@@ -394,6 +394,7 @@ Views MAY declare structural constraints as part of their registration.
 ```ts
 type ViewConstraint = {
   content: "group" | "value" | "any";
+  nonEmpty?: true;
   children?: {
     content: "group" | "value" | "any";
     viewLocked?: true;
@@ -412,6 +413,7 @@ type ViewRegistration = {
 Constraint meanings:
 
 - `content`: required content shape for the item. `"value"` means non-group.
+- `nonEmpty`: constrained group MUST have at least one direct child.
 - `children.content`: required content shape for direct children of a constrained group.
 - `children.viewLocked`: children MUST have their stored view cleared to `null`.
 - `shapeSync`: direct children MUST share the same labeled column set and order.
@@ -420,8 +422,9 @@ Enforcement rules:
 
 - Constraint enforcement MUST run after every transaction (`commit`, `undo`, `redo`, remote apply).
 - Enforcement MUST only coerce plain items (blank, scalar, group). Connected items (formula, query) MUST NOT be coerced; mismatches are handled at view resolution time (see `core.view(id)`).
-- Content coercion MUST run before children coercion. Children coercion MUST run before shape sync.
+- Content coercion MUST run before non-empty enforcement. Non-empty enforcement MUST run before children coercion. Children coercion MUST run before shape sync.
 - If a content constraint cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
+- If `nonEmpty` is set and the constrained group is empty, enforcement MUST create one direct child.
 - Shape sync MUST elect a leader row, then create missing columns, reorder mismatched columns, and detach excess columns in other rows.
 - Coercion ops MUST be captured for undo/redo.
 

@@ -391,11 +391,32 @@ export function createCore(opts: {
     id: ItemId,
     constraint: ViewConstraint | undefined,
   ): boolean => {
-    if (!constraint || constraint.content === "any") return true;
+    if (!constraint) return true;
+
     const resolved = item(id);
     const isGroup = resolved.content.type === "group";
-    if (constraint.content === "group") return isGroup;
-    return !isGroup;
+
+    switch (constraint.content) {
+      case "any":
+        break;
+      case "group":
+        if (!isGroup) return false;
+        break;
+      case "value":
+        if (isGroup) return false;
+        break;
+      default:
+        return assertNever(
+          constraint.content,
+          "Unhandled constraint content type",
+        );
+    }
+
+    if (constraint.nonEmpty && resolved.content.type === "group") {
+      return resolved.content.children.length > 0;
+    }
+
+    return true;
   };
 
   const view = (id: ItemId): ViewName => {

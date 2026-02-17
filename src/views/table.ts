@@ -27,7 +27,7 @@ import {
 
 type TableSignals = {
   rows: { value: ItemId[] };
-  schemaRowId: { value: ItemId | null };
+  schemaRowId: { value: ItemId };
   colCount: { value: number };
 };
 
@@ -301,41 +301,36 @@ function buildHeader(mountCtx: TableMountCtx): Component {
       (colIdx) =>
         createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-col");
+          const schemaRowId = signals.schemaRowId.value;
+          const cellId = childrenOf(core, schemaRowId)[colIdx]!;
+          const focus: Focus = { container: schemaRowId, item: cellId };
 
-          colCtx.slot(col, () => {
-            const schemaRowId = signals.schemaRowId.value;
-            const cellId = schemaRowId
-              ? (childrenOf(core, schemaRowId)[colIdx] ?? null)
-              : null;
-            if (!schemaRowId || !cellId) return null;
+          const canEditLabel = () => core.item(cellId).mode.type !== "readonly";
 
-            const focus: Focus = { container: schemaRowId, item: cellId };
+          const commitLabel = (text: string) => {
+            if (!canEditLabel()) return;
+            const cur = core.item(cellId).label ?? "";
+            if (cur === text) return;
+            core.commit((t) => t.setLabel(cellId, text));
+          };
 
-            const canEditLabel = () =>
-              core.item(cellId).mode.type !== "readonly";
+          const commitConnField = (key: string, text: string) => {
+            const snap = core.item(cellId);
+            if (snap.mode.type !== "connected") return;
+            const next = patchConn(snap.mode.conn, key, text);
+            core.commit((t) => t.setConnected(cellId, next));
+          };
 
-            const commitLabel = (text: string) => {
-              if (!canEditLabel()) return;
-              const cur = core.item(cellId).label ?? "";
-              if (cur === text) return;
-              core.commit((t) => t.setLabel(cellId, text));
-            };
-
-            const commitConnField = (key: string, text: string) => {
-              const snap = core.item(cellId);
-              if (snap.mode.type !== "connected") return;
-              const next = patchConn(snap.mode.conn, key, text);
-              core.commit((t) => t.setConnected(cellId, next));
-            };
-
-            return buildItemHeader(core, {
+          colCtx.mount(
+            col,
+            buildItemHeader(core, {
               focus,
               id: cellId,
               canEditLabel,
               commitLabel,
               commitConnField,
-            });
-          });
+            }),
+          );
 
           return col;
         }),
@@ -375,31 +370,32 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
     const headerCell = el("div", "ui-table-cell ui-table-header-col");
     row.append(headerCell);
 
-    ctx.slot(headerCell, () => {
-      const canEditLabel = () => core.item(rowId).mode.type !== "readonly";
+    const canEditLabel = () => core.item(rowId).mode.type !== "readonly";
 
-      const commitLabel = (text: string) => {
-        if (!canEditLabel()) return;
-        const cur = core.item(rowId).label ?? "";
-        if (cur === text) return;
-        core.commit((t) => t.setLabel(rowId, text));
-      };
+    const commitLabel = (text: string) => {
+      if (!canEditLabel()) return;
+      const cur = core.item(rowId).label ?? "";
+      if (cur === text) return;
+      core.commit((t) => t.setLabel(rowId, text));
+    };
 
-      const commitConnField = (key: string, text: string) => {
-        const snap = core.item(rowId);
-        if (snap.mode.type !== "connected") return;
-        const next = patchConn(snap.mode.conn, key, text);
-        core.commit((t) => t.setConnected(rowId, next));
-      };
+    const commitConnField = (key: string, text: string) => {
+      const snap = core.item(rowId);
+      if (snap.mode.type !== "connected") return;
+      const next = patchConn(snap.mode.conn, key, text);
+      core.commit((t) => t.setConnected(rowId, next));
+    };
 
-      return buildItemHeader(core, {
+    ctx.mount(
+      headerCell,
+      buildItemHeader(core, {
         focus: { container: tableId, item: rowId },
         id: rowId,
         canEditLabel,
         commitLabel,
         commitConnField,
-      });
-    });
+      }),
+    );
 
     ctx.list<number>(
       row,
@@ -445,11 +441,10 @@ function createTableView(args: {
   const { core, id: tableId } = args;
 
   const rowsSignal = computed(() => rowIds(core, tableId));
-  const schemaRowIdSignal = computed(() => rowsSignal.value[0] ?? null);
-  const colCountSignal = computed(() => {
-    const schemaRowId = schemaRowIdSignal.value;
-    return schemaRowId ? childrenOf(core, schemaRowId).length : 0;
-  });
+  const schemaRowIdSignal = computed(() => rowsSignal.value[0]!);
+  const colCountSignal = computed(() =>
+    childrenOf(core, schemaRowIdSignal.value).length,
+  );
 
   const signals: TableSignals = {
     rows: rowsSignal,
@@ -591,6 +586,7 @@ export const tableView: ViewRegistration = {
   factory: createTableView,
   constraint: {
     content: "group",
+    nonEmpty: true,
     children: { content: "group", viewLocked: true },
     shapeSync: true,
   },

@@ -3,6 +3,7 @@ import { isGroupContent, makeBlankEntry, normalizeLabel } from "./model";
 
 export type ViewConstraint = {
   content: "group" | "value" | "any";
+  nonEmpty?: true;
   children?: {
     content: "group" | "value" | "any";
     viewLocked?: true;
@@ -65,6 +66,22 @@ export function enforceViewConstraints(
   }
 
   if (contentOps.length) applyOps(contentOps);
+
+  const nonEmptyOps: Op[] = [];
+  for (const { id, constraint } of constrained) {
+    if (!constraint.nonEmpty) continue;
+    if (!model.hasEntry(id)) continue;
+
+    const entry = model.peekEntry(id);
+    if (!isGroupContent(entry.content)) continue;
+    if (entry.content.childIds.length > 0) continue;
+
+    const newId = model.createId();
+    nonEmptyOps.push(model.ops.create(makeBlankEntry(newId)));
+    nonEmptyOps.push(model.ops.move({ childId: newId, toParentId: id }));
+  }
+
+  if (nonEmptyOps.length) applyOps(nonEmptyOps);
 
   const childOps: Op[] = [];
   for (const { id, constraint } of constrained) {

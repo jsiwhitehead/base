@@ -608,10 +608,11 @@ describe("views/table", () => {
     setView(core, tableId, "table");
 
     const r1 = mkGroup(core, tableId, { label: "r1" });
-    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
-    core.focus({ container: tableId, item: r1 }, DEFAULT_TARGET);
+    const firstRow = childrenOf(core, tableId)[0]!;
+    core.focus({ container: tableId, item: firstRow }, DEFAULT_TARGET);
 
     const { domView, unmount } = await mountView({
       view: "table",
@@ -621,14 +622,23 @@ describe("views/table", () => {
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r1, target: DEFAULT_TARGET });
+    expectSel(core, {
+      container: tableId,
+      item: firstRow,
+      target: DEFAULT_TARGET,
+    });
 
-    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+    const firstCell = childrenOf(core, firstRow)[0]!;
+    core.focus({ container: firstRow, item: firstCell }, DEFAULT_TARGET);
     await flushDomEffects();
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c11, target: DEFAULT_TARGET });
+    expectSel(core, {
+      container: firstRow,
+      item: firstCell,
+      target: DEFAULT_TARGET,
+    });
 
     unmount();
   });
