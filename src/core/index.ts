@@ -79,6 +79,8 @@ type Item = {
 };
 
 type ItemRef = { entryId: EntryId; path: readonly number[] };
+type RepairAnchorStep = { parentId: EntryId; index: number };
+type RepairAnchor = { steps: readonly RepairAnchorStep[] };
 
 const itemIdOf = (entryId: EntryId, path: readonly number[] = []): ItemId =>
   `${String(entryId)}:${path.length ? path.join(",") : ""}`;
@@ -305,14 +307,67 @@ export function createCore(opts: {
     return model.hasEntry(a) && model.hasEntry(b);
   };
 
-  const repairSelectionAfterDispatch = (meta?: Transaction["meta"]) => {
-    const source = meta?.source;
-    if (source === "remote") {
-      const sel = runtime.selectionSignal.peek();
-      if (!selectionStillValid(sel)) runtime.setSelection({ type: "idle" });
+  const captureRepairAnchor = (): RepairAnchor | null => {
+    const sel = runtime.selectionSignal.peek();
+    if (sel.type !== "focused") return null;
+
+    const leafId =
+      entryIdFromItemId(sel.focus.item) ??
+      entryIdFromItemId(sel.focus.container);
+    if (leafId == null) return null;
+
+    const steps: RepairAnchorStep[] = [];
+    let cur = leafId;
+    while (true) {
+      const loc = model.locateInParent(cur);
+      if (!loc) break;
+      steps.push({ parentId: loc.parentId, index: loc.index });
+      cur = loc.parentId;
+    }
+
+    return { steps };
+  };
+
+  const resolveRepairAnchor = (anchor: RepairAnchor): Focus | null => {
+    for (let i = anchor.steps.length - 1; i >= 0; i--) {
+      const { parentId, index } = anchor.steps[i]!;
+      if (!model.hasEntry(parentId)) continue;
+
+      const siblings = model.childIdsOf(parentId);
+      if (!siblings.length) continue;
+
+      const childId = siblings[index] ?? siblings[index - 1] ?? null;
+      if (childId == null || !model.hasEntry(childId)) continue;
+
+      const id = itemIdOf(childId);
+      return { container: id, item: id };
+    }
+
+    return null;
+  };
+
+  const repairSelectionAfterLocalApply = (
+    anchor: RepairAnchor | null,
+  ): void => {
+    const selNow = runtime.selectionSignal.peek();
+    if (selectionStillValid(selNow)) {
+      runtime.setSelection(selNow);
       return;
     }
-    runtime.setSelection(runtime.selectionSignal.peek());
+
+    if (anchor) {
+      const focus = resolveRepairAnchor(anchor);
+      if (focus) {
+        runtime.setSelection({
+          type: "focused",
+          focus,
+          target: DEFAULT_TARGET,
+        });
+        return;
+      }
+    }
+
+    runtime.setSelection(selNow);
   };
 
   const childrenOfResolved = (base: ItemRef, v: Result): readonly ItemId[] => {
@@ -550,11 +605,13 @@ export function createCore(opts: {
         const constraintRes = applyConstraintOps(res.touched, inverseAcc);
         final = mergeModelApply(final, constraintRes);
 
-        repairSelectionAfterDispatch(txn.meta);
+        const sel = runtime.selectionSignal.peek();
+        if (!selectionStillValid(sel)) runtime.setSelection({ type: "idle" });
 
         return;
       }
 
+      const anchor = captureRepairAnchor();
       const isUser = source === "user";
 
       const { result: userRes, inverseOps: invUser } = applyTxnWithInverse(txn);
@@ -564,7 +621,7 @@ export function createCore(opts: {
       const constraintRes = applyConstraintOps(userRes.touched, inverseAcc);
       final = mergeModelApply(final, constraintRes);
 
-      repairSelectionAfterDispatch(txn.meta);
+      repairSelectionAfterLocalApply(anchor);
 
       if (isUser) {
         const inverse = model.ops.transaction(inverseAcc.toReversed(), {

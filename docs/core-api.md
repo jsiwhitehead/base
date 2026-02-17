@@ -313,11 +313,14 @@ core.blur()
 
 Rules:
 
-- `focus` MUST select an item within a container.
-- If `target` is omitted, Core MUST use `DEFAULT_TARGET`.
-- If `opts` or `opts.caret` is omitted, selection MUST remain focused without a caret.
-- If edits invalidate selection, Core MUST repair selection to a valid state.
 - Selection MUST be the single source of truth for focus state.
+- A focused selection MUST reference existing items, and `focus.item` MUST be within `focus.container`.
+- `core.focus` MUST default `target` to `DEFAULT_TARGET` and MUST apply no caret unless `opts.caret` is provided.
+- After any apply, if selection is invalid, Core MUST repair it.
+- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor, choosing the original sibling slot index at the nearest surviving anchored parent level, otherwise the previous sibling.
+- Local structural repair MUST set selection to `DEFAULT_TARGET` with no caret.
+- If local structural repair cannot produce a valid focus, Core MUST fall back to runtime repair.
+- For remote apply, invalid selection MUST become `idle`.
 
 ## Target binding
 
