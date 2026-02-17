@@ -389,7 +389,7 @@ Rules:
 - Core receives editor key events only when editors/controls allow those events to bubble (yield).
 - Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
 - Core MAY still handle explicit global commands while focus is in native text editors.
-- Core MUST handle root bootstrap navigation globally: when selection is root container focus, `NAV right` focuses the root's first child if one exists.
+- Core MUST handle root bootstrap intents globally. From root container focus, only `NAV right`, `TAB`, `CONFIRM`, and `TYPE` are enabled; each MUST follow the corresponding Outline behavior (`docs/views-spec.md`).
 - View behavior MUST remain intent-driven (semantic), not raw-key driven.
 
 ### View constraints

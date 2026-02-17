@@ -16,7 +16,11 @@ import {
   DEFAULT_TARGET,
   LABEL_TARGET,
   VALUE_TARGET,
+  editTargetsForItem,
+  fieldsFromConn,
+  getTextForTarget,
   parseValue,
+  typeCharIntoFocusedTextInput,
 } from "../core";
 import type { NavDir } from "../dom";
 import {
@@ -27,16 +31,12 @@ import {
   caret0,
   caretAt,
   createComponent,
-  editTargetsForItem,
   el,
-  fieldsFromConn,
   handleContainerIntent,
-  getTextForTarget,
   moveWithinItemEditTargets,
   patchConn,
   SELECT_ALL,
   setBodyClasses,
-  typeCharIntoFocusedTextInput,
 } from "../dom";
 
 type EditPoint = { id: ItemId; target: string };

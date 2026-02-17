@@ -9,13 +9,9 @@ export {
   caret0,
   caretAt,
   caretEnd,
-  editTargetsForItem,
-  fieldsFromConn,
   handleContainerIntent,
   moveWithinItemEditTargets,
   patchConn,
   resolveFocusAfterRemove,
   SELECT_ALL,
-  getTextForTarget,
-  typeCharIntoFocusedTextInput,
 } from "./controls";

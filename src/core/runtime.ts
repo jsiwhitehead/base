@@ -109,6 +109,24 @@ export function defaultTextCaret(
   };
 }
 
+export function typeCharIntoFocusedTextInput(text: string): void {
+  const activeEl = document.activeElement;
+  if (
+    !(
+      activeEl instanceof HTMLInputElement ||
+      activeEl instanceof HTMLTextAreaElement
+    )
+  )
+    return;
+  if (activeEl.readOnly || activeEl.disabled) return;
+
+  const start = activeEl.selectionStart ?? 0;
+  const end = activeEl.selectionEnd ?? start;
+
+  activeEl.setRangeText(text, start, end, "end");
+  activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
+}
+
 function parseKeydownIntent(e: KeyboardEvent): Intent | null {
   if (e.key === "Escape") return { type: "CANCEL" };
   if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };

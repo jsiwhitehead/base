@@ -13,9 +13,13 @@ import type {
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
-  VALUE_TARGET,
   connTarget,
   defaultTextCaret,
+  editTargetsForItem,
+  fieldsFromConn,
+  getTextForTarget,
+  primaryEditTarget,
+  typeCharIntoFocusedTextInput,
 } from "../core";
 import { createComponent, el } from "./base";
 
@@ -23,13 +27,6 @@ type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
 type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
-};
-
-type ConnField = {
-  key: string;
-  label: string;
-  multiline: boolean;
-  text: string;
 };
 
 export const SELECT_ALL: Caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
@@ -49,24 +46,6 @@ function prevent(e: Event): void {
 
 export type NavDir = Extract<ViewIntent, { type: "NAV" }>["dir"];
 export type TextFieldKind = "isolated" | "traversable";
-
-export function typeCharIntoFocusedTextInput(text: string): void {
-  const activeEl = document.activeElement;
-  if (
-    !(
-      activeEl instanceof HTMLInputElement ||
-      activeEl instanceof HTMLTextAreaElement
-    )
-  )
-    return;
-  if (activeEl.readOnly || activeEl.disabled) return;
-
-  const start = activeEl.selectionStart ?? 0;
-  const end = activeEl.selectionEnd ?? start;
-
-  activeEl.setRangeText(text, start, end, "end");
-  activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
 
 function textInput(multiline: boolean): TextInputElement {
   const inputEl = document.createElement(multiline ? "textarea" : "input") as
@@ -374,58 +353,6 @@ export function buildTextField(
   });
 
   return { ...c, focusEl };
-}
-
-export function fieldsFromConn(conn: Connected): ConnField[] {
-  if (conn.type === "formula") {
-    return [
-      { key: "expr", label: "=", multiline: true, text: conn.expr ?? "" },
-    ];
-  }
-  return [
-    { key: "from", label: "~", multiline: false, text: conn.from ?? "" },
-    { key: "where", label: "where:", multiline: true, text: conn.where ?? "" },
-    {
-      key: "orderBy",
-      label: "orderBy:",
-      multiline: true,
-      text: conn.orderBy ?? "",
-    },
-  ];
-}
-
-export function editTargetsForItem(core: Core, id: ItemId): string[] {
-  const item = core.item(id);
-  if (item.mode.type === "connected") {
-    return fieldsFromConn(item.mode.conn).map((field) => connTarget(field.key));
-  }
-  if (item.mode.type === "plain" && item.content.type === "value")
-    return [VALUE_TARGET];
-  return [];
-}
-
-export function primaryEditTarget(core: Core, id: ItemId): string | null {
-  return editTargetsForItem(core, id)[0] ?? null;
-}
-
-export function getTextForTarget(
-  core: Core,
-  id: ItemId,
-  target: string,
-): string {
-  const item = core.item(id);
-  if (target === VALUE_TARGET) {
-    return item.content.type === "value"
-      ? String(item.content.value ?? "")
-      : "";
-  }
-  if (target === LABEL_TARGET) return item.label ?? "";
-  if (!target.startsWith("conn:") || item.mode.type !== "connected") return "";
-  const key = target.slice("conn:".length);
-  return (
-    fieldsFromConn(item.mode.conn).find((field) => field.key === key)?.text ??
-    ""
-  );
 }
 
 export function clampCaretToText(caret: Caret, text: string): Caret {
