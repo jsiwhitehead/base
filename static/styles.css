@@ -134,7 +134,7 @@
     );
   }
 
-  .ui-frame.is-focused:not(:focus-within) {
+  .ui-frame.is-focused:focus {
     --frame-wash: color-mix(
       in oklch,
       var(--ui-color-bg) 90%,
@@ -142,7 +142,7 @@
     );
   }
 
-  .ui-frame.is-focused:focus-within {
+  .ui-frame.is-focused:focus-within:not(:focus) {
     --frame-wash: transparent;
   }
 

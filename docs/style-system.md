@@ -260,7 +260,7 @@ Rules:
 
 - Item focus MUST be driven by `.is-focused`, not DOM `:focus`/`:focus-within`.
 - Rail/header/wash MUST use frame-derived variables.
-- DOM focus MAY be used only for container vs edit mode (`:focus-within`) and local control affordances (`:focus`).
+- DOM focus MAY be used only for container vs edit mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
 
 ## Focus language
 
@@ -291,13 +291,14 @@ DOM focus is a modifier for the focused item. It MUST NOT determine item focus.
 Signals:
 
 - `.ui-frame.is-focused`: authoritative item focus.
-- `.ui-frame:focus-within`: DOM focus is inside the item.
+- `.ui-frame:focus`: container itself has DOM focus.
+- `.ui-frame:focus-within`: DOM focus is inside the item (including container focus).
 - `input/textarea/select/button:focus`: the active control/editor.
 
 Model:
 
-- Container focus: `.is-focused` and NOT `:focus-within` (wash MAY be on).
-- Edit focus: `.is-focused:focus-within` (wash SHOULD be off; local affordance on `:focus`).
+- Container focus: `.ui-frame.is-focused:focus` (wash MAY be on).
+- Edit focus: `.ui-frame.is-focused:focus-within:not(:focus)` (wash SHOULD be off; local affordance on `:focus`).
 - Target affordances SHOULD use `:focus`, not `:focus-visible`.
 
 ### Control focus vs editor focus
