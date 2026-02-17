@@ -451,6 +451,7 @@ function buildChildOuterFrame(
 
     ctx.slot(frameEl, () => {
       const wanted = core.view(id);
+      if (wanted === "outline") return buildOutlineBody(mountCtx, focus);
       return core.mountView({ id, focus, view: wanted });
     });
 
