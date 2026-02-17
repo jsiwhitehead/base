@@ -497,16 +497,16 @@ export function createModel(): Model {
     orphanedChildren: EntryId[];
   } => {
     if (!entries.has(id)) throw new Error("Unknown entry");
-    if (id === rootId()) throw new Error("Cannot remove root");
 
     const record = entryRecord(id);
     const currentEntry = record.entrySignal.peek();
+    const isRoot = id === rootId();
 
     const parentId = currentEntry.parentId;
     const orphanedChildren: EntryId[] = [];
 
     batch(() => {
-      if (parentId != null) {
+      if (!isRoot && parentId != null) {
         const parent = getGroupEntry(parentId);
         if (!parent) throw new Error("Parent is not a group");
 
@@ -536,10 +536,24 @@ export function createModel(): Model {
         }
       }
 
-      entries.delete(id);
+      if (isRoot) {
+        record.entrySignal.value = {
+          id: currentEntry.id,
+          parentId: null,
+          label: "",
+          view: null,
+          content: { type: "blank" },
+        };
+      } else {
+        entries.delete(id);
+      }
     });
 
-    return { removedId: id, parentTouched: parentId, orphanedChildren };
+    return {
+      removedId: id,
+      parentTouched: isRoot ? null : parentId,
+      orphanedChildren,
+    };
   };
 
   const apply = (txn: Transaction): ApplyResult => {

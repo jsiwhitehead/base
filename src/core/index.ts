@@ -512,6 +512,39 @@ export function createCore(opts: {
         if (!model.hasEntry(id0)) continue;
 
         const cur = model.peekEntry(id0);
+        if (id0 === rootEntryId) {
+          const prev = { label: cur.label, view: cur.view };
+
+          if (isGroupContent(cur.content)) {
+            const childIds = cur.content.childIds.filter((cid) =>
+              model.hasEntry(cid),
+            );
+            inverses.push(
+              model.ops.patch(id0, {
+                ...prev,
+                content: { type: "group", childIds: [] },
+              }),
+            );
+            for (let i = 0; i < childIds.length; i++) {
+              inverses.push(
+                model.ops.move({
+                  childId: childIds[i]!,
+                  toParentId: id0,
+                  toIndex: i,
+                }),
+              );
+            }
+          } else {
+            inverses.push(
+              model.ops.patch(id0, {
+                ...prev,
+                content: cur.content,
+              }),
+            );
+          }
+          continue;
+        }
+
         const parentId = cur.parentId ?? null;
         const loc = model.locateInParent(id0);
         const prevIndex = loc?.index ?? undefined;
