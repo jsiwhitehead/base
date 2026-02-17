@@ -205,19 +205,21 @@ Rules:
 
 ### Rail
 
-The rail is the primary structural marker for boundaries and item focus. Each item renders one rail segment. Views that render groups MUST align sibling rail segments so they read as a continuous rail for the group, separated by small gaps.
+The rail is the primary structural marker for boundaries and item focus. Each item renders one rail segment. Views that render groups MUST align sibling segments so they read as a continuous rail for the group, separated by small gaps.
 
 Rules:
 
 - Each item MUST render a rail segment and it MUST NOT behave as a generic card border.
 - Focus and issue styling MUST be local to the item's own rail segment.
-- Rail segments MUST NOT visually merge or bleed across sibling items (the gap must remain visible).
-- Rail segments SHOULD be square-ended at internal joins (the gaps between siblings).
-- Rail segments MAY be rounded only at the outer ends of a contiguous group (first and last segment).
+- Rail segments MUST NOT merge across siblings (the gap must remain visible).
+- Rail segments SHOULD be square-ended at internal joins (between siblings).
+- Rail segments SHOULD be rounded only at the outer ends of a contiguous group (first and last segment).
+- Implementations SHOULD use structural selectors (`:first-*`, `:last-*`) on the items, not helper classes (for example `is-first`/`is-last`).
 
 Notes:
 
-- Rail overlays (for example a thicker focus overlay) MAY be used if overlays stay local, preserve sibling geometry, and do not remove the inter-item gap.
+- Rail segments may be rendered as pseudo-elements (for example `::before`) or real elements. Both follow the same rounding rules.
+- Rail overlays (for example a thicker focus overlay) MAY be used if overlays stay local, preserve sibling geometry, and keep the inter-item gap visible.
 - Hit targets MAY exceed visible rail width when usability requires it.
 
 ### Wash
@@ -405,11 +407,12 @@ Focus grammar:
 - Container focus = wash on, no local rings.
 - Edit focus = wash off, local ring/caret on active target.
 
-Rail rules:
+Rail rules
 
-- Each item renders a rail segment; group layouts align sibling segments to read as a continuous rail with small gaps.
-- Rail segments are local per item and must not bridge/bleed across sibling gaps.
-- Rail segments are square-ended at internal joins; rounded only at the outer ends of a contiguous group.
+- Each item renders one rail segment.
+- Group layouts align sibling segments into a continuous rail with small gaps.
+- Segments never merge across siblings.
+- Segments are square at internal joins and rounded only at the outer ends of the group.
 
 CSS layering:
 
