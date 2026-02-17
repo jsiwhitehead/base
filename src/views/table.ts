@@ -119,8 +119,6 @@ const plan = {
     sel: Extract<Selection, { type: "focused" }>,
     dir: NavDir,
   ): { focus: Focus; target: string; caret: Caret } | null {
-    if (rows.length === 0) return null;
-
     if (isRowContainerSel(sel, tableId)) {
       const rowId = sel.focus.item;
       const rowIdx = rows.indexOf(rowId);
@@ -188,8 +186,6 @@ const plan = {
     sel: Extract<Selection, { type: "focused" }>,
     shift: boolean,
   ): { focus: Focus; target: string; caret: Caret } | null {
-    if (rows.length === 0) return null;
-
     const dir = shift ? -1 : 1;
 
     if (isRowContainerSel(sel, tableId)) {
@@ -406,9 +402,7 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
         return out;
       },
       (colIdx) => {
-        const cellId = childrenOf(core, rowId)[colIdx] ?? null;
-        if (!cellId)
-          return createComponent(core, () => el("div", "ui-table-cell"));
+        const cellId = childrenOf(core, rowId)[colIdx]!;
         return buildDataCell(core, rowId, cellId);
       },
     );
@@ -442,8 +436,8 @@ function createTableView(args: {
 
   const rowsSignal = computed(() => rowIds(core, tableId));
   const schemaRowIdSignal = computed(() => rowsSignal.value[0]!);
-  const colCountSignal = computed(() =>
-    childrenOf(core, schemaRowIdSignal.value).length,
+  const colCountSignal = computed(
+    () => childrenOf(core, schemaRowIdSignal.value).length,
   );
 
   const signals: TableSignals = {
@@ -534,17 +528,20 @@ function createTableView(args: {
       }
       case "DELETE": {
         if (isRowContainerSel(selection, tableId)) {
-          const nextFocus = resolveFocusAfterRemove(
-            core,
-            selection.focus.item,
-            "next",
-          );
-          cmd.removeRow(core, selection.focus.item);
+          const rows = signals.rows.value;
+          const removingTable = rows.length === 1;
+
+          const removeId = removingTable ? tableId : selection.focus.item;
+          const nextFocus = resolveFocusAfterRemove(core, removeId, "next");
+
+          core.commit((t) => t.remove(removeId));
+
           if (nextFocus)
             core.focus(nextFocus.focus, nextFocus.target, {
               caret: nextFocus.caret,
             });
           else core.blur();
+
           return;
         }
 
