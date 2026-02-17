@@ -3,7 +3,7 @@
 ## Mission and boundaries
 
 - Make minimal, correct, repo-consistent changes.
-- Prefer the smallest viable diff over broad rewrites.
+- Prefer the smallest viable diff and minimum necessary exploration.
 - Do not refactor unless explicitly requested.
 - Do not introduce style churn beyond local tidy passes.
 - Do not invent new public APIs or contracts without explicit direction.
@@ -14,13 +14,13 @@
 - Follow contributor workflow and formatting conventions: `CONTRIBUTING.md`.
 - Keep diffs small, scoped, and reviewable.
 - Do not rename or move files unless required.
-- Avoid widening public entrypoints/contracts without explicit direction.
 - Update the authoritative docs when behavior or contracts change.
 
 ## Before you change anything
 
 - Find an existing local pattern in the nearest module and follow it.
 - Identify the owning layer/module for the change.
+- Do not read all docs by default; open only what is needed for this task.
 - Identify the authoritative docs for the area:
   - Core API and semantics: `docs/core-api.md`
   - DOM runtime and lifecycle: `docs/dom-runtime.md`
@@ -41,7 +41,7 @@
 
 ## After you change something
 
-- Run the canonical validation commands listed in `CONTRIBUTING.md`.
+- Run the relevant subset of canonical validation commands from `CONTRIBUTING.md`, run the full set only when required, and do not guess commands.
 - Confirm no architecture invariant regressions: `docs/architecture.md`.
 - Summarize the change, rationale, and risk areas.
 
