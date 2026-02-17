@@ -128,7 +128,8 @@ Rules:
 
 - CSS SHOULD be structured in a stable layer order.
 - Base layer SHOULD contain shared primitives (including header) when they are stable and minimal.
-- Views SHOULD limit their layer to composition/layout and local affordances.
+- Views SHOULD limit their layer to composition/layout only.
+- Local affordances SHOULD be defined in base primitives; views SHOULD supply structure/classes only.
 
 Recommended order:
 
@@ -168,7 +169,7 @@ Rules:
 - The body MUST remain visually neutral relative to frame-level state language.
 - The body MUST NOT restyle rail or header primitives.
 - The body MUST NOT add container-level wash/ring language.
-- The body MAY add local affordances for active targets.
+- The body MAY host active targets, but local affordance styling SHOULD come from shared base primitives.
 
 ### Header
 
@@ -180,7 +181,7 @@ Rules:
 - The header MUST read as a single, contained identity surface.
 - The header MUST use subtle fill and legible contrast.
 - The header MUST NOT look like a view-specific widget.
-- The header MUST remain legible independently of body styling
+- The header MUST remain legible independently of body styling.
 
 Header content model:
 
@@ -192,6 +193,15 @@ Layout rules:
 - Header placement SHOULD communicate structure (item-level or set-level alignment).
 - The header MUST support `stacked` and `inline` label/conn arrangements.
 - Layout mode MAY switch based on available width.
+
+### Textfield
+
+Textfields are shared primitives used in headers and bodies.
+
+Rules:
+
+- Autosize textfields MAY be implemented using a hidden mirror element.
+- Styling MAY use `:has(.ui-textfield-mirror)` to detect autosize mode if no explicit class is provided.
 
 ### Rail
 
@@ -235,6 +245,7 @@ Rules:
 
 - `.is-issue` MUST override `.is-focused` for derived color decisions.
 - The frame MUST derive canonical variables consumed by primitives.
+- Frame-derived variables SHOULD be defined on `.ui-frame` so nested controls can consume them.
 - Views MUST NOT set frame-derived state colors ad hoc.
 
 Required derived variables:
@@ -247,9 +258,9 @@ Required derived variables:
 
 Rules:
 
-- Visual focus state MUST NOT depend on DOM `:focus` or `:focus-visible`.
-- Rail/header/wash state MUST be driven by `.is-focused` and derived variables.
-- Views MUST NOT treat DOM focus as authoritative item focus.
+- Item focus MUST be driven by `.is-focused`, not DOM `:focus`/`:focus-within`.
+- Rail/header/wash MUST use frame-derived variables.
+- DOM focus MAY be used only for container vs edit mode (`:focus-within`) and local control affordances (`:focus`).
 
 ## Focus language
 
@@ -273,6 +284,22 @@ Rules:
 - Container focus: rail tint active, wash MAY be active, local rings SHOULD be absent.
 - Edit focus (non-default target): rail tint remains active, wash SHOULD be off, local affordance MUST appear on active target.
 
+### How DOM focus is used
+
+DOM focus is a modifier for the focused item. It MUST NOT determine item focus.
+
+Signals:
+
+- `.ui-frame.is-focused`: authoritative item focus.
+- `.ui-frame:focus-within`: DOM focus is inside the item.
+- `input/textarea/select/button:focus`: the active control/editor.
+
+Model:
+
+- Container focus: `.is-focused` and NOT `:focus-within` (wash MAY be on).
+- Edit focus: `.is-focused:focus-within` (wash SHOULD be off; local affordance on `:focus`).
+- Target affordances SHOULD use `:focus`, not `:focus-visible`.
+
 ### Control focus vs editor focus
 
 Rules:
@@ -281,6 +308,7 @@ Rules:
 - Control rings MUST remain local and compatible with issue palette overrides.
 - Editor targets (for example `value`) SHOULD rely on caret/selection, not heavy rings.
 - Editors MUST NOT receive block-level wash/highlight when active.
+- In the default DOM structure, header-owned targets (`label`, `conn:*`) are treated as controls, and body-owned targets (`value`) are treated as editors.
 
 ## Issue language
 
