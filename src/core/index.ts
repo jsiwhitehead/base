@@ -871,6 +871,29 @@ export function createCore(opts: {
       return;
     }
 
+    if (intent.type === "NAV" && intent.dir === "right") {
+      const sel = runtime.selectionSignal.peek();
+      if (
+        sel.type === "focused" &&
+        sel.target === DEFAULT_TARGET &&
+        sel.focus.item === rootId &&
+        sel.focus.container === rootId
+      ) {
+        const rootItem = item(rootId);
+        if (rootItem.content.type === "group") {
+          const firstChildId = rootItem.content.children[0] ?? null;
+          if (firstChildId) {
+            runtime.setSelection({
+              type: "focused",
+              focus: { container: rootId, item: firstChildId },
+              target: DEFAULT_TARGET,
+            });
+            return;
+          }
+        }
+      }
+    }
+
     const onIntent = runtime.getActiveViewOnIntent();
     if (onIntent) onIntent(intent);
   };
