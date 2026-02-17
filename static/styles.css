@@ -340,6 +340,7 @@
   .ui-outline .ui-outline-placeholder {
     opacity: 0.4;
     font-style: italic;
+    color: var(--ui-color-muted);
   }
 
   .ui-table {

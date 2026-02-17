@@ -15,6 +15,7 @@ export {
   moveWithinItemEditTargets,
   patchConn,
   resolveFocusAfterRemove,
+  SELECT_ALL,
   getTextForTarget,
   typeCharIntoFocusedTextInput,
 } from "./controls";

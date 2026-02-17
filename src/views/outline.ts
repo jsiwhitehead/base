@@ -34,8 +34,9 @@ import {
   moveWithinItemEditTargets,
   patchConn,
   resolveFocusAfterRemove,
-  setBodyClasses,
   getTextForTarget,
+  SELECT_ALL,
+  setBodyClasses,
   typeCharIntoFocusedTextInput,
 } from "../dom";
 
@@ -47,8 +48,6 @@ type OutlineMountCtx = {
   editPointsSignal: { value: EditPoint[] };
   dispatch: (intent: ViewIntent) => void;
 };
-
-const EMPTY_ROW = "__empty__" as const;
 
 function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
@@ -217,12 +216,8 @@ const cmd = {
     core.commit((t) => t.setConnected(id, next));
   },
 
-  insertFirstChild(core: Core, groupId: ItemId): ItemId | null {
-    let id: ItemId = "";
-    core.commit((t) => {
-      id = t.insertChild(groupId, { at: 0 });
-    });
-    return id || null;
+  convertEmptyGroupToValue(core: Core, id: ItemId): void {
+    core.commit((t) => t.setValue(id, parseValue("")));
   },
 
   insertSibling(
@@ -489,18 +484,10 @@ function buildOutlineScalarBody(
   });
 }
 
-function buildEmptyGroupPlaceholder(
-  mountCtx: OutlineMountCtx,
-  groupId: ItemId,
-): Component {
-  const { core, rootId } = mountCtx;
-  const groupFocus = focusFor(core, rootId, groupId);
-
-  return createComponent(core, (ctx) => {
-    const placeholderEl = el("div", "ui-outline-child ui-outline-placeholder");
+function buildEmptyGroupPlaceholder(core: Core): Component {
+  return createComponent(core, () => {
+    const placeholderEl = el("div", "ui-outline-placeholder");
     placeholderEl.textContent = "(empty)";
-    bindItemFrame(ctx, { core, focus: groupFocus }, placeholderEl);
-
     return placeholderEl;
   });
 }
@@ -518,24 +505,25 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
       return snap.content.type === "group" ? "group" : "value";
     });
 
-    ctx.list<ItemId | typeof EMPTY_ROW>(
+    const kids = computed<readonly ItemId[]>(() =>
+      kind.value === "group" ? childrenOf(core, id) : [],
+    );
+
+    ctx.list<ItemId>(
       root,
-      () => {
-        if (kind.value !== "group") return [];
-        const kids = childrenOf(core, id);
-        return kids.length > 0 ? [...kids] : [EMPTY_ROW];
-      },
+      () => [...kids.value],
       (childId) => {
-        if (childId === EMPTY_ROW)
-          return buildEmptyGroupPlaceholder(mountCtx, id);
         const childFocus = focusFor(core, rootId, childId);
         return buildChildOuterFrame(mountCtx, childFocus, true);
       },
     );
 
-    ctx.slot(root, () =>
-      kind.value === "value" ? buildOutlineScalarBody(mountCtx, focus) : null,
-    );
+    ctx.slot(root, () => {
+      if (kind.value === "value")
+        return buildOutlineScalarBody(mountCtx, focus);
+      if (kids.value.length === 0) return buildEmptyGroupPlaceholder(core);
+      return null;
+    });
 
     return root;
   });
@@ -556,23 +544,32 @@ function createOutlineView(args: {
     const sel = sel0;
 
     if (
-      (intent.type === "TYPE" || intent.type === "CONFIRM") &&
+      intent.type === "TYPE" &&
+      sel.target === DEFAULT_TARGET &&
+      intent.char === "="
+    ) {
+      const did = handleContainerIntent({ core, sel, intent });
+      if (did) return;
+    }
+
+    if (
       sel.target === DEFAULT_TARGET &&
       core.item(sel.focus.item).content.type === "group" &&
-      childrenOf(core, sel.focus.item).length === 0
+      childrenOf(core, sel.focus.item).length === 0 &&
+      (intent.type === "TYPE" || intent.type === "CONFIRM")
     ) {
       const groupId = sel.focus.item;
       if (core.item(groupId).mode.type === "readonly") return;
 
-      const newId = cmd.insertFirstChild(core, groupId);
-      if (!newId) return;
-
-      const newFocus = focusFor(core, rootId, newId);
-      core.focus(newFocus, VALUE_TARGET, { caret: caret0() });
+      cmd.convertEmptyGroupToValue(core, groupId);
 
       if (intent.type === "TYPE") {
+        core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
         queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+        return;
       }
+
+      core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
       return;
     }
 

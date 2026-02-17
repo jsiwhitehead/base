@@ -500,12 +500,15 @@ export function handleContainerIntent(args: {
     const item = core.item(id);
     const valueText =
       item.content.type === "value" ? String(item.content.value ?? "") : "";
+    const isEmptyPlainValue =
+      item.content.type === "value" && valueText.trim() === "";
+    const isEmptyPlainGroup =
+      item.content.type === "group" && item.content.children.length === 0;
 
     if (
       intent.char === "=" &&
       item.mode.type === "plain" &&
-      item.content.type === "value" &&
-      valueText.trim() === ""
+      (isEmptyPlainValue || isEmptyPlainGroup)
     ) {
       core.commit((t) => t.setConnected(id, { type: "formula", expr: "" }));
       core.focus(sel.focus, connTarget("expr"), { caret: caret0() });

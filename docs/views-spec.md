@@ -55,7 +55,7 @@ Rules:
 - Outline is a lines-of-text editor: scalars are lines, and groups define indentation levels.
 - Items are either `group` containers or scalar leaves (plain `value` or connected `conn:*`).
 - Empty groups are valid Core state, but Outline should not normally show indentation with no lines.
-- Outline uses a placeholder line for empty groups.
+- Outline uses a placeholder for empty groups.
 - Navigation is hierarchical and depth-first over visible items.
 - Editing remains inline in the outline context.
 - Outline defines an edit traversal space across leaf edit targets.
@@ -85,9 +85,8 @@ Structural rules:
 - `.ui-frame.ui-outline-child` instances MUST stay stable per visible child item.
 - `.ui-header` subtree in `.ui-frame.ui-outline-child` MAY mount/unmount by header visibility policy.
 - Mounted child body subtree MAY swap by child view name, but `.ui-frame.ui-outline-child` MUST NOT.
-- When a group has zero children, Outline MUST render one placeholder line as `.ui-frame.ui-outline-child`.
-- The placeholder line focuses the empty group (`DEFAULT_TARGET`), not a child.
-- The placeholder line adds no edit targets.
+- When a group has zero children, Outline MUST render a body-only empty state.
+- Empty-state UI for an empty group MUST NOT be a focus surface and MUST NOT add edit targets.
 
 Notes:
 
@@ -134,14 +133,11 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 
 #### View-specific exceptions
 
-When a group is empty and its placeholder line is focused (container focus on that group):
+When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
 
-- `CONFIRM` MUST call `tx.insertChild(groupId)` and then enter edit on the new child's `value`.
-- `TYPE char` MUST do the same, then apply the typed character into the new child's `value`.
-
-New children created this way start as blank value items.
-
-This is an Outline-specific override of the universal "no primary target => no-op" behavior for groups.
+- `TYPE "="` MUST convert the group to formula and focus `conn:expr` at caret start.
+- `TYPE` with any other character MUST convert the group to blank `value`, focus `value`, and type that character (replace behavior).
+- `CONFIRM` MUST convert the group to blank `value` and focus `value`.
 
 #### Navigation geometry
 
@@ -201,7 +197,7 @@ Outline-local commands:
 ### Edge cases and invariants
 
 - Prune invariant: After any Outline structural edit, Outline MUST NOT leave any newly-empty groups in the edited ancestry; newly-empty groups MUST be removed immediately.
-- Outline MAY still encounter pre-existing empty groups (for example, from other views); these are handled by the placeholder line rule.
+- Outline MAY still encounter pre-existing empty groups (for example, from other views); these are handled by the placeholder rule.
 
 ### Styling notes
 

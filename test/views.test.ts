@@ -158,13 +158,12 @@ describe("views/outline", () => {
     ) as HTMLElement | null;
 
     expect(placeholder).toBeTruthy();
-    expect(placeholder?.classList.contains("ui-frame")).toBe(true);
-    expect(placeholder?.dataset.id).toBe(g);
+    expect(placeholder?.classList.contains("ui-frame")).toBe(false);
 
     unmount();
   });
 
-  test("Enter on empty group inserts first child and enters VALUE", async () => {
+  test("Enter on empty group converts to value and enters VALUE", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
 
@@ -180,15 +179,16 @@ describe("views/outline", () => {
     await flushDomEffects();
 
     const kids = childrenOf(core, g);
-    expect(kids.length).toBe(1);
-    expectSel(core, { container: g, item: kids[0]!, target: VALUE_TARGET });
+    expect(kids.length).toBe(0);
+    expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
+    expect(scalarOfId(core, g)).toBe(null);
 
     requireTargetInput(document.body, VALUE_TARGET);
 
     unmount();
   });
 
-  test("TYPE on empty group inserts first child and types character", async () => {
+  test("TYPE on empty group converts to value and types character", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
 
@@ -204,9 +204,9 @@ describe("views/outline", () => {
     await flushDomEffects(3);
 
     const kids = childrenOf(core, g);
-    expect(kids.length).toBe(1);
-    expectSel(core, { container: g, item: kids[0]!, target: VALUE_TARGET });
-    expect(scalarOfId(core, kids[0]!)).toBe("a");
+    expect(kids.length).toBe(0);
+    expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
+    expect(scalarOfId(core, g)).toBe("a");
 
     unmount();
   });
