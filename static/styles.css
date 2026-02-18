@@ -110,7 +110,6 @@
     width: var(--ui-main-rail);
     background: var(--rail-tint);
     border-radius: var(--ui-rail-radius);
-    pointer-events: none;
   }
 
   .ui-frame {
@@ -327,6 +326,7 @@
     width: var(--ui-rail);
     background: var(--rail-tint);
     border-radius: 0;
+    z-index: 2;
   }
 
   .ui-outline > .ui-outline-child:first-child::before {
@@ -347,7 +347,7 @@
     display: inline-flex;
     align-self: flex-start;
     position: relative;
-    z-index: 2;
+    z-index: 1;
   }
 
   .ui-outline .ui-outline-child > .ui-body {
@@ -436,22 +436,25 @@
 
   .ui-frame.ui-table-cell {
     position: relative;
-    padding-top: calc(var(--ui-rail) + var(--ui-space-gap));
+    padding-top: calc(
+      var(--ui-rail) + var(--ui-space-gap) + var(--ui-space-tight)
+    );
+    padding-bottom: var(--ui-space-tight);
     padding-inline: var(--ui-space-pad);
   }
 
   .ui-frame.ui-table-cell::before {
     content: "";
     position: absolute;
-    left: var(--ui-space-gap);
-    right: var(--ui-space-gap);
+    left: 0;
+    right: 0;
     top: 0;
     height: var(--ui-rail);
     background: var(--rail-tint);
     border-radius: 0;
   }
 
-  .ui-table-row > .ui-frame.ui-table-cell:first-child::before {
+  .ui-table-row > .ui-frame.ui-table-cell:nth-child(2)::before {
     border-top-left-radius: var(--ui-rail-radius);
     border-bottom-left-radius: var(--ui-rail-radius);
   }
@@ -462,30 +465,37 @@
   }
 
   .ui-table-cell.ui-table-header-col {
-    padding-left: var(--ui-space-pad);
+    position: relative;
+    padding-left: var(--ui-rail);
     padding-block: 0;
-    background: var(--rail-tint);
-    border-radius: 0;
+    background: var(--header-fill);
+    border-radius: var(--ui-radius);
   }
 
   .ui-table-inner
     .ui-table-body
     > .ui-table-row:first-child
-    > .ui-table-cell.ui-table-header-col {
-    border-top-left-radius: var(--ui-radius);
-    border-top-right-radius: var(--ui-radius);
+    > .ui-table-cell.ui-table-header-col::before {
+    border-top-left-radius: var(--ui-rail-radius);
+    border-top-right-radius: var(--ui-rail-radius);
   }
 
   .ui-table-inner
     .ui-table-body
     > .ui-table-row:last-child
-    > .ui-table-cell.ui-table-header-col {
-    border-bottom-left-radius: var(--ui-radius);
-    border-bottom-right-radius: var(--ui-radius);
+    > .ui-table-cell.ui-table-header-col::before {
+    border-bottom-left-radius: var(--ui-rail-radius);
+    border-bottom-right-radius: var(--ui-rail-radius);
   }
 
   .ui-table-cell.ui-table-header-col::before {
-    content: none;
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: var(--ui-rail);
+    background: var(--rail-tint);
+    border-radius: 0;
   }
 
   .ui-table-cell > * {
