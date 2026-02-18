@@ -57,7 +57,8 @@
     --ui-color-bg: #fff;
     --ui-color-fg: oklch(23% 0.02 255);
     --ui-color-muted: oklch(46% 0.03 255);
-    --ui-color-surface: oklch(94% 0.01 255);
+    --ui-color-rail: oklch(94% 0.01 255);
+    --ui-color-header: oklch(97.5% 0.01 255);
 
     --ui-color-focus: oklch(62% 0.2 255);
     --ui-color-numeric: oklch(62% 0.2 255);
@@ -119,8 +120,8 @@
     cursor: pointer;
 
     --accent: var(--ui-color-focus);
-    --rail-tint: var(--ui-color-surface);
-    --header-fill: var(--ui-color-surface);
+    --rail-tint: var(--ui-color-rail);
+    --header-fill: var(--ui-color-header);
     --frame-wash: transparent;
     --value-ink: var(--ui-color-fg);
   }
@@ -133,12 +134,12 @@
     --rail-tint: color-mix(
       in oklch,
       var(--accent) 70%,
-      var(--ui-color-surface) 30%
+      var(--ui-color-rail) 30%
     );
     --header-fill: color-mix(
       in oklch,
       var(--accent) 18%,
-      var(--ui-color-surface) 82%
+      var(--ui-color-header) 82%
     );
   }
 
@@ -159,12 +160,12 @@
     --rail-tint: color-mix(
       in oklch,
       var(--ui-color-issue) 35%,
-      var(--ui-color-surface) 65%
+      var(--ui-color-rail) 65%
     );
     --header-fill: color-mix(
       in oklch,
       var(--ui-color-issue) 10%,
-      var(--ui-color-surface) 90%
+      var(--ui-color-header) 90%
     );
   }
 
@@ -172,12 +173,12 @@
     --rail-tint: color-mix(
       in oklch,
       var(--ui-color-issue) 72%,
-      var(--ui-color-surface) 28%
+      var(--ui-color-rail) 28%
     );
     --header-fill: color-mix(
       in oklch,
       var(--ui-color-issue) 18%,
-      var(--ui-color-surface) 82%
+      var(--ui-color-header) 82%
     );
   }
 
@@ -419,7 +420,7 @@
 
   .ui-table-col {
     padding: var(--ui-space-pad);
-    background: var(--ui-color-surface);
+    background: var(--ui-color-header);
     border-radius: var(--ui-radius);
   }
 

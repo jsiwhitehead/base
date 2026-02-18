@@ -119,7 +119,7 @@ Token categories:
   - Spacing (for example `--ui-space-gap`, `--ui-space-pad`).
   - Shape/measure (for example `--ui-radius`, `--ui-ring`).
 - Colors:
-  - Base/surface (for example `--ui-color-bg`, `--ui-color-surface`).
+  - Base/surface and frame neutrals (for example `--ui-color-bg`, `--ui-color-surface`, `--ui-color-rail`, `--ui-color-header`).
   - Semantic state (for example `--ui-color-focus`, `--ui-color-issue`, `--ui-color-numeric`).
 
 ### CSS layering order
@@ -448,6 +448,7 @@ Frame-derived variables:
 - `--header-fill`: header fill.
 - `--frame-wash`: container wash.
 - `--value-ink`: value text ink.
+- Default neutral bases: `--ui-color-rail` for rail tint, `--ui-color-header` for header fill; `--ui-color-surface` remains the generic panel/surface neutral.
 
 Focus grammar:
 
