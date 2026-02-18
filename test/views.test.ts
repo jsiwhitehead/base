@@ -4,8 +4,8 @@ import type {
   Core,
   DomView,
   Focus,
+  Intent,
   ItemId,
-  ViewIntent,
   ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
@@ -22,7 +22,7 @@ import {
   mkGroup,
   pointerDown,
   requireTargetInput,
-  scalarOfId,
+  valueOfId,
   setFormula,
   setView,
 } from "./test-utils";
@@ -52,8 +52,14 @@ function fireViewKey(
 function intentFromKey(
   key: string,
   opts: Partial<KeyboardEventInit> = {},
-): ViewIntent | null {
-  if (key === "Escape") return null;
+): Intent | null {
+  if (key === "Escape") {
+    return {
+      type: "NAV",
+      dir: "out",
+      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
+    };
+  }
   if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
   if (key === "Enter") return { type: "CONFIRM" };
   if (key === "Backspace") return { type: "DELETE", dir: "backward" };
@@ -181,7 +187,7 @@ describe("views/outline", () => {
     const kids = childrenOf(core, g);
     expect(kids.length).toBe(0);
     expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
-    expect(scalarOfId(core, g)).toBe("");
+    expect(valueOfId(core, g)).toBe("");
 
     requireTargetInput(document.body, VALUE_TARGET);
 
@@ -206,7 +212,7 @@ describe("views/outline", () => {
     const kids = childrenOf(core, g);
     expect(kids.length).toBe(0);
     expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
-    expect(scalarOfId(core, g)).toBe("a");
+    expect(valueOfId(core, g)).toBe("a");
 
     unmount();
   });
@@ -357,8 +363,8 @@ describe("views/outline", () => {
     expect(aIdx).toBeGreaterThanOrEqual(0);
 
     const b = kids[aIdx + 1]!;
-    expect(scalarOfId(core, a)).toBe("he");
-    expect(scalarOfId(core, b)).toBe("llo");
+    expect(valueOfId(core, a)).toBe("he");
+    expect(valueOfId(core, b)).toBe("llo");
 
     expectSel(core, { container: rootId, item: b, target: VALUE_TARGET });
 
@@ -384,7 +390,7 @@ describe("views/outline", () => {
     fireViewKey(domView, "Backspace");
     await flushDomEffects();
 
-    expect(scalarOfId(core, a)).toBe("hithere");
+    expect(valueOfId(core, a)).toBe("hithere");
     expect(core.item(b).content.type).toBe("issue");
     expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
 
@@ -641,7 +647,7 @@ describe("views/table", () => {
 
     fireViewKey(domView, "Backspace");
     await flushDomEffects();
-    expect(scalarOfId(core, c11)).toBe(null);
+    expect(valueOfId(core, c11)).toBe(null);
 
     core.focus({ container: tableId, item: r2 }, DEFAULT_TARGET);
     await flushDomEffects();
@@ -786,7 +792,7 @@ describe("views/slider", () => {
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await flushDomEffects();
 
-    expect(scalarOfId(core, s)).toBe(42);
+    expect(valueOfId(core, s)).toBe(42);
 
     unmount();
   });

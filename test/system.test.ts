@@ -16,7 +16,7 @@ import {
   pointerDown,
   requireCreatedEntryId,
   requireTargetInput,
-  scalarOfId,
+  valueOfId,
   setView,
 } from "./test-utils";
 
@@ -145,20 +145,20 @@ describe("system/history across views", () => {
     cInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await flushDomEffects();
 
-    expect(scalarOfId(core, a)).toBe("x2");
-    expect(scalarOfId(core, c11)).toBe("9");
+    expect(valueOfId(core, a)).toBe("x2");
+    expect(valueOfId(core, c11)).toBe("9");
 
     core.undo();
-    expect(scalarOfId(core, c11)).toBe(1);
-    expect(scalarOfId(core, a)).toBe("x2");
+    expect(valueOfId(core, c11)).toBe(1);
+    expect(valueOfId(core, a)).toBe("x2");
 
     core.undo();
-    expect(scalarOfId(core, a)).toBe("x");
+    expect(valueOfId(core, a)).toBe("x");
 
     core.redo();
     core.redo();
-    expect(scalarOfId(core, a)).toBe("x2");
-    expect(scalarOfId(core, c11)).toBe("9");
+    expect(valueOfId(core, a)).toBe("x2");
+    expect(valueOfId(core, c11)).toBe("9");
 
     const sel = core.selection();
     expect(sel.type).toBe("focused");
@@ -220,7 +220,7 @@ describe("system/collab + local history", () => {
 
     await flushDomEffects();
 
-    expect(scalarOfId(core, x)).toBe(7);
+    expect(valueOfId(core, x)).toBe(7);
     expect(requireFrame(document.body, x).isConnected).toBe(true);
 
     unmount();

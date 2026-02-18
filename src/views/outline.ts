@@ -6,10 +6,10 @@ import type {
   Core,
   DomView,
   Focus,
+  Intent,
   ItemId,
   Selection,
   ValueOrBlank,
-  ViewIntent,
   ViewRegistration,
 } from "../core";
 import {
@@ -44,7 +44,7 @@ type OutlineMountCtx = {
   core: Core;
   rootId: ItemId;
   editPointsSignal: { value: EditPoint[] };
-  dispatch: (intent: ViewIntent) => void;
+  dispatch: (intent: Intent) => void;
 };
 
 function valueToText(v: ValueOrBlank): string {
@@ -646,7 +646,7 @@ function createOutlineView(args: {
 
   const editPointsSignal = computed(() => collectEditPoints(core, rootId));
 
-  const dispatch = (intent: ViewIntent): void => {
+  const dispatch = (intent: Intent): void => {
     const sel0 = core.selection();
     if (sel0.type !== "focused") return;
     const sel = sel0;
@@ -720,14 +720,16 @@ function createOutlineView(args: {
       }
       case "NAV": {
         if (sel.target === DEFAULT_TARGET) {
+          const dir = intent.dir === "out" ? "left" : intent.dir;
+
           const fromId = sel.focus.item;
           let nextId: ItemId | null = null;
 
-          if (intent.dir === "left") nextId = parentOf(core, rootId, fromId);
-          else if (intent.dir === "right") nextId = firstChild(core, fromId);
-          else if (intent.dir === "up")
+          if (dir === "left") nextId = parentOf(core, rootId, fromId);
+          else if (dir === "right") nextId = firstChild(core, fromId);
+          else if (dir === "up")
             nextId = plan.prevVisible(core, rootId, fromId);
-          else if (intent.dir === "down")
+          else if (dir === "down")
             nextId = plan.nextVisible(core, rootId, fromId);
 
           if (!nextId) return;

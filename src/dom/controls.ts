@@ -6,9 +6,9 @@ import type {
   Connected,
   Core,
   Focus,
+  Intent,
   ItemId,
   Selection,
-  ViewIntent,
 } from "../core";
 import {
   DEFAULT_TARGET,
@@ -43,7 +43,7 @@ function prevent(e: Event): void {
   e.preventDefault?.();
 }
 
-export type NavDir = Extract<ViewIntent, { type: "NAV" }>["dir"];
+export type NavDir = Extract<Intent, { type: "NAV" }>["dir"];
 export type TextFieldKind = "isolated" | "traversable";
 
 function textInput(multiline: boolean): TextInputElement {
@@ -440,7 +440,7 @@ export function resolveFocusAfterRemove(
 export function handleContainerIntent(args: {
   core: Core;
   sel: Extract<Selection, { type: "focused" }>;
-  intent: Extract<ViewIntent, { type: "CONFIRM" | "TYPE" }>;
+  intent: Extract<Intent, { type: "CONFIRM" | "TYPE" }>;
 }): boolean {
   const { core, sel, intent } = args;
   if (sel.target !== DEFAULT_TARGET) return false;

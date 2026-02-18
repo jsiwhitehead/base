@@ -30,17 +30,17 @@ export function makeCoreRuntime(): { core: Core; rootId: ItemId } {
   return { core, rootId };
 }
 
-export function scalarOf(content: Content): true | number | string | null {
+export function valueOf(content: Content): true | number | string | null {
   if (content.type === "issue") throw new Error(content.message);
   if (content.type === "group") throw new Error("Expected value content");
   return content.value;
 }
 
-export function scalarOfId(
+export function valueOfId(
   core: Core,
   id: ItemId,
 ): true | number | string | null {
-  return scalarOf(core.item(id).content);
+  return valueOf(core.item(id).content);
 }
 
 export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {

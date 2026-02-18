@@ -130,7 +130,7 @@ Shared targets:
 
 - Core MUST own the global `keydown` listener (bubble phase).
 - Core MUST parse keydown events into intents.
-- Core MUST handle global intents first (for example `CANCEL`).
+- Core MUST handle global intents first (for example `NAV/out`).
 - Core MUST route non-global view intents to the active view handler.
 - If Core routes an intent, it MUST call `preventDefault()` on the original DOM event.
 - Native editors (`input`, `textarea`, `contenteditable`) SHOULD handle keydown locally by preserving native behavior and calling `stopPropagation()` so the global handler does not receive the event.
@@ -167,7 +167,7 @@ Every item has an ordered list of traversable edit targets, derived from its mod
 | ------------------- | --------------------------------------- |
 | Connected (formula) | `[conn:expr]`                           |
 | Connected (query)   | `[conn:from, conn:where, conn:orderBy]` |
-| Plain scalar        | `[value]`                               |
+| Plain value         | `[value]`                               |
 | Readonly or group   | `[]` (empty)                            |
 
 The **primary edit target** is the first target in this list, or `null` if empty. This determines whether CONFIRM and TYPE from container focus have an edit target to enter.
@@ -185,18 +185,17 @@ Readonly items have an empty edit target list. CONFIRM, TYPE, and DELETE from co
 
 #### Behaviors from container focus
 
-| Intent    | Condition                  | Behavior                                                                                                   |
-| --------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                                                                 |
-| CONFIRM   | No primary target          | No-op                                                                                                      |
-| TYPE char | Primary target exists      | Enter edit on primary target, select all, insert char                                                      |
-| TYPE char | No primary target          | No-op                                                                                                      |
-| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                                                             |
-| NAV       | Always                     | Move by view navigation geometry, stay at container focus                                                  |
-| TAB       | Always                     | View-specific structural action                                                                            |
-| DELETE    | Item supports remove       | Remove item, focus next sibling at container; then previous sibling; then parent. If no destination, blur. |
-| DELETE    | Item supports clear        | Clear item to blank, stay on same item at container focus                                                  |
-| CANCEL    | Always                     | Core escape ladder (blur from container)                                                                   |
+| Intent    | Condition                  | Behavior                                                                                                                                                              |
+| --------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                                                                                                                            |
+| CONFIRM   | No primary target          | No-op                                                                                                                                                                 |
+| TYPE char | Primary target exists      | Enter edit on primary target, select all, insert char                                                                                                                 |
+| TYPE char | No primary target          | No-op                                                                                                                                                                 |
+| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                                                                                                                        |
+| NAV       | Always                     | Move by view navigation geometry and stay at container focus. Escape maps to NAV/out: exit editing to container focus, then follow root/global/view NAV-out handling. |
+| TAB       | Always                     | View-specific structural action                                                                                                                                       |
+| DELETE    | Item supports remove       | Remove item, focus next sibling at container; then previous sibling; then parent. If no destination, blur.                                                            |
+| DELETE    | Item supports clear        | Clear item to blank, stay on same item at container focus                                                                                                             |
 
 TYPE `=` overwrites existing content and converts the item to a formula-connected item. It is blocked only when the item is a non-empty group, since Core's group conversion rule prevents converting non-empty groups.
 
@@ -224,7 +223,7 @@ When a boundary nav yields:
 
 **Delete at boundary**: Backspace at text start or Delete at text end commits and yields. The outer view decides what to do — behavior is view-specific, default is no-op.
 
-**Escape**: always bubbles to Core. Draft-mode fields cancel the local draft first, then Escape reaches the escape ladder and returns to container focus.
+**Escape**: always bubbles to Core. Draft-mode fields cancel local draft first, then handle Escape as NAV/out: follow global/view NAV-out handling.
 
 **Live and draft edit models**: Traversable fields use one of two edit models. This affects when Core state updates but does not change controls behavior:
 

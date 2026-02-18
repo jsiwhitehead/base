@@ -3,9 +3,9 @@ import type {
   Core,
   DomView,
   Focus,
+  Intent,
   ItemId,
   ValueOrBlank,
-  ViewIntent,
   ViewRegistration,
 } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
@@ -167,7 +167,7 @@ function createSliderView(args: {
 
   const viewFocus: Focus = args.focus ?? { container: id, item: id };
 
-  const dispatch = (intent: ViewIntent): void => {
+  const dispatch = (intent: Intent): void => {
     const sel0 = core.selection();
     if (sel0.type !== "focused") return;
     const sel = sel0;
@@ -175,13 +175,9 @@ function createSliderView(args: {
     switch (intent.type) {
       case "CONFIRM":
         if (sel.focus.item !== id) return;
-
-        if (sel.target === VALUE_TARGET) {
-          core.focus(sel.focus, DEFAULT_TARGET);
-          return;
-        }
-
+        if (sel.target === VALUE_TARGET) core.focus(sel.focus, DEFAULT_TARGET);
         return;
+      case "NAV":
       case "TAB":
       case "TYPE":
       case "DELETE":

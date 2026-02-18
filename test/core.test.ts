@@ -11,7 +11,7 @@ import {
   mkBlank,
   mkGroup,
   requireCreatedEntryId,
-  scalarOfId,
+  valueOfId,
   setFormula,
   setQuery,
   setView,
@@ -321,16 +321,16 @@ describe("core/values", () => {
     const x = mkBlank(core, rootId, { label: "x" });
 
     core.commit((t) => t.setValue(x, null));
-    expect(scalarOfId(core, x)).toBe(null);
+    expect(valueOfId(core, x)).toBe(null);
 
     core.commit((t) => t.setValue(x, 7));
-    expect(scalarOfId(core, x)).toBe(7);
+    expect(valueOfId(core, x)).toBe(7);
 
     core.commit((t) => t.setValue(x, "hi"));
-    expect(scalarOfId(core, x)).toBe("hi");
+    expect(valueOfId(core, x)).toBe("hi");
 
     core.commit((t) => t.setValue(x, true));
-    expect(scalarOfId(core, x)).toBe(true);
+    expect(valueOfId(core, x)).toBe(true);
   });
 });
 
@@ -342,10 +342,10 @@ describe("core/formula", () => {
     const y = mkBlank(core, rootId, { label: "y" });
     setFormula(core, y, "x + 2");
 
-    expect(scalarOfId(core, y)).toBe(12);
+    expect(valueOfId(core, y)).toBe(12);
 
     core.commit((t) => t.setValue(x, 40));
-    expect(scalarOfId(core, y)).toBe(42);
+    expect(valueOfId(core, y)).toBe(42);
   });
 
   test("cycles become issues (no crashes)", () => {
@@ -531,7 +531,7 @@ describe("core/view constraints & rules", () => {
 });
 
 describe("core/history", () => {
-  test("undo/redo restores structure and scalars; redo cleared after new commit", () => {
+  test("undo/redo restores structure and values; redo cleared after new commit", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const g = mkGroup(core, rootId, { label: "g" });
@@ -564,7 +564,7 @@ describe("core/history", () => {
     });
 
     core.redo();
-    expect(scalarOfId(core, b)).toBe(99);
+    expect(valueOfId(core, b)).toBe(99);
     expect(
       childrenOf(core, rootId).some((id) => core.item(id).label === "g"),
     ).toBe(true);
@@ -711,18 +711,18 @@ describe("core/collab (wire contract)", () => {
     });
 
     core.commit((t) => t.setValue(x, 2));
-    expect(scalarOfId(core, x)).toBe(2);
+    expect(valueOfId(core, x)).toBe(2);
 
     core.undo();
-    expect(scalarOfId(core, x)).toBe(1);
+    expect(valueOfId(core, x)).toBe(1);
 
     core.commit((t) => t.setValue(x, 3));
-    expect(scalarOfId(core, x)).toBe(3);
+    expect(valueOfId(core, x)).toBe(3);
 
     const localLast = sent.at(-1);
     expect(localLast).toBeTruthy();
     deliver(localLast!);
-    expect(scalarOfId(core, x)).toBe(3);
+    expect(valueOfId(core, x)).toBe(3);
 
     const createdTxn = sent.find((txn) =>
       txn.ops.some((op) => op.type === "create"),
@@ -742,10 +742,10 @@ describe("core/collab (wire contract)", () => {
     };
 
     deliver(remoteTxn);
-    expect(scalarOfId(core, x)).toBe(99);
+    expect(valueOfId(core, x)).toBe(99);
 
     core.undo();
-    expect(scalarOfId(core, x)).toBe(1);
+    expect(valueOfId(core, x)).toBe(1);
 
     core.dispose();
   });

@@ -52,8 +52,8 @@ Outline is the primary hierarchical editor view.
 
 Rules:
 
-- Outline is a lines-of-text editor: scalars are lines, and groups define indentation levels.
-- Items are either `group` containers or scalar leaves (plain `value` or connected `conn:*`).
+- Outline is a lines-of-text editor: value items are lines, and groups define indentation levels.
+- Items are either `group` containers or value leaves (plain `value` or connected `conn:*`).
 - Empty groups are valid Core state, but Outline should not normally show indentation with no lines.
 - Outline uses a placeholder for empty groups.
 - Navigation is hierarchical and depth-first over visible items.
@@ -73,7 +73,7 @@ Outline group body:
     ...
 ```
 
-Outline scalar body:
+Outline value body:
 
 ```text
 .ui-body.ui-outline
@@ -106,7 +106,7 @@ Outline focus surfaces:
 
 Edit targets by item type:
 
-- Plain scalar leaf:
+- Plain value leaf:
   - `value`
 
 - Connected leaf:
@@ -137,8 +137,8 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 Pointer hit routing inside `.ui-outline-child`:
 
 - Gutter/rail region (left of `--outline-indent`) keeps frame container behavior (`DEFAULT_TARGET`).
-- For the non-gutter content area, the scalar textarea SHOULD span under the header area while its text starts below the header via padding.
-- For clicks in the scalar value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
+- For the non-gutter content area, the value textarea SHOULD span under the header area while its text starts below the header via padding.
+- For clicks in the value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
 - Header interactive controls retain native behavior and MUST win hit-testing over body text-editing surfaces.
 
 When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
@@ -170,13 +170,13 @@ Unified across all visible leaf items in depth-first order. Each leaf contribute
 
 Continue to the adjacent leaf's edit target in the unified traversal. Backward moves to the previous leaf's last target with caret at end. Forward moves to the next leaf's first target with caret at start. At the very first or last edit stop in the entire traversal, no-op.
 
-Enter from a plain scalar `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain scalar items, never to `conn:*` fields.
+Enter from a plain value `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain value items, never to `conn:*` fields.
 
 Delete at boundary from a `conn:*` target is a no-op.
 
 Delete at boundary from a `value` target is target-specific:
 
-- If the current text is non-empty, boundary delete joins adjacent plain scalar items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join boundary in the surviving item. Join only applies when both items are plain scalars.
+- If the current text is non-empty, boundary delete joins adjacent plain value items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join boundary in the surviving item. Join only applies when both items are plain value items.
 - If the current text is empty, boundary delete removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
 
 #### DELETE policy
@@ -201,10 +201,10 @@ Outline-local commands:
 - `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
 
-Outline scalar edit storage:
+Outline value edit storage:
 
-- Outline scalar editing MUST store raw text exactly as entered, including `""` (empty string).
-- Outline scalar editing MUST NOT auto-coerce text to number, `true`, or `null`.
+- Outline value editing MUST store raw text exactly as entered, including `""` (empty string).
+- Outline value editing MUST NOT auto-coerce text to number, `true`, or `null`.
 
 `changeNesting(sel, dir)` rules:
 
@@ -376,7 +376,7 @@ Table-local styling:
 
 ### Purpose and mental model
 
-Slider is a scalar control view for numeric-like adjustments.
+Slider is a value control view for numeric-like adjustments.
 
 Rules:
 
@@ -421,13 +421,13 @@ Slider-local commands:
 
 Rules:
 
-- `setValue` SHOULD commit only when item is an editable plain scalar and value is finite.
+- `setValue` SHOULD commit only when item is an editable plain value item and value is finite.
 
 ### Edge cases and invariants
 
 Rules:
 
-- Slider MUST only edit plain scalar value items.
+- Slider MUST only edit plain value items.
 - Non-numeric current values SHOULD fall back to `min`.
 - Boolean-like current values MAY map to numeric fallback behavior.
 - Display formatting SHOULD derive from `step` precision.

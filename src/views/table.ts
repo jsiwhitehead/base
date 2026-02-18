@@ -6,9 +6,9 @@ import type {
   Core,
   DomView,
   Focus,
+  Intent,
   ItemId,
   Selection,
-  ViewIntent,
   ViewRegistration,
 } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
@@ -35,7 +35,7 @@ type TableMountCtx = {
   core: Core;
   tableId: ItemId;
   signals: TableSignals;
-  dispatch: (intent: ViewIntent) => void;
+  dispatch: (intent: Intent) => void;
 };
 
 const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
@@ -446,7 +446,7 @@ function createTableView(args: {
     colCount: colCountSignal,
   };
 
-  const dispatch = (intent: ViewIntent): void => {
+  const dispatch = (intent: Intent): void => {
     const sel0 = core.selection();
     if (sel0.type !== "focused") return;
     const selection = sel0;
@@ -454,6 +454,25 @@ function createTableView(args: {
     switch (intent.type) {
       case "NAV": {
         if (selection.target !== DEFAULT_TARGET) return;
+
+        if (intent.dir === "out") {
+          const containerId = selection.focus.container;
+          const parentLoc = core.locate(containerId);
+          if (!parentLoc) {
+            core.focus(
+              { container: containerId, item: containerId },
+              DEFAULT_TARGET,
+            );
+            return;
+          }
+
+          core.focus(
+            { container: parentLoc.parentId, item: containerId },
+            DEFAULT_TARGET,
+          );
+          return;
+        }
+
         const rows = signals.rows.value;
         const colCount = signals.colCount.value;
 

@@ -203,7 +203,7 @@ Rules:
 
 Intent routing:
 
-- Views MUST NOT receive `CANCEL` intents.
+- Escape is represented as `NAV/out` and may be handled by the active view after Core global handling.
 
 ### Caret constructors
 
@@ -309,7 +309,7 @@ Propagation-gating rules:
 - Locally handled keydowns MUST call `stopPropagation()` so they do not reach global key routing.
 - Yielded keydowns MUST NOT call `stopPropagation()` so they bubble to Core.
 - When yielding, the runtime MUST perform the listed commit/cancel behavior and call `preventDefault()` where specified.
-- Text fields MUST NOT stop propagation for Escape. Draft fields MAY cancel local edits, but Escape always bubbles to the global Cancel ladder.
+- Text fields MUST NOT stop propagation for Escape. Draft fields MAY cancel local edits, but Escape always bubbles as `NAV/out` for global/view NAV-out handling.
 
 Events that trigger commit/yield behavior:
 

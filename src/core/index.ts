@@ -37,7 +37,6 @@ import type {
   Focus,
   Intent,
   Selection,
-  ViewIntent,
   ViewFactory,
 } from "./runtime";
 import {
@@ -994,118 +993,119 @@ export function createCore(opts: {
     return wrappedId || null;
   };
 
-  const handleRootIntent = (intent: Intent): boolean => {
-    if (
-      intent.type !== "NAV" &&
-      intent.type !== "TAB" &&
-      intent.type !== "CONFIRM" &&
-      intent.type !== "TYPE"
-    ) {
-      return false;
-    }
-
-    const sel = runtime.selectionSignal.peek();
+  const handleRootIntent = (intent: Intent, sel: Selection): boolean => {
     if (!atRootContainer(sel)) return false;
-
-    if (intent.type === "NAV") {
-      if (intent.dir !== "right") return false;
-      const rootItem = item(rootId);
-      if (rootItem.content.type !== "group") return false;
-
-      const firstChildId = rootItem.content.children[0] ?? null;
-      if (!firstChildId) return false;
-
-      runtime.setSelection({
-        type: "focused",
-        focus: { container: rootId, item: firstChildId },
-        target: DEFAULT_TARGET,
-      });
-      return true;
-    }
-
-    if (intent.type === "TAB") {
-      if (intent.shift) return false;
-      const wrappedId = wrapRootIntoChild0();
-      if (!wrappedId) return true;
-
-      runtime.setSelection({
-        type: "focused",
-        focus: { container: rootId, item: wrappedId },
-        target: DEFAULT_TARGET,
-      });
-      return true;
-    }
-
     const rootItem = item(rootId);
-    const rootIsEditable = rootItem.mode.type !== "readonly";
-    const rootIsEmptyGroup =
-      rootItem.content.type === "group" &&
-      rootItem.content.children.length === 0;
 
-    if (rootIsEditable && rootIsEmptyGroup) {
-      core.commit((t) => t.setValue(rootId, ""));
-      runtime.setSelection({
-        type: "focused",
-        focus: sel.focus,
-        target: VALUE_TARGET,
-        caret:
-          intent.type === "CONFIRM"
-            ? { start: 0, end: 0 }
-            : { start: 0, end: Number.MAX_SAFE_INTEGER },
-      });
-      if (intent.type === "TYPE") {
-        queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+    switch (intent.type) {
+      case "NAV": {
+        if (intent.dir === "out") {
+          runtime.setSelection({ type: "idle" });
+          return true;
+        }
+
+        if (intent.dir !== "right") return false;
+        if (rootItem.content.type !== "group") return false;
+
+        const firstChildId = rootItem.content.children[0];
+        if (!firstChildId) return false;
+
+        runtime.setSelection({
+          type: "focused",
+          focus: { container: rootId, item: firstChildId },
+          target: DEFAULT_TARGET,
+        });
+        return true;
       }
-      return true;
-    }
 
-    const target = primaryEditTarget(core, rootId);
-    if (!target) return false;
+      case "TAB": {
+        if (intent.shift) return false;
 
-    if (intent.type === "CONFIRM") {
-      const caretPos = getTextForTarget(core, rootId, target).length;
-      runtime.setSelection({
-        type: "focused",
-        focus: sel.focus,
-        target,
-        caret: { start: caretPos, end: caretPos },
-      });
-      return true;
-    }
-
-    runtime.setSelection({
-      type: "focused",
-      focus: sel.focus,
-      target,
-      caret: { start: 0, end: Number.MAX_SAFE_INTEGER },
-    });
-    queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
-    return true;
-  };
-
-  const dispatch = (intent: Intent): void => {
-    if (intent.type === "CANCEL") {
-      const sel = runtime.selectionSignal.peek();
-      if (sel.type === "idle") {
-        runtime.setSelection({ type: "idle" });
-        return;
+        const wrappedId = wrapRootIntoChild0();
+        if (wrappedId) {
+          runtime.setSelection({
+            type: "focused",
+            focus: { container: rootId, item: wrappedId },
+            target: DEFAULT_TARGET,
+          });
+        }
+        return true;
       }
-      if (sel.target !== DEFAULT_TARGET) {
+
+      case "CONFIRM":
+      case "TYPE": {
+        const rootIsEditable = rootItem.mode.type !== "readonly";
+        const rootIsEmptyGroup =
+          rootItem.content.type === "group" &&
+          rootItem.content.children.length === 0;
+
+        let target: string;
+        let caret: Caret;
+
+        if (rootIsEditable && rootIsEmptyGroup) {
+          core.commit((t) => t.setValue(rootId, ""));
+          target = VALUE_TARGET;
+          caret =
+            intent.type === "CONFIRM"
+              ? { start: 0, end: 0 }
+              : { start: 0, end: Number.MAX_SAFE_INTEGER };
+        } else {
+          const t = primaryEditTarget(core, rootId);
+          if (!t) return false;
+
+          target = t;
+          if (intent.type === "CONFIRM") {
+            const pos = getTextForTarget(core, rootId, target).length;
+            caret = { start: pos, end: pos };
+          } else {
+            caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
+          }
+        }
+
         runtime.setSelection({
           type: "focused",
           focus: sel.focus,
-          target: DEFAULT_TARGET,
+          target,
+          caret,
         });
-        return;
+
+        if (intent.type === "TYPE") {
+          queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+        }
+
+        return true;
       }
-      runtime.setSelection({ type: "idle" });
+
+      default:
+        return false;
+    }
+  };
+
+  const handleNavOut = (sel: Selection): boolean => {
+    if (sel.type === "idle") return true;
+
+    if (sel.target !== DEFAULT_TARGET) {
+      runtime.setSelection({
+        type: "focused",
+        focus: sel.focus,
+        target: DEFAULT_TARGET,
+      });
+      return true;
+    }
+
+    return false;
+  };
+
+  const dispatch = (intent: Intent): void => {
+    const sel = runtime.selectionSignal.peek();
+
+    if (intent.type === "NAV" && intent.dir === "out" && handleNavOut(sel)) {
       return;
     }
 
-    if (handleRootIntent(intent)) return;
+    if (handleRootIntent(intent, sel)) return;
 
-    const onIntent = runtime.getActiveViewOnIntent();
-    if (onIntent) onIntent(intent);
+    runtime.getActiveViewOnIntent()?.(intent);
   };
 
   core = {
@@ -1151,7 +1151,6 @@ export type {
   Intent,
   Selection,
   Transaction,
-  ViewIntent,
   ViewFactory,
   ViewName,
 };

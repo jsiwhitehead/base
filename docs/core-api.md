@@ -426,7 +426,7 @@ Constraint meanings:
 Enforcement rules:
 
 - Constraint enforcement MUST run after every transaction (`commit`, `undo`, `redo`, remote apply).
-- Enforcement MUST only coerce plain items (blank, scalar, group). Connected items (formula, query) MUST NOT be coerced; mismatches are handled at view resolution time (see `core.view(id)`).
+- Enforcement MUST only coerce plain items (blank, value, group). Connected items (formula, query) MUST NOT be coerced; mismatches are handled at view resolution time (see `core.view(id)`).
 - Content coercion MUST run before non-empty enforcement. Non-empty enforcement MUST run before children coercion. Children coercion MUST run before shape sync.
 - If a content constraint cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
 - If `nonEmpty` is set and the constrained group is empty, enforcement MUST create one direct child.
@@ -491,7 +491,6 @@ Type exports:
 - `ApplyResult`
 - `Core`
 - `Intent`
-- `ViewIntent`
 - `Selection`
 - `Focus`
 - `Caret`

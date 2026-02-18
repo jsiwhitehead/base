@@ -18,6 +18,7 @@ export type Selection =
   | { type: "focused"; focus: Focus; target: string; caret?: Caret };
 
 type Anchor = "top" | "bottom";
+export type NavDir = "left" | "right" | "up" | "down" | "out";
 
 type RuntimeEffect =
   | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
@@ -26,27 +27,24 @@ type RuntimeEffect =
 export type Intent =
   | {
       type: "NAV";
-      dir: "left" | "right" | "up" | "down";
+      dir: NavDir;
       mode: "step" | "jump";
     }
   | { type: "CONFIRM"; caret?: Caret }
-  | { type: "CANCEL" }
   | { type: "TAB"; shift: boolean; caret?: Caret }
   | { type: "TYPE"; char: string }
   | { type: "DELETE"; dir: "backward" | "forward" };
 
-export type ViewIntent = Exclude<Intent, { type: "CANCEL" }>;
-
 type ViewHandle = {
   root: HTMLElement;
-  onIntent?: (intent: ViewIntent) => void;
+  onIntent?: (intent: Intent) => void;
 };
 
 export type Component = { el: HTMLElement; dispose(): void };
 
 export type DomView = {
   root: HTMLElement;
-  onIntent?: (intent: ViewIntent) => void;
+  onIntent?: (intent: Intent) => void;
   dispose(): void;
 };
 
@@ -92,7 +90,13 @@ export function typeCharIntoFocusedTextInput(text: string): void {
 }
 
 function parseKeydownIntent(e: KeyboardEvent): Intent | null {
-  if (e.key === "Escape") return { type: "CANCEL" };
+  if (e.key === "Escape") {
+    return {
+      type: "NAV",
+      dir: "out",
+      mode: e.metaKey || e.ctrlKey ? "jump" : "step",
+    };
+  }
   if (e.key === "Tab") return { type: "TAB", shift: !!e.shiftKey };
   if (e.key === "Enter") return { type: "CONFIRM" };
 
@@ -218,7 +222,7 @@ type Runtime = {
 
   getActiveViewRoot(): HTMLElement | null;
 
-  getActiveViewOnIntent(): ((intent: ViewIntent) => void) | null;
+  getActiveViewOnIntent(): ((intent: Intent) => void) | null;
 
   dispose(): void;
 };
@@ -404,7 +408,7 @@ export function createRuntime<C>(opts: {
 
   const registerViewRoot = (view: {
     root: HTMLElement;
-    onIntent?: (intent: ViewIntent) => void;
+    onIntent?: (intent: Intent) => void;
   }): (() => void) => {
     const handle: ViewHandle = {
       root: view.root,
@@ -541,7 +545,7 @@ export function createRuntime<C>(opts: {
   const getActiveViewRoot = (): HTMLElement | null =>
     getActiveView()?.root ?? null;
 
-  const getActiveViewOnIntent = (): ((intent: ViewIntent) => void) | null =>
+  const getActiveViewOnIntent = (): ((intent: Intent) => void) | null =>
     getActiveView()?.onIntent ?? null;
 
   const dispose = (): void => {
