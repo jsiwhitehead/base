@@ -33,6 +33,7 @@ import {
   el,
   handleContainerIntent,
   moveWithinItemEditTargets,
+  observeHeight,
   patchConn,
   SELECT_ALL,
   setBodyClasses,
@@ -438,6 +439,33 @@ const cmd = {
   },
 } as const;
 
+function buildMeasuredHeader(
+  core: Core,
+  args: {
+    focus: Focus;
+    id: ItemId;
+    canEditLabel: () => boolean;
+    commitLabel: (text: string) => void;
+    commitConnField: (key: string, text: string) => void;
+  },
+  onHeight: (heightPx: number) => void,
+): Component {
+  return createComponent(core, (ctx) => {
+    const header = buildItemHeader(core, args);
+
+    ctx.effect(() => {
+      const stop = observeHeight(header.el, onHeight);
+      return () => {
+        stop();
+        onHeight(0);
+        header.dispose();
+      };
+    });
+
+    return header.el;
+  });
+}
+
 function buildChildOuterFrame(
   mountCtx: OutlineMountCtx,
   focus: Focus,
@@ -490,78 +518,31 @@ function buildChildOuterFrame(
       const shouldShowHeader = computed(
         () => hasLabel.value || hasFields.value || labelFocused.value,
       );
-
-      let observedHeader: HTMLElement | null = null;
-      let rafId: number | null = null;
+      const needsHeaderOffset = computed(() => {
+        if (!shouldShowHeader.value) return false;
+        if (core.view(id) !== "outline") return false;
+        return core.item(id).content.type === "value";
+      });
 
       const setHeaderHeight = (heightPx: number) => {
         frameEl.style.setProperty("--outline-header-h", `${heightPx}px`);
       };
-
-      const ro = new ResizeObserver((entries) => {
-        const entry = entries[0];
-        if (!entry) return;
-        setHeaderHeight(Math.max(0, entry.borderBoxSize[0]!.blockSize));
-      });
-
-      const bindHeaderHeight = () => {
-        const headerEl = frameEl.querySelector(":scope > .ui-header");
-        const next = headerEl instanceof HTMLElement ? headerEl : null;
-        if (next === observedHeader) return;
-
-        if (observedHeader) ro.unobserve(observedHeader);
-        observedHeader = next;
-
-        if (!observedHeader) {
-          setHeaderHeight(0);
-          return;
-        }
-
-        setHeaderHeight(
-          Math.max(0, observedHeader.getBoundingClientRect().height),
-        );
-        ro.observe(observedHeader, { box: "border-box" });
-      };
-
-      const unbindHeaderHeight = () => {
-        if (rafId != null) {
-          cancelAnimationFrame(rafId);
-          rafId = null;
-        }
-        if (observedHeader) ro.unobserve(observedHeader);
-        observedHeader = null;
-        setHeaderHeight(0);
+      const headerArgs = {
+        focus,
+        id,
+        canEditLabel,
+        commitLabel,
+        commitConnField,
       };
 
       ctx.slot(frameEl, () => {
         if (!shouldShowHeader.value) return null;
-        return buildItemHeader(core, {
-          focus,
-          id,
-          canEditLabel,
-          commitLabel,
-          commitConnField,
-        });
+        if (!needsHeaderOffset.value) return buildItemHeader(core, headerArgs);
+        return buildMeasuredHeader(core, headerArgs, setHeaderHeight);
       });
 
       ctx.effect(() => {
-        const show = shouldShowHeader.value;
-
-        if (!show) {
-          unbindHeaderHeight();
-          return;
-        }
-
-        if (rafId != null) cancelAnimationFrame(rafId);
-        rafId = requestAnimationFrame(() => {
-          rafId = null;
-          bindHeaderHeight();
-        });
-      });
-
-      ctx.effect(() => () => {
-        unbindHeaderHeight();
-        ro.disconnect();
+        if (!needsHeaderOffset.value) setHeaderHeight(0);
       });
     }
 

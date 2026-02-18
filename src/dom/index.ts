@@ -1,6 +1,12 @@
 export type { NavDir } from "./controls";
 
-export { bindItemFrame, createComponent, el, setBodyClasses } from "./base";
+export {
+  bindItemFrame,
+  createComponent,
+  el,
+  observeHeight,
+  setBodyClasses,
+} from "./base";
 
 export {
   buildItemHeader,
