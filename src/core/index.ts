@@ -225,16 +225,16 @@ type ConnField = {
 export function fieldsFromConn(conn: Connected): ConnField[] {
   if (conn.type === "formula") {
     return [
-      { key: "expr", label: "=", multiline: true, text: conn.expr ?? "" },
+      { key: "expr", label: "=", multiline: false, text: conn.expr ?? "" },
     ];
   }
   return [
     { key: "from", label: "~", multiline: false, text: conn.from ?? "" },
-    { key: "where", label: "where:", multiline: true, text: conn.where ?? "" },
+    { key: "where", label: "where:", multiline: false, text: conn.where ?? "" },
     {
       key: "orderBy",
       label: "orderBy:",
-      multiline: true,
+      multiline: false,
       text: conn.orderBy ?? "",
     },
   ];
