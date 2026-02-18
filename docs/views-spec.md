@@ -249,17 +249,18 @@ Table body:
 
 ```text
 .ui-body.ui-table
-  .ui-table-header
-    .ui-table-col.ui-table-header-col
-    .ui-table-col
-      [.ui-header subtree]                     (schema cell header; targets: label, conn:*)
-    ...
-  .ui-table-body
-    .ui-frame.ui-table-row                     (row target: DEFAULT_TARGET)
-      .ui-table-cell.ui-table-header-col
-        [.ui-header subtree]                   (row header; targets: label, conn:*)
-      .ui-frame.ui-table-cell                  (cell target: DEFAULT_TARGET)
-        [.ui-body.<cell-view> subtree]         (mounted cell view body)
+  .ui-table-inner
+    .ui-table-header
+      .ui-table-col.ui-table-header-col
+      .ui-table-col
+        [.ui-header subtree]                   (schema cell header; targets: label, conn:*)
+      ...
+    .ui-table-body
+      .ui-frame.ui-table-row                   (row target: DEFAULT_TARGET)
+        .ui-table-cell.ui-table-header-col
+          [.ui-header subtree]                 (row header; targets: label, conn:*)
+        .ui-frame.ui-table-cell                (cell target: DEFAULT_TARGET)
+          [.ui-body.<cell-view> subtree]       (mounted cell view body)
       ...
     ...
 ```
@@ -369,7 +370,8 @@ Rules:
 
 Table-local styling:
 
-- Uses CSS table display grouping primitives.
+- `.ui-body.ui-table` is the horizontal scroll container for table overflow.
+- `.ui-table-inner` uses CSS table display grouping primitives with intrinsic width sizing.
 - Header column and data columns are distinct layout roles.
 - Data cells present top rail segments.
 - Header column presents a left block rail region.

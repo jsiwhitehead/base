@@ -384,50 +384,57 @@
   }
 
   .ui-table {
-    display: table;
-    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    min-width: 0;
+  }
+
+  .ui-table-inner {
+    display: inline-table;
+    width: max-content;
     border-collapse: separate;
     border-spacing: var(--ui-space-gap);
   }
 
-  .ui-table .ui-table-header {
+  .ui-table-header {
     display: table-header-group;
   }
 
-  .ui-table .ui-table-body {
+  .ui-table-body {
     display: table-row-group;
   }
 
-  .ui-table .ui-table-row {
+  .ui-table-row {
     display: table-row;
   }
 
-  .ui-table .ui-table-col,
-  .ui-table .ui-table-cell {
+  .ui-table-col,
+  .ui-table-cell {
     display: table-cell;
     vertical-align: top;
     padding: 0;
     min-width: 0;
   }
 
-  .ui-table .ui-table-col {
+  .ui-table-col {
     padding: var(--ui-space-pad);
     background: var(--ui-color-surface);
     border-radius: var(--ui-radius);
   }
 
-  .ui-table .ui-table-col .ui-header {
+  .ui-table-col .ui-header {
     padding: 0;
     background: transparent;
     border-radius: 0;
   }
 
-  .ui-table .ui-frame.ui-table-cell {
+  .ui-frame.ui-table-cell {
     position: relative;
     padding-top: calc(var(--ui-rail) + var(--ui-space-gap));
   }
 
-  .ui-table .ui-frame.ui-table-cell::before {
+  .ui-frame.ui-table-cell::before {
     content: "";
     position: absolute;
     left: var(--ui-space-gap);
@@ -438,24 +445,24 @@
     border-radius: 0;
   }
 
-  .ui-table .ui-table-row > .ui-frame.ui-table-cell:first-child::before {
+  .ui-table-row > .ui-frame.ui-table-cell:first-child::before {
     border-top-left-radius: var(--ui-rail-radius);
     border-bottom-left-radius: var(--ui-rail-radius);
   }
 
-  .ui-table .ui-table-row > .ui-frame.ui-table-cell:last-child::before {
+  .ui-table-row > .ui-frame.ui-table-cell:last-child::before {
     border-top-right-radius: var(--ui-rail-radius);
     border-bottom-right-radius: var(--ui-rail-radius);
   }
 
-  .ui-table .ui-table-cell.ui-table-header-col {
+  .ui-table-cell.ui-table-header-col {
     padding-left: var(--ui-space-pad);
     padding-block: 0;
     background: var(--rail-tint);
     border-radius: 0;
   }
 
-  .ui-table
+  .ui-table-inner
     .ui-table-body
     > .ui-table-row:first-child
     > .ui-table-cell.ui-table-header-col {
@@ -463,7 +470,7 @@
     border-top-right-radius: var(--ui-radius);
   }
 
-  .ui-table
+  .ui-table-inner
     .ui-table-body
     > .ui-table-row:last-child
     > .ui-table-cell.ui-table-header-col {
@@ -471,11 +478,11 @@
     border-bottom-right-radius: var(--ui-radius);
   }
 
-  .ui-table .ui-table-cell.ui-table-header-col::before {
+  .ui-table-cell.ui-table-header-col::before {
     content: none;
   }
 
-  .ui-table .ui-table-cell > * {
+  .ui-table-cell > * {
     min-width: 0;
   }
 

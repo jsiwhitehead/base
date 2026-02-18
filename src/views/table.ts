@@ -580,9 +580,12 @@ function createTableView(args: {
     };
     bindItemFrame(ctx, { core, focus: tableFocus }, root);
 
+    const inner = el("div", "ui-table-inner");
+    root.append(inner);
+
     const mountCtx: TableMountCtx = { core, tableId, signals, dispatch };
-    ctx.mount(root, buildHeader(mountCtx));
-    ctx.mount(root, buildBody(mountCtx));
+    ctx.mount(inner, buildHeader(mountCtx));
+    ctx.mount(inner, buildBody(mountCtx));
 
     return root;
   });
