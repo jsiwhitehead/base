@@ -954,15 +954,7 @@ export function createCore(opts: {
       })
     : null;
 
-  const atRootContainer = (
-    sel: Selection,
-  ): sel is Extract<Selection, { type: "focused" }> =>
-    sel.type === "focused" &&
-    sel.target === DEFAULT_TARGET &&
-    sel.focus.item === rootId &&
-    sel.focus.container === rootId;
-
-  const wrapRootIntoChild0 = (): ItemId | null => {
+  const wrapRootIntoChild = (): ItemId | null => {
     const rootItem = item(rootId);
     const rootView = view(rootId);
     const rootChildren =
@@ -994,11 +986,18 @@ export function createCore(opts: {
   };
 
   const handleRootIntent = (intent: Intent, sel: Selection): boolean => {
-    if (!atRootContainer(sel)) return false;
+    if (
+      sel.type !== "focused" ||
+      sel.focus.item !== rootId ||
+      sel.focus.container !== rootId
+    ) {
+      return false;
+    }
     const rootItem = item(rootId);
 
     switch (intent.type) {
       case "NAV": {
+        if (sel.target !== DEFAULT_TARGET) return false;
         if (intent.dir === "out") {
           runtime.setSelection({ type: "idle" });
           return true;
@@ -1021,12 +1020,18 @@ export function createCore(opts: {
       case "TAB": {
         if (intent.shift) return false;
 
-        const wrappedId = wrapRootIntoChild0();
+        const wrappedId = wrapRootIntoChild();
         if (wrappedId) {
+          const wrappedTargets = editTargetsForItem(core, wrappedId);
+          const target =
+            sel.target === DEFAULT_TARGET || wrappedTargets.includes(sel.target)
+              ? sel.target
+              : DEFAULT_TARGET;
+
           runtime.setSelection({
             type: "focused",
             focus: { container: rootId, item: wrappedId },
-            target: DEFAULT_TARGET,
+            target,
           });
         }
         return true;
@@ -1034,6 +1039,7 @@ export function createCore(opts: {
 
       case "CONFIRM":
       case "TYPE": {
+        if (sel.target !== DEFAULT_TARGET) return false;
         const rootIsEditable = rootItem.mode.type !== "readonly";
         const rootIsEmptyGroup =
           rootItem.content.type === "group" &&
@@ -1051,7 +1057,23 @@ export function createCore(opts: {
               : { start: 0, end: Number.MAX_SAFE_INTEGER };
         } else {
           const t = primaryEditTarget(core, rootId);
-          if (!t) return false;
+          if (!t) {
+            if (
+              intent.type === "CONFIRM" &&
+              rootItem.content.type === "group"
+            ) {
+              const firstChildId = rootItem.content.children[0];
+              if (!firstChildId) return false;
+
+              runtime.setSelection({
+                type: "focused",
+                focus: { container: rootId, item: firstChildId },
+                target: DEFAULT_TARGET,
+              });
+              return true;
+            }
+            return false;
+          }
 
           target = t;
           if (intent.type === "CONFIRM") {

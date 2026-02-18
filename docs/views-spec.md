@@ -160,7 +160,7 @@ Hierarchical, depth-first over visible items. At the edges of the tree (root par
 
 #### Tab action
 
-Tab performs structural wrap/unwrap. Tab wraps the focused item as `G(X)`. Shift+Tab unwraps the focused item's parent group `G(children...)` to `children...` when possible. Preserves current target and caret. No-op when the operation is not structurally possible.
+Tab changes structure. Tab wraps the focused item as `G(X)`. Shift+Tab unwraps the focused item's parent group when possible. If unwrap is not possible because the focused item is a direct child of `rootId`, Shift+Tab promotes that child into `rootId` (root id unchanged): remove all root siblings, then promote by content type (`value` becomes root value, `group` moves its children to root). Preserve the current target and caret when possible. Otherwise, no-op.
 
 #### Edit traversal scope
 
@@ -200,6 +200,7 @@ Outline-local commands:
 - `joinBoundary(sel, dir)`
 - `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
+- `promoteChildToRoot(rootId, childId)`
 
 Outline value edit storage:
 
@@ -208,9 +209,10 @@ Outline value edit storage:
 
 `changeNesting(sel, dir)` rules:
 
-- `in` (Tab): wrap `X` as `G(X)` in-place. `G.label` is empty; `X.label` is unchanged.
-- `out` (Shift+Tab): unwrap parent `G(children...)` to `children...` by splicing `children...` into `G`'s parent at `G`'s original index. Discards `G.label`.
-- No-op: `in`/`out` do nothing if the required parent structure does not exist (root), or if any required ancestor is connected or readonly.
+- `in` (Tab): wrap `X` as `G(X)` in place. `G.label` is empty. `X.label` is unchanged.
+- `out` (Shift+Tab): unwrap the parent group by moving `G(children...)` into `G`'s parent at `G`'s original index. `G.label` is discarded.
+- Root fallback for `out`: if `X` is a direct child of `rootId`, promote `X` into `rootId` (root id unchanged). Remove all other root children, then remove `X` after transfer.
+- No-op: do nothing when the required structure is missing, when promotion preconditions fail, when content is not plain `value`/`group`, or when any required item is `connected` or `readonly`.
 
 ### Edge cases and invariants
 

@@ -1018,10 +1018,7 @@ describe("smoke: container TYPE intent microtask path", () => {
     const ok = handleContainerIntent({
       core,
       sel: sel0,
-      intent: { type: "TYPE", char: "a" } as Extract<
-        Intent,
-        { type: "TYPE" }
-      >,
+      intent: { type: "TYPE", char: "a" } as Extract<Intent, { type: "TYPE" }>,
     });
     expect(ok).toBe(true);
 

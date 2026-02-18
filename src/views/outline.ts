@@ -422,6 +422,46 @@ const cmd = {
 
     return { container: grandparentId, item: id };
   },
+
+  promoteChildToRoot(
+    core: Core,
+    rootId: ItemId,
+    childId: ItemId,
+  ): Focus | null {
+    const loc = core.locate(childId);
+    if (!loc || loc.parentId !== rootId) return null;
+
+    const childSnap = core.item(childId);
+    if (childSnap.mode.type !== "plain") return null;
+
+    const childContent = childSnap.content;
+    if (childContent.type !== "value" && childContent.type !== "group") {
+      return null;
+    }
+
+    const rootKids = [...childrenOf(core, rootId)];
+
+    core.commit((t) => {
+      for (const cid of rootKids) {
+        if (cid !== childId) t.remove(cid);
+      }
+
+      if (childContent.type === "value") {
+        t.remove(childId);
+        t.setValue(rootId, childContent.value);
+        return;
+      }
+
+      t.setGroup(rootId);
+      const kids = [...childContent.children];
+      for (let i = 0; i < kids.length; i += 1) {
+        t.move(kids[i]!, rootId, { at: i });
+      }
+      t.remove(childId);
+    });
+
+    return { container: rootId, item: rootId };
+  },
 } as const;
 
 function buildChildOuterFrame(
@@ -687,12 +727,15 @@ function createOutlineView(args: {
         const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
         const fromCaret = wasEditing ? (intent.caret ?? null) : null;
 
-        const nextFocus = cmd.changeNesting(
+        let nextFocus = cmd.changeNesting(
           core,
           rootId,
           sel,
           intent.shift ? "out" : "in",
         );
+        if (!nextFocus && intent.shift) {
+          nextFocus = cmd.promoteChildToRoot(core, rootId, sel.focus.item);
+        }
         if (!nextFocus) return;
 
         if (!wasEditing) {

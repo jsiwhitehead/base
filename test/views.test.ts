@@ -317,7 +317,7 @@ describe("views/outline", () => {
     unmount();
   });
 
-  test("Shift+Tab is no-op when focused item's parent is root", async () => {
+  test("Shift+Tab on direct root child promotes child into root", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const a = mkBlank(core, rootId, { label: "a", value: "1" });
@@ -335,8 +335,9 @@ describe("views/outline", () => {
     fireViewKey(domView, "Tab", { shiftKey: true });
     await flushDomEffects();
 
-    expect(childrenOf(core, rootId)).toEqual([a, b]);
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expect(childrenOf(core, rootId)).toEqual([]);
+    expect(valueOfId(core, rootId)).toBe("1");
+    expectSel(core, { container: rootId, item: rootId, target: VALUE_TARGET });
 
     unmount();
   });
