@@ -6,19 +6,6 @@ import { DEV, devAssert } from "../dev";
 export type EntryId = number;
 export type Scalar = true | number | string;
 
-const NUMERIC_SCALAR_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
-
-export function parseScalar(text: string): Scalar | null {
-  const t = text.trim();
-  if (text === "") return null;
-  if (NUMERIC_SCALAR_RE.test(t)) {
-    const n = Number(t);
-    if (Number.isFinite(n)) return n;
-  }
-  if (t === "true") return true;
-  return text;
-}
-
 export type ViewName = "outline" | "table" | "slider";
 
 type BlankContent = { type: "blank" };

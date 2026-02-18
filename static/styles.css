@@ -60,6 +60,7 @@
     --ui-color-surface: oklch(94% 0.01 255);
 
     --ui-color-focus: oklch(62% 0.2 255);
+    --ui-color-numeric: oklch(62% 0.2 255);
     --ui-color-issue: oklch(62% 0.22 25);
 
     --ui-sidebar: 380px;
@@ -121,6 +122,7 @@
     --rail-tint: var(--ui-color-surface);
     --header-fill: var(--ui-color-surface);
     --frame-wash: transparent;
+    --value-ink: var(--ui-color-fg);
   }
 
   .ui-frame:focus {
@@ -177,6 +179,10 @@
       var(--ui-color-issue) 18%,
       var(--ui-color-surface) 82%
     );
+  }
+
+  .ui-frame.is-numeric {
+    --value-ink: var(--ui-color-numeric);
   }
 
   .ui-header {
@@ -352,6 +358,10 @@
     display: block;
     width: 100%;
     min-width: 0;
+  }
+
+  .ui-outline-value {
+    color: var(--value-ink);
   }
 
   .ui-outline-value .ui-textfield-mirror {

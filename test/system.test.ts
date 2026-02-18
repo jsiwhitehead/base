@@ -146,7 +146,7 @@ describe("system/history across views", () => {
     await flushDomEffects();
 
     expect(scalarOfId(core, a)).toBe("x2");
-    expect(scalarOfId(core, c11)).toBe(9);
+    expect(scalarOfId(core, c11)).toBe("9");
 
     core.undo();
     expect(scalarOfId(core, c11)).toBe(1);
@@ -158,7 +158,7 @@ describe("system/history across views", () => {
     core.redo();
     core.redo();
     expect(scalarOfId(core, a)).toBe("x2");
-    expect(scalarOfId(core, c11)).toBe(9);
+    expect(scalarOfId(core, c11)).toBe("9");
 
     const sel = core.selection();
     expect(sel.type).toBe("focused");

@@ -181,7 +181,7 @@ describe("views/outline", () => {
     const kids = childrenOf(core, g);
     expect(kids.length).toBe(0);
     expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
-    expect(scalarOfId(core, g)).toBe(null);
+    expect(scalarOfId(core, g)).toBe("");
 
     requireTargetInput(document.body, VALUE_TARGET);
 

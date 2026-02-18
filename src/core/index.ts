@@ -29,7 +29,6 @@ import {
   isQueryContent,
   makeBlankEntry,
   makeGroupEntry,
-  parseScalar,
 } from "./model";
 import type {
   Caret,
@@ -47,7 +46,6 @@ import {
   VALUE_TARGET,
   connTarget,
   createRuntime,
-  defaultTextCaret,
   typeCharIntoFocusedTextInput,
 } from "./runtime";
 import type { ViewConstraint } from "./sync";
@@ -127,7 +125,16 @@ function storedFromValue(v: ValueOrBlank): EntryContent {
   return v === null ? { type: "blank" } : { type: "scalar", value: v };
 }
 
-export const parseValue: (text: string) => ValueOrBlank = parseScalar;
+const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+export function isNumericLikeValue(value: ValueOrBlank): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "string") return false;
+  const t = value.trim();
+  if (!t) return false;
+  if (!NUMERIC_VALUE_RE.test(t)) return false;
+  return Number.isFinite(Number(t));
+}
 
 function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
   if (ref.path.length) return { type: "readonly" };
@@ -1036,7 +1043,7 @@ export function createCore(opts: {
       rootItem.content.children.length === 0;
 
     if (rootIsEditable && rootIsEmptyGroup) {
-      core.commit((t) => t.setValue(rootId, parseValue("")));
+      core.commit((t) => t.setValue(rootId, ""));
       runtime.setSelection({
         type: "focused",
         focus: sel.focus,
@@ -1154,6 +1161,5 @@ export {
   LABEL_TARGET,
   VALUE_TARGET,
   connTarget,
-  defaultTextCaret,
   typeCharIntoFocusedTextInput,
 };

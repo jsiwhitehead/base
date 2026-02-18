@@ -19,7 +19,6 @@ import {
   editTargetsForItem,
   fieldsFromConn,
   getTextForTarget,
-  parseValue,
   typeCharIntoFocusedTextInput,
 } from "../core";
 import type { NavDir } from "../dom";
@@ -239,7 +238,7 @@ const cmd = {
   },
 
   setText(core: Core, id: ItemId, text: string): void {
-    core.commit((t) => t.setValue(id, parseValue(text)));
+    core.commit((t) => t.setValue(id, text));
   },
 
   commitConnField(core: Core, id: ItemId, key: string, text: string): void {
@@ -250,7 +249,7 @@ const cmd = {
   },
 
   convertEmptyGroupToValue(core: Core, id: ItemId): void {
-    core.commit((t) => t.setValue(id, parseValue("")));
+    core.commit((t) => t.setValue(id, ""));
   },
 
   removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
@@ -310,9 +309,9 @@ const cmd = {
     let rightId: ItemId = "";
 
     core.commit((t) => {
-      t.setValue(id, parseValue(left));
+      t.setValue(id, left);
       rightId = t.insertChild(parentId, { at: idx + 1 });
-      t.setValue(rightId, parseValue(right));
+      t.setValue(rightId, right);
     });
 
     return rightId || null;
@@ -353,7 +352,7 @@ const cmd = {
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, rightId);
 
     core.commit((t) => {
-      t.setValue(leftId, parseValue(leftText + rightText));
+      t.setValue(leftId, leftText + rightText);
       t.remove(rightId);
       for (const pruneId of pruneIds) t.remove(pruneId);
     });

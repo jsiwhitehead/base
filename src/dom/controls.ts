@@ -14,7 +14,6 @@ import {
   DEFAULT_TARGET,
   LABEL_TARGET,
   connTarget,
-  defaultTextCaret,
   editTargetsForItem,
   fieldsFromConn,
   getTextForTarget,
@@ -321,7 +320,15 @@ export function buildTextField(
     });
 
     ctx.target(opts.focus, opts.target, () => inp, {
-      caret: defaultTextCaret(),
+      caret: {
+        set(pos: number): void {
+          const p = Math.max(0, Math.min(pos, inp.value.length));
+          inp.setSelectionRange(p, p);
+        },
+        getLength(): number {
+          return inp.value.length;
+        },
+      },
     });
 
     ctx.effect(() => {

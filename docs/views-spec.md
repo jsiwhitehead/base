@@ -144,8 +144,8 @@ Pointer hit routing inside `.ui-outline-child`:
 When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
 
 - `TYPE "="` MUST convert the group to formula and focus `conn:expr` at caret start.
-- `TYPE` with any other character MUST convert the group to blank `value`, focus `value`, and type that character (replace behavior).
-- `CONFIRM` MUST convert the group to blank `value` and focus `value`.
+- `TYPE` with any other character MUST convert the group to `value` with `""`, focus `value`, and type that character (replace behavior).
+- `CONFIRM` MUST convert the group to `value` with `""` and focus `value`.
 
 #### Navigation geometry
 
@@ -201,6 +201,11 @@ Outline-local commands:
 - `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
 
+Outline scalar edit storage:
+
+- Outline scalar editing MUST store raw text exactly as entered, including `""` (empty string).
+- Outline scalar editing MUST NOT auto-coerce text to number, `true`, or `null`.
+
 `changeNesting(sel, dir)` rules:
 
 - `in`: wraps item in a new group and moves it inside.
@@ -220,6 +225,7 @@ Outline-local styling:
 - Indentation based on `(rail + pad)` per depth level.
 - Header capsule aligns to item rail start.
 - Nodes stack with vertical gap.
+- Outline value text MAY consume frame-derived `--value-ink`.
 
 ## Table view (`table`)
 

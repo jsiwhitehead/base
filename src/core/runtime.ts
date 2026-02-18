@@ -73,42 +73,6 @@ function assertNever(_exhaustive: never, message: string): never {
   throw new Error(message);
 }
 
-type TextCaret = {
-  read(): Caret;
-  set(pos: number): void;
-  getLength(): number;
-};
-
-export function defaultTextCaret(
-  getActive: () => Element | null = () => document.activeElement,
-): TextCaret {
-  const activeTextEl = (): HTMLInputElement | HTMLTextAreaElement | null => {
-    const a = getActive();
-    return a instanceof HTMLElement && isTextInput(a) ? a : null;
-  };
-
-  return {
-    read(): Caret {
-      const el = activeTextEl();
-      if (!el) return { start: 0, end: 0 };
-      const start = el.selectionStart ?? 0;
-      const end = el.selectionEnd ?? start;
-      return { start, end };
-    },
-    set(pos: number): void {
-      const el = activeTextEl();
-      if (!el) return;
-      const len = el.value.length;
-      const p = clamp(pos, 0, len);
-      el.setSelectionRange(p, p);
-    },
-    getLength(): number {
-      const el = activeTextEl();
-      return el ? el.value.length : 0;
-    },
-  };
-}
-
 export function typeCharIntoFocusedTextInput(text: string): void {
   const activeEl = document.activeElement;
   if (

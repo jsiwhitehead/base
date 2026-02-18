@@ -120,7 +120,7 @@ Token categories:
   - Shape/measure (for example `--ui-radius`, `--ui-ring`).
 - Colors:
   - Base/surface (for example `--ui-color-bg`, `--ui-color-surface`).
-  - Semantic state (for example `--ui-color-focus`, `--ui-color-issue`).
+  - Semantic state (for example `--ui-color-focus`, `--ui-color-issue`, `--ui-color-numeric`).
 
 ### CSS layering order
 
@@ -236,10 +236,15 @@ Rules:
 
 ### Required state classes
 
-All frames MUST support and apply these classes on the frame root:
+All frames MUST support these classes on the frame root:
 
 - `.is-focused`.
 - `.is-issue`.
+- `.is-numeric`.
+
+Application rules:
+
+- Implementations SHOULD apply `.is-numeric` when the resolved value is numeric-like.
 
 ### Precedence and derived variables
 
@@ -255,6 +260,7 @@ Required derived variables:
 - `--rail-tint`.
 - `--header-fill`.
 - `--frame-wash`.
+- `--value-ink`.
 
 ### Selection-driven focus styling
 
@@ -369,6 +375,30 @@ Issue + edit focus:
 - Wash: off.
 - Local control ring: issue-tinted where applicable.
 
+## Numeric language
+
+### Meaning
+
+- `.is-numeric` marks items whose resolved value is numeric (`number`) or a string parseable as a finite number.
+
+### Scope
+
+- `.is-numeric` is purely presentational metadata.
+- `.is-numeric` MUST NOT affect evaluation, sorting, coercion, or storage semantics.
+
+### Interaction with other states
+
+- `.is-issue` takes precedence for frame palette decisions.
+- `.is-numeric` MUST NOT alter rail or header primitives by default.
+- `.is-numeric` MAY alter body value styling via `--value-ink`.
+
+### Styling contract
+
+- `.ui-frame` defines `--value-ink` defaulting to `--ui-color-fg`.
+- `.ui-frame.is-numeric` overrides `--value-ink` to `--ui-color-numeric`.
+- Views MAY opt into `--value-ink` for value text.
+- Views MUST NOT hardcode numeric colors.
+
 ## Implementation guidance
 
 ### Selection-driven updates
@@ -406,6 +436,7 @@ Universal state classes:
 
 - `.is-focused`: active item.
 - `.is-issue`: broken/invalid connection.
+- `.is-numeric`: numeric-like resolved value.
 
 Precedence:
 
@@ -416,6 +447,7 @@ Frame-derived variables:
 - `--rail-tint`: rail segment tint.
 - `--header-fill`: header fill.
 - `--frame-wash`: container wash.
+- `--value-ink`: value text ink.
 
 Focus grammar:
 

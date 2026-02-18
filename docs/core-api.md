@@ -509,8 +509,3 @@ Constant exports:
 - `LABEL_TARGET`
 - `VALUE_TARGET`
 - `connTarget`
-
-Helper exports:
-
-- `parseValue(text): ValueOrBlank`
-- `defaultTextCaret(...)`

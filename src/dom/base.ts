@@ -1,7 +1,7 @@
 import { computed, effect } from "@preact/signals-core";
 
 import type { Component, Core, Focus, ViewName } from "../core";
-import { DEFAULT_TARGET } from "../core";
+import { DEFAULT_TARGET, isNumericLikeValue } from "../core";
 import { DEV, devAssert } from "../dev";
 
 type Ctx = {
@@ -273,6 +273,10 @@ export function bindItemFrame(
   const isIssue = computed(
     () => spec.core.item(spec.focus.item).content.type === "issue",
   );
+  const isNumeric = computed(() => {
+    const content = spec.core.item(spec.focus.item).content;
+    return content.type === "value" && isNumericLikeValue(content.value);
+  });
 
   ctx.target(spec.focus, DEFAULT_TARGET, () => frameEl);
 
@@ -284,6 +288,7 @@ export function bindItemFrame(
   ctx.effect(() => {
     frameEl.classList.toggle("is-focused", isFocused.value);
     frameEl.classList.toggle("is-issue", isIssue.value);
+    frameEl.classList.toggle("is-numeric", isNumeric.value);
   });
 }
 
