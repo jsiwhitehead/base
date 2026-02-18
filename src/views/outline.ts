@@ -98,13 +98,14 @@ function firstChild(core: Core, id: ItemId): ItemId | null {
   return kids[0] ?? null;
 }
 
-function lastDescendant(core: Core, id: ItemId): ItemId {
-  let cur = id;
-  while (true) {
-    const kids = childrenOf(core, cur);
-    if (kids.length === 0) return cur;
-    cur = kids[kids.length - 1]!;
-  }
+function prevSibling(core: Core, id: ItemId): ItemId | null {
+  const loc = core.locate(id);
+  return loc ? (loc.siblings[loc.index - 1] ?? null) : null;
+}
+
+function nextSibling(core: Core, id: ItemId): ItemId | null {
+  const loc = core.locate(id);
+  return loc ? (loc.siblings[loc.index + 1] ?? null) : null;
 }
 
 function isEditLeaf(core: Core, id: ItemId): boolean {
@@ -129,33 +130,6 @@ function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
 }
 
 const plan = {
-  nextVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
-    const firstVisibleChild = firstChild(core, id);
-    if (firstVisibleChild) return firstVisibleChild;
-
-    let cur: ItemId | null = id;
-    while (cur) {
-      const loc = core.locate(cur);
-      if (!loc) return null;
-      const { parentId, index, siblings } = loc;
-      const sibling = siblings[index + 1] ?? null;
-      if (sibling) return sibling;
-      cur = parentId;
-      if (cur === rootId) return null;
-    }
-    return null;
-  },
-
-  prevVisible(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
-    if (id === rootId) return null;
-    const loc = core.locate(id);
-    if (!loc) return null;
-    const { parentId, index, siblings } = loc;
-    const prev = siblings[index - 1] ?? null;
-    if (prev) return lastDescendant(core, prev);
-    return parentId === rootId ? null : parentId;
-  },
-
   moveEditPoint(
     core: Core,
     rootId: ItemId,
@@ -769,11 +743,10 @@ function createOutlineView(args: {
           let nextId: ItemId | null = null;
 
           if (dir === "left") nextId = parentOf(core, rootId, fromId);
-          else if (dir === "right") nextId = firstChild(core, fromId);
-          else if (dir === "up")
-            nextId = plan.prevVisible(core, rootId, fromId);
-          else if (dir === "down")
-            nextId = plan.nextVisible(core, rootId, fromId);
+          else if (dir === "right")
+            nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
+          else if (dir === "up") nextId = prevSibling(core, fromId);
+          else if (dir === "down") nextId = nextSibling(core, fromId);
 
           if (!nextId) return;
 

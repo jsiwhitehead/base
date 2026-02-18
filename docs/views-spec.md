@@ -149,14 +149,14 @@ When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
 
 #### Navigation geometry
 
-Hierarchical, depth-first over visible items. At the edges of the tree (root parent, childless leaf, first or last visible item), NAV is a no-op.
+Container focus uses sibling-only vertical navigation. At boundaries (no parent, no child, no previous/next sibling), NAV is a no-op.
 
-| NAV   | From container focus  |
-| ----- | --------------------- |
-| Up    | Previous visible item |
-| Down  | Next visible item     |
-| Left  | Parent item           |
-| Right | First child           |
+| NAV   | From container focus           |
+| ----- | ------------------------------ |
+| Up    | Previous sibling               |
+| Down  | Next sibling                   |
+| Left  | Parent item                    |
+| Right | First child, else next sibling |
 
 #### Tab action
 

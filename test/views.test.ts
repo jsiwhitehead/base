@@ -217,13 +217,13 @@ describe("views/outline", () => {
     unmount();
   });
 
-  test("NAV from container focus follows outline geometry", async () => {
+  test("NAV from container focus uses sibling geometry with right fallthrough", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "aa" });
     const b = mkBlank(core, g, { label: "b", value: "bb" });
-    const c = mkBlank(core, rootId, { label: "c", value: "cc" });
+    mkBlank(core, rootId, { label: "c", value: "cc" });
 
     core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
 
@@ -237,19 +237,31 @@ describe("views/outline", () => {
     await flushDomEffects();
     expectSel(core, { container: g, item: a, target: DEFAULT_TARGET });
 
+    fireViewKey(domView, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
+
+    fireViewKey(domView, "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { container: g, item: a, target: DEFAULT_TARGET });
+
     fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
     expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
 
     fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: c, target: DEFAULT_TARGET });
+    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
 
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
     expectSel(core, {
       container: rootId,
-      item: rootId,
+      item: g,
       target: DEFAULT_TARGET,
     });
 
@@ -321,7 +333,7 @@ describe("views/outline", () => {
     const { core, rootId } = makeCoreRuntime();
 
     const a = mkBlank(core, rootId, { label: "a", value: "1" });
-    const b = mkBlank(core, rootId, { label: "b", value: "2" });
+    mkBlank(core, rootId, { label: "b", value: "2" });
     core.focus({ container: rootId, item: a }, VALUE_TARGET, {
       caret: caret0(),
     });
