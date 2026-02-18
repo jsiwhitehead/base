@@ -47,11 +47,8 @@
     --ui-space-tight: 4px;
     --ui-space-pad: 12px;
 
-    --ui-radius: 6px;
-
     --ui-rail: 6px;
-    --ui-rail-radius: 3px;
-
+    --ui-radius: 4px;
     --ui-ring: 2px;
 
     --ui-color-bg: #fff;
@@ -109,7 +106,7 @@
     left: 0;
     width: var(--ui-main-rail);
     background: var(--rail-tint);
-    border-radius: var(--ui-rail-radius);
+    border-radius: var(--ui-radius);
   }
 
   .ui-frame {
@@ -326,20 +323,18 @@
   }
 
   .ui-outline > .ui-outline-child:first-child::before {
-    border-top-left-radius: var(--ui-rail-radius);
-    border-top-right-radius: var(--ui-rail-radius);
+    border-top-left-radius: var(--ui-radius);
+    border-top-right-radius: var(--ui-radius);
   }
 
   .ui-outline > .ui-outline-child:last-child::before {
-    border-bottom-left-radius: var(--ui-rail-radius);
-    border-bottom-right-radius: var(--ui-rail-radius);
+    border-bottom-left-radius: var(--ui-radius);
+    border-bottom-right-radius: var(--ui-radius);
   }
 
   .ui-outline .ui-outline-child > .ui-header {
     margin-left: calc(-1 * var(--outline-indent));
     padding-left: calc(var(--ui-space-pad) + var(--outline-indent));
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
     display: inline-flex;
     align-self: flex-start;
     position: relative;
@@ -404,6 +399,11 @@
 
   .ui-table-row {
     display: table-row;
+    --row-wash: transparent;
+  }
+
+  .ui-table-row.is-focused {
+    --row-wash: var(--frame-wash);
   }
 
   .ui-table-cell {
@@ -412,14 +412,33 @@
     padding: 0;
     min-width: 0;
     border-radius: 0;
+    position: relative;
+    z-index: 0;
+  }
+
+  .ui-table-cell::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: calc(-1 * var(--ui-space-gap));
+    right: 0;
+    background: var(--row-wash);
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .ui-table-row > .ui-table-first::after {
+    left: 0;
+    background: var(--header-fill);
   }
 
   .ui-table-header .ui-table-cell {
     padding: var(--ui-space-pad);
     background: var(--ui-color-header);
+    border-radius: var(--ui-radius);
   }
 
-  .ui-table-header .ui-table-first {
+  .ui-table .ui-table-first {
     background: transparent;
   }
 
@@ -430,12 +449,21 @@
   }
 
   .ui-table-row > .ui-table-cell {
-    position: relative;
     padding-top: calc(
       var(--ui-rail) + var(--ui-space-gap) + var(--ui-space-tight)
     );
     padding-bottom: var(--ui-space-tight);
     padding-inline: var(--ui-space-pad);
+  }
+
+  .ui-table-row > .ui-table-cell:nth-child(2) {
+    border-top-left-radius: var(--ui-radius);
+    border-bottom-left-radius: var(--ui-radius);
+  }
+
+  .ui-table-row > .ui-table-cell:last-child {
+    border-top-right-radius: var(--ui-radius);
+    border-bottom-right-radius: var(--ui-radius);
   }
 
   .ui-table-row > .ui-table-cell::before {
@@ -449,20 +477,29 @@
   }
 
   .ui-table-row > .ui-table-cell:nth-child(2)::before {
-    border-top-left-radius: var(--ui-rail-radius);
-    border-bottom-left-radius: var(--ui-rail-radius);
+    border-top-left-radius: var(--ui-radius);
+    border-bottom-left-radius: var(--ui-radius);
   }
 
   .ui-table-row > .ui-table-cell:last-child::before {
-    border-top-right-radius: var(--ui-rail-radius);
-    border-bottom-right-radius: var(--ui-rail-radius);
+    border-top-right-radius: var(--ui-radius);
+    border-bottom-right-radius: var(--ui-radius);
   }
 
   .ui-table-row > .ui-table-first {
     position: relative;
     padding-left: var(--ui-rail);
     padding-block: 0;
-    background: var(--header-fill);
+  }
+
+  .ui-table-row:first-child > .ui-table-first::after {
+    border-top-left-radius: var(--ui-radius);
+    border-top-right-radius: var(--ui-radius);
+  }
+
+  .ui-table-row:last-child > .ui-table-first::after {
+    border-bottom-left-radius: var(--ui-radius);
+    border-bottom-right-radius: var(--ui-radius);
   }
 
   .ui-table-row > .ui-table-first::before {
@@ -477,13 +514,13 @@
   }
 
   .ui-table-row:first-child > .ui-table-first::before {
-    border-top-left-radius: var(--ui-rail-radius);
-    border-top-right-radius: var(--ui-rail-radius);
+    border-top-left-radius: var(--ui-radius);
+    border-top-right-radius: var(--ui-radius);
   }
 
   .ui-table-row:last-child > .ui-table-first::before {
-    border-bottom-left-radius: var(--ui-rail-radius);
-    border-bottom-right-radius: var(--ui-rail-radius);
+    border-bottom-left-radius: var(--ui-radius);
+    border-bottom-right-radius: var(--ui-radius);
   }
 
   .ui-table-cell > * {
