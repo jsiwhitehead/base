@@ -172,6 +172,13 @@ function seedDemo(app: App): void {
 
   mkValue(demo, "x", 10);
   mkValue(demo, "y", 2);
+  const table = mkGroup(demo, "Table demo", "table");
+  const row1 = mkGroup(table, "r1");
+  mkValue(row1, "item", "Apples");
+  mkValue(row1, "qty", 3);
+  const row2 = mkGroup(table, "r2");
+  mkValue(row2, "item", "Oranges");
+  mkValue(row2, "qty", 5);
 
   void mkFormula;
   void mkQuery;
