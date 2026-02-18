@@ -155,7 +155,7 @@ export function buildTextField(
 
     const syncMirror = (text: string): void => {
       if (!mirror) return;
-      const next = text.endsWith("\n") ? text + "\u200B" : text;
+      const next = text === "" || text.endsWith("\n") ? text + "\u200B" : text;
       if (mirror.textContent !== next) mirror.textContent = next;
     };
 
@@ -220,9 +220,16 @@ export function buildTextField(
       }
 
       if (e.key === "Enter") {
-        if (inp instanceof HTMLTextAreaElement && (e.metaKey || e.ctrlKey)) {
-          e.stopPropagation();
-          return;
+        if (inp instanceof HTMLTextAreaElement) {
+          if (e.shiftKey) {
+            e.stopPropagation();
+            return;
+          }
+          if (e.metaKey || e.ctrlKey) {
+            prevent(e);
+            e.stopPropagation();
+            return;
+          }
         }
         yieldCommit(e);
         return;
@@ -276,6 +283,16 @@ export function buildTextField(
     });
 
     ctx.on(inp, "pointerdown", (e: PointerEvent) => {
+      const paddingTopPx = Number.parseFloat(getComputedStyle(inp).paddingTop);
+      if (Number.isFinite(paddingTopPx) && paddingTopPx > 0) {
+        const y = e.clientY - inp.getBoundingClientRect().top;
+        if (y < paddingTopPx) {
+          e.preventDefault();
+          const end = inp.value.length;
+          inp.setSelectionRange(end, end);
+        }
+      }
+
       core.focus(opts.focus, opts.target);
       e.stopPropagation();
     });

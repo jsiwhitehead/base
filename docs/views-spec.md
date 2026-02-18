@@ -77,7 +77,7 @@ Outline scalar body:
 
 ```text
 .ui-body.ui-outline
-  [.ui-textfield subtree]                      (target: value)
+  [.ui-textfield.ui-outline-value subtree]     (target: value)
 ```
 
 Structural rules:
@@ -87,6 +87,7 @@ Structural rules:
 - Mounted child body subtree MAY swap by child view name, but `.ui-frame.ui-outline-child` MUST NOT.
 - When a group has zero children, Outline MUST render a body-only empty state.
 - Empty-state UI for an empty group MUST NOT be a focus surface and MUST NOT add edit targets.
+- For each `.ui-outline-child`, `--outline-header-h` SHOULD reflect the mounted direct-header height in px, or `0px` when no header is mounted.
 
 Notes:
 
@@ -132,6 +133,13 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 ### View-specific behaviors
 
 #### View-specific exceptions
+
+Pointer hit routing inside `.ui-outline-child`:
+
+- Gutter/rail region (left of `--outline-indent`) keeps frame container behavior (`DEFAULT_TARGET`).
+- For the non-gutter content area, the scalar textarea SHOULD span under the header area while its text starts below the header via padding.
+- For clicks in the scalar value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
+- Header interactive controls retain native behavior and MUST win hit-testing over body text-editing surfaces.
 
 When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
 

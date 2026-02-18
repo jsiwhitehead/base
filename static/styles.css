@@ -265,6 +265,7 @@
     position: relative;
     width: fit-content;
     min-width: 1ch;
+    max-width: 100%;
   }
 
   .ui-textfield:has(.ui-textfield-mirror) .ui-textfield-input {
@@ -307,6 +308,7 @@
     min-width: 0;
 
     --outline-indent: calc(var(--ui-rail) + var(--ui-space-pad));
+    --outline-header-h: 0px;
     padding-left: var(--outline-indent);
   }
 
@@ -337,6 +339,32 @@
     border-bottom-left-radius: 0;
     display: inline-flex;
     align-self: flex-start;
+    position: relative;
+    z-index: 2;
+  }
+
+  .ui-outline .ui-outline-child > .ui-body {
+    position: relative;
+    z-index: 1;
+  }
+
+  .ui-outline-value:has(.ui-textfield-mirror) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ui-outline-value .ui-textfield-mirror {
+    display: block;
+  }
+
+  .ui-outline-value .ui-textfield-input,
+  .ui-outline-value .ui-textfield-mirror {
+    padding-top: calc(var(--outline-header-h) + var(--ui-space-gap));
+  }
+
+  .ui-outline-value {
+    margin-top: calc(-1 * (var(--outline-header-h) + var(--ui-space-gap)));
   }
 
   .ui-outline .ui-outline-placeholder {

@@ -473,11 +473,54 @@ function buildChildOuterFrame(
 
       const hasFields = computed(() => fieldsSignal.value.length > 0);
 
-      ctx.slot(frameEl, () => {
-        const shouldShow =
-          hasLabel.value || hasFields.value || labelFocused.value;
-        if (!shouldShow) return null;
+      const shouldShowHeader = computed(
+        () => hasLabel.value || hasFields.value || labelFocused.value,
+      );
 
+      let observedHeader: HTMLElement | null = null;
+      let rafId: number | null = null;
+
+      const setHeaderHeight = (heightPx: number) => {
+        frameEl.style.setProperty("--outline-header-h", `${heightPx}px`);
+      };
+
+      const ro = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        setHeaderHeight(Math.max(0, entry.borderBoxSize[0]!.blockSize));
+      });
+
+      const bindHeaderHeight = () => {
+        const headerEl = frameEl.querySelector(":scope > .ui-header");
+        const next = headerEl instanceof HTMLElement ? headerEl : null;
+        if (next === observedHeader) return;
+
+        if (observedHeader) ro.unobserve(observedHeader);
+        observedHeader = next;
+
+        if (!observedHeader) {
+          setHeaderHeight(0);
+          return;
+        }
+
+        setHeaderHeight(
+          Math.max(0, observedHeader.getBoundingClientRect().height),
+        );
+        ro.observe(observedHeader, { box: "border-box" });
+      };
+
+      const unbindHeaderHeight = () => {
+        if (rafId != null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        if (observedHeader) ro.unobserve(observedHeader);
+        observedHeader = null;
+        setHeaderHeight(0);
+      };
+
+      ctx.slot(frameEl, () => {
+        if (!shouldShowHeader.value) return null;
         return buildItemHeader(core, {
           focus,
           id,
@@ -485,6 +528,26 @@ function buildChildOuterFrame(
           commitLabel,
           commitConnField,
         });
+      });
+
+      ctx.effect(() => {
+        const show = shouldShowHeader.value;
+
+        if (!show) {
+          unbindHeaderHeight();
+          return;
+        }
+
+        if (rafId != null) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          bindHeaderHeight();
+        });
+      });
+
+      ctx.effect(() => () => {
+        unbindHeaderHeight();
+        ro.disconnect();
       });
     }
 
@@ -509,7 +572,8 @@ function buildOutlineScalarBody(
     focus,
     target: VALUE_TARGET,
     multiline: true,
-    autosize: false,
+    autosize: true,
+    className: "ui-outline-value",
     editModel: "live",
     commit: (text) => cmd.setText(core, id, text),
     getState: () => {

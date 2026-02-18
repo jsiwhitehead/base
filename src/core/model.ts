@@ -10,7 +10,7 @@ const NUMERIC_SCALAR_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
 export function parseScalar(text: string): Scalar | null {
   const t = text.trim();
-  if (!t) return null;
+  if (text === "") return null;
   if (NUMERIC_SCALAR_RE.test(t)) {
     const n = Number(t);
     if (Number.isFinite(n)) return n;
