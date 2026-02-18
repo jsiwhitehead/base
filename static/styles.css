@@ -424,6 +424,10 @@
     border-radius: var(--ui-radius);
   }
 
+  .ui-table-col.ui-table-header-col {
+    background: transparent;
+  }
+
   .ui-table-col .ui-header {
     padding: 0;
     background: transparent;
@@ -433,6 +437,7 @@
   .ui-frame.ui-table-cell {
     position: relative;
     padding-top: calc(var(--ui-rail) + var(--ui-space-gap));
+    padding-inline: var(--ui-space-pad);
   }
 
   .ui-frame.ui-table-cell::before {

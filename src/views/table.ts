@@ -574,12 +574,6 @@ function createTableView(args: {
     const root = el("div");
     setBodyClasses(root, "table");
 
-    const tableFocus: Focus = args.focus ?? {
-      container: tableId,
-      item: tableId,
-    };
-    bindItemFrame(ctx, { core, focus: tableFocus }, root);
-
     const inner = el("div", "ui-table-inner");
     root.append(inner);
 
