@@ -283,7 +283,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
 
   return createComponent(core, (ctx) => {
     const header = el("div", "ui-table-header");
-    const headerHead = el("div", "ui-table-col ui-table-header-col");
+    const headerHead = el("div", "ui-table-cell ui-table-first");
     header.append(headerHead);
 
     ctx.list<number>(
@@ -296,7 +296,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
       },
       (colIdx) =>
         createComponent(core, (colCtx) => {
-          const col = el("div", "ui-table-col");
+          const col = el("div", "ui-table-cell");
           const schemaRowId = signals.schemaRowId.value;
           const cellId = childrenOf(core, schemaRowId)[colIdx]!;
           const focus: Focus = { container: schemaRowId, item: cellId };
@@ -363,7 +363,7 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
       row,
     );
 
-    const headerCell = el("div", "ui-table-cell ui-table-header-col");
+    const headerCell = el("div", "ui-table-cell ui-table-first");
     row.append(headerCell);
 
     const canEditLabel = () => core.item(rowId).mode.type !== "readonly";

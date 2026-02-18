@@ -488,7 +488,7 @@ describe("views/table", () => {
     expect(header).toBeTruthy();
 
     const headerCols = [
-      ...(header?.querySelectorAll(":scope > .ui-table-col") ?? []),
+      ...(header?.querySelectorAll(":scope > .ui-table-cell") ?? []),
     ] as HTMLElement[];
     expect(headerCols.length).toBe(3);
 

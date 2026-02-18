@@ -50,7 +50,7 @@
     --ui-radius: 6px;
 
     --ui-rail: 6px;
-    --ui-rail-radius: 2px;
+    --ui-rail-radius: 3px;
 
     --ui-ring: 2px;
 
@@ -143,11 +143,7 @@
   }
 
   .ui-frame.is-focused:focus {
-    --frame-wash: color-mix(
-      in oklch,
-      var(--ui-color-bg) 90%,
-      var(--accent) 10%
-    );
+    --frame-wash: color-mix(in oklch, var(--ui-color-bg) 94%, var(--accent) 6%);
   }
 
   .ui-frame.is-focused:focus-within:not(:focus) {
@@ -410,31 +406,30 @@
     display: table-row;
   }
 
-  .ui-table-col,
   .ui-table-cell {
     display: table-cell;
     vertical-align: top;
     padding: 0;
     min-width: 0;
+    border-radius: 0;
   }
 
-  .ui-table-col {
+  .ui-table-header .ui-table-cell {
     padding: var(--ui-space-pad);
     background: var(--ui-color-header);
-    border-radius: var(--ui-radius);
   }
 
-  .ui-table-col.ui-table-header-col {
+  .ui-table-header .ui-table-first {
     background: transparent;
   }
 
-  .ui-table-col .ui-header {
+  .ui-table-cell .ui-header {
     padding: 0;
     background: transparent;
     border-radius: 0;
   }
 
-  .ui-frame.ui-table-cell {
+  .ui-table-row > .ui-table-cell {
     position: relative;
     padding-top: calc(
       var(--ui-rail) + var(--ui-space-gap) + var(--ui-space-tight)
@@ -443,59 +438,52 @@
     padding-inline: var(--ui-space-pad);
   }
 
-  .ui-frame.ui-table-cell::before {
+  .ui-table-row > .ui-table-cell::before {
     content: "";
     position: absolute;
-    left: 0;
-    right: 0;
+    inset-inline: 0;
     top: 0;
     height: var(--ui-rail);
     background: var(--rail-tint);
     border-radius: 0;
   }
 
-  .ui-table-row > .ui-frame.ui-table-cell:nth-child(2)::before {
+  .ui-table-row > .ui-table-cell:nth-child(2)::before {
     border-top-left-radius: var(--ui-rail-radius);
     border-bottom-left-radius: var(--ui-rail-radius);
   }
 
-  .ui-table-row > .ui-frame.ui-table-cell:last-child::before {
+  .ui-table-row > .ui-table-cell:last-child::before {
     border-top-right-radius: var(--ui-rail-radius);
     border-bottom-right-radius: var(--ui-rail-radius);
   }
 
-  .ui-table-cell.ui-table-header-col {
+  .ui-table-row > .ui-table-first {
     position: relative;
     padding-left: var(--ui-rail);
     padding-block: 0;
     background: var(--header-fill);
-    border-radius: var(--ui-radius);
   }
 
-  .ui-table-inner
-    .ui-table-body
-    > .ui-table-row:first-child
-    > .ui-table-cell.ui-table-header-col::before {
-    border-top-left-radius: var(--ui-rail-radius);
-    border-top-right-radius: var(--ui-rail-radius);
-  }
-
-  .ui-table-inner
-    .ui-table-body
-    > .ui-table-row:last-child
-    > .ui-table-cell.ui-table-header-col::before {
-    border-bottom-left-radius: var(--ui-rail-radius);
-    border-bottom-right-radius: var(--ui-rail-radius);
-  }
-
-  .ui-table-cell.ui-table-header-col::before {
+  .ui-table-row > .ui-table-first::before {
     content: "";
     position: absolute;
     inset-block: 0;
     left: 0;
     width: var(--ui-rail);
+    height: 100%;
     background: var(--rail-tint);
     border-radius: 0;
+  }
+
+  .ui-table-row:first-child > .ui-table-first::before {
+    border-top-left-radius: var(--ui-rail-radius);
+    border-top-right-radius: var(--ui-rail-radius);
+  }
+
+  .ui-table-row:last-child > .ui-table-first::before {
+    border-bottom-left-radius: var(--ui-rail-radius);
+    border-bottom-right-radius: var(--ui-rail-radius);
   }
 
   .ui-table-cell > * {

@@ -251,13 +251,13 @@ Table body:
 .ui-body.ui-table
   .ui-table-inner
     .ui-table-header
-      .ui-table-col.ui-table-header-col
-      .ui-table-col
+      .ui-table-cell.ui-table-first
+      .ui-table-cell
         [.ui-header subtree]                   (schema cell header; targets: label, conn:*)
       ...
     .ui-table-body
       .ui-frame.ui-table-row                   (row target: DEFAULT_TARGET)
-        .ui-table-cell.ui-table-header-col
+        .ui-table-cell.ui-table-first
           [.ui-header subtree]                 (row header; targets: label, conn:*)
         .ui-frame.ui-table-cell                (cell target: DEFAULT_TARGET)
           [.ui-body.<cell-view> subtree]       (mounted cell view body)
