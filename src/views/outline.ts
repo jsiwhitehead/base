@@ -119,6 +119,10 @@ function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
   const out: EditPoint[] = [];
   const walk = (parentId: ItemId) => {
     for (const cid of childrenOf(core, parentId)) {
+      if (core.view(cid) !== "outline") {
+        out.push({ id: cid, target: DEFAULT_TARGET });
+        continue;
+      }
       if (isEditLeaf(core, cid)) {
         for (const t of editTargetsForItem(core, cid))
           out.push({ id: cid, target: t });
@@ -168,6 +172,13 @@ const plan = {
     const nextIdx = backward ? at - 1 : at + 1;
     const next = points[nextIdx] ?? null;
     if (!next) return null;
+    if (next.target === DEFAULT_TARGET) {
+      return {
+        focus: focusFor(core, rootId, next.id),
+        target: DEFAULT_TARGET,
+        caret: caret0(),
+      };
+    }
 
     const caret = backward
       ? caretAt(getTextForTarget(core, next.id, next.target).length)
@@ -195,6 +206,13 @@ const plan = {
     const nextIdx = dir === "backward" ? at - 1 : at + 1;
     const next = points[nextIdx] ?? null;
     if (!next) return null;
+    if (next.target === DEFAULT_TARGET) {
+      return {
+        focus: focusFor(core, rootId, next.id),
+        target: DEFAULT_TARGET,
+        caret: caret0(),
+      };
+    }
 
     const text = getTextForTarget(core, next.id, next.target);
     const caret = dir === "backward" ? caretAt(text.length) : caret0();

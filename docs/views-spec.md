@@ -120,6 +120,7 @@ Notes:
 
 - Outline defines a traversal space for `NAV` while editing.
 - Groups participate in navigation but not in edit traversal.
+- Non-outline child views are treated as atomic traversal stops at `DEFAULT_TARGET` and are not traversed recursively.
 - Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/dom-runtime.md`.
 
 ### Header visibility policy
@@ -320,7 +321,7 @@ Grid over rows and cells. Row headers occupy column 0. Column headers occupy row
 | ----- | ------------------ | ----------------------------------------------- |
 | Up    | Previous row       | Same column, previous row                       |
 | Down  | Next row           | Same column, next row                           |
-| Left  | No-op              | Previous cell (column 0 exits to row container) |
+| Left  | Exit to table item | Previous cell (column 0 exits to row container) |
 | Right | First cell         | Next cell                                       |
 
 #### Tab action

@@ -455,6 +455,20 @@ function createTableView(args: {
       case "NAV": {
         if (selection.target !== DEFAULT_TARGET) return;
 
+        if (intent.dir === "left" && isRowContainerSel(selection, tableId)) {
+          const parentLoc = core.locate(tableId);
+          if (!parentLoc) {
+            core.focus({ container: tableId, item: tableId }, DEFAULT_TARGET);
+            return;
+          }
+
+          core.focus(
+            { container: parentLoc.parentId, item: tableId },
+            DEFAULT_TARGET,
+          );
+          return;
+        }
+
         if (intent.dir === "out") {
           const containerId = selection.focus.container;
           const parentLoc = core.locate(containerId);
