@@ -250,7 +250,7 @@ describe("views/outline", () => {
     unmount();
   });
 
-  test("Tab nests in and out", async () => {
+  test("Tab wraps in-place and Shift+Tab unwraps parent group", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const g = mkGroup(core, rootId, { label: "g" });
@@ -271,6 +271,8 @@ describe("views/outline", () => {
     expect(kids.length).toBe(1);
     const wrapper = kids[0]!;
     expect(wrapper).not.toBe(x);
+    expect(core.item(wrapper).label ?? "").toBe("");
+    expect(core.item(x).label).toBe("x");
 
     expectSel(core, { container: wrapper, item: x, target: VALUE_TARGET });
 
@@ -278,6 +280,57 @@ describe("views/outline", () => {
     await flushDomEffects();
 
     expectSel(core, { container: g, item: x, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("Shift+Tab unwraps multi-child parent by splicing children at wrapper index", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const before = mkBlank(core, rootId, { label: "before", value: "b" });
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "1" });
+    const b = mkBlank(core, g, { label: "b", value: "2" });
+    const c = mkBlank(core, g, { label: "c", value: "3" });
+    const after = mkBlank(core, rootId, { label: "after", value: "a" });
+
+    core.focus({ container: g, item: b }, VALUE_TARGET, { caret: caret0() });
+
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    fireViewKey(domView, "Tab", { shiftKey: true });
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([before, a, b, c, after]);
+    expectSel(core, { container: rootId, item: b, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("Shift+Tab is no-op when focused item's parent is root", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const a = mkBlank(core, rootId, { label: "a", value: "1" });
+    const b = mkBlank(core, rootId, { label: "b", value: "2" });
+    core.focus({ container: rootId, item: a }, VALUE_TARGET, {
+      caret: caret0(),
+    });
+
+    const { domView, unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+    });
+
+    fireViewKey(domView, "Tab", { shiftKey: true });
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([a, b]);
+    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
 
     unmount();
   });

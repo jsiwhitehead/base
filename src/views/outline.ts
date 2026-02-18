@@ -367,56 +367,57 @@ const cmd = {
     dir: "in" | "out",
   ): Focus | null {
     const id = sel.focus.item;
+    const loc = core.locate(id);
+    if (!loc) return null;
 
     if (dir === "in") {
-      const loc = core.locate(id);
-      if (!loc) return null;
-
       const { parentId, index: idx } = loc;
-
-      const label = core.item(id).label ?? "";
+      const parentSnap = core.item(parentId);
+      if (parentSnap.content.type !== "group") return null;
+      if (
+        parentSnap.mode.type === "readonly" ||
+        parentSnap.mode.type === "connected"
+      )
+        return null;
       let wrapperId: ItemId = "";
 
       core.commit((t) => {
         wrapperId = t.insertChild(parentId, { at: idx });
         t.setGroup(wrapperId);
-        t.setLabel(id, "");
-        t.setLabel(wrapperId, label);
         t.move(id, wrapperId, { at: 0 });
       });
 
       return { container: wrapperId, item: id };
     }
 
-    const loc = core.locate(id);
-    if (!loc) return null;
-
     const { parentId: wrapperId } = loc;
     if (wrapperId === rootId) return null;
 
-    const grandparentId = parentOf(core, rootId, wrapperId);
-    if (!grandparentId) return null;
-
-    const grandparentSnap = core.item(grandparentId);
-    if (grandparentSnap.content.type !== "group") return null;
-
-    const wrapperIdx = grandparentSnap.content.children.indexOf(wrapperId);
-    if (wrapperIdx < 0) return null;
-
+    const wrapperLoc = core.locate(wrapperId);
+    if (!wrapperLoc) return null;
+    const { parentId: grandparentId, index: wrapperIdx } = wrapperLoc;
     const wrapperSnap = core.item(wrapperId);
     if (wrapperSnap.content.type !== "group") return null;
+    if (
+      wrapperSnap.mode.type === "readonly" ||
+      wrapperSnap.mode.type === "connected"
+    )
+      return null;
+    const grandparentSnap = core.item(grandparentId);
+    if (grandparentSnap.content.type !== "group") return null;
+    if (
+      grandparentSnap.mode.type === "readonly" ||
+      grandparentSnap.mode.type === "connected"
+    )
+      return null;
 
-    const wrapperLabel = wrapperSnap.label ?? "";
-    const shouldUnwrap =
-      wrapperSnap.content.children.length === 1 &&
-      wrapperSnap.content.children[0] === id;
-    const moveAt = shouldUnwrap ? wrapperIdx : wrapperIdx + 1;
+    const kids = [...wrapperSnap.content.children];
 
     core.commit((t) => {
-      t.move(id, grandparentId, { at: moveAt });
-      if (!shouldUnwrap) return;
+      for (let i = 0; i < kids.length; i += 1) {
+        t.move(kids[i]!, grandparentId, { at: wrapperIdx + i });
+      }
       t.remove(wrapperId);
-      t.setLabel(id, wrapperLabel);
     });
 
     return { container: grandparentId, item: id };

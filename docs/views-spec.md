@@ -160,7 +160,7 @@ Hierarchical, depth-first over visible items. At the edges of the tree (root par
 
 #### Tab action
 
-Nest in (Tab) or nest out (Shift+Tab). Moves the item in the tree hierarchy. Preserves current target and clamps caret to destination text length. No-op when nesting is not possible.
+Tab performs structural wrap/unwrap. Tab wraps the focused item as `G(X)`. Shift+Tab unwraps the focused item's parent group `G(children...)` to `children...` when possible. Preserves current target and caret. No-op when the operation is not structurally possible.
 
 #### Edit traversal scope
 
@@ -208,9 +208,9 @@ Outline scalar edit storage:
 
 `changeNesting(sel, dir)` rules:
 
-- `in`: wraps item in a new group and moves it inside.
-- `out`: moves item to the wrapper's parent.
-- `out`: unwraps and removes the wrapper only when the wrapper has exactly one child (the moved item).
+- `in` (Tab): wrap `X` as `G(X)` in-place. `G.label` is empty; `X.label` is unchanged.
+- `out` (Shift+Tab): unwrap parent `G(children...)` to `children...` by splicing `children...` into `G`'s parent at `G`'s original index. Discards `G.label`.
+- No-op: `in`/`out` do nothing if the required parent structure does not exist (root), or if any required ancestor is connected or readonly.
 
 ### Edge cases and invariants
 
