@@ -1,5 +1,3 @@
-export type { NavDir } from "./controls";
-
 export {
   bindItemFrame,
   createComponent,
@@ -8,6 +6,7 @@ export {
   setBodyClasses,
 } from "./base";
 
+export type { NavDir } from "./controls";
 export {
   buildItemHeader,
   buildTextField,
@@ -21,3 +20,6 @@ export {
   resolveFocusAfterRemove,
   SELECT_ALL,
 } from "./controls";
+
+export type { DragController, DragState, DropTarget } from "./drag";
+export { buildDropIndicator, createDragController } from "./drag";

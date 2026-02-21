@@ -2,7 +2,13 @@ import type { Core, ItemId, Value, ViewName } from "./core";
 import { createCore } from "./core";
 import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV, devAssert, devWarn } from "./dev";
-import { bindItemFrame, createComponent, el } from "./dom";
+import {
+  bindItemFrame,
+  buildDropIndicator,
+  createComponent,
+  createDragController,
+  el,
+} from "./dom";
 import { viewRegistrations } from "./views";
 
 type App = {
@@ -55,6 +61,9 @@ function createApp(opts: CreateAppOpts = {}): App {
     return rootFrame;
   });
 
+  const drag = createDragController(core);
+  const indicator = buildDropIndicator(drag.state);
+
   const root = el("div", "ui-root");
   const main = appRoot.el;
 
@@ -72,7 +81,7 @@ function createApp(opts: CreateAppOpts = {}): App {
     { capture: true },
   );
 
-  root.append(main);
+  root.append(main, indicator.el);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
@@ -94,6 +103,8 @@ function createApp(opts: CreateAppOpts = {}): App {
     rootId,
     dispose() {
       debugPanel?.dispose();
+      indicator.dispose();
+      drag.dispose();
       appRoot.dispose();
       hostEl.replaceChildren();
       core.dispose();
@@ -168,11 +179,9 @@ function seedDemo(app: App): void {
     return id;
   };
 
-  const demo = mkGroup(rootId, "Demo", "outline");
-
-  mkValue(demo, "x", 10);
-  mkValue(demo, "y", 2);
-  const table = mkGroup(demo, "Table demo");
+  mkValue(rootId, "x", 10);
+  mkValue(rootId, "y", 2);
+  const table = mkGroup(rootId, "table");
   const row1 = mkGroup(table, "r1");
   mkValue(row1, "item", "Apples");
   mkValue(row1, "qty", 3);

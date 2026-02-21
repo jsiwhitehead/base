@@ -448,6 +448,64 @@ Rules:
 - Undo history MUST be linear.
 - A new edit MUST clear the redo stack.
 
+## Helper functions
+
+### `fieldsFromConn(conn)`
+
+```ts
+fieldsFromConn(conn: Connected): { key: string; label: string; multiline: boolean; text: string }[]
+```
+
+Returns the ordered list of editable fields for a connected item.
+
+Rules:
+
+- For `formula`: returns one field with key `"expr"`.
+- For `query`: returns fields `"from"`, `"where"`, `"orderBy"` in that order.
+- Field order MUST be canonical and stable.
+
+### `editTargetsForItem(core, id)`
+
+```ts
+editTargetsForItem(core: Core, id: ItemId): string[]
+```
+
+Returns the ordered list of traversable edit targets for an item (see `docs/architecture.md` edit target list).
+
+Rules:
+
+- For connected items: returns `connTarget(key)` for each field in `fieldsFromConn` order.
+- For plain value items: returns `[VALUE_TARGET]`.
+- For readonly or group items: returns `[]`.
+
+### `getTextForTarget(core, id, target)`
+
+```ts
+getTextForTarget(core: Core, id: ItemId, target: string): string
+```
+
+Returns the current text for a given item and target.
+
+Rules:
+
+- For `VALUE_TARGET`: returns the item's value as a string, or `""` if blank or non-value.
+- For `LABEL_TARGET`: returns the item's label, or `""` if absent.
+- For `conn:*` targets: returns the matching connected field text, or `""` if not found.
+
+### `isNumericLikeValue(value)`
+
+```ts
+isNumericLikeValue(value: ValueOrBlank): boolean
+```
+
+Presentational helper that returns `true` if the value is a finite number or a string parseable as one. Determines whether `.is-numeric` is applied to a frame; has no effect on storage, evaluation, or sorting.
+
+Rules:
+
+- `number`: `true` if and only if `Number.isFinite(value)`.
+- `string`: trims whitespace, returns `true` if the result is a finite number.
+- All other values (`null`, `true`): `false`.
+
 ## Lifecycle
 
 ```ts
@@ -489,6 +547,7 @@ Type exports:
 - `Content`
 - `Connected`
 - `ApplyResult`
+- `Tx`
 - `Core`
 - `Intent`
 - `Selection`
@@ -508,3 +567,10 @@ Constant exports:
 - `LABEL_TARGET`
 - `VALUE_TARGET`
 - `connTarget`
+
+Function exports:
+
+- `fieldsFromConn`
+- `editTargetsForItem`
+- `getTextForTarget`
+- `isNumericLikeValue`

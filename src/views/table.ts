@@ -286,19 +286,13 @@ function buildHeader(mountCtx: TableMountCtx): Component {
     const headerHead = el("div", "ui-table-cell ui-table-first");
     header.append(headerHead);
 
-    ctx.list<number>(
+    ctx.list<ItemId>(
       header,
-      () => {
-        const colCount = signals.colCount.value;
-        const out: number[] = [];
-        for (let i = 0; i < colCount; i++) out.push(i);
-        return out;
-      },
-      (colIdx) =>
+      () => childrenOf(core, signals.schemaRowId.value),
+      (cellId) =>
         createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-cell");
           const schemaRowId = signals.schemaRowId.value;
-          const cellId = childrenOf(core, schemaRowId)[colIdx]!;
           const focus: Focus = { container: schemaRowId, item: cellId };
 
           const canEditLabel = () => core.item(cellId).mode.type !== "readonly";
@@ -339,6 +333,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
 function buildDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
   return createComponent(core, (ctx) => {
     const host = el("div", "ui-table-cell");
+    host.dataset.dragSlot = "true";
 
     const focus: Focus = { container: rowId, item: cellId };
     bindItemFrame(ctx, { core, focus }, host);
@@ -393,18 +388,10 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
       }),
     );
 
-    ctx.list<number>(
+    ctx.list<ItemId>(
       row,
-      () => {
-        const colCount = signals.colCount.value;
-        const out: number[] = [];
-        for (let i = 0; i < colCount; i++) out.push(i);
-        return out;
-      },
-      (colIdx) => {
-        const cellId = childrenOf(core, rowId)[colIdx]!;
-        return buildDataCell(core, rowId, cellId);
-      },
+      () => childrenOf(core, rowId).slice(0, signals.colCount.value),
+      (cellId) => buildDataCell(core, rowId, cellId),
     );
 
     return row;

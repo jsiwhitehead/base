@@ -23,6 +23,7 @@ Base helpers:
 
 - `createComponent`: lifecycle-safe component factory.
 - `el`: small DOM element constructor helper.
+- `observeHeight`: reactive element height observer.
 - `bindItemFrame`: canonical `.ui-frame` binding helper.
 - `setBodyClasses`: canonical body-root class helper.
 
@@ -31,17 +32,21 @@ Controls/editing helpers:
 - `buildTextField`: canonical shared text editor component.
 - `caret0`, `caretAt`, `caretEnd`: caret constructors.
 - `clampCaretToText`: clamps a caret to text length.
-- `editTargetsForItem`: canonical traversable edit-target derivation.
+- `SELECT_ALL`: caret sentinel that selects all text.
 - `handleContainerIntent`: shared container-focus `TYPE`/`CONFIRM` adaptor for views.
-- `getTextForTarget`: canonical text lookup by item/target.
 - `moveWithinItemEditTargets`: intra-item traversable-target movement helper.
 - `resolveFocusAfterRemove`: canonical remove-focus destination helper.
 
 Connected header helpers:
 
 - `buildItemHeader`: canonical header subtree component.
-- `fieldsFromConn`: connected-mode field derivation helper.
 - `patchConn`: single-field connected patch helper.
+
+Drag helpers:
+
+- `createDragController`: creates the drag-and-drop controller.
+- `buildDropIndicator`: builds the drop-position indicator component.
+- Types: `DragController`, `DragState`, `DropTarget`.
 
 ## Component model
 
@@ -171,6 +176,20 @@ Rules:
 - If `className` is provided, sets `element.className = className`.
 - If `text` is provided (including empty string), sets `element.textContent = text`.
 
+### `observeHeight(element, onHeight)`
+
+```ts
+observeHeight(element: HTMLElement, onHeight: (px: number) => void): () => void
+```
+
+Observes the border-box height of an element via `ResizeObserver`.
+
+Rules:
+
+- Calls `onHeight` synchronously once with the current height.
+- Calls `onHeight` on every subsequent resize.
+- Returns a cleanup function that disconnects the observer.
+
 ## Frame binding (`bindItemFrame`)
 
 ### `bindItemFrame(ctx, spec, frameEl)`
@@ -210,6 +229,7 @@ Intent routing:
 - `caret0()` returns `{ start: 0, end: 0 }`.
 - `caretAt(pos)` returns `{ start: pos, end: pos }`.
 - `caretEnd()` returns end-sentinel caret (`Number.MAX_SAFE_INTEGER`).
+- `SELECT_ALL`: caret constant `{ start: 0, end: Number.MAX_SAFE_INTEGER }` that selects all text when applied.
 
 ### `handleContainerIntent({ core, sel, intent })`
 
@@ -334,17 +354,6 @@ Rules:
 
 ## Connected header helpers
 
-### `fieldsFromConn(conn)`
-
-Canonical connected field derivation.
-
-Rules:
-
-- For `formula`: returns one field `expr`.
-- For non-formula connected definitions: returns `from`, `where`, `orderBy`.
-- Field metadata includes key, label text, multiline flag, and current text.
-- Field order MUST be canonical and stable.
-
 ### `patchConn(conn, key, text)`
 
 Single-field patch helper.
@@ -385,6 +394,74 @@ Rules:
 - Each connected field MUST commit through `commitConnField(field.key, text)`.
 - Connected rows are keyed by `field.key` and reconciled with `ctx.list`.
 - Render order matches `fieldsFromConn(conn)`.
+
+## Drag system
+
+### Types
+
+```ts
+type DragState =
+  | { type: "idle" }
+  | { type: "pending"; itemId: ItemId; pointerId: number; startX: number; startY: number }
+  | { type: "active"; itemId: ItemId; drop: DropTarget | null };
+
+type DropTarget =
+  | { type: "gap"; parentId: ItemId; at: number; side: "before" | "after"; axis: "horizontal" | "vertical"; anchorEl: HTMLElement }
+  | { type: "slot"; itemId: ItemId; anchorEl: HTMLElement };
+
+type DragController = {
+  state: Signal<DragState>;
+  dispose(): void;
+};
+```
+
+### `createDragController(core)`
+
+```ts
+createDragController(core: Core): DragController
+```
+
+Creates a drag controller that manages pointer-driven item reordering.
+
+Rules:
+
+- Attaches global `pointerdown`, `pointermove`, `pointerup`, and `pointercancel` listeners.
+- Drags MUST NOT start on interactive elements (`input`, `textarea`, `select`, `button`, contenteditable) or readonly frames.
+- `DragState` transitions: `idle` → `pending` → `active` → `idle`.
+- While pending/active, `document.documentElement.dataset.dragState` is `"pending"` or `"active"`.
+- The dragged frame receives `is-dragging` while active.
+- Escape cancels an active drag without committing.
+- On `pointerup` while active, commits the drop atomically via `core.commit(...)`.
+- `dispose()` MUST remove all global listeners.
+
+Drop commit rules:
+
+- `gap` drop: moves the item to the target position; cleans up the source vacancy.
+- `slot` drop: swaps the item into the slot; labels are exchanged and the displaced item is removed.
+- Newly-empty ancestor groups at the source are pruned (non-slot sources only).
+
+### `buildDropIndicator(dragState)`
+
+```ts
+buildDropIndicator(dragState: Signal<DragState>): Component
+```
+
+Builds a fixed-position drop indicator component.
+
+Rules:
+
+- Tracks `dragState` reactively.
+- When `dragState` is not `active` or has no drop target, the indicator is hidden.
+- For `slot` drop targets, the indicator is hidden and `is-drop-target` is added to `anchorEl`.
+- For `gap` drop targets, the indicator is shown at the near edge of `anchorEl`; `dataset.side` and `dataset.axis` are set for CSS targeting.
+- `dispose()` removes `is-drop-target` from any slot element and stops the effect.
+
+### Observable DOM outputs
+
+- `document.documentElement.dataset.dragState`: `"pending"` or `"active"` while dragging; absent when idle.
+- `.is-dragging`: on the source `.ui-frame` during an active drag.
+- `.is-drop-target`: on a slot `anchorEl` when it is the current drop target.
+- `.ui-drop-indicator`: the fixed-position indicator element managed by `buildDropIndicator`.
 
 ## Key parsing boundary
 

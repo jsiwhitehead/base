@@ -284,29 +284,15 @@ export function createModel(): Model {
     }));
   };
 
-  function assertUniqueChildLabels(
-    parentId: EntryId,
-    opts: {
-      childIds?: readonly EntryId[];
-      override?: { childId: EntryId; label: string };
-    } = {},
-  ): void {
+  function assertUniqueChildLabels(parentId: EntryId): void {
     const parent = entrySignal(parentId).peek();
     if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
 
-    const childIds = opts.childIds ?? parent.content.childIds;
-
     const seen = new Set<string>();
-    for (const childId of childIds) {
+    for (const childId of parent.content.childIds) {
       if (!entries.has(childId)) continue;
 
-      const childEntry = entrySignal(childId).peek();
-      const raw =
-        opts.override && opts.override.childId === childId
-          ? opts.override.label
-          : childEntry.label;
-
-      const label = normalizeLabel(raw);
+      const label = normalizeLabel(entrySignal(childId).peek().label);
       if (!label) continue;
 
       if (seen.has(label))
@@ -384,8 +370,6 @@ export function createModel(): Model {
         childId,
         ...baseline.slice(rawAt),
       ];
-
-      assertUniqueChildLabels(toParentId, { childIds: preparedChildIds });
     }
 
     if (
@@ -438,15 +422,6 @@ export function createModel(): Model {
     const record = entryRecord(id);
     const currentEntry = record.entrySignal.peek();
     let nextContent = next.content;
-
-    if (next.label !== undefined) {
-      const parentId = currentEntry.parentId;
-      if (parentId != null) {
-        assertUniqueChildLabels(parentId, {
-          override: { childId: id, label: next.label },
-        });
-      }
-    }
 
     if (nextContent !== undefined) {
       const currentContent = currentEntry.content;
@@ -586,6 +561,17 @@ export function createModel(): Model {
           }
         }
       });
+
+      const groupsToCheck = new Set<EntryId>();
+      for (const id of touched) {
+        const entry = entries.get(id)?.entrySignal.peek();
+        if (!entry) continue;
+
+        if (isGroupEntry(entry)) groupsToCheck.add(id);
+        if (entry.parentId != null && entries.has(entry.parentId))
+          groupsToCheck.add(entry.parentId);
+      }
+      for (const groupId of groupsToCheck) assertUniqueChildLabels(groupId);
     } catch (err) {
       restoreEntries(snapshot);
       throw err;

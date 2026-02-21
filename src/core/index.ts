@@ -163,7 +163,7 @@ export type ApplyResult = {
   }[];
 };
 
-type Tx = {
+export type Tx = {
   setLabel(id: ItemId, label: string): void;
   setView(id: ItemId, view: ViewName | null): void;
 
