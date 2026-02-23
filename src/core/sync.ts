@@ -242,7 +242,7 @@ export function enforceViewConstraints(
         if (!model.hasEntry(cid)) continue;
         const label = normalizeLabel(model.peekEntry(cid).label);
         if (label && !schemaSet.has(label)) {
-          syncOps.push(model.ops.move({ childId: cid, toParentId: null }));
+          syncOps.push(model.ops.remove(cid));
         }
       }
     }

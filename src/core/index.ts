@@ -13,10 +13,10 @@ import {
 } from "./eval";
 import { interpretExpr } from "./lang";
 import type {
+  ApplyDelta,
   Entry,
   EntryContent,
   EntryId,
-  ModelApplyResult,
   Op,
   Transaction,
   TransactionMeta,
@@ -25,7 +25,6 @@ import type {
 import {
   createModel,
   isFormulaContent,
-  isGroupContent,
   isQueryContent,
   makeBlankEntry,
   makeGroupEntry,
@@ -157,6 +156,10 @@ type UserCommitHistoryCtx = {
   selection: Selection;
   startedAt: number;
 };
+type CapturedSubtree = {
+  entry: Entry;
+  children: CapturedSubtree[];
+};
 
 const TEXT_HISTORY_COALESCE_MS = 1000;
 
@@ -232,17 +235,6 @@ function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
   return { type: "plain" };
 }
 
-export type ApplyResult = {
-  readonly created: readonly ItemId[];
-  readonly touched: readonly ItemId[];
-  readonly moved: readonly {
-    readonly fromParentId: ItemId | null;
-    readonly toParentId: ItemId | null;
-    readonly fromIndex: number | null;
-    readonly toIndex: number | null;
-  }[];
-};
-
 export type Tx = {
   setLabel(id: ItemId, label: string): void;
   setView(id: ItemId, view: ViewName | null): void;
@@ -272,10 +264,10 @@ export type Core = {
 
   view(id: ItemId): ViewName;
 
-  commit(run: (t: Tx) => void): ApplyResult;
+  commit(run: (t: Tx) => void): void;
 
-  undo(): ApplyResult;
-  redo(): ApplyResult;
+  undo(): void;
+  redo(): void;
 
   selection(): Selection;
   focus(focus: Focus, target?: string, opts?: FocusOpts): void;
@@ -440,34 +432,15 @@ export function createCore(opts: {
     redo: [],
   };
 
-  const emptyModelApply: ModelApplyResult = {
-    created: [],
+  const emptyApply: ApplyDelta = {
+    removed: [],
     touched: [],
-    moved: [],
   };
 
-  const mergeModelApply = (
-    a: ModelApplyResult,
-    b: ModelApplyResult,
-  ): ModelApplyResult => ({
-    created: [...a.created, ...b.created],
+  const mergeApply = (a: ApplyDelta, b: ApplyDelta): ApplyDelta => ({
+    removed: Array.from(new Set([...a.removed, ...b.removed])),
     touched: Array.from(new Set([...a.touched, ...b.touched])),
-    moved: [...a.moved, ...b.moved],
   });
-
-  const toApplyResult = (modelApply: ModelApplyResult): ApplyResult => {
-    const toItem = (eid: EntryId) => itemIdOf(eid);
-    return {
-      created: modelApply.created.map(toItem),
-      touched: modelApply.touched.map(toItem),
-      moved: modelApply.moved.map((x) => ({
-        fromParentId: x.fromParentId == null ? null : toItem(x.fromParentId),
-        toParentId: x.toParentId == null ? null : toItem(x.toParentId),
-        fromIndex: x.fromIndex,
-        toIndex: x.toIndex,
-      })),
-    };
-  };
 
   const selectionStillValid = (sel: Selection): boolean => {
     if (sel.type === "idle") return true;
@@ -649,6 +622,48 @@ export function createCore(opts: {
   const captureInverseForTxn = (txn: Transaction): Op[] => {
     const inverses: Op[] = [];
 
+    const captureSubtree = (rootEntryId: EntryId): CapturedSubtree => {
+      const entry = model.peekEntry(rootEntryId);
+      const childIds =
+        entry.content.type === "group" ? model.childIdsOf(rootEntryId) : [];
+      return {
+        entry,
+        children: childIds.map((childId) => captureSubtree(childId)),
+      };
+    };
+
+    const entryForRestoreCreate = (entry: Entry): Entry => {
+      if (entry.content.type !== "group") return { ...entry, parentId: null };
+      return {
+        ...entry,
+        parentId: null,
+        content: { type: "group", childIds: [] },
+      };
+    };
+
+    const pushCreateOpsForSubtree = (
+      node: CapturedSubtree,
+      out: Op[],
+      opts?: { skipRoot?: true },
+    ): void => {
+      if (!opts?.skipRoot) out.push(model.ops.create(entryForRestoreCreate(node.entry)));
+      for (const child of node.children) pushCreateOpsForSubtree(child, out);
+    };
+
+    const pushChildRestoreMoves = (node: CapturedSubtree, out: Op[]): void => {
+      for (let i = 0; i < node.children.length; i += 1) {
+        const child = node.children[i]!;
+        out.push(
+          model.ops.move({
+            childId: child.entry.id,
+            toParentId: node.entry.id,
+            toIndex: i,
+          }),
+        );
+        pushChildRestoreMoves(child, out);
+      }
+    };
+
     for (const op of txn.ops) {
       if (op.type === "create") {
         inverses.push(model.ops.remove(op.entry.id));
@@ -670,7 +685,9 @@ export function createCore(opts: {
         const childId = op.spec.childId;
         if (!model.hasEntry(childId)) continue;
         const child = model.peekEntry(childId);
-        const parentId = child.parentId ?? null;
+        const parentId = child.parentId;
+        if (parentId == null)
+          throw new Error("Move inverse expects child to have a parent");
         const loc = model.locateInParent(childId);
         inverses.push(
           model.ops.move({
@@ -687,83 +704,44 @@ export function createCore(opts: {
         if (!model.hasEntry(id0)) continue;
 
         const cur = model.peekEntry(id0);
+        const subtree = captureSubtree(id0);
         if (id0 === rootEntryId) {
-          const prev = { label: cur.label, view: cur.view };
-
-          if (isGroupContent(cur.content)) {
-            const childIds = cur.content.childIds.filter((cid) =>
-              model.hasEntry(cid),
-            );
+          if (subtree.entry.content.type === "group") {
             inverses.push(
               model.ops.patch(id0, {
-                ...prev,
+                label: subtree.entry.label,
+                view: subtree.entry.view,
                 content: { type: "group", childIds: [] },
               }),
             );
-            for (let i = 0; i < childIds.length; i++) {
-              inverses.push(
-                model.ops.move({
-                  childId: childIds[i]!,
-                  toParentId: id0,
-                  toIndex: i,
-                }),
-              );
-            }
+            pushCreateOpsForSubtree(subtree, inverses, { skipRoot: true });
+            pushChildRestoreMoves(subtree, inverses);
           } else {
             inverses.push(
               model.ops.patch(id0, {
-                ...prev,
-                content: cur.content,
+                label: subtree.entry.label,
+                view: subtree.entry.view,
+                content: subtree.entry.content,
               }),
             );
           }
           continue;
         }
 
-        const parentId = cur.parentId ?? null;
+        const parentId = cur.parentId;
+        if (parentId == null)
+          throw new Error("Remove inverse expects non-root item to have a parent");
         const loc = model.locateInParent(id0);
         const prevIndex = loc?.index ?? undefined;
-
-        if (isGroupContent(cur.content)) {
-          const childIds = [...cur.content.childIds].filter((cid) =>
-            model.hasEntry(cid),
-          );
-
-          for (let i = childIds.length - 1; i >= 0; i--) {
-            inverses.push(
-              model.ops.move({
-                childId: childIds[i]!,
-                toParentId: id0,
-                toIndex: i,
-              }),
-            );
-          }
-
-          inverses.push(
-            model.ops.move({
-              childId: id0,
-              toParentId: parentId,
-              ...(prevIndex != null ? { toIndex: prevIndex } : {}),
-            }),
-          );
-
-          inverses.push(
-            model.ops.create({
-              ...cur,
-              parentId: null,
-              content: { type: "group", childIds: [] },
-            }),
-          );
-        } else {
-          inverses.push(
-            model.ops.move({
-              childId: id0,
-              toParentId: parentId,
-              ...(prevIndex != null ? { toIndex: prevIndex } : {}),
-            }),
-          );
-          inverses.push(model.ops.create({ ...cur, parentId: null }));
-        }
+        pushChildRestoreMoves(subtree, inverses);
+        inverses.push(
+          model.ops.move({
+            childId: id0,
+            toParentId: parentId,
+            ...(prevIndex != null ? { toIndex: prevIndex } : {}),
+          }),
+        );
+        pushCreateOpsForSubtree(subtree, inverses);
 
         continue;
       }
@@ -776,23 +754,23 @@ export function createCore(opts: {
 
   const applyTxnWithInverse = (
     txn: Transaction,
-  ): { result: ModelApplyResult; inverseOps: Op[] } => {
+  ): { delta: ApplyDelta; inverseOps: Op[] } => {
     const inverseOps = captureInverseForTxn(txn);
-    const result = model.apply(txn);
-    return { result, inverseOps };
+    const delta = model.apply(txn);
+    return { delta, inverseOps };
   };
 
   const applyConstraintOps = (
     touchedIds: readonly EntryId[],
     inverseAcc: Op[],
-  ): ModelApplyResult => {
-    let merged = emptyModelApply;
+  ): ApplyDelta => {
+    let merged = emptyApply;
 
     enforceViewConstraints(model, constraints, touchedIds, (ops) => {
       const txn = model.ops.transaction(ops, { source: "rule" });
-      const { result, inverseOps } = applyTxnWithInverse(txn);
+      const { delta, inverseOps } = applyTxnWithInverse(txn);
       inverseAcc.push(...inverseOps);
-      merged = mergeModelApply(merged, result);
+      merged = mergeApply(merged, delta);
     });
 
     return merged;
@@ -867,17 +845,25 @@ export function createCore(opts: {
     history.undo[history.undo.length - 1] = mergeUndoEntries(last!, entry);
   };
 
+  const clearCachesForRemovedEntries = (
+    removedIds: readonly EntryId[],
+  ): void => {
+    if (!removedIds.length) return;
+    evaluator.prune(removedIds);
+    for (const id of removedIds) viewSignalCache.delete(id);
+  };
+
   const applyRemotePipeline = (
     txn: Transaction,
     inverseAcc: Op[],
-  ): ModelApplyResult => {
-    let merged = emptyModelApply;
+  ): ApplyDelta => {
+    let merged = emptyApply;
 
-    const modelApply = model.apply(txn);
-    merged = mergeModelApply(merged, modelApply);
+    const modelDelta = model.apply(txn);
+    merged = mergeApply(merged, modelDelta);
 
-    const constraintApply = applyConstraintOps(modelApply.touched, inverseAcc);
-    merged = mergeModelApply(merged, constraintApply);
+    const constraintDelta = applyConstraintOps(modelDelta.touched, inverseAcc);
+    merged = mergeApply(merged, constraintDelta);
 
     const selection = selectionSignal.peek();
     if (!selectionStillValid(selection)) setSelection({ type: "idle" });
@@ -889,17 +875,17 @@ export function createCore(opts: {
     txn: Transaction,
     inverseAcc: Op[],
     userHistoryCtx: UserCommitHistoryCtx | null = null,
-  ): ModelApplyResult => {
-    let merged = emptyModelApply;
+  ): ApplyDelta => {
+    let merged = emptyApply;
     const anchor = captureRepairAnchor();
     const isUser = txn.meta?.source === "user";
 
-    const { result: userApply, inverseOps } = applyTxnWithInverse(txn);
+    const { delta: userDelta, inverseOps } = applyTxnWithInverse(txn);
     inverseAcc.push(...inverseOps);
-    merged = mergeModelApply(merged, userApply);
+    merged = mergeApply(merged, userDelta);
 
-    const constraintApply = applyConstraintOps(userApply.touched, inverseAcc);
-    merged = mergeModelApply(merged, constraintApply);
+    const constraintDelta = applyConstraintOps(userDelta.touched, inverseAcc);
+    merged = mergeApply(merged, constraintDelta);
 
     repairSelectionAfterLocalApply(anchor);
 
@@ -924,8 +910,8 @@ export function createCore(opts: {
   const applyPipeline = (
     txn: Transaction,
     userHistoryCtx: UserCommitHistoryCtx | null = null,
-  ): ApplyResult => {
-    let final = emptyModelApply;
+  ): void => {
+    let final = emptyApply;
     const inverseAcc: Op[] = [];
     const source = txn.meta?.source;
 
@@ -933,17 +919,14 @@ export function createCore(opts: {
       const isRemote = source === "remote";
 
       if (isRemote) {
-        final = mergeModelApply(final, applyRemotePipeline(txn, inverseAcc));
-        return;
+        final = mergeApply(final, applyRemotePipeline(txn, inverseAcc));
+      } else {
+        final = mergeApply(final, applyUserPipeline(txn, inverseAcc, userHistoryCtx));
       }
 
-      final = mergeModelApply(
-        final,
-        applyUserPipeline(txn, inverseAcc, userHistoryCtx),
-      );
+      clearCachesForRemovedEntries(final.removed);
     });
 
-    return toApplyResult(final);
   };
 
   let localSeq = 0;
@@ -969,25 +952,24 @@ export function createCore(opts: {
   const applyLocal = (
     txn: Transaction,
     userHistoryCtx: UserCommitHistoryCtx | null = null,
-  ): ApplyResult => {
+  ): void => {
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
-    const applyResult = applyPipeline(stamped, userHistoryCtx);
+    applyPipeline(stamped, userHistoryCtx);
     sendLocalTxn(stamped);
-    return applyResult;
   };
 
-  const applyRemote = (txn: Transaction): ApplyResult => {
+  const applyRemote = (txn: Transaction): void => {
     if (
       opts.collab &&
       txn.meta?.origin &&
       txn.meta.origin === opts.collab.origin
     )
-      return toApplyResult(emptyModelApply);
+      return;
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
-    return applyPipeline(model.ops.transaction(txn.ops, meta));
+    applyPipeline(model.ops.transaction(txn.ops, meta));
   };
 
-  const commit = (run: (t: Tx) => void): ApplyResult => {
+  const commit = (run: (t: Tx) => void): void => {
     const userHistoryCtx: UserCommitHistoryCtx = {
       selection: selectionSignal.peek(),
       startedAt: Date.now(),
@@ -1095,29 +1077,26 @@ export function createCore(opts: {
     };
 
     run(t);
-    if (!ops.length) return toApplyResult(emptyModelApply);
+    if (!ops.length) return;
 
     const txn = model.ops.transaction(ops, { source: "user" });
-    return applyLocal(txn, userHistoryCtx);
+    applyLocal(txn, userHistoryCtx);
   };
 
-  const undo = (): ApplyResult => {
+  const undo = (): void => {
     const last = history.undo.pop() ?? null;
-    if (!last) return toApplyResult(emptyModelApply);
-    const applyResult = applyLocal(last.inverse);
+    if (!last) return;
+    applyLocal(last.inverse);
     history.redo.push(last);
-    return applyResult;
   };
 
-  const redo = (): ApplyResult => {
+  const redo = (): void => {
     const last = history.redo.pop() ?? null;
-    if (!last) return toApplyResult(emptyModelApply);
+    if (!last) return;
 
     const replay = model.ops.transaction(last.user.ops, { source: "redo" });
-    const applyResult = applyLocal(replay);
+    applyLocal(replay);
     history.undo.push(last);
-
-    return applyResult;
   };
 
   const focus = (
@@ -1339,8 +1318,6 @@ export function createCore(opts: {
   core = {
     dispose() {
       unsubscribeCollab?.();
-      const { removedIds } = model.pruneUnreachable();
-      evaluator.prune(removedIds);
       evaluator.dispose();
       viewSignalCache.clear();
     },

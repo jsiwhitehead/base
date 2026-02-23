@@ -160,7 +160,7 @@ All edits are performed in transactions.
 ```ts
 core.commit((tx) => {
   // operations
-}): ApplyResult
+}): void
 ```
 
 Commit rules:
@@ -244,32 +244,7 @@ All transaction operations:
 `remove`:
 
 - Removes the item from the tree.
-- If removed item content is `group`, its children MUST become orphans (`parentId = null`).
-
-### ApplyResult
-
-```ts
-type ApplyResult = {
-  created: readonly ItemId[];
-  touched: readonly ItemId[];
-  moved: readonly {
-    fromParentId: ItemId | null;
-    toParentId: ItemId | null;
-    fromIndex: number | null;
-    toIndex: number | null;
-  }[];
-};
-```
-
-Returned by:
-
-- `core.commit(...)`.
-- `core.undo()`.
-- `core.redo()`.
-
-Notes:
-
-- This result MAY be used for follow-up behavior such as selection coordination or animation.
+- If removed item content is `group`, `remove` MUST delete the full subtree rooted at that item.
 
 ## Location and structure
 
@@ -400,14 +375,14 @@ Enforcement rules:
 - Content coercion MUST run before non-empty enforcement. Non-empty enforcement MUST run before children coercion. Children coercion MUST run before shape sync.
 - If a content constraint cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
 - If `nonEmpty` is set and the constrained group is empty, enforcement MUST create one direct child.
-- Shape sync MUST elect a leader row, then create missing columns, reorder mismatched columns, and detach excess columns in other rows.
+- Shape sync MUST elect a leader row, then create missing columns, reorder mismatched columns, and remove excess columns in other rows.
 - Coercion ops MUST be captured for undo/redo.
 
 ## Undo and redo
 
 ```ts
-core.undo(): ApplyResult
-core.redo(): ApplyResult
+core.undo(): void
+core.redo(): void
 ```
 
 Rules:
@@ -514,7 +489,6 @@ Type exports:
 - `ValueOrBlank`
 - `Content`
 - `Connected`
-- `ApplyResult`
 - `Tx`
 - `Core`
 - `CorePlatformHooks`

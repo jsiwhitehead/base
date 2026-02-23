@@ -55,7 +55,7 @@ type SnapshotEntry = {
 
 type MoveSpec = {
   childId: EntryId;
-  toParentId: EntryId | null;
+  toParentId: EntryId;
   toIndex?: number;
 };
 
@@ -90,10 +90,9 @@ export type Transaction = {
   readonly meta?: TransactionMeta;
 };
 
-export type ModelApplyResult = {
-  readonly created: readonly EntryId[];
+export type ApplyDelta = {
+  readonly removed: readonly EntryId[];
   readonly touched: readonly EntryId[];
-  readonly moved: readonly MoveResult[];
 };
 
 type LocateInParentResult = {
@@ -130,10 +129,9 @@ export type Model = {
   findChildIdByLabel(groupId: EntryId, label: string): EntryId | null;
   locateInParent(childId: EntryId): LocateInParentResult | null;
 
-  apply(txn: Transaction): ModelApplyResult;
+  apply(txn: Transaction): ApplyDelta;
 
   snapshot(id: EntryId): SnapshotEntry;
-  pruneUnreachable(): { removed: number; removedIds: EntryId[] };
 };
 
 type EntryRecord = {
@@ -337,14 +335,11 @@ export function createModel(): Model {
     if (!entries.has(childId)) throw new Error("Unknown child");
     if (childId === rootId()) throw new Error("Cannot move root");
     if (toParentId === childId) throw new Error("Cannot move item into itself");
-    if (toParentId != null) {
-      let cur: EntryId | null = toParentId;
-      while (cur != null) {
-        if (!entries.has(cur)) break;
-        if (cur === childId)
-          throw new Error("Cannot move item into its descendant");
-        cur = entryRecord(cur).entrySignal.peek().parentId;
-      }
+    let cur: EntryId | null = toParentId;
+    while (cur != null) {
+      if (!entries.has(cur)) break;
+      if (cur === childId) throw new Error("Cannot move item into its descendant");
+      cur = entryRecord(cur).entrySignal.peek().parentId;
     }
 
     const childRecord = entryRecord(childId);
@@ -364,24 +359,22 @@ export function createModel(): Model {
       fromIndex = i >= 0 ? i : null;
     }
 
-    if (toParentId != null) {
-      if (!toParent) throw new Error("Parent is not a group");
+    if (!toParent) throw new Error("Parent is not a group");
 
-      const baseline =
-        toParentId === fromParentId && fromIndex != null
-          ? toParent.content.childIds.filter((cid) => cid !== childId)
-          : [...toParent.content.childIds];
+    const baseline =
+      toParentId === fromParentId && fromIndex != null
+        ? toParent.content.childIds.filter((cid) => cid !== childId)
+        : [...toParent.content.childIds];
 
-      const len = baseline.length;
-      const rawAt = spec.toIndex == null ? len : clampIndex(spec.toIndex, len);
-      toIndex = rawAt;
+    const len = baseline.length;
+    const rawAt = spec.toIndex == null ? len : clampIndex(spec.toIndex, len);
+    toIndex = rawAt;
 
-      preparedChildIds = [
-        ...baseline.slice(0, rawAt),
-        childId,
-        ...baseline.slice(rawAt),
-      ];
-    }
+    preparedChildIds = [
+      ...baseline.slice(0, rawAt),
+      childId,
+      ...baseline.slice(rawAt),
+    ];
 
     if (
       fromParentId != null &&
@@ -394,7 +387,7 @@ export function createModel(): Model {
     }
 
     batch(() => {
-      if (toParentId != null && preparedChildIds) {
+      if (preparedChildIds) {
         const { entrySignal: parentSignal, parent } =
           expectGroupParent(toParentId);
         parentSignal.value = {
@@ -465,24 +458,35 @@ export function createModel(): Model {
   const remove = (
     id: EntryId,
   ): {
-    removedId: EntryId;
+    removedIds: EntryId[];
     parentTouched: EntryId | null;
-    orphanedChildren: EntryId[];
   } => {
     if (!entries.has(id)) throw new Error("Unknown entry");
 
     const record = entryRecord(id);
     const currentEntry = record.entrySignal.peek();
     const isRoot = id === rootId();
-
     const parentId = currentEntry.parentId;
-    const orphanedChildren: EntryId[] = [];
+    const removedIds: EntryId[] = [];
+
+    const collectDescendants = (rootChildId: EntryId): void => {
+      if (!entries.has(rootChildId)) return;
+      const childEntry = entryRecord(rootChildId).entrySignal.peek();
+      if (isGroupContent(childEntry.content)) {
+        for (const cid of childEntry.content.childIds) collectDescendants(cid);
+      }
+      removedIds.push(rootChildId);
+    };
+
+    if (isGroupEntry(currentEntry)) {
+      for (const childId of currentEntry.content.childIds) {
+        collectDescendants(childId);
+      }
+    }
+    if (!isRoot) removedIds.push(id);
 
     batch(() => {
       if (!isRoot && parentId != null) {
-        const parent = getGroupEntry(parentId);
-        if (!parent) throw new Error("Parent is not a group");
-
         const { entrySignal: parentSignal, parent: parentVal } =
           expectGroupParent(parentId);
 
@@ -497,16 +501,9 @@ export function createModel(): Model {
         }
       }
 
-      if (isGroupEntry(currentEntry)) {
-        for (const childId of currentEntry.content.childIds) {
-          if (!entries.has(childId)) continue;
-          const childRecord = entryRecord(childId);
-          const child = childRecord.entrySignal.peek();
-          if (child.parentId === id) {
-            childRecord.entrySignal.value = { ...child, parentId: null };
-            orphanedChildren.push(childId);
-          }
-        }
+      for (const removedId of removedIds) {
+        if (removedId === id) continue;
+        entries.delete(removedId);
       }
 
       if (isRoot) {
@@ -523,16 +520,14 @@ export function createModel(): Model {
     });
 
     return {
-      removedId: id,
+      removedIds: isRoot ? [id, ...removedIds] : removedIds,
       parentTouched: isRoot ? null : parentId,
-      orphanedChildren,
     };
   };
 
-  const apply = (txn: Transaction): ModelApplyResult => {
-    const created: EntryId[] = [];
+  const apply = (txn: Transaction): ApplyDelta => {
+    const removed = new Set<EntryId>();
     const touched = new Set<EntryId>();
-    const moved: MoveResult[] = [];
     const snapshot = snapshotEntries();
 
     try {
@@ -541,7 +536,6 @@ export function createModel(): Model {
           switch (op.type) {
             case "create":
               createEntryInternal(op.entry);
-              created.push(op.entry.id);
               touched.add(op.entry.id);
               break;
 
@@ -552,7 +546,6 @@ export function createModel(): Model {
 
             case "move": {
               const moveResult = move(op.spec);
-              moved.push(moveResult);
               touched.add(op.spec.childId);
               if (moveResult.fromParentId != null)
                 touched.add(moveResult.fromParentId);
@@ -563,11 +556,12 @@ export function createModel(): Model {
 
             case "remove": {
               const removeResult = remove(op.id);
-              touched.add(removeResult.removedId);
+              for (const removedId of removeResult.removedIds) {
+                removed.add(removedId);
+                touched.add(removedId);
+              }
               if (removeResult.parentTouched != null)
                 touched.add(removeResult.parentTouched);
-              for (const orphanedChildId of removeResult.orphanedChildren)
-                touched.add(orphanedChildId);
               break;
             }
 
@@ -588,7 +582,7 @@ export function createModel(): Model {
       }
       for (const groupId of groupsToCheck) assertUniqueChildLabels(groupId);
       if (DEV) assertValidInternal();
-      return { created, touched: [...touched], moved };
+      return { removed: [...removed], touched: [...touched] };
     } catch (err) {
       restoreEntries(snapshot);
       throw err;
@@ -636,39 +630,6 @@ export function createModel(): Model {
     if (index < 0) return null;
 
     return { parentId, index, childIds };
-  };
-
-  const collectReachableFrom = (start: EntryId): Set<EntryId> => {
-    const seen = new Set<EntryId>();
-    const stack: EntryId[] = [start];
-
-    while (stack.length) {
-      const id = stack.pop()!;
-      if (seen.has(id)) continue;
-      if (!entries.has(id)) continue;
-
-      seen.add(id);
-
-      const entry = entrySignal(id).peek();
-      if (isGroupEntry(entry))
-        for (const cid of entry.content.childIds) stack.push(cid);
-    }
-    return seen;
-  };
-
-  const pruneUnreachable = (): { removed: number; removedIds: EntryId[] } => {
-    const keep = collectReachableFrom(rootId());
-    const removedIds: EntryId[] = [];
-
-    for (const [id] of entries) {
-      if (!keep.has(id)) {
-        entries.delete(id);
-        removedIds.push(id);
-      }
-    }
-
-    if (DEV) assertValidInternal();
-    return { removed: removedIds.length, removedIds };
   };
 
   function assertValidInternal(): void {
@@ -825,6 +786,5 @@ export function createModel(): Model {
     apply,
 
     snapshot,
-    pruneUnreachable,
   };
 }

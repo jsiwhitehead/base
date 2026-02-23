@@ -1,14 +1,7 @@
 import type { ReadonlySignal } from "@preact/signals-core";
 import { signal } from "@preact/signals-core";
 
-import type {
-  ApplyResult,
-  Caret,
-  Core,
-  Focus,
-  ItemId,
-  Selection,
-} from "./core";
+import type { Caret, Core, Focus, ItemId, Selection } from "./core";
 import { DEFAULT_TARGET } from "./core";
 import type { Component, UiCore } from "./dom";
 import { createComponent, el } from "./dom";
@@ -18,7 +11,6 @@ type DebugLast =
       type: "commit" | "undo" | "redo";
       selectionBefore: Selection;
       selectionAfter: Selection;
-      result: ApplyResult;
     }
   | {
       type: "focus";
@@ -85,29 +77,26 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
 
   core.commit = (run) => {
     const selectionBefore = readSelection();
-    const result = commitCore(run);
+    commitCore(run);
     const selectionAfter = readSelection();
-    debug.setLast({ type: "commit", selectionBefore, selectionAfter, result });
-    debug.pushRecent(`commit ${applyResultSummary(result)}`);
-    return result;
+    debug.setLast({ type: "commit", selectionBefore, selectionAfter });
+    debug.pushRecent("commit");
   };
 
   core.undo = () => {
     const selectionBefore = readSelection();
-    const result = undoCore();
+    undoCore();
     const selectionAfter = readSelection();
-    debug.setLast({ type: "undo", selectionBefore, selectionAfter, result });
-    debug.pushRecent(`undo ${applyResultSummary(result)}`);
-    return result;
+    debug.setLast({ type: "undo", selectionBefore, selectionAfter });
+    debug.pushRecent("undo");
   };
 
   core.redo = () => {
     const selectionBefore = readSelection();
-    const result = redoCore();
+    redoCore();
     const selectionAfter = readSelection();
-    debug.setLast({ type: "redo", selectionBefore, selectionAfter, result });
-    debug.pushRecent(`redo ${applyResultSummary(result)}`);
-    return result;
+    debug.setLast({ type: "redo", selectionBefore, selectionAfter });
+    debug.pushRecent("redo");
   };
 
   core.focus = (focus, target = DEFAULT_TARGET, opts = {}) => {
@@ -166,10 +155,6 @@ function selectionText(selection: Selection): string {
   ].join("\n");
 }
 
-function applyResultSummary(r: ApplyResult): string {
-  return `created: ${r.created.length}, touched: ${r.touched.length}, moved: ${r.moved.length}`;
-}
-
 function recentLinesText(lines: readonly string[]): string {
   if (!lines.length) return "(none)";
   return [...lines].reverse().join("\n");
@@ -185,7 +170,7 @@ function lastText(last: DebugLast | null): string {
   if (last.type === "dispose") return "last: dispose";
 
   if (last.type === "commit" || last.type === "undo" || last.type === "redo") {
-    return `last: ${last.type} (${applyResultSummary(last.result)})`;
+    return `last: ${last.type}`;
   }
 
   if (last.type === "focus") {
