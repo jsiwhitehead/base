@@ -24,7 +24,8 @@ This guide explains how to contribute effectively to this repository: workflow, 
   - core semantics/state/transactions: `src/core/`
   - shared DOM/runtime/controls: `src/dom/`
   - view behavior/layout: `src/views/`
-  - app wiring: `src/main.ts`
+  - shared app composition/setup: `src/setup.ts`
+  - bootstrap/demo wiring: `src/main.ts`
   - tests/helpers: `test/`
 - Run local validation from repo root:
 
@@ -136,7 +137,7 @@ Canonical domain terms (do not invent synonyms):
 
 ### Add a new view
 
-- Change locations: `src/views/`, possibly `src/main.ts` for wiring.
+- Change locations: `src/views/`, `src/setup.ts` for shared registration/composition, and possibly `src/main.ts` for demo/bootstrap-only wiring.
 - Check contracts: `docs/architecture.md`, `docs/views-spec.md`.
 - Update docs: `docs/views-spec.md` if behavior changes.
 - Validate: run typecheck, tests, format.

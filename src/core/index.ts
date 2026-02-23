@@ -1,5 +1,5 @@
 import type { ReadonlySignal } from "@preact/signals-core";
-import { batch, computed } from "@preact/signals-core";
+import { batch, computed, signal } from "@preact/signals-core";
 
 import type { Result } from "./eval";
 import {
@@ -30,27 +30,90 @@ import {
   makeBlankEntry,
   makeGroupEntry,
 } from "./model";
-import type {
-  Caret,
-  Component,
-  DomView,
-  Focus,
-  Intent,
-  Selection,
-  ViewFactory,
-} from "./runtime";
-import {
-  DEFAULT_TARGET,
-  LABEL_TARGET,
-  VALUE_TARGET,
-  connTarget,
-  createRuntime,
-  typeCharIntoFocusedTextInput,
-} from "./runtime";
 import type { ViewConstraint } from "./sync";
 import { contentSatisfiesConstraint, enforceViewConstraints } from "./sync";
 
 export type ItemId = string;
+
+const DEFAULT_TARGET = "default" as const;
+const LABEL_TARGET = "label" as const;
+const VALUE_TARGET = "value" as const;
+const connTarget: (key: string) => string = (key) => `conn:${key}`;
+
+type Focus = { container: ItemId; item: ItemId };
+type Caret = { start: number; end: number };
+
+type Selection =
+  | { type: "idle" }
+  | { type: "focused"; focus: Focus; target: string; caret?: Caret };
+
+type NavDir = "left" | "right" | "up" | "down" | "out";
+
+type Intent =
+  | {
+      type: "NAV";
+      dir: NavDir;
+      mode: "step" | "jump";
+    }
+  | { type: "CONFIRM"; caret?: Caret }
+  | { type: "TAB"; shift: boolean; caret?: Caret }
+  | { type: "TYPE"; char: string }
+  | { type: "DELETE"; dir: "backward" | "forward" };
+
+type KeyIntentInput = {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+};
+
+function parseKeyIntent(input: KeyIntentInput): Intent | null {
+  if (input.key === "Escape") {
+    return {
+      type: "NAV",
+      dir: "out",
+      mode: input.metaKey || input.ctrlKey ? "jump" : "step",
+    };
+  }
+  if (input.key === "Tab") return { type: "TAB", shift: !!input.shiftKey };
+  if (input.key === "Enter") return { type: "CONFIRM" };
+
+  if (input.key === "Backspace") return { type: "DELETE", dir: "backward" };
+  if (input.key === "Delete") return { type: "DELETE", dir: "forward" };
+
+  let dir: "left" | "right" | "up" | "down" | null = null;
+  switch (input.key) {
+    case "ArrowLeft":
+      dir = "left";
+      break;
+    case "ArrowRight":
+      dir = "right";
+      break;
+    case "ArrowUp":
+      dir = "up";
+      break;
+    case "ArrowDown":
+      dir = "down";
+      break;
+  }
+  if (dir) {
+    return {
+      type: "NAV",
+      dir,
+      mode: input.metaKey || input.ctrlKey ? "jump" : "step",
+    };
+  }
+
+  if (
+    !(input.ctrlKey || input.metaKey || input.altKey) &&
+    input.key.length === 1
+  ) {
+    return { type: "TYPE", char: input.key };
+  }
+
+  return null;
+}
 
 export type Value = true | number | string;
 export type ValueOrBlank = Value | null;
@@ -204,15 +267,6 @@ export type Core = {
   locate(id: ItemId): LocateResult | null;
 
   dispatch(intent: Intent): void;
-
-  attachTarget(opts: {
-    focus: Focus;
-    target: string;
-    getEl: () => HTMLElement | null;
-    caret?: { set(pos: number): void; getLength(): number };
-  }): () => void;
-
-  mountView(opts: { id: ItemId; focus?: Focus; view: ViewName }): Component;
 };
 
 type ConnField = {
@@ -283,27 +337,23 @@ type CollabWire = {
   subscribe(onTxn: (txn: Transaction) => void): () => void;
 };
 
-export type ViewRegistration = {
-  factory: ViewFactory<Core>;
-  constraint?: ViewConstraint;
+type CorePlatformHooks = {
+  onSelectionChange?: (selection: Selection) => void;
+  getActiveViewIntentHandler?: () => ((intent: Intent) => void) | null;
+  typeCharAtFocusedTarget?: (text: string) => void;
 };
 
+export type { CorePlatformHooks };
+
 export function createCore(opts: {
-  views: Partial<Record<ViewName, ViewRegistration>>;
+  constraints?: Partial<Record<ViewName, ViewConstraint>>;
   collab?: CollabWire;
+  platform?: CorePlatformHooks;
 }): {
   core: Core;
   rootId: ItemId;
 } {
-  const factories: Partial<Record<ViewName, ViewFactory<Core>>> = {};
-  const constraints: Partial<Record<ViewName, ViewConstraint>> = {};
-  for (const [name, reg] of Object.entries(opts.views) as [
-    ViewName,
-    ViewRegistration,
-  ][]) {
-    factories[name] = reg.factory;
-    if (reg.constraint) constraints[name] = reg.constraint;
-  }
+  const constraints = opts.constraints ?? {};
 
   const model = createModel();
 
@@ -318,18 +368,47 @@ export function createCore(opts: {
   let core!: Core;
 
   const rootId = itemIdOf(rootEntryId);
-
-  const runtime = createRuntime<Core>({
-    model,
-    getCore: () => core,
-    views: factories,
-    dispatchIntent: (intent) => core.dispatch(intent),
-    initialSelection: {
-      type: "focused",
-      focus: { container: rootId, item: rootId },
-      target: DEFAULT_TARGET,
-    },
+  const selectionSignal = signal<Selection>({
+    type: "focused",
+    focus: { container: rootId, item: rootId },
+    target: DEFAULT_TARGET,
   });
+
+  const getActiveViewIntentHandler = (): ((intent: Intent) => void) | null =>
+    opts.platform?.getActiveViewIntentHandler?.() ?? null;
+
+  const emitSelectionChange = (sel: Selection): void => {
+    opts.platform?.onSelectionChange?.(sel);
+  };
+
+  const setSelection = (next: Selection): void => {
+    const repairToRoot = (): Selection => {
+      if (!model.hasEntry(rootEntryId)) return { type: "idle" };
+      return {
+        type: "focused",
+        focus: { container: rootId, item: rootId },
+        target: DEFAULT_TARGET,
+      };
+    };
+
+    if (next.type === "idle") {
+      selectionSignal.value = next;
+      emitSelectionChange(next);
+      return;
+    }
+
+    const itemEid = entryIdFromItemId(next.focus.item);
+    const containerEid = entryIdFromItemId(next.focus.container);
+    const valid =
+      itemEid != null &&
+      containerEid != null &&
+      model.hasEntry(itemEid) &&
+      model.hasEntry(containerEid);
+
+    const repaired = valid ? next : repairToRoot();
+    selectionSignal.value = repaired;
+    emitSelectionChange(repaired);
+  };
 
   const history: {
     undo: { user: Transaction; inverse: Transaction }[];
@@ -377,7 +456,7 @@ export function createCore(opts: {
   };
 
   const captureRepairAnchor = (): RepairAnchor | null => {
-    const sel = runtime.selectionSignal.peek();
+    const sel = selectionSignal.peek();
     if (sel.type !== "focused") return null;
 
     const leafId =
@@ -418,16 +497,16 @@ export function createCore(opts: {
   const repairSelectionAfterLocalApply = (
     anchor: RepairAnchor | null,
   ): void => {
-    const selNow = runtime.selectionSignal.peek();
+    const selNow = selectionSignal.peek();
     if (selectionStillValid(selNow)) {
-      runtime.setSelection(selNow);
+      setSelection(selNow);
       return;
     }
 
     if (anchor) {
       const focus = resolveRepairAnchor(anchor);
       if (focus) {
-        runtime.setSelection({
+        setSelection({
           type: "focused",
           focus,
           target: DEFAULT_TARGET,
@@ -436,7 +515,7 @@ export function createCore(opts: {
       }
     }
 
-    runtime.setSelection(selNow);
+    setSelection(selNow);
   };
 
   const childrenOfResolved = (base: ItemRef, v: Result): readonly ItemId[] => {
@@ -521,7 +600,7 @@ export function createCore(opts: {
         if (!model.hasEntry(eid)) return "outline";
 
         const vk = model.entrySignal(eid).value.view;
-        const wanted = vk && factories[vk] ? vk : "outline";
+        const wanted = vk ?? "outline";
         if (wanted === "outline") return "outline";
 
         const content = item(itemIdOf(eid)).content;
@@ -707,8 +786,8 @@ export function createCore(opts: {
         const constraintRes = applyConstraintOps(res.touched, inverseAcc);
         final = mergeModelApply(final, constraintRes);
 
-        const sel = runtime.selectionSignal.peek();
-        if (!selectionStillValid(sel)) runtime.setSelection({ type: "idle" });
+        const sel = selectionSignal.peek();
+        if (!selectionStillValid(sel)) setSelection({ type: "idle" });
 
         return;
       }
@@ -910,22 +989,19 @@ export function createCore(opts: {
     focusOpts: FocusOpts = {},
   ) => {
     const shouldApplyCaret = target !== DEFAULT_TARGET && !!focusOpts.caret;
-    runtime.setSelection(
-      {
-        type: "focused",
-        focus: nextFocus,
-        target,
-        ...(shouldApplyCaret ? { caret: focusOpts.caret } : {}),
-      },
-      [],
-    );
+    setSelection({
+      type: "focused",
+      focus: nextFocus,
+      target,
+      ...(shouldApplyCaret ? { caret: focusOpts.caret } : {}),
+    });
   };
 
   const blur = (): void => {
-    runtime.setSelection({ type: "idle" });
+    setSelection({ type: "idle" });
   };
 
-  const selection = (): Selection => runtime.selection();
+  const selection = (): Selection => selectionSignal.value;
 
   const locate = (id: ItemId): LocateResult | null => {
     const ref = parseItemId(id);
@@ -940,13 +1016,6 @@ export function createCore(opts: {
       siblings: loc.childIds.map((eid) => itemIdOf(eid)),
     };
   };
-
-  const attachTarget: Core["attachTarget"] = (args) =>
-    runtime.attachTarget(args);
-
-  const mountView: Core["mountView"] = (args) => runtime.mountView(args);
-
-  const uninstallGlobal = runtime.installGlobalListeners(window);
 
   const unsubscribeCollab = opts.collab
     ? opts.collab.subscribe((txn) => {
@@ -999,7 +1068,7 @@ export function createCore(opts: {
       case "NAV": {
         if (sel.target !== DEFAULT_TARGET) return false;
         if (intent.dir === "out") {
-          runtime.setSelection({ type: "idle" });
+          setSelection({ type: "idle" });
           return true;
         }
 
@@ -1009,7 +1078,7 @@ export function createCore(opts: {
         const firstChildId = rootItem.content.children[0];
         if (!firstChildId) return false;
 
-        runtime.setSelection({
+        setSelection({
           type: "focused",
           focus: { container: rootId, item: firstChildId },
           target: DEFAULT_TARGET,
@@ -1028,7 +1097,7 @@ export function createCore(opts: {
               ? sel.target
               : DEFAULT_TARGET;
 
-          runtime.setSelection({
+          setSelection({
             type: "focused",
             focus: { container: rootId, item: wrappedId },
             target,
@@ -1065,7 +1134,7 @@ export function createCore(opts: {
               const firstChildId = rootItem.content.children[0];
               if (!firstChildId) return false;
 
-              runtime.setSelection({
+              setSelection({
                 type: "focused",
                 focus: { container: rootId, item: firstChildId },
                 target: DEFAULT_TARGET,
@@ -1084,7 +1153,7 @@ export function createCore(opts: {
           }
         }
 
-        runtime.setSelection({
+        setSelection({
           type: "focused",
           focus: sel.focus,
           target,
@@ -1092,7 +1161,7 @@ export function createCore(opts: {
         });
 
         if (intent.type === "TYPE") {
-          queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+          opts.platform?.typeCharAtFocusedTarget?.(intent.char);
         }
 
         return true;
@@ -1107,7 +1176,7 @@ export function createCore(opts: {
     if (sel.type === "idle") return true;
 
     if (sel.target !== DEFAULT_TARGET) {
-      runtime.setSelection({
+      setSelection({
         type: "focused",
         focus: sel.focus,
         target: DEFAULT_TARGET,
@@ -1119,7 +1188,7 @@ export function createCore(opts: {
   };
 
   const dispatch = (intent: Intent): void => {
-    const sel = runtime.selectionSignal.peek();
+    const sel = selectionSignal.peek();
 
     if (intent.type === "NAV" && intent.dir === "out" && handleNavOut(sel)) {
       return;
@@ -1127,17 +1196,15 @@ export function createCore(opts: {
 
     if (handleRootIntent(intent, sel)) return;
 
-    runtime.getActiveViewOnIntent()?.(intent);
+    getActiveViewIntentHandler()?.(intent);
   };
 
   core = {
     dispose() {
       unsubscribeCollab?.();
-      uninstallGlobal();
       const { removedIds } = model.pruneUnreachable();
       evaluator.prune(removedIds);
       evaluator.dispose();
-      runtime.dispose();
       viewSignalCache.clear();
     },
 
@@ -1157,9 +1224,6 @@ export function createCore(opts: {
     locate,
 
     dispatch,
-
-    attachTarget,
-    mountView,
   };
 
   return { core, rootId };
@@ -1167,13 +1231,13 @@ export function createCore(opts: {
 
 export type {
   Caret,
-  Component,
-  DomView,
   Focus,
   Intent,
+  KeyIntentInput,
+  NavDir,
   Selection,
   Transaction,
-  ViewFactory,
+  ViewConstraint,
   ViewName,
 };
 
@@ -1182,5 +1246,5 @@ export {
   LABEL_TARGET,
   VALUE_TARGET,
   connTarget,
-  typeCharIntoFocusedTextInput,
+  parseKeyIntent,
 };

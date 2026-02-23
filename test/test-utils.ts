@@ -3,13 +3,14 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import type {
   Content,
-  Core,
   ItemId,
   Selection,
   Transaction,
   ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
+import type { UiCore } from "../src/dom";
+import { createUiCoreRuntime } from "../src/setup";
 import { viewRegistrations } from "../src/views";
 
 const cleanups: Array<() => void> = [];
@@ -24,9 +25,21 @@ afterEach(() => {
   cleanups.length = 0;
 });
 
-export function makeCoreRuntime(): { core: Core; rootId: ItemId } {
-  const { core, rootId } = createCore({ views: viewRegistrations });
-  cleanups.push(() => core.dispose());
+export function makeCoreRuntime(args?: {
+  views?: Partial<typeof viewRegistrations>;
+  collab?: Parameters<typeof createCore>[0]["collab"];
+}): { core: UiCore; rootId: ItemId } {
+  const { core, pureCore, rootId, runtime } = createUiCoreRuntime({
+    views: args?.views ?? viewRegistrations,
+    ...(args?.collab ? { collab: args.collab } : {}),
+  });
+  const uninstallGlobal = runtime.installGlobalListeners(window);
+
+  cleanups.push(() => {
+    uninstallGlobal();
+    runtime.dispose();
+    pureCore.dispose();
+  });
   return { core, rootId };
 }
 
@@ -37,13 +50,16 @@ export function valueOf(content: Content): true | number | string | null {
 }
 
 export function valueOfId(
-  core: Core,
+  core: { item(id: ItemId): { content: Content } },
   id: ItemId,
 ): true | number | string | null {
   return valueOf(core.item(id).content);
 }
 
-export function childrenOf(core: Core, id: ItemId): readonly ItemId[] {
+export function childrenOf(
+  core: { item(id: ItemId): { content: Content } },
+  id: ItemId,
+): readonly ItemId[] {
   const content = core.item(id).content;
   return content.type === "group" ? content.children : [];
 }
@@ -67,7 +83,7 @@ function expectFocused(
 }
 
 export function expectSel(
-  core: Core,
+  core: { selection(): Selection },
   want: { container: ItemId; item: ItemId; target?: string },
 ): void {
   const sel = core.selection();
@@ -78,7 +94,7 @@ export function expectSel(
 }
 
 export function mkBlank(
-  core: Core,
+  core: { commit: UiCore["commit"] },
   parentId: ItemId,
   args?: { at?: number; label?: string; value?: true | number | string | null },
 ): ItemId {
@@ -95,7 +111,7 @@ export function mkBlank(
 }
 
 export function mkGroup(
-  core: Core,
+  core: { commit: UiCore["commit"] },
   parentId: ItemId,
   args?: { at?: number; label?: string; view?: ViewName | null },
 ): ItemId {
@@ -112,14 +128,18 @@ export function mkGroup(
   return id;
 }
 
-export function setFormula(core: Core, id: ItemId, expr: string): void {
+export function setFormula(
+  core: { commit: UiCore["commit"] },
+  id: ItemId,
+  expr: string,
+): void {
   core.commit((t) => {
     t.setConnected(id, { type: "formula", expr });
   });
 }
 
 export function setQuery(
-  core: Core,
+  core: { commit: UiCore["commit"] },
   id: ItemId,
   args: { from: string; where?: string; orderBy?: string },
 ): void {
@@ -133,7 +153,11 @@ export function setQuery(
   });
 }
 
-export function setView(core: Core, id: ItemId, view: ViewName | null): void {
+export function setView(
+  core: { commit: UiCore["commit"] },
+  id: ItemId,
+  view: ViewName | null,
+): void {
   core.commit((t) => t.setView(id, view));
 }
 

@@ -1,14 +1,6 @@
-import type {
-  Component,
-  Core,
-  DomView,
-  Focus,
-  Intent,
-  ItemId,
-  ValueOrBlank,
-  ViewRegistration,
-} from "../core";
+import type { Focus, Intent, ItemId, ValueOrBlank } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
+import type { Component, DomView, UiCore } from "../dom";
 import {
   bindItemFrame,
   caret0,
@@ -16,6 +8,7 @@ import {
   el,
   setBodyClasses,
 } from "../dom";
+import type { ViewRegistration } from "./index";
 
 type SliderOpts = { min?: number; max?: number; step?: number };
 
@@ -70,12 +63,12 @@ function formatNumberForStep(value: number, step: number): string {
   return precision <= 0 ? String(Math.trunc(value)) : value.toFixed(precision);
 }
 
-const canSetValue = (core: Core, id: ItemId): boolean => {
+const canSetValue = (core: UiCore, id: ItemId): boolean => {
   const item = core.item(id);
   return item.mode.type === "plain" && item.content.type === "value";
 };
 
-const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
+const getValueOr = (core: UiCore, id: ItemId, fallback: number): number => {
   const item = core.item(id);
   if (item.content.type === "value")
     return toNumberOr(item.content.value, fallback);
@@ -83,14 +76,14 @@ const getValueOr = (core: Core, id: ItemId, fallback: number): number => {
 };
 
 const cmd = {
-  setValue(core: Core, id: ItemId, value: number): void {
+  setValue(core: UiCore, id: ItemId, value: number): void {
     if (!Number.isFinite(value) || !canSetValue(core, id)) return;
     core.commit((t) => t.setValue(id, value));
   },
 } as const;
 
 type SliderMountCtx = {
-  core: Core;
+  core: UiCore;
   id: ItemId;
   focus: Focus;
   resolvedOpts: SliderResolvedOpts;
@@ -157,7 +150,7 @@ function buildSliderBody({
 }
 
 function createSliderView(args: {
-  core: Core;
+  core: UiCore;
   id: ItemId;
   focus?: Focus;
 }): DomView {

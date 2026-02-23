@@ -8,7 +8,7 @@ This document covers:
 
 - Public Core types and constants.
 - Core commands and reactive reads.
-- Structural, selection, and view-mounting invariants.
+- Structural, selection, and intent-routing invariants.
 
 ## Creating Core
 
@@ -26,8 +26,8 @@ Rules:
 - Core MUST be the single source of truth for state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
 - Collaboration transactions use the exported `Transaction` wire type (model/entry-level ops), while normal editing APIs remain item-based (`core.commit(...)` and `tx.*`).
-- `createCore` MUST receive a view registration registry used by `core.mountView(...)` and constraint enforcement (it MAY be empty).
-- Each view registration MUST contain a view factory and MAY contain a view constraint.
+- `createCore` MAY receive a constraints registry (`ViewConstraint` by `ViewName`) used by `core.view(...)` resolution and post-transaction constraint enforcement.
+- `createCore` MAY receive platform callbacks (`CorePlatformHooks`) for DOM/runtime-owned behavior while preserving Core semantics.
 - A Core instance owns all state and MUST be explicitly disposed.
 
 ## Reactivity model
@@ -61,6 +61,7 @@ Rules:
 - IDs MUST remain stable for the lifetime of the item.
 - IDs returned by Core MUST always be valid inputs back into Core.
 - Undo/redo MUST preserve IDs for items that continue to exist.
+- Outside Core internals, callers SHOULD treat `ItemId` as opaque and MUST rely on Core APIs rather than parsing item IDs.
 
 ## Items
 
@@ -319,73 +320,49 @@ Rules:
 - After any apply, if selection is invalid, Core MUST repair it.
 - For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor, choosing the original sibling slot index at the nearest surviving anchored parent level, otherwise the previous sibling.
 - Local structural repair MUST set selection to `DEFAULT_TARGET` with no caret.
-- If local structural repair cannot produce a valid focus, Core MUST fall back to runtime repair.
+- If local structural repair cannot produce a valid focus, Core MUST fall back to a valid Core-owned selection (root focus or `idle`).
 - For remote apply, invalid selection MUST become `idle`.
 
-## Target binding
+## Core/platform boundary (`CorePlatformHooks`)
+
+`createCore(opts)` MAY receive optional platform callbacks:
 
 ```ts
-core.attachTarget({
-  focus,
-  target,
-  getEl,
-  caret?
-})
+type CorePlatformHooks = {
+  onSelectionChange?: (selection: Selection) => void;
+  getActiveViewIntentHandler?: () => ((intent: Intent) => void) | null;
+  typeCharAtFocusedTarget?: (text: string) => void;
+};
 ```
-
-Registers a target binding for a `(focus, target)` pair.
 
 Rules:
 
-- `getEl()` MUST return the element to focus when selection matches the pair.
-- `caret` MAY be provided to support text-cursor placement.
-- `core.attachTarget(...)` MUST return a cleanup function.
-- Callers MUST invoke cleanup when binding is no longer valid.
-- Only one active binding MAY exist per `(focus, target)` pair.
-- New binding registration for the same pair MUST replace the previous one.
+- Core MUST remain headless and MUST NOT depend on DOM APIs directly.
+- Platform callbacks MUST be optional so Core can run headless in tests/non-DOM contexts.
+- `onSelectionChange` is a notification hook used to synchronize platform focus state from Core selection.
+- `getActiveViewIntentHandler` allows Core intent routing to delegate non-global intents to the active mounted view without depending on DOM runtime internals.
+- `typeCharAtFocusedTarget` allows Core root-intent semantics (`TYPE`) to trigger platform text insertion after Core updates selection.
 
-Selection application behavior:
-
-- Core MUST resolve exact `(focus, target)` binding first.
-- If missing, Core MUST fall back to `(focus, DEFAULT_TARGET)`.
-- Core MUST focus returned element when available.
-- Caret application SHOULD be best-effort and only run on supported focused elements.
-- If no binding exists, selection state MUST still update even if DOM focus does not move.
-
-## Views and mounting
+## Views and constraints
 
 ```ts
 core.view(id): ViewName
-core.mountView({ id, focus?, view: ViewName }): Component
-```
-
-```ts
-type Component = { el: HTMLElement; dispose(): void };
 ```
 
 `core.view(id)` behavior:
 
-- Returns current view name for the item.
-- If `id` is missing or stored view cannot be resolved, Core MUST return default view name (`"outline"`).
+- Returns the current semantically resolved view name for the item.
+- If `id` is missing, invalid, or stored view cannot be resolved, Core MUST return the default view name (`"outline"`).
 - If the stored view has a constraint and the item's resolved content does not satisfy it, Core MUST return `"outline"`. The stored view preference MUST be preserved on the item.
-
-`core.mountView(...)` behavior:
-
-- MUST mount non-readonly existing items only.
-- MUST throw for readonly or missing `id`.
-- MUST use the requested view when available, otherwise fall back to `"outline"`.
-- MUST throw if neither the requested view nor `"outline"` is registered.
-- `dispose()` MUST release mounted-view resources.
+- `core.view(id)` resolves semantic view eligibility only; DOM factory availability and mounting fallback are runtime concerns (`docs/dom-runtime.md`).
 
 ### Active view and keyboard routing
 
-When `core.focus(...)` updates selection, Core sets active view from focused DOM ownership.
-
 Rules:
 
-- Active view MUST be derived from element focused via target binding (`getEl()`), not pointer event targets.
-- Active view MUST resolve to the closest mounted view root containing that element.
-- Global keyboard input MUST be parsed and routed by Core to the active view intent handler.
+- Core owns semantic intent parsing (`parseKeyIntent`) and routing.
+- DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
+- Core routes non-global intents through `getActiveViewIntentHandler()` when provided.
 - Core receives editor key events only when editors/controls allow those events to bubble (yield).
 - Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
 - Core MAY still handle explicit global commands while focus is in native text editors.
@@ -394,7 +371,7 @@ Rules:
 
 ### View constraints
 
-Views MAY declare structural constraints as part of their registration.
+Views MAY declare structural constraints as part of application/view registration, but Core receives only the constraints registry.
 
 ```ts
 type ViewConstraint = {
@@ -405,13 +382,6 @@ type ViewConstraint = {
     viewLocked?: true;
   };
   shapeSync?: true;
-};
-```
-
-```ts
-type ViewRegistration = {
-  factory: ViewFactory;
-  constraint?: ViewConstraint;
 };
 ```
 
@@ -517,7 +487,6 @@ Disposes Core resources.
 Rules:
 
 - Core MUST release all reactive resources.
-- Core MUST detach all target bindings.
 - After disposal, Core methods MUST NOT be used.
 
 ## Public Core API surface
@@ -535,8 +504,6 @@ Core exports:
 - `core.focus`
 - `core.blur`
 - `core.dispatch`
-- `core.attachTarget`
-- `core.mountView`
 - `core.dispose`
 
 Type exports:
@@ -549,17 +516,16 @@ Type exports:
 - `ApplyResult`
 - `Tx`
 - `Core`
+- `CorePlatformHooks`
 - `Intent`
+- `KeyIntentInput`
+- `NavDir`
 - `Selection`
 - `Focus`
 - `Caret`
-- `Component`
-- `DomView`
 - `Transaction`
-- `ViewFactory`
 - `ViewName`
 - `ViewConstraint`
-- `ViewRegistration`
 
 Constant exports:
 
@@ -570,7 +536,9 @@ Constant exports:
 
 Function exports:
 
+- `parseKeyIntent`
 - `fieldsFromConn`
 - `editTargetsForItem`
 - `getTextForTarget`
 - `isNumericLikeValue`
+- `primaryEditTarget`

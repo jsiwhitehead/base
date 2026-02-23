@@ -1,7 +1,8 @@
 import type { Signal } from "@preact/signals-core";
 import { effect, signal } from "@preact/signals-core";
 
-import type { Component, Core, ItemId, Tx } from "../core";
+import type { Core, ItemId, Tx } from "../core";
+import type { Component } from "./runtime";
 import { el } from "./base";
 
 export type DropTarget =
@@ -307,7 +308,10 @@ export function createDragController(core: Core): DragController {
 
   const onPointerCancel = (e: PointerEvent): void => {
     const s = state.value;
-    if (s.type === "active" || (s.type === "pending" && e.pointerId === s.pointerId))
+    if (
+      s.type === "active" ||
+      (s.type === "pending" && e.pointerId === s.pointerId)
+    )
       cancel();
   };
 

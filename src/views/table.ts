@@ -1,18 +1,8 @@
 import { computed } from "@preact/signals-core";
 
-import type {
-  Caret,
-  Component,
-  Core,
-  DomView,
-  Focus,
-  Intent,
-  ItemId,
-  Selection,
-  ViewRegistration,
-} from "../core";
+import type { Caret, Focus, Intent, ItemId, Selection } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
-import type { NavDir } from "../dom";
+import type { Component, DomView, NavDir, UiCore } from "../dom";
 import {
   bindItemFrame,
   buildItemHeader,
@@ -24,6 +14,7 @@ import {
   resolveFocusAfterRemove,
   setBodyClasses,
 } from "../dom";
+import type { ViewRegistration } from "./index";
 
 type TableSignals = {
   rows: { value: ItemId[] };
@@ -32,18 +23,18 @@ type TableSignals = {
 };
 
 type TableMountCtx = {
-  core: Core;
+  core: UiCore;
   tableId: ItemId;
   signals: TableSignals;
   dispatch: (intent: Intent) => void;
 };
 
-const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
+const childrenOf = (core: UiCore, id: ItemId): readonly ItemId[] => {
   const content = core.item(id).content;
   return content.type === "group" ? content.children : [];
 };
 
-const rowIds = (core: Core, tableId: ItemId): ItemId[] => [
+const rowIds = (core: UiCore, tableId: ItemId): ItemId[] => [
   ...childrenOf(core, tableId),
 ];
 
@@ -55,7 +46,7 @@ function isRowContainerSel(
 }
 
 function isCellSel(
-  core: Core,
+  core: UiCore,
   tableId: ItemId,
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "focused" }>,
@@ -67,7 +58,7 @@ function isCellSel(
 }
 
 function isCellContainerSel(
-  core: Core,
+  core: UiCore,
   tableId: ItemId,
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "focused" }>,
@@ -76,7 +67,7 @@ function isCellContainerSel(
 }
 
 function isCellValueSel(
-  core: Core,
+  core: UiCore,
   tableId: ItemId,
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "focused" }>,
@@ -84,7 +75,7 @@ function isCellValueSel(
   return sel.target === VALUE_TARGET && isCellSel(core, tableId, rows, sel);
 }
 
-function cellColIdx(core: Core, rowId: ItemId, cellId: ItemId): number {
+function cellColIdx(core: UiCore, rowId: ItemId, cellId: ItemId): number {
   return childrenOf(core, rowId).indexOf(cellId);
 }
 
@@ -112,7 +103,7 @@ function focusCellContainer(
 
 const plan = {
   navMove(
-    core: Core,
+    core: UiCore,
     tableId: ItemId,
     rows: readonly ItemId[],
     colCount: number,
@@ -179,7 +170,7 @@ const plan = {
   },
 
   tabMove(
-    core: Core,
+    core: UiCore,
     tableId: ItemId,
     rows: readonly ItemId[],
     colCount: number,
@@ -233,7 +224,7 @@ const plan = {
   },
 
   enterMove(
-    core: Core,
+    core: UiCore,
     rows: readonly ItemId[],
     sel: Extract<Selection, { type: "focused" }>,
   ): { focus: Focus; target: string; caret: Caret } | null {
@@ -255,7 +246,11 @@ const plan = {
 } as const;
 
 const cmd = {
-  addRowAfter(core: Core, tableId: ItemId, afterRowId: ItemId | null): ItemId {
+  addRowAfter(
+    core: UiCore,
+    tableId: ItemId,
+    afterRowId: ItemId | null,
+  ): ItemId {
     const rows = rowIds(core, tableId);
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
@@ -269,11 +264,11 @@ const cmd = {
     return id;
   },
 
-  removeRow(core: Core, rowId: ItemId): void {
+  removeRow(core: UiCore, rowId: ItemId): void {
     core.commit((t) => t.remove(rowId));
   },
 
-  clearCell(core: Core, cellId: ItemId): void {
+  clearCell(core: UiCore, cellId: ItemId): void {
     core.commit((t) => t.setValue(cellId, null));
   },
 } as const;
@@ -330,7 +325,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
   });
 }
 
-function buildDataCell(core: Core, rowId: ItemId, cellId: ItemId): Component {
+function buildDataCell(core: UiCore, rowId: ItemId, cellId: ItemId): Component {
   return createComponent(core, (ctx) => {
     const host = el("div", "ui-table-cell");
     host.dataset.dragSlot = "true";
@@ -415,7 +410,7 @@ function buildBody(mountCtx: TableMountCtx): Component {
 }
 
 function createTableView(args: {
-  core: Core;
+  core: UiCore;
   id: ItemId;
   focus?: Focus;
 }): DomView {

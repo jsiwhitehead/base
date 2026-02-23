@@ -26,7 +26,8 @@ bun run format
 - `src/core/`: core state, transactions, selection/focus, and intent routing.
 - `src/dom/`: shared DOM runtime and reusable controls.
 - `src/views/`: view implementations (`outline`, `table`, `slider`).
-- `src/main.ts`: bootstrap and top-level wiring.
+- `src/setup.ts`: shared composition and app assembly (`Core` + DOM runtime + views).
+- `src/main.ts`: browser bootstrap and demo/startup wiring.
 
 ## Key docs
 

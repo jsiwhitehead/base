@@ -2,15 +2,11 @@ import { computed } from "@preact/signals-core";
 
 import type {
   Caret,
-  Component,
-  Core,
-  DomView,
   Focus,
   Intent,
   ItemId,
   Selection,
   ValueOrBlank,
-  ViewRegistration,
 } from "../core";
 import {
   DEFAULT_TARGET,
@@ -19,9 +15,8 @@ import {
   editTargetsForItem,
   fieldsFromConn,
   getTextForTarget,
-  typeCharIntoFocusedTextInput,
 } from "../core";
-import type { NavDir } from "../dom";
+import type { Component, DomView, NavDir, UiCore } from "../dom";
 import {
   bindItemFrame,
   buildItemHeader,
@@ -37,12 +32,14 @@ import {
   patchConn,
   SELECT_ALL,
   setBodyClasses,
+  typeCharIntoFocusedTextInput,
 } from "../dom";
+import type { ViewRegistration } from "./index";
 
 type EditPoint = { id: ItemId; target: string };
 
 type OutlineMountCtx = {
-  core: Core;
+  core: UiCore;
   rootId: ItemId;
   editPointsSignal: { value: EditPoint[] };
   dispatch: (intent: Intent) => void;
@@ -52,24 +49,24 @@ function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
 }
 
-const childrenOf = (core: Core, id: ItemId): readonly ItemId[] => {
+const childrenOf = (core: UiCore, id: ItemId): readonly ItemId[] => {
   const content = core.item(id).content;
   return content.type === "group" ? content.children : [];
 };
 
-function parentOf(core: Core, rootId: ItemId, id: ItemId): ItemId | null {
+function parentOf(core: UiCore, rootId: ItemId, id: ItemId): ItemId | null {
   if (id === rootId) return null;
   const loc = core.locate(id);
   return loc ? loc.parentId : null;
 }
 
-function focusFor(core: Core, rootId: ItemId, id: ItemId): Focus {
+function focusFor(core: UiCore, rootId: ItemId, id: ItemId): Focus {
   const parentId = parentOf(core, rootId, id);
   return { container: parentId ?? rootId, item: id };
 }
 
 function computePruneAncestorsForRemoval(
-  core: Core,
+  core: UiCore,
   rootId: ItemId,
   removedId: ItemId,
 ): ItemId[] {
@@ -94,28 +91,28 @@ function computePruneAncestorsForRemoval(
   return out;
 }
 
-function firstChild(core: Core, id: ItemId): ItemId | null {
+function firstChild(core: UiCore, id: ItemId): ItemId | null {
   const kids = childrenOf(core, id);
   return kids[0] ?? null;
 }
 
-function prevSibling(core: Core, id: ItemId): ItemId | null {
+function prevSibling(core: UiCore, id: ItemId): ItemId | null {
   const loc = core.locate(id);
   return loc ? (loc.siblings[loc.index - 1] ?? null) : null;
 }
 
-function nextSibling(core: Core, id: ItemId): ItemId | null {
+function nextSibling(core: UiCore, id: ItemId): ItemId | null {
   const loc = core.locate(id);
   return loc ? (loc.siblings[loc.index + 1] ?? null) : null;
 }
 
-function isEditLeaf(core: Core, id: ItemId): boolean {
+function isEditLeaf(core: UiCore, id: ItemId): boolean {
   const item = core.item(id);
   if (item.mode.type === "connected") return true;
   return item.mode.type === "plain" && item.content.type === "value";
 }
 
-function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
+function collectEditPoints(core: UiCore, rootId: ItemId): EditPoint[] {
   const out: EditPoint[] = [];
   const walk = (parentId: ItemId) => {
     for (const cid of childrenOf(core, parentId)) {
@@ -136,7 +133,7 @@ function collectEditPoints(core: Core, rootId: ItemId): EditPoint[] {
 
 const plan = {
   moveEditPoint(
-    core: Core,
+    core: UiCore,
     rootId: ItemId,
     points: readonly EditPoint[],
     sel: Extract<Selection, { type: "focused" }>,
@@ -192,7 +189,7 @@ const plan = {
   },
 
   adjacentEditStopAfterDeletion(
-    core: Core,
+    core: UiCore,
     rootId: ItemId,
     points: readonly EditPoint[],
     sel: Extract<Selection, { type: "focused" }>,
@@ -226,26 +223,26 @@ const plan = {
 } as const;
 
 const cmd = {
-  setLabel(core: Core, id: ItemId, text: string): void {
+  setLabel(core: UiCore, id: ItemId, text: string): void {
     core.commit((t) => t.setLabel(id, text));
   },
 
-  setText(core: Core, id: ItemId, text: string): void {
+  setText(core: UiCore, id: ItemId, text: string): void {
     core.commit((t) => t.setValue(id, text));
   },
 
-  commitConnField(core: Core, id: ItemId, key: string, text: string): void {
+  commitConnField(core: UiCore, id: ItemId, key: string, text: string): void {
     const item = core.item(id);
     if (item.mode.type !== "connected") return;
     const next = patchConn(item.mode.conn, key, text);
     core.commit((t) => t.setConnected(id, next));
   },
 
-  convertEmptyGroupToValue(core: Core, id: ItemId): void {
+  convertEmptyGroupToValue(core: UiCore, id: ItemId): void {
     core.commit((t) => t.setValue(id, ""));
   },
 
-  removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
+  removeAndPruneAncestors(core: UiCore, rootId: ItemId, id: ItemId): void {
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, id);
     core.commit((t) => {
       t.remove(id);
@@ -254,7 +251,7 @@ const cmd = {
   },
 
   insertSibling(
-    core: Core,
+    core: UiCore,
     sel: Extract<Selection, { type: "focused" }>,
     side: "before" | "after",
   ): ItemId | null {
@@ -273,7 +270,7 @@ const cmd = {
   },
 
   splitAt(
-    core: Core,
+    core: UiCore,
     sel: Extract<Selection, { type: "focused" }>,
     caretStart: number,
     caretEnd = caretStart,
@@ -311,7 +308,7 @@ const cmd = {
   },
 
   joinBoundary(
-    core: Core,
+    core: UiCore,
     rootId: ItemId,
     sel: Extract<Selection, { type: "focused" }>,
     dir: "backward" | "forward",
@@ -354,7 +351,7 @@ const cmd = {
   },
 
   changeNesting(
-    core: Core,
+    core: UiCore,
     rootId: ItemId,
     sel: Extract<Selection, { type: "focused" }>,
     dir: "in" | "out",
@@ -417,7 +414,7 @@ const cmd = {
   },
 
   promoteChildToRoot(
-    core: Core,
+    core: UiCore,
     rootId: ItemId,
     childId: ItemId,
   ): Focus | null {
@@ -458,7 +455,7 @@ const cmd = {
 } as const;
 
 function buildMeasuredHeader(
-  core: Core,
+  core: UiCore,
   args: {
     focus: Focus;
     id: ItemId;
@@ -605,7 +602,7 @@ function buildOutlineScalarBody(
   });
 }
 
-function buildEmptyGroupPlaceholder(core: Core): Component {
+function buildEmptyGroupPlaceholder(core: UiCore): Component {
   return createComponent(core, () => {
     const placeholderEl = el("div", "ui-outline-placeholder");
     placeholderEl.textContent = "(empty)";
@@ -651,7 +648,7 @@ function buildOutlineBody(mountCtx: OutlineMountCtx, focus: Focus): Component {
 }
 
 function createOutlineView(args: {
-  core: Core;
+  core: UiCore;
   id: ItemId;
   focus?: Focus;
 }): DomView {

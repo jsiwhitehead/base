@@ -640,19 +640,23 @@ describe("core/target binding", () => {
 });
 
 describe("core/view mounting", () => {
-  test("mountView validates id format and existence", () => {
+  test("mountView treats item ids as opaque and can render fallback issue snapshots", () => {
     const { core } = makeCoreRuntime();
 
-    expect(() =>
-      core.mountView({ id: "not-an-id" as ItemId, view: "outline" }),
-    ).toThrow();
-    expect(() =>
-      core.mountView({ id: "999999:" as ItemId, view: "outline" }),
-    ).toThrow();
+    const bad1 = core.mountView({ id: "not-an-id" as ItemId, view: "outline" });
+    const bad2 = core.mountView({ id: "999999:" as ItemId, view: "outline" });
+
+    expect(bad1.el.classList.contains("ui-body")).toBe(true);
+    expect(bad1.el.classList.contains("ui-outline")).toBe(true);
+    expect(bad2.el.classList.contains("ui-body")).toBe(true);
+    expect(bad2.el.classList.contains("ui-outline")).toBe(true);
+
+    bad1.dispose();
+    bad2.dispose();
   });
 
   test("mountView falls back to outline when requested view factory is missing", () => {
-    const { core, rootId } = createCore({ views: viewRegistrations });
+    const { core, rootId } = makeCoreRuntime({ views: viewRegistrations });
 
     const mounted = core.mountView({
       id: rootId,
@@ -663,17 +667,14 @@ describe("core/view mounting", () => {
     expect(mounted.el.classList.contains("ui-outline")).toBe(true);
 
     mounted.dispose();
-    core.dispose();
   });
 
   test("mountView throws when requested view and outline fallback are both missing", () => {
-    const { core, rootId } = createCore({ views: {} });
+    const { core, rootId } = makeCoreRuntime({ views: {} });
 
     expect(() =>
       core.mountView({ id: rootId, view: "nonexistent" as ViewName }),
     ).toThrow();
-
-    core.dispose();
   });
 });
 
@@ -701,7 +702,7 @@ describe("core/collab (wire contract)", () => {
       onRemote(txn);
     };
 
-    const { core, rootId } = createCore({ views: {}, collab });
+    const { core, rootId } = createCore({ constraints: {}, collab });
 
     let x = "";
     core.commit((t) => {

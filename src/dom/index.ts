@@ -23,3 +23,16 @@ export {
 
 export type { DragController, DragState, DropTarget } from "./drag";
 export { buildDropIndicator, createDragController } from "./drag";
+
+export type {
+  Component,
+  DomRuntime,
+  DomView,
+  UiCore,
+  ViewFactory,
+} from "./runtime";
+export {
+  bindUiRuntime,
+  createRuntime,
+  typeCharIntoFocusedTextInput,
+} from "./runtime";

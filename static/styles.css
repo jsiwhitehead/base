@@ -202,15 +202,23 @@
     z-index: 9999;
     background: var(--ui-color-focus);
     border-radius: 1px;
-    transform: translateY(calc(-50% + var(--_sign, 1) * var(--ui-space-gap) / 2));
+    transform: translateY(
+      calc(-50% + var(--_sign, 1) * var(--ui-space-gap) / 2)
+    );
   }
 
-  .ui-drop-indicator[data-side="before"] { --_sign: -1; }
-  .ui-drop-indicator[data-side="after"]  { --_sign:  1; }
+  .ui-drop-indicator[data-side="before"] {
+    --_sign: -1;
+  }
+  .ui-drop-indicator[data-side="after"] {
+    --_sign: 1;
+  }
 
   .ui-drop-indicator[data-axis="horizontal"] {
     width: 2px;
-    transform: translateX(calc(-50% + var(--_sign, 1) * var(--ui-space-gap) / 2));
+    transform: translateX(
+      calc(-50% + var(--_sign, 1) * var(--ui-space-gap) / 2)
+    );
   }
 
   .ui-header {

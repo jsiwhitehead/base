@@ -1,126 +1,7 @@
-import type { Core, ItemId, Value, ViewName } from "./core";
-import { createCore } from "./core";
-import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
+import type { ItemId, Value, ViewName } from "./core";
 import { DEV, devAssert, devWarn } from "./dev";
-import {
-  bindItemFrame,
-  buildDropIndicator,
-  createComponent,
-  createDragController,
-  el,
-} from "./dom";
-import { viewRegistrations } from "./views";
-
-type App = {
-  core: Core;
-  rootId: ItemId;
-  dispose(): void;
-};
-
-type CreateAppOpts = {
-  host?: HTMLElement;
-  rootView?: ViewName;
-  demo?: boolean;
-};
-
-function createApp(opts: CreateAppOpts = {}): App {
-  const rootView = opts.rootView ?? "outline";
-  const demo = opts.demo ?? DEV;
-
-  const hostEl =
-    opts.host ??
-    (typeof document !== "undefined"
-      ? (document.getElementById("root") as HTMLElement | null)
-      : null);
-
-  devAssert(hostEl, "Missing app root element (#root)");
-
-  const { core: rawCore, rootId } = createCore({ views: viewRegistrations });
-
-  const debug = createDebugState();
-  const core = instrumentCore(rawCore, debug);
-
-  core.commit((t) => {
-    t.setView(rootId, rootView);
-  });
-
-  const focus = { container: rootId, item: rootId };
-
-  const appRoot = createComponent(core, (ctx) => {
-    const rootFrame = el("div");
-    rootFrame.classList.add("ui-main");
-    rootFrame.tabIndex = 0;
-
-    bindItemFrame(ctx, { core, focus }, rootFrame);
-
-    ctx.slot(rootFrame, () => {
-      const wanted = core.view(rootId);
-      return core.mountView({ id: rootId, focus, view: wanted });
-    });
-
-    return rootFrame;
-  });
-
-  const drag = createDragController(core);
-  const indicator = buildDropIndicator(drag.state);
-
-  const root = el("div", "ui-root");
-  const main = appRoot.el;
-
-  main.addEventListener(
-    "pointerdown",
-    (event) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement
-      )
-        return;
-      main.focus();
-    },
-    { capture: true },
-  );
-
-  root.append(main, indicator.el);
-
-  let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
-
-  if (DEV) {
-    debugPanel = buildDebugPanel({
-      core,
-      debug,
-      probeRoot: main,
-      className: "ui-debug",
-    });
-    root.append(debugPanel.el);
-  }
-
-  hostEl.replaceChildren(root);
-  main.focus();
-
-  const app: App = {
-    core,
-    rootId,
-    dispose() {
-      debugPanel?.dispose();
-      indicator.dispose();
-      drag.dispose();
-      appRoot.dispose();
-      hostEl.replaceChildren();
-      core.dispose();
-    },
-  };
-
-  if (demo) {
-    try {
-      seedDemo(app);
-    } catch (e) {
-      devWarn("seedDemo failed:", e);
-    }
-  }
-
-  return app;
-}
+import type { App } from "./setup";
+import { createApp } from "./setup";
 
 function seedDemo(app: App): void {
   const { core, rootId } = app;
@@ -202,7 +83,18 @@ function autoMount(): void {
   if (globalMountState.__APP_MOUNTED__) return;
   globalMountState.__APP_MOUNTED__ = true;
 
-  createApp({ demo: true, rootView: "outline" });
+  const host = document.getElementById("root") as HTMLElement | null;
+  devAssert(host, "Missing app root element (#root)");
+
+  const app = createApp({ host, rootView: "outline" });
+
+  if (DEV) {
+    try {
+      seedDemo(app);
+    } catch (e) {
+      devWarn("seedDemo failed:", e);
+    }
+  }
 }
 
 autoMount();

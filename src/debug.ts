@@ -4,13 +4,13 @@ import { signal } from "@preact/signals-core";
 import type {
   ApplyResult,
   Caret,
-  Component,
   Core,
   Focus,
   ItemId,
   Selection,
 } from "./core";
 import { DEFAULT_TARGET } from "./core";
+import type { Component, UiCore } from "./dom";
 import { createComponent, el } from "./dom";
 
 type DebugLast =
@@ -50,7 +50,7 @@ export function createDebugState(): DebugState {
   };
 }
 
-export function instrumentCore(core: Core, debug: DebugState): Core {
+export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
   const commitCore = core.commit.bind(core);
   const undoCore = core.undo.bind(core);
   const redoCore = core.redo.bind(core);
@@ -115,7 +115,7 @@ export function instrumentCore(core: Core, debug: DebugState): Core {
 }
 
 type DebugPanelOpts = {
-  core: Core;
+  core: UiCore;
   debug: DebugState;
   probeRoot: HTMLElement;
   className?: string;

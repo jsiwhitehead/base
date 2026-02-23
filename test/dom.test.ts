@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { signal } from "@preact/signals-core";
 
-import type { Component, Focus, Intent, Selection } from "../src/core";
+import type { Focus, Intent, Selection } from "../src/core";
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
@@ -12,6 +12,7 @@ import {
   bindItemFrame,
   buildItemHeader,
   buildTextField,
+  type Component,
   createComponent,
   el,
   handleContainerIntent,

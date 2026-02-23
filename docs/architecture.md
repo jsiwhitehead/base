@@ -13,7 +13,7 @@ The architecture guarantees predictable focus and selection behavior, stable DOM
 - Component: reusable UI/runtime building block used inside views or shared DOM runtime utilities.
 - State: canonical application data owned by Core.
 - Rendering/runtime: DOM integration layer that mounts, updates, and disposes UI safely.
-- Layer/boundary: architectural partition (`core/`, `dom/`, `views/`, `main.ts`) with explicit ownership and dependency direction.
+- Layer/boundary: architectural partition (`core/`, `dom/`, `views/`, `setup.ts`, `main.ts`) with explicit ownership and dependency direction.
 - Selection: Core-owned current location in the item tree; source of truth for focus.
 - Focus: target-level focus state represented as `(itemId, target)`.
 - Target: stable identifier for a focus/edit surface (for example `DEFAULT_TARGET`, `label`, `conn:*`, `value`).
@@ -28,15 +28,22 @@ The architecture guarantees predictable focus and selection behavior, stable DOM
 
 - Owns state and transactions.
 - Owns selection and programmatic focus application.
-- Owns global input parsing (`keydown` to intents).
-- Owns global intent handling and routing to active views.
+- Owns intent semantics and parsing (`keydown`-like input shape to intents).
+- Owns global intent handling semantics and routing to active views.
 
 `dom/`
 
 - Owns shared DOM runtime lifecycle (mount/patch/dispose).
 - Owns stable dynamic mounting primitives (`ctx.slot`, `ctx.list`).
 - Owns shared controls and canonical frame/header binding helpers.
+- Owns global DOM input listeners and DOM-event-to-intent handoff.
 - Enforces runtime-side structural and focus contracts.
+
+`setup.ts`
+
+- Owns shared composition of Core, DOM runtime, and registered views.
+- Owns Core platform-hook wiring to DOM/runtime behavior.
+- Owns reusable app assembly without environment-specific bootstrap/demo behavior.
 
 `views/`
 
@@ -47,9 +54,8 @@ The architecture guarantees predictable focus and selection behavior, stable DOM
 
 `main.ts`
 
-- Owns app bootstrap and wiring across layers.
-- Composes Core, runtime, and registered views.
-- Defines root mount and startup lifecycle.
+- Owns environment-specific bootstrap and demo wiring.
+- Defines root mount discovery and startup lifecycle.
 
 ### Allowed dependencies
 
@@ -58,7 +64,8 @@ The architecture guarantees predictable focus and selection behavior, stable DOM
 | core  | (none)           |
 | dom   | core             |
 | views | core, dom        |
-| main  | core, dom, views |
+| setup | core, dom, views |
+| main  | setup            |
 
 ### Outer view vs item view split
 
@@ -128,8 +135,8 @@ Shared targets:
 
 ### Routing and interaction
 
-- Core MUST own the global `keydown` listener (bubble phase).
-- Core MUST parse keydown events into intents.
+- DOM runtime MUST own the global `keydown` listener (bubble phase).
+- Keydown parsing MUST use Core-owned intent semantics (`parseKeyIntent`) rather than ad-hoc runtime/view parsing.
 - Core MUST handle global intents first (for example `NAV/out`).
 - Core MUST route non-global view intents to the active view handler.
 - If Core routes an intent, it MUST call `preventDefault()` on the original DOM event.
@@ -264,6 +271,12 @@ Forbidden at this boundary:
 - `.ui-body.<root-view>` MUST be the view root used for active view resolution.
 
 API-level runtime details belong in `docs/dom-runtime.md`.
+
+### Core/platform seam
+
+- `Core` MUST remain headless and MUST NOT depend on DOM APIs or `dom/` modules.
+- Platform-specific behavior needed by Core semantics MUST be provided through injected callbacks wired in `src/setup.ts`.
+- `ItemId` MUST be treated as opaque outside Core internals.
 
 ## Views model
 

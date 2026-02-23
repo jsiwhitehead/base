@@ -1,15 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import type {
-  Core,
-  DomView,
-  Focus,
-  Intent,
-  ItemId,
-  ViewName,
-} from "../src/core";
+import type { Focus, Intent, ItemId, ViewName } from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
-import { caretAt, caret0 } from "../src/dom";
+import { caretAt, caret0, type DomView, type UiCore } from "../src/dom";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -135,7 +128,7 @@ function expectSnapshotSame(
 
 async function mountView(args: {
   view: Extract<ViewName, "outline" | "table" | "slider">;
-  core: Core;
+  core: UiCore;
   id: ItemId;
   focus?: Focus;
 }) {

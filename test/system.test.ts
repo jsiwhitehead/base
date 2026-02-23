@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Core, ItemId, Transaction } from "../src/core";
-import { DEFAULT_TARGET, VALUE_TARGET, createCore } from "../src/core";
-import { bindItemFrame, createComponent, el } from "../src/dom";
+import type { ItemId, Transaction } from "../src/core";
+import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
+import { bindItemFrame, createComponent, el, type UiCore } from "../src/dom";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -20,7 +20,7 @@ import {
   setView,
 } from "./test-utils";
 
-function mountAppShell(core: Core, rootId: ItemId): () => void {
+function mountAppShell(core: UiCore, rootId: ItemId): () => void {
   const focus = { container: rootId, item: rootId };
 
   const appRoot = createComponent(core, (ctx) => {
@@ -172,7 +172,7 @@ describe("system/collab + local history", () => {
     let onRemote: ((txn: Transaction) => void) | undefined;
     const sent: Transaction[] = [];
 
-    const { core, rootId } = createCore({
+    const { core, rootId } = makeCoreRuntime({
       views: viewRegistrations,
       collab: {
         origin: "test-origin",

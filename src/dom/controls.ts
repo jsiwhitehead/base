@@ -2,9 +2,7 @@ import { computed } from "@preact/signals-core";
 
 import type {
   Caret,
-  Component,
   Connected,
-  Core,
   Focus,
   Intent,
   ItemId,
@@ -18,8 +16,9 @@ import {
   fieldsFromConn,
   getTextForTarget,
   primaryEditTarget,
-  typeCharIntoFocusedTextInput,
 } from "../core";
+import type { Component, UiCore } from "./runtime";
+import { typeCharIntoFocusedTextInput } from "./runtime";
 import { createComponent, el } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
@@ -110,7 +109,7 @@ type TextFieldOpts = {
 };
 
 export function buildTextField(
-  core: Core,
+  core: UiCore,
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
   const editModel: TextFieldEditModel = opts.editModel ?? "draft";
@@ -387,7 +386,7 @@ export function clampCaretToText(caret: Caret, text: string): Caret {
 }
 
 export function moveWithinItemEditTargets(
-  core: Core,
+  core: UiCore,
   id: ItemId,
   fromTarget: string,
   dir: "backward" | "forward",
@@ -403,7 +402,7 @@ export function moveWithinItemEditTargets(
 }
 
 export function resolveFocusAfterRemove(
-  core: Core,
+  core: UiCore,
   removedId: ItemId,
   prefer: "prev" | "next",
 ): { focus: Focus; target: string; caret: Caret } | null {
@@ -438,7 +437,7 @@ export function resolveFocusAfterRemove(
 }
 
 export function handleContainerIntent(args: {
-  core: Core;
+  core: UiCore;
   sel: Extract<Selection, { type: "focused" }>;
   intent: Extract<Intent, { type: "CONFIRM" | "TYPE" }>;
 }): boolean {
@@ -499,7 +498,7 @@ export function patchConn(
 }
 
 export function buildItemHeader(
-  core: Core,
+  core: UiCore,
   args: {
     focus: Focus;
     id: ItemId;

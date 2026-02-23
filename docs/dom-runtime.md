@@ -7,6 +7,7 @@ This document is the normative external specification for the `dom/` layer.
 This document defines:
 
 - Public API exported from `dom/index`.
+- The DOM runtime adapter contract over headless Core.
 - Required DOM/class outputs for runtime-provided subtrees.
 - Observable runtime behavior (focus integration, yielding, disposal, reconciliation).
 
@@ -48,6 +49,24 @@ Drag helpers:
 - `buildDropIndicator`: builds the drop-position indicator component.
 - Types: `DragController`, `DragState`, `DropTarget`.
 
+Runtime integration helpers/types:
+
+- `UiCore`: DOM-facing composed API (`Core` plus runtime-backed methods such as view mounting and target binding).
+- `bindUiRuntime`: composes a headless `Core` with the DOM runtime and returns `{ core: UiCore, runtime }`.
+- `createRuntime`: low-level DOM runtime factory used by `bindUiRuntime`.
+- `DomRuntime`: runtime adapter type (selection sync, target binding, view mounting, listeners, disposal).
+- `typeCharIntoFocusedTextInput`: DOM helper used by platform callbacks; not part of Core.
+
+## Core/runtime boundary
+
+Rules:
+
+- `dom/` owns DOM listeners, target bindings, mounted-view tracking, and DOM focus/caret effects.
+- `dom/` MUST NOT own canonical state or canonical selection; Core remains the source of truth.
+- Runtime selection/focus behavior MUST be driven by Core selection updates (for example via `runtime.syncSelection(...)`).
+- View mounting and target binding are `UiCore`/runtime responsibilities, not pure `Core` API responsibilities.
+- Runtime code MUST treat `ItemId` as opaque (see `docs/core-api.md`).
+
 ## Component model
 
 A component is the smallest disposable UI unit:
@@ -70,7 +89,7 @@ Rules:
 Canonical component factory:
 
 ```ts
-createComponent(core: Core, build: (ctx: Ctx) => HTMLElement): Component
+createComponent(core: UiCore, build: (ctx: Ctx) => HTMLElement): Component
 ```
 
 Rules:
@@ -402,11 +421,24 @@ Rules:
 ```ts
 type DragState =
   | { type: "idle" }
-  | { type: "pending"; itemId: ItemId; pointerId: number; startX: number; startY: number }
+  | {
+      type: "pending";
+      itemId: ItemId;
+      pointerId: number;
+      startX: number;
+      startY: number;
+    }
   | { type: "active"; itemId: ItemId; drop: DropTarget | null };
 
 type DropTarget =
-  | { type: "gap"; parentId: ItemId; at: number; side: "before" | "after"; axis: "horizontal" | "vertical"; anchorEl: HTMLElement }
+  | {
+      type: "gap";
+      parentId: ItemId;
+      at: number;
+      side: "before" | "after";
+      axis: "horizontal" | "vertical";
+      anchorEl: HTMLElement;
+    }
   | { type: "slot"; itemId: ItemId; anchorEl: HTMLElement };
 
 type DragController = {

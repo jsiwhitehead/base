@@ -1,8 +1,9 @@
 import { computed, effect } from "@preact/signals-core";
 
-import type { Component, Core, Focus, ViewName } from "../core";
+import type { Focus, ViewName } from "../core";
 import { DEFAULT_TARGET, isNumericLikeValue } from "../core";
 import { DEV, devAssert } from "../dev";
+import type { Component, UiCore } from "./runtime";
 
 type Ctx = {
   on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
@@ -189,7 +190,7 @@ class RegionChildManager<Id extends string | number> {
 }
 
 export function createComponent(
-  core: Core,
+  core: UiCore,
   build: (ctx: Ctx) => HTMLElement,
 ): Component {
   const bag = new Disposer();
@@ -282,7 +283,7 @@ export function createComponent(
 
 export function bindItemFrame(
   ctx: Ctx,
-  spec: { core: Core; focus: Focus },
+  spec: { core: UiCore; focus: Focus },
   frameEl: HTMLElement,
 ): void {
   frameEl.classList.add("ui-frame");

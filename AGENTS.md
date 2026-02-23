@@ -35,7 +35,8 @@
 - Core semantics/state/transactions/selection/routing: `src/core/`
 - DOM runtime/controls/target binding: `src/dom/`
 - View behavior/layout: `src/views/`
-- App wiring/bootstrap: `src/main.ts`
+- Shared app composition/setup: `src/setup.ts`
+- App bootstrap/demo wiring: `src/main.ts`
 - Tests: `test/`
 - Shared test helpers: `test/test-utils.ts`
 
