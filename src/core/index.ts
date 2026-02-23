@@ -142,6 +142,23 @@ type Item = {
 type ItemRef = { entryId: EntryId; path: readonly number[] };
 type RepairAnchorStep = { parentId: EntryId; index: number };
 type RepairAnchor = { steps: readonly RepairAnchorStep[] };
+type TextHistoryGroupKey = {
+  kind: "text";
+  itemId: ItemId;
+  target: string;
+};
+type UndoHistoryEntry = {
+  user: Transaction;
+  inverse: Transaction;
+  groupedAt: number;
+  groupKey: TextHistoryGroupKey | null;
+};
+type UserCommitHistoryCtx = {
+  selection: Selection;
+  startedAt: number;
+};
+
+const TEXT_HISTORY_COALESCE_MS = 1000;
 
 const itemIdOf = (entryId: EntryId, path: readonly number[] = []): ItemId =>
   `${String(entryId)}:${path.length ? path.join(",") : ""}`;
@@ -416,8 +433,8 @@ export function createCore(opts: {
   };
 
   const history: {
-    undo: { user: Transaction; inverse: Transaction }[];
-    redo: { user: Transaction; inverse: Transaction }[];
+    undo: UndoHistoryEntry[];
+    redo: UndoHistoryEntry[];
   } = {
     undo: [],
     redo: [],
@@ -781,6 +798,75 @@ export function createCore(opts: {
     return merged;
   };
 
+  const classifyTextHistoryGroup = (
+    txn: Transaction,
+    sel: Selection,
+  ): TextHistoryGroupKey | null => {
+    if (sel.type !== "focused") return null;
+    if (sel.target !== VALUE_TARGET) return null;
+    if (txn.ops.length !== 1) return null;
+
+    const op = txn.ops[0];
+    if (!op) return null;
+    if (
+      op.type !== "patch" ||
+      op.next.label !== undefined ||
+      op.next.view !== undefined
+    ) {
+      return null;
+    }
+
+    const content = op.next.content;
+    if (!content || (content.type !== "blank" && content.type !== "scalar")) {
+      return null;
+    }
+
+    const focusedEntryId = entryIdFromItemId(sel.focus.item);
+    if (focusedEntryId == null || focusedEntryId !== op.id) return null;
+
+    return { kind: "text", itemId: sel.focus.item, target: sel.target };
+  };
+
+  const canCoalesceUndoEntries = (
+    prev: UndoHistoryEntry | null,
+    next: UndoHistoryEntry,
+  ): boolean => {
+    const prevKey = prev?.groupKey;
+    const nextKey = next.groupKey;
+    if (!prevKey || !nextKey) return false;
+
+    return (
+      prevKey.itemId === nextKey.itemId &&
+      prevKey.target === nextKey.target &&
+      next.groupedAt - prev.groupedAt <= TEXT_HISTORY_COALESCE_MS
+    );
+  };
+
+  const mergeUndoEntries = (
+    prev: UndoHistoryEntry,
+    next: UndoHistoryEntry,
+  ): UndoHistoryEntry => ({
+    user: {
+      ops: [...prev.user.ops, ...next.user.ops],
+      ...(next.user.meta ? { meta: next.user.meta } : {}),
+    },
+    inverse: {
+      ops: [...next.inverse.ops, ...prev.inverse.ops],
+      ...(next.inverse.meta ? { meta: next.inverse.meta } : {}),
+    },
+    groupedAt: next.groupedAt,
+    groupKey: next.groupKey,
+  });
+
+  const pushOrCoalesceUndoEntry = (entry: UndoHistoryEntry): void => {
+    const last = history.undo.at(-1) ?? null;
+    if (!canCoalesceUndoEntries(last, entry)) {
+      history.undo.push(entry);
+      return;
+    }
+    history.undo[history.undo.length - 1] = mergeUndoEntries(last!, entry);
+  };
+
   const applyRemotePipeline = (
     txn: Transaction,
     inverseAcc: Op[],
@@ -802,6 +888,7 @@ export function createCore(opts: {
   const applyUserPipeline = (
     txn: Transaction,
     inverseAcc: Op[],
+    userHistoryCtx: UserCommitHistoryCtx | null = null,
   ): ModelApplyResult => {
     let merged = emptyModelApply;
     const anchor = captureRepairAnchor();
@@ -820,14 +907,24 @@ export function createCore(opts: {
       const inverse = model.ops.transaction(inverseAcc.toReversed(), {
         source: "undo",
       });
-      history.undo.push({ user: txn, inverse });
+      pushOrCoalesceUndoEntry({
+        user: txn,
+        inverse,
+        groupedAt: userHistoryCtx?.startedAt ?? Date.now(),
+        groupKey: userHistoryCtx
+          ? classifyTextHistoryGroup(txn, userHistoryCtx.selection)
+          : null,
+      });
       history.redo = [];
     }
 
     return merged;
   };
 
-  const applyPipeline = (txn: Transaction): ApplyResult => {
+  const applyPipeline = (
+    txn: Transaction,
+    userHistoryCtx: UserCommitHistoryCtx | null = null,
+  ): ApplyResult => {
     let final = emptyModelApply;
     const inverseAcc: Op[] = [];
     const source = txn.meta?.source;
@@ -840,7 +937,10 @@ export function createCore(opts: {
         return;
       }
 
-      final = mergeModelApply(final, applyUserPipeline(txn, inverseAcc));
+      final = mergeModelApply(
+        final,
+        applyUserPipeline(txn, inverseAcc, userHistoryCtx),
+      );
     });
 
     return toApplyResult(final);
@@ -866,9 +966,12 @@ export function createCore(opts: {
     opts.collab.send(txn);
   };
 
-  const applyLocal = (txn: Transaction): ApplyResult => {
+  const applyLocal = (
+    txn: Transaction,
+    userHistoryCtx: UserCommitHistoryCtx | null = null,
+  ): ApplyResult => {
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
-    const applyResult = applyPipeline(stamped);
+    const applyResult = applyPipeline(stamped, userHistoryCtx);
     sendLocalTxn(stamped);
     return applyResult;
   };
@@ -885,6 +988,10 @@ export function createCore(opts: {
   };
 
   const commit = (run: (t: Tx) => void): ApplyResult => {
+    const userHistoryCtx: UserCommitHistoryCtx = {
+      selection: selectionSignal.peek(),
+      startedAt: Date.now(),
+    };
     const ops: Op[] = [];
     const pendingCreated = new Set<EntryId>();
 
@@ -991,7 +1098,7 @@ export function createCore(opts: {
     if (!ops.length) return toApplyResult(emptyModelApply);
 
     const txn = model.ops.transaction(ops, { source: "user" });
-    return applyLocal(txn);
+    return applyLocal(txn, userHistoryCtx);
   };
 
   const undo = (): ApplyResult => {

@@ -416,6 +416,7 @@ Rules:
 - Selection MUST be repaired to valid state.
 - Selection MUST NOT be historically restored.
 - Undo history MUST be linear.
+- Core MAY coalesce adjacent user text edits in the same focused target into a single undo step.
 - A new edit MUST clear the redo stack.
 
 ## Helper functions
