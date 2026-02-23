@@ -107,7 +107,7 @@ PR checklist:
   - prefer small, focused tests and avoid duplicated helpers
   - test names SHOULD follow `"<area>: <behaviour>"`
   - shared test helpers SHOULD live in `test/`, not `src/`
-  - prefer a small number of obvious helper modules (for example `test/test-utils.ts`)
+  - prefer a small number of obvious helper modules (for example `test/core-test-utils.ts` and `test/dom-test-utils.ts`)
   - helper naming patterns: `mkX`, `setX`, `expectX`, `requireX`
 - Docs:
   - keep sections short and scannable

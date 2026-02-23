@@ -38,7 +38,7 @@
 - Shared app composition/setup: `src/setup.ts`
 - App bootstrap/demo wiring: `src/main.ts`
 - Tests: `test/`
-- Shared test helpers: `test/test-utils.ts`
+- Shared test helpers: `test/core-test-utils.ts`, `test/dom-test-utils.ts`
 
 ## After you change something
 

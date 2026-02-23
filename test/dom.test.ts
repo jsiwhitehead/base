@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { signal } from "@preact/signals-core";
 
-import type { Focus, Intent, Selection } from "../src/core";
+import type { Focus, Intent, ItemId, Selection, ViewName } from "../src/core";
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
@@ -17,6 +17,7 @@ import {
   el,
   handleContainerIntent,
 } from "../src/dom";
+import { viewRegistrations } from "../src/views";
 
 import {
   dispatchKey,
@@ -27,7 +28,7 @@ import {
   requireTargetInput,
   setFormula,
   setQuery,
-} from "./test-utils";
+} from "./dom-test-utils";
 
 function mount(c: Component): () => void {
   document.body.append(c.el);
@@ -1035,5 +1036,108 @@ describe("smoke: container TYPE intent microtask path", () => {
     expect(inp.value).toBe("a");
 
     unmount();
+  });
+});
+
+describe("dom runtime: UiCore target binding and view mounting", () => {
+  test("focus prefers exact target binding and falls back to DEFAULT_TARGET", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "v" });
+    const focus = { container: rootId, item: x };
+
+    const defaultEl = document.createElement("button");
+    const valueEl = document.createElement("input");
+    document.body.append(defaultEl, valueEl);
+
+    const cleanDefault = core.attachTarget({
+      focus,
+      target: DEFAULT_TARGET,
+      getEl: () => defaultEl,
+    });
+
+    core.focus(focus, VALUE_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(defaultEl);
+
+    const cleanValue = core.attachTarget({
+      focus,
+      target: VALUE_TARGET,
+      getEl: () => valueEl,
+    });
+
+    core.focus(focus, VALUE_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(valueEl);
+
+    cleanValue();
+    cleanDefault();
+  });
+
+  test("new binding for same (focus, target) replaces previous binding", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "v" });
+    const focus = { container: rootId, item: x };
+
+    const first = document.createElement("button");
+    const second = document.createElement("button");
+    document.body.append(first, second);
+
+    const c1 = core.attachTarget({
+      focus,
+      target: DEFAULT_TARGET,
+      getEl: () => first,
+    });
+    core.focus(focus, DEFAULT_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(first);
+
+    const c2 = core.attachTarget({
+      focus,
+      target: DEFAULT_TARGET,
+      getEl: () => second,
+    });
+    core.focus(focus, DEFAULT_TARGET);
+    await flushDomEffects();
+    expect(document.activeElement).toBe(second);
+
+    c2();
+    c1();
+  });
+
+  test("mountView treats item ids as opaque and can render fallback issue snapshots", () => {
+    const { core } = makeCoreRuntime();
+
+    const bad1 = core.mountView({ id: "not-an-id" as ItemId, view: "outline" });
+    const bad2 = core.mountView({ id: "999999:" as ItemId, view: "outline" });
+
+    expect(bad1.el.classList.contains("ui-body")).toBe(true);
+    expect(bad1.el.classList.contains("ui-outline")).toBe(true);
+    expect(bad2.el.classList.contains("ui-body")).toBe(true);
+    expect(bad2.el.classList.contains("ui-outline")).toBe(true);
+
+    bad1.dispose();
+    bad2.dispose();
+  });
+
+  test("mountView falls back to outline when requested view factory is missing", () => {
+    const { core, rootId } = makeCoreRuntime({ views: viewRegistrations });
+
+    const mounted = core.mountView({
+      id: rootId,
+      view: "nonexistent" as ViewName,
+    });
+
+    expect(mounted.el.classList.contains("ui-body")).toBe(true);
+    expect(mounted.el.classList.contains("ui-outline")).toBe(true);
+
+    mounted.dispose();
+  });
+
+  test("mountView throws when requested view and outline fallback are both missing", () => {
+    const { core, rootId } = makeCoreRuntime({ views: {} });
+
+    expect(() =>
+      core.mountView({ id: rootId, view: "nonexistent" as ViewName }),
+    ).toThrow();
   });
 });

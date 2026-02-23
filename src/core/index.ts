@@ -381,6 +381,19 @@ export function createCore(opts: {
     opts.platform?.onSelectionChange?.(sel);
   };
 
+  const isValidFocusedSelection = (
+    sel: Extract<Selection, { type: "focused" }>,
+  ): boolean => {
+    const itemEid = entryIdFromItemId(sel.focus.item);
+    const containerEid = entryIdFromItemId(sel.focus.container);
+    if (itemEid == null || containerEid == null) return false;
+    if (!model.hasEntry(itemEid) || !model.hasEntry(containerEid)) return false;
+    if (itemEid === containerEid) return true;
+
+    const loc = model.locateInParent(itemEid);
+    return !!loc && loc.parentId === containerEid;
+  };
+
   const setSelection = (next: Selection): void => {
     const repairToRoot = (): Selection => {
       if (!model.hasEntry(rootEntryId)) return { type: "idle" };
@@ -397,15 +410,7 @@ export function createCore(opts: {
       return;
     }
 
-    const itemEid = entryIdFromItemId(next.focus.item);
-    const containerEid = entryIdFromItemId(next.focus.container);
-    const valid =
-      itemEid != null &&
-      containerEid != null &&
-      model.hasEntry(itemEid) &&
-      model.hasEntry(containerEid);
-
-    const repaired = valid ? next : repairToRoot();
+    const repaired = isValidFocusedSelection(next) ? next : repairToRoot();
     selectionSignal.value = repaired;
     emitSelectionChange(repaired);
   };
@@ -449,10 +454,7 @@ export function createCore(opts: {
 
   const selectionStillValid = (sel: Selection): boolean => {
     if (sel.type === "idle") return true;
-    const a = entryIdFromItemId(sel.focus.item);
-    const b = entryIdFromItemId(sel.focus.container);
-    if (a == null || b == null) return false;
-    return model.hasEntry(a) && model.hasEntry(b);
+    return isValidFocusedSelection(sel);
   };
 
   const captureRepairAnchor = (): RepairAnchor | null => {

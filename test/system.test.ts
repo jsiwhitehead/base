@@ -18,7 +18,7 @@ import {
   requireTargetInput,
   valueOfId,
   setView,
-} from "./test-utils";
+} from "./dom-test-utils";
 
 function mountAppShell(core: UiCore, rootId: ItemId): () => void {
   const focus = { container: rootId, item: rootId };

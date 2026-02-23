@@ -1,46 +1,19 @@
-import { afterEach, beforeAll, expect } from "bun:test";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { expect } from "bun:test";
 
 import type {
   Content,
+  Core,
   ItemId,
   Selection,
   Transaction,
   ViewName,
 } from "../src/core";
 import { DEFAULT_TARGET, createCore } from "../src/core";
-import type { UiCore } from "../src/dom";
-import { createUiCoreRuntime } from "../src/setup";
-import { viewRegistrations } from "../src/views";
+import { splitViewRegistrations, viewRegistrations } from "../src/views";
 
-const cleanups: Array<() => void> = [];
-
-beforeAll(() => {
-  GlobalRegistrator.register();
-});
-
-afterEach(() => {
-  document.body.replaceChildren();
-  for (const fn of cleanups.toReversed()) fn();
-  cleanups.length = 0;
-});
-
-export function makeCoreRuntime(args?: {
-  views?: Partial<typeof viewRegistrations>;
-  collab?: Parameters<typeof createCore>[0]["collab"];
-}): { core: UiCore; rootId: ItemId } {
-  const { core, pureCore, rootId, runtime } = createUiCoreRuntime({
-    views: args?.views ?? viewRegistrations,
-    ...(args?.collab ? { collab: args.collab } : {}),
-  });
-  const uninstallGlobal = runtime.installGlobalListeners(window);
-
-  cleanups.push(() => {
-    uninstallGlobal();
-    runtime.dispose();
-    pureCore.dispose();
-  });
-  return { core, rootId };
+export function makePureCore(): { core: Core; rootId: ItemId } {
+  const { constraints } = splitViewRegistrations(viewRegistrations);
+  return createCore({ constraints });
 }
 
 export function valueOf(content: Content): true | number | string | null {
@@ -94,7 +67,7 @@ export function expectSel(
 }
 
 export function mkBlank(
-  core: { commit: UiCore["commit"] },
+  core: { commit: Core["commit"] },
   parentId: ItemId,
   args?: { at?: number; label?: string; value?: true | number | string | null },
 ): ItemId {
@@ -111,7 +84,7 @@ export function mkBlank(
 }
 
 export function mkGroup(
-  core: { commit: UiCore["commit"] },
+  core: { commit: Core["commit"] },
   parentId: ItemId,
   args?: { at?: number; label?: string; view?: ViewName | null },
 ): ItemId {
@@ -129,7 +102,7 @@ export function mkGroup(
 }
 
 export function setFormula(
-  core: { commit: UiCore["commit"] },
+  core: { commit: Core["commit"] },
   id: ItemId,
   expr: string,
 ): void {
@@ -139,7 +112,7 @@ export function setFormula(
 }
 
 export function setQuery(
-  core: { commit: UiCore["commit"] },
+  core: { commit: Core["commit"] },
   id: ItemId,
   args: { from: string; where?: string; orderBy?: string },
 ): void {
@@ -154,73 +127,42 @@ export function setQuery(
 }
 
 export function setView(
-  core: { commit: UiCore["commit"] },
+  core: { commit: Core["commit"] },
   id: ItemId,
   view: ViewName | null,
 ): void {
   core.commit((t) => t.setView(id, view));
 }
 
-export function dispatchKey(
-  target: Element,
-  key: string,
-  opts: Partial<KeyboardEventInit> = {},
-): { defaultPrevented: boolean; bubbled: number } {
-  let bubbled = 0;
-  const onBubble = () => {
-    bubbled += 1;
-  };
-  window.addEventListener("keydown", onBubble);
+export function assertCoreInvariants(core: Core, rootId: ItemId): void {
+  const seen = new Set<ItemId>();
+  const stack: ItemId[] = [rootId];
 
-  const ev = new KeyboardEvent("keydown", {
-    key,
-    bubbles: true,
-    cancelable: true,
-    ...opts,
-  });
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
 
-  target.dispatchEvent(ev);
-  window.removeEventListener("keydown", onBubble);
+    const it = core.item(id);
+    const isQuery =
+      it.mode.type === "connected" && it.mode.conn.type === "query";
 
-  return { defaultPrevented: ev.defaultPrevented, bubbled };
-}
+    if (it.content.type !== "group") continue;
+    for (const childId of it.content.children) {
+      const loc = core.locate(childId);
+      if (!loc) {
+        expect(core.item(childId).mode.type).toBe("readonly");
+        stack.push(childId);
+        continue;
+      }
 
-export async function flushDomEffects(turns = 2): Promise<void> {
-  for (let i = 0; i < turns; i += 1) {
-    await Promise.resolve();
+      if (!isQuery) expect(loc.parentId).toBe(id);
+      expect(loc.index).toBeGreaterThanOrEqual(0);
+      expect(loc.index).toBeLessThan(loc.siblings.length);
+      expect(loc.siblings[loc.index]).toBe(childId);
+      expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
+
+      stack.push(childId);
+    }
   }
-}
-
-function queryTargetInput(
-  root: ParentNode,
-  target: string,
-): HTMLTextAreaElement | HTMLInputElement | null {
-  const sel = `textarea[data-target="${target}"], input[data-target="${target}"]`;
-  return root.querySelector(sel) as
-    | HTMLTextAreaElement
-    | HTMLInputElement
-    | null;
-}
-
-export function requireTargetInput(
-  root: ParentNode,
-  target: string,
-): HTMLTextAreaElement | HTMLInputElement {
-  const targetInput = queryTargetInput(root, target);
-  if (!targetInput) throw new Error(`Missing input for target=${target}`);
-  return targetInput;
-}
-
-export function pointerDown(element: HTMLElement): void {
-  element.dispatchEvent(
-    new Event("pointerdown", { bubbles: true, cancelable: true }),
-  );
-}
-
-export function requireEl<T extends Element>(
-  element: T | null,
-  msg = "Missing element",
-): T {
-  if (!element) throw new Error(msg);
-  return element;
 }

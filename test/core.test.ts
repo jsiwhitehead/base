@@ -1,21 +1,34 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Core, ItemId, Transaction, ViewName } from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET, createCore } from "../src/core";
-import { viewRegistrations } from "../src/views";
+import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
+  assertCoreInvariants,
   childrenOf,
   expectSel,
-  flushDomEffects,
-  makeCoreRuntime,
+  makePureCore,
   mkBlank,
   mkGroup,
   requireCreatedEntryId,
-  valueOfId,
   setFormula,
   setQuery,
   setView,
-} from "./test-utils";
+  valueOfId,
+} from "./core-test-utils";
+
+const cleanups: Array<() => void> = [];
+
+afterEach(() => {
+  for (const fn of cleanups.toReversed()) fn();
+  cleanups.length = 0;
+});
+
+function makeCoreForTest(): { core: Core; rootId: ItemId } {
+  const ctx = makePureCore();
+  cleanups.push(() => ctx.core.dispose());
+  return ctx;
+}
 
 type TreeShape =
   | {
@@ -114,42 +127,30 @@ function expectCommitThrowsNoChange(
   expect(snapshotState(core, rootId, opts)).toEqual(before);
 }
 
-function assertCoreInvariants(core: Core, rootId: ItemId): void {
-  const seen = new Set<ItemId>();
-  const stack: ItemId[] = [rootId];
+function assertFocusedSelectionStructurallyValid(
+  core: Core,
+  rootId: ItemId,
+): void {
+  const sel = core.selection();
+  if (sel.type === "idle") return;
 
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
+  const item = core.item(sel.focus.item);
+  const container = core.item(sel.focus.container);
+  expect(item.content.type).not.toBe("issue");
+  expect(container.content.type).not.toBe("issue");
 
-    const it = core.item(id);
-    const isQuery =
-      it.mode.type === "connected" && it.mode.conn.type === "query";
+  if (sel.focus.item === sel.focus.container) return;
 
-    if (it.content.type !== "group") continue;
-    for (const childId of it.content.children) {
-      const loc = core.locate(childId);
-      if (!loc) {
-        expect(core.item(childId).mode.type).toBe("readonly");
-        stack.push(childId);
-        continue;
-      }
+  const loc = core.locate(sel.focus.item);
+  expect(loc).not.toBeNull();
+  expect(loc!.parentId).toBe(sel.focus.container);
 
-      if (!isQuery) expect(loc.parentId).toBe(id);
-      expect(loc.index).toBeGreaterThanOrEqual(0);
-      expect(loc.index).toBeLessThan(loc.siblings.length);
-      expect(loc.siblings[loc.index]).toBe(childId);
-      expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
-
-      stack.push(childId);
-    }
-  }
+  assertCoreInvariants(core, rootId);
 }
 
 describe("core/basics", () => {
   test("boot: root exists, is group; selection is focused on root", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     expect(core.item(rootId).content.type).toBe("group");
     expectSel(core, {
@@ -160,13 +161,13 @@ describe("core/basics", () => {
   });
 
   test("item(invalid format) returns issue (does not throw)", () => {
-    const { core } = makeCoreRuntime();
+    const { core } = makeCoreForTest();
 
     expect(core.item("not-an-id").content.type).toBe("issue");
   });
 
   test("item(valid format, missing item) returns issue (does not throw)", () => {
-    const { core } = makeCoreRuntime();
+    const { core } = makeCoreForTest();
 
     expect(core.item("999999:").content.type).toBe("issue");
   });
@@ -174,7 +175,7 @@ describe("core/basics", () => {
 
 describe("core/commit (transactionality)", () => {
   test("empty commit is a no-op", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const before = snapshotState(core, rootId);
     core.commit(() => {});
@@ -184,7 +185,7 @@ describe("core/commit (transactionality)", () => {
   });
 
   test("commit is atomic: if an op fails, nothing changes", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: 1 });
@@ -199,8 +200,36 @@ describe("core/commit (transactionality)", () => {
 });
 
 describe("core/tree editing", () => {
+  test("move into self throws and leaves state unchanged", () => {
+    const { core, rootId } = makePureCore();
+    const g = mkGroup(core, rootId, { label: "g" });
+
+    expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, g));
+    assertCoreInvariants(core, rootId);
+    core.dispose();
+  });
+
+  test("move into descendant throws and leaves state unchanged", () => {
+    const { core, rootId } = makePureCore();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const c = mkGroup(core, g, { label: "c" });
+
+    expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, c));
+    assertCoreInvariants(core, rootId);
+    core.dispose();
+  });
+
+  test("move root throws and leaves state unchanged", () => {
+    const { core, rootId } = makePureCore();
+    const g = mkGroup(core, rootId, { label: "g" });
+
+    expectCommitThrowsNoChange(core, rootId, (t) => t.move(rootId, g));
+    assertCoreInvariants(core, rootId);
+    core.dispose();
+  });
+
   test("insertChild appends by default", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
 
@@ -213,7 +242,7 @@ describe("core/tree editing", () => {
   });
 
   test("insertChild(at) inserts at index", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
 
@@ -227,7 +256,7 @@ describe("core/tree editing", () => {
   });
 
   test("move within parent reorders", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
 
@@ -242,7 +271,7 @@ describe("core/tree editing", () => {
   });
 
   test("move across parents reparents", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g1 = mkGroup(core, rootId, { label: "g1" });
     const g2 = mkGroup(core, rootId, { label: "g2" });
@@ -259,7 +288,7 @@ describe("core/tree editing", () => {
   });
 
   test("remove removes subtree from parent", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: 1 });
@@ -279,7 +308,7 @@ describe("core/tree editing", () => {
 
 describe("core/locate", () => {
   test("locate returns parent/index/siblings for item children", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a" });
@@ -294,7 +323,7 @@ describe("core/locate", () => {
   });
 
   test("locate returns null for readonly derived children", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
     mkBlank(core, rows, { label: "r1", value: 1 });
@@ -316,7 +345,7 @@ describe("core/locate", () => {
 
 describe("core/values", () => {
   test("setValue supports null/number/string/true", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const x = mkBlank(core, rootId, { label: "x" });
 
@@ -336,7 +365,7 @@ describe("core/values", () => {
 
 describe("core/formula", () => {
   test("formula evaluates and updates synchronously on commit", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const x = mkBlank(core, rootId, { label: "x", value: 10 });
     const y = mkBlank(core, rootId, { label: "y" });
@@ -349,7 +378,7 @@ describe("core/formula", () => {
   });
 
   test("cycles become issues (no crashes)", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const a = mkBlank(core, rootId, { label: "a" });
     const b = mkBlank(core, rootId, { label: "b" });
@@ -362,7 +391,7 @@ describe("core/formula", () => {
   });
 
   test("formula group materialises derived children which are readonly and not locatable", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
     mkBlank(core, rows, { label: "r1", value: 1 });
@@ -387,7 +416,7 @@ describe("core/formula", () => {
 
 describe("core/query", () => {
   test("query filters and sorts rows; supports label/position vars; returns locatable item ids", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
 
@@ -435,7 +464,7 @@ describe("core/query", () => {
   });
 
   test("query orderBy ranks numbers before text before true; blanks/issues sort last; stable tie-break", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const rows = mkGroup(core, rootId, { label: "rows" });
 
@@ -483,7 +512,7 @@ describe("core/query", () => {
 
 describe("core/view constraints & rules", () => {
   test("table constraint coerces table item to group; rows become group", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const tableId = mkBlank(core, rootId, { label: "table", value: "x" });
     setView(core, tableId, "table");
@@ -501,7 +530,7 @@ describe("core/view constraints & rules", () => {
   });
 
   test("shape sync across table rows propagates by label (add/reorder/remove)", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
     setView(core, tableId, "table");
@@ -532,7 +561,7 @@ describe("core/view constraints & rules", () => {
 
 describe("core/history", () => {
   test("undo/redo restores structure and values; redo cleared after new commit", () => {
-    const { core, rootId } = makeCoreRuntime();
+    const { core, rootId } = makeCoreForTest();
 
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: 1 });
@@ -573,108 +602,150 @@ describe("core/history", () => {
   });
 });
 
-describe("core/target binding", () => {
-  test("focus prefers exact target binding and falls back to DEFAULT_TARGET", async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const x = mkBlank(core, rootId, { label: "x", value: "v" });
-    const focus = { container: rootId, item: x };
+describe("core/selection validity & repair", () => {
+  test("focus with invalid container/item pair repairs to valid selection", () => {
+    const { core, rootId } = makePureCore();
+    const g1 = mkGroup(core, rootId, { label: "g1" });
+    const g2 = mkGroup(core, rootId, { label: "g2" });
+    const x = mkBlank(core, g2, { label: "x", value: 1 });
 
-    const defaultEl = document.createElement("button");
-    const valueEl = document.createElement("input");
-    document.body.append(defaultEl, valueEl);
+    core.focus({ container: g1, item: x }, DEFAULT_TARGET);
 
-    const cleanDefault = core.attachTarget({
-      focus,
-      target: DEFAULT_TARGET,
-      getEl: () => defaultEl,
-    });
-
-    core.focus(focus, VALUE_TARGET);
-    await flushDomEffects();
-    expect(document.activeElement).toBe(defaultEl);
-
-    const cleanValue = core.attachTarget({
-      focus,
-      target: VALUE_TARGET,
-      getEl: () => valueEl,
-    });
-
-    core.focus(focus, VALUE_TARGET);
-    await flushDomEffects();
-    expect(document.activeElement).toBe(valueEl);
-
-    cleanValue();
-    cleanDefault();
+    assertFocusedSelectionStructurallyValid(core, rootId);
+    core.dispose();
   });
 
-  test("new binding for same (focus, target) replaces previous binding", async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const x = mkBlank(core, rootId, { label: "x", value: "v" });
-    const focus = { container: rootId, item: x };
+  test("removing selected item repairs selection to a valid position", () => {
+    const { core, rootId } = makePureCore();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: 1 });
+    const b = mkBlank(core, g, { label: "b", value: 2 });
+    const c = mkBlank(core, g, { label: "c", value: 3 });
+    void a;
+    void c;
 
-    const first = document.createElement("button");
-    const second = document.createElement("button");
-    document.body.append(first, second);
+    core.focus({ container: g, item: b }, DEFAULT_TARGET);
+    core.commit((t) => t.remove(b));
 
-    const c1 = core.attachTarget({
-      focus,
-      target: DEFAULT_TARGET,
-      getEl: () => first,
+    assertFocusedSelectionStructurallyValid(core, rootId);
+    core.dispose();
+  });
+
+  test("moving selected item to another parent repairs invalid container pairing", () => {
+    const { core, rootId } = makePureCore();
+    const g1 = mkGroup(core, rootId, { label: "g1" });
+    const g2 = mkGroup(core, rootId, { label: "g2" });
+    const x = mkBlank(core, g1, { label: "x", value: 1 });
+
+    core.focus({ container: g1, item: x }, DEFAULT_TARGET);
+    core.commit((t) => t.move(x, g2));
+
+    assertFocusedSelectionStructurallyValid(core, rootId);
+    core.dispose();
+  });
+
+  test("remote apply that invalidates selected item sets selection to idle", () => {
+    let onRemote: ((txn: Transaction) => void) | undefined;
+    const collab = {
+      origin: "local",
+      send(_txn: Transaction) {},
+      subscribe(fn: (txn: Transaction) => void) {
+        onRemote = fn;
+        return () => {
+          onRemote = undefined;
+        };
+      },
+    };
+
+    const { constraints } = splitViewRegistrations(viewRegistrations);
+    const { core, rootId } = createCore({ constraints, collab });
+
+    let g = "";
+    let x = "";
+    core.commit((t) => {
+      g = t.insertChild(rootId);
+      t.setLabel(g, "g");
+      t.setGroup(g);
+      x = t.insertChild(g);
+      t.setLabel(x, "x");
+      t.setValue(x, 1);
     });
-    core.focus(focus, DEFAULT_TARGET);
-    await flushDomEffects();
-    expect(document.activeElement).toBe(first);
 
-    const c2 = core.attachTarget({
-      focus,
-      target: DEFAULT_TARGET,
-      getEl: () => second,
-    });
-    core.focus(focus, DEFAULT_TARGET);
-    await flushDomEffects();
-    expect(document.activeElement).toBe(second);
+    core.focus({ container: g, item: x }, DEFAULT_TARGET);
 
-    c2();
-    c1();
+    const createTxn = {
+      ops: [
+        { type: "remove" as const, id: Number(x.slice(0, x.indexOf(":"))) },
+      ],
+      meta: { origin: "remote-peer", seq: 1 },
+    };
+    if (!onRemote) throw new Error("No collab subscriber");
+    onRemote(createTxn);
+
+    expect(core.selection().type).toBe("idle");
+    core.dispose();
   });
 });
 
-describe("core/view mounting", () => {
-  test("mountView treats item ids as opaque and can render fallback issue snapshots", () => {
-    const { core } = makeCoreRuntime();
+describe("core/id stability", () => {
+  test("move/reorder and undo/redo preserve item ids", () => {
+    const { core, rootId } = makePureCore();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: 1 });
+    const b = mkBlank(core, g, { label: "b", value: 2 });
+    const c = mkBlank(core, g, { label: "c", value: 3 });
 
-    const bad1 = core.mountView({ id: "not-an-id" as ItemId, view: "outline" });
-    const bad2 = core.mountView({ id: "999999:" as ItemId, view: "outline" });
+    core.commit((t) => t.move(c, g, { at: 0 }));
+    expect(childrenOf(core, g)).toEqual([c, a, b]);
 
-    expect(bad1.el.classList.contains("ui-body")).toBe(true);
-    expect(bad1.el.classList.contains("ui-outline")).toBe(true);
-    expect(bad2.el.classList.contains("ui-body")).toBe(true);
-    expect(bad2.el.classList.contains("ui-outline")).toBe(true);
+    core.commit((t) => t.remove(a));
+    core.undo();
+    expect(childrenOf(core, g)).toEqual([c, a, b]);
 
-    bad1.dispose();
-    bad2.dispose();
+    core.redo();
+    expect(childrenOf(core, g)).toEqual([c, b]);
+
+    core.undo();
+    expect(childrenOf(core, g)).toEqual([c, a, b]);
+
+    assertCoreInvariants(core, rootId);
+    core.dispose();
   });
+});
 
-  test("mountView falls back to outline when requested view factory is missing", () => {
-    const { core, rootId } = makeCoreRuntime({ views: viewRegistrations });
+describe("core/determinism", () => {
+  test("same sequence of transactions produces the same final state", () => {
+    const { constraints } = splitViewRegistrations(viewRegistrations);
+    const runScenario = () => {
+      const { core, rootId } = createCore({ constraints });
+      let g = "";
+      let a = "";
+      let b = "";
+      core.commit((t) => {
+        g = t.insertChild(rootId);
+        t.setLabel(g, "g");
+        t.setGroup(g);
+        a = t.insertChild(g);
+        t.setLabel(a, "a");
+        t.setValue(a, 1);
+        b = t.insertChild(g);
+        t.setLabel(b, "b");
+        t.setValue(b, 2);
+      });
+      core.commit((t) => {
+        t.move(b, g, { at: 0 });
+        t.setValue(a, 10);
+      });
+      core.focus({ container: g, item: b }, VALUE_TARGET);
+      core.undo();
+      core.redo();
 
-    const mounted = core.mountView({
-      id: rootId,
-      view: "nonexistent" as ViewName,
-    });
+      const snap = snapshotState(core, rootId, { viewIds: [rootId, g] });
+      core.dispose();
+      return snap;
+    };
 
-    expect(mounted.el.classList.contains("ui-body")).toBe(true);
-    expect(mounted.el.classList.contains("ui-outline")).toBe(true);
-
-    mounted.dispose();
-  });
-
-  test("mountView throws when requested view and outline fallback are both missing", () => {
-    const { core, rootId } = makeCoreRuntime({ views: {} });
-
-    expect(() =>
-      core.mountView({ id: rootId, view: "nonexistent" as ViewName }),
-    ).toThrow();
+    expect(runScenario()).toEqual(runScenario());
   });
 });
 

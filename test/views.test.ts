@@ -18,7 +18,7 @@ import {
   valueOfId,
   setFormula,
   setView,
-} from "./test-utils";
+} from "./dom-test-utils";
 
 const viewFactories = Object.fromEntries(
   Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),

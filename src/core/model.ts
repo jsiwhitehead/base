@@ -335,6 +335,17 @@ export function createModel(): Model {
     const { childId, toParentId } = spec;
 
     if (!entries.has(childId)) throw new Error("Unknown child");
+    if (childId === rootId()) throw new Error("Cannot move root");
+    if (toParentId === childId) throw new Error("Cannot move item into itself");
+    if (toParentId != null) {
+      let cur: EntryId | null = toParentId;
+      while (cur != null) {
+        if (!entries.has(cur)) break;
+        if (cur === childId)
+          throw new Error("Cannot move item into its descendant");
+        cur = entryRecord(cur).entrySignal.peek().parentId;
+      }
+    }
 
     const childRecord = entryRecord(childId);
     const child = childRecord.entrySignal.peek();
@@ -572,13 +583,12 @@ export function createModel(): Model {
           groupsToCheck.add(entry.parentId);
       }
       for (const groupId of groupsToCheck) assertUniqueChildLabels(groupId);
+      if (DEV) assertValidInternal();
+      return { created, touched: [...touched], moved };
     } catch (err) {
       restoreEntries(snapshot);
       throw err;
     }
-
-    if (DEV) assertValidInternal();
-    return { created, touched: [...touched], moved };
   };
 
   const contentTypeOf = (id: EntryId): EntryContent["type"] =>
@@ -661,6 +671,10 @@ export function createModel(): Model {
     devAssert(root != null, "Root not set");
     if (root == null) return;
     devAssert(entries.has(root), `Root entry missing: ${String(root)}`);
+    devAssert(
+      entries.get(root)!.entrySignal.peek().parentId == null,
+      `Root entry ${root} must not have a parent`,
+    );
 
     const groupChildIdsOf = (id: EntryId): readonly EntryId[] | null => {
       const entry = entries.get(id)?.entrySignal.peek();
@@ -731,6 +745,18 @@ export function createModel(): Model {
         count === 1,
         `Entry ${childId} parent ${parentId} contains it ${count} times (expected 1)`,
       );
+    }
+
+    for (const [id] of entries) {
+      const seen = new Set<EntryId>();
+      let cur: EntryId | null = id;
+      while (cur != null) {
+        devAssert(!seen.has(cur), `Cycle detected in parent chain at ${cur}`);
+        seen.add(cur);
+        const record = entries.get(cur);
+        if (!record) break;
+        cur = record.entrySignal.peek().parentId;
+      }
     }
   }
 
