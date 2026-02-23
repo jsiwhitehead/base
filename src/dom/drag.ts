@@ -2,8 +2,9 @@ import type { Signal } from "@preact/signals-core";
 import { effect, signal } from "@preact/signals-core";
 
 import type { Core, ItemId, Tx } from "../core";
-import type { Component } from "./runtime";
+import { devWarn } from "../dev";
 import { el } from "./base";
+import type { Component } from "./runtime";
 
 export type DropTarget =
   | {
@@ -203,12 +204,16 @@ export function createDragController(core: Core): DragController {
     };
   }
 
-  function commitDrop(s: Extract<DragState, { type: "active" }>): void {
-    if (s.drop) {
+  function commitDrop(dragState: Extract<DragState, { type: "active" }>): void {
+    if (dragState.drop) {
       const isSlotSource = activeSourceEl?.dataset.dragSlot === "true";
-      const sourceLoc = isSlotSource ? core.locate(s.itemId) : null;
-      const sourceLabel = isSlotSource ? core.item(s.itemId).label : null;
-      const pruneList = isSlotSource ? [] : computePruneList(core, s.itemId);
+      const sourceLoc = isSlotSource ? core.locate(dragState.itemId) : null;
+      const sourceLabel = isSlotSource
+        ? core.item(dragState.itemId).label
+        : null;
+      const pruneList = isSlotSource
+        ? []
+        : computePruneList(core, dragState.itemId);
 
       const applySourceOps = (tx: Tx): void => {
         if (sourceLoc) {
@@ -222,27 +227,31 @@ export function createDragController(core: Core): DragController {
       };
 
       try {
-        if (s.drop.type === "gap") {
-          const drop = s.drop;
+        if (dragState.drop.type === "gap") {
+          const drop = dragState.drop;
           core.commit((tx) => {
-            tx.move(s.itemId, drop.parentId, { at: drop.at });
-            if (isSlotSource) tx.setLabel(s.itemId, "");
+            tx.move(dragState.itemId, drop.parentId, { at: drop.at });
+            if (isSlotSource) tx.setLabel(dragState.itemId, "");
             applySourceOps(tx);
           });
         } else {
-          const drop = s.drop;
+          const drop = dragState.drop;
           const slotLoc = core.locate(drop.itemId);
           const displacedLabel = core.item(drop.itemId).label;
           if (slotLoc) {
             core.commit((tx) => {
-              tx.move(s.itemId, slotLoc.parentId, { at: slotLoc.index });
+              tx.move(dragState.itemId, slotLoc.parentId, {
+                at: slotLoc.index,
+              });
               tx.remove(drop.itemId);
-              if (displacedLabel) tx.setLabel(s.itemId, displacedLabel);
+              if (displacedLabel) tx.setLabel(dragState.itemId, displacedLabel);
               applySourceOps(tx);
             });
           }
         }
-      } catch {}
+      } catch (err) {
+        devWarn("drag drop commit failed:", err);
+      }
     }
     cancel();
   }
@@ -266,51 +275,51 @@ export function createDragController(core: Core): DragController {
   };
 
   const onPointerMove = (e: PointerEvent): void => {
-    const s = state.value;
+    const dragState = state.value;
 
-    if (s.type === "pending" && e.pointerId === s.pointerId) {
-      const dx = e.clientX - s.startX;
-      const dy = e.clientY - s.startY;
+    if (dragState.type === "pending" && e.pointerId === dragState.pointerId) {
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
       if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
 
       const frameEl = document.querySelector<HTMLElement>(
-        `.ui-frame[data-id="${CSS.escape(s.itemId)}"]`,
+        `.ui-frame[data-id="${CSS.escape(dragState.itemId)}"]`,
       );
       if (!frameEl) {
         state.value = { type: "idle" };
         return;
       }
-      activate(s.itemId, frameEl, e.clientX, e.clientY);
+      activate(dragState.itemId, frameEl, e.clientX, e.clientY);
       return;
     }
 
-    if (s.type === "active") {
+    if (dragState.type === "active") {
       const drop = resolveDropTarget(
         core,
         e.clientX,
         e.clientY,
-        s.itemId,
+        dragState.itemId,
         activeSourceEl!,
       );
-      state.value = { ...s, drop };
+      state.value = { ...dragState, drop };
     }
   };
 
   const onPointerUp = (e: PointerEvent): void => {
-    const s = state.value;
-    if (s.type === "pending" && e.pointerId === s.pointerId) {
+    const dragState = state.value;
+    if (dragState.type === "pending" && e.pointerId === dragState.pointerId) {
       delete document.documentElement.dataset.dragState;
       state.value = { type: "idle" };
-    } else if (s.type === "active") {
-      commitDrop(s);
+    } else if (dragState.type === "active") {
+      commitDrop(dragState);
     }
   };
 
   const onPointerCancel = (e: PointerEvent): void => {
-    const s = state.value;
+    const dragState = state.value;
     if (
-      s.type === "active" ||
-      (s.type === "pending" && e.pointerId === s.pointerId)
+      dragState.type === "active" ||
+      (dragState.type === "pending" && e.pointerId === dragState.pointerId)
     )
       cancel();
   };

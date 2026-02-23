@@ -1,18 +1,18 @@
-import { describe, expect, test } from "bun:test";
 import { signal } from "@preact/signals-core";
+import { describe, expect, test } from "bun:test";
 
-import type { Focus, Intent, ItemId, Selection, ViewName } from "../src/core";
+import type { Focus, Intent, ItemId, ViewName } from "../src/core";
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
   VALUE_TARGET,
   connTarget,
 } from "../src/core";
+import type { Component } from "../src/dom";
 import {
   bindItemFrame,
   buildItemHeader,
   buildTextField,
-  type Component,
   createComponent,
   el,
   handleContainerIntent,
@@ -21,10 +21,12 @@ import { viewRegistrations } from "../src/views";
 
 import {
   dispatchKey,
+  expectFocused,
   flushDomEffects,
   makeCoreRuntime,
   mkBlank,
   pointerDown,
+  queryTargetInput,
   requireTargetInput,
   setFormula,
   setQuery,
@@ -52,24 +54,6 @@ function setInputValueAndFireInput(
 ): void {
   inp.value = value;
   inp.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
-function expectFocused(
-  sel: Selection,
-): asserts sel is Extract<Selection, { type: "focused" }> {
-  expect(sel.type).toBe("focused");
-  if (sel.type !== "focused") throw new Error("Expected focused selection");
-}
-
-function queryTargetInput(
-  root: ParentNode,
-  target: string,
-): HTMLTextAreaElement | HTMLInputElement | null {
-  const sel = `textarea[data-target="${target}"], input[data-target="${target}"]`;
-  return root.querySelector(sel) as
-    | HTMLTextAreaElement
-    | HTMLInputElement
-    | null;
 }
 
 function connTargetsInHeaderConn(root: ParentNode): string[] {
@@ -120,9 +104,9 @@ describe("dom runtime: createComponent + Ctx primitives", () => {
     const c = createComponent(core, (ctx) => {
       const host = el("div");
       ctx.effect(() => {
-        const v = s.value;
-        ran.fn(v);
-        return () => cleaned.fn(v);
+        const signalValue = s.value;
+        ran.fn(signalValue);
+        return () => cleaned.fn(signalValue);
       });
       return host;
     });
@@ -398,10 +382,10 @@ describe("bindItemFrame contract", () => {
     pointerDown(frame);
     await flushDomEffects();
 
-    const sel = core.selection();
-    expectFocused(sel);
-    expect(sel.focus).toEqual(focus);
-    expect(sel.target).toBe(DEFAULT_TARGET);
+    const selection = core.selection();
+    expectFocused(selection);
+    expect(selection.focus).toEqual(focus);
+    expect(selection.target).toBe(DEFAULT_TARGET);
     expect(parentSaw.count()).toBe(0);
 
     unmount();
@@ -1015,11 +999,11 @@ describe("smoke: container TYPE intent microtask path", () => {
     core.focus(focus, DEFAULT_TARGET);
     await flushDomEffects();
 
-    const sel0 = core.selection();
-    expectFocused(sel0);
+    const selection = core.selection();
+    expectFocused(selection);
     const ok = handleContainerIntent({
       core,
-      sel: sel0,
+      sel: selection,
       intent: { type: "TYPE", char: "a" } as Extract<Intent, { type: "TYPE" }>,
     });
     expect(ok).toBe(true);

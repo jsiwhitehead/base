@@ -42,6 +42,13 @@ type DebugState = {
   pushRecent(line: string): void;
 };
 
+type DebugPanelOpts = {
+  core: UiCore;
+  debug: DebugState;
+  probeRoot: HTMLElement;
+  className?: string;
+};
+
 export function createDebugState(): DebugState {
   const last = signal<DebugLast | null>(null);
   const recent = signal<readonly string[]>([]);
@@ -136,13 +143,6 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
 
   return core;
 }
-
-type DebugPanelOpts = {
-  core: UiCore;
-  debug: DebugState;
-  probeRoot: HTMLElement;
-  className?: string;
-};
 
 function safeJson(x: unknown): string {
   try {

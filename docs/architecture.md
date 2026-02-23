@@ -139,7 +139,7 @@ Shared targets:
 - Keydown parsing MUST use Core-owned intent semantics (`parseKeyIntent`) rather than ad-hoc runtime/view parsing.
 - Core MUST handle global intents first (for example `NAV/out`).
 - Core MUST route non-global view intents to the active view handler.
-- If Core routes an intent, it MUST call `preventDefault()` on the original DOM event.
+- DOM runtime MUST call `preventDefault()` on the original DOM event before dispatching a parsed intent to Core.
 - Native editors (`input`, `textarea`, `contenteditable`) SHOULD handle keydown locally by preserving native behavior and calling `stopPropagation()` so the global handler does not receive the event.
 - Controls MAY yield keys to Core by not calling `stopPropagation()` in the relevant key/case so the event bubbles to Core.
 - When yielding, controls SHOULD call `preventDefault()` when native editor behavior is not the intended behavior.

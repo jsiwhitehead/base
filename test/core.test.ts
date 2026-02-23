@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Core, ItemId, Transaction, ViewName } from "../src/core";
-import { DEFAULT_TARGET, VALUE_TARGET, createCore } from "../src/core";
+import { createCore, DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
   assertCoreInvariants,
@@ -78,17 +78,21 @@ function snapshotSelection(
   core: Core,
   opts: { includeCaret?: boolean } = {},
 ): SelectionSnapshot {
-  const sel = core.selection();
-  if (sel.type === "idle") return { type: "idle" };
+  const selection = core.selection();
+  if (selection.type === "idle") return { type: "idle" };
 
-  if (!opts.includeCaret || !sel.caret)
-    return { type: "focused", focus: sel.focus, target: sel.target };
+  if (!opts.includeCaret || !selection.caret)
+    return {
+      type: "focused",
+      focus: selection.focus,
+      target: selection.target,
+    };
 
   return {
     type: "focused",
-    focus: sel.focus,
-    target: sel.target,
-    caret: { start: sel.caret.start, end: sel.caret.end },
+    focus: selection.focus,
+    target: selection.target,
+    caret: { start: selection.caret.start, end: selection.caret.end },
   };
 }
 
@@ -131,19 +135,19 @@ function assertFocusedSelectionStructurallyValid(
   core: Core,
   rootId: ItemId,
 ): void {
-  const sel = core.selection();
-  if (sel.type === "idle") return;
+  const selection = core.selection();
+  if (selection.type === "idle") return;
 
-  const item = core.item(sel.focus.item);
-  const container = core.item(sel.focus.container);
+  const item = core.item(selection.focus.item);
+  const container = core.item(selection.focus.container);
   expect(item.content.type).not.toBe("issue");
   expect(container.content.type).not.toBe("issue");
 
-  if (sel.focus.item === sel.focus.container) return;
+  if (selection.focus.item === selection.focus.container) return;
 
-  const loc = core.locate(sel.focus.item);
+  const loc = core.locate(selection.focus.item);
   expect(loc).not.toBeNull();
-  expect(loc!.parentId).toBe(sel.focus.container);
+  expect(loc!.parentId).toBe(selection.focus.container);
 
   assertCoreInvariants(core, rootId);
 }

@@ -35,10 +35,6 @@ const ISSUE = {
   fnName: "Expected function name",
 } as const;
 
-function assertNever(_exhaustive: never, message: string): never {
-  throw new TypeError(message);
-}
-
 const GRAMMAR = ohm.grammar(String.raw`
 Script {
   Start         = Expr
@@ -103,6 +99,7 @@ Script {
 `);
 
 type Expr = Binary | Unary | Call | Select | Member | Lit | Blank | Ident;
+type IssueResult = Extract<Result, { type: "issue" }>;
 
 type PrimitiveBinaryOp =
   | "!="
@@ -164,6 +161,10 @@ interface Ident {
 }
 
 const IMPLICIT_PARAM: Ident = { type: "Ident", label: "_" };
+
+function assertNever(_exhaustive: never, message: string): never {
+  throw new TypeError(message);
+}
 
 function buildBinaryChain(
   first: ohm.Node,
@@ -310,80 +311,80 @@ const SEMANTICS = GRAMMAR.createSemantics().addAttribute("ast", {
   },
 });
 
-type IssueResult = Extract<Result, { type: "issue" }>;
-
 function firstIssue(...results: Result[]): IssueResult | null {
   for (const result of results) if (isIssueResult(result)) return result;
   return null;
 }
 
-function ensureNotIssue(v: Result): Result {
-  if (isIssueResult(v)) throw new TypeError(v.message);
-  return v;
+function ensureNotIssue(result: Result): Result {
+  if (isIssueResult(result)) throw new TypeError(result.message);
+  return result;
 }
 
-function primExpect(v: Result): true | number | string {
-  if (isScalarResult(v)) return v.result;
+function primExpect(result: Result): true | number | string {
+  if (isScalarResult(result)) return result.result;
   throw new TypeError(ISSUE.literal);
 }
 
-function numOpt(v: Result): number | null {
-  if (isBlankResult(v)) return null;
-  if (isIssueResult(v)) throw new TypeError(v.message);
+function numOpt(result: Result): number | null {
+  if (isBlankResult(result)) return null;
+  if (isIssueResult(result)) throw new TypeError(result.message);
 
-  if (isScalarResult(v)) {
-    const x = v.result;
-    if (typeof x === "number") return x;
-    if (x === true) return 1;
-    if (typeof x === "string") {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : null;
+  if (isScalarResult(result)) {
+    const scalar = result.result;
+    if (typeof scalar === "number") return scalar;
+    if (scalar === true) return 1;
+    if (typeof scalar === "string") {
+      const parsedNumber = Number(scalar);
+      return Number.isFinite(parsedNumber) ? parsedNumber : null;
     }
   }
 
   throw new TypeError(ISSUE.numOrBlank);
 }
 
-function textOpt(v: Result): string | null {
-  if (isBlankResult(v)) return null;
-  if (isIssueResult(v)) throw new TypeError(v.message);
-  if (isScalarResult(v) && typeof v.result === "string") return v.result;
+function textOpt(result: Result): string | null {
+  if (isBlankResult(result)) return null;
+  if (isIssueResult(result)) throw new TypeError(result.message);
+  if (isScalarResult(result) && typeof result.result === "string")
+    return result.result;
   throw new TypeError(ISSUE.textOrBlank);
 }
 
-function numExpect(v: Result): number {
-  if (isIssueResult(v)) throw new TypeError(v.message);
-  if (isScalarResult(v) && typeof v.result === "number") return v.result;
+function numExpect(result: Result): number {
+  if (isIssueResult(result)) throw new TypeError(result.message);
+  if (isScalarResult(result) && typeof result.result === "number")
+    return result.result;
   throw new TypeError(ISSUE.number);
 }
 
-function toNumber(v: Result): number | null {
-  if (isBlankResult(v)) return null;
-  if (isIssueResult(v)) throw new TypeError(v.message);
+function toNumber(result: Result): number | null {
+  if (isBlankResult(result)) return null;
+  if (isIssueResult(result)) throw new TypeError(result.message);
 
-  if (isScalarResult(v)) {
-    const x = v.result;
-    if (typeof x === "number") return x;
-    if (x === true) return 1;
-    if (typeof x === "string") {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : null;
+  if (isScalarResult(result)) {
+    const scalar = result.result;
+    if (typeof scalar === "number") return scalar;
+    if (scalar === true) return 1;
+    if (typeof scalar === "string") {
+      const parsedNumber = Number(scalar);
+      return Number.isFinite(parsedNumber) ? parsedNumber : null;
     }
   }
   return null;
 }
 
-function toText(v: Result): string | null {
-  if (isBlankResult(v)) return null;
-  if (isIssueResult(v)) throw new TypeError(v.message);
-  if (isScalarResult(v)) return String(v.result);
+function toText(result: Result): string | null {
+  if (isBlankResult(result)) return null;
+  if (isIssueResult(result)) throw new TypeError(result.message);
+  if (isScalarResult(result)) return String(result.result);
   return null;
 }
 
-function primitiveToResult(x: boolean | number | string | null): Result {
-  if (x === null || x === false) return Results.blank();
-  if (x === true) return Results.scalar(true);
-  return Results.scalar(x);
+function primitiveToResult(value: boolean | number | string | null): Result {
+  if (value === null || value === false) return Results.blank();
+  if (value === true) return Results.scalar(true);
+  return Results.scalar(value);
 }
 
 function numericOp(
@@ -450,12 +451,12 @@ function getValueGroupByPosition(group: Result, position: number): Result {
   if (!isResultGroupResult(group))
     return Results.issue(ISSUE.selectPosNonResultGroup);
 
-  const it = group.items[norm.index];
-  if (it == null)
+  const item = group.items[norm.index];
+  if (item == null)
     return Results.issue(
       ISSUE.positionOutOfRange(position, group.items.length),
     );
-  return it.result;
+  return item.result;
 }
 
 function getByPositionOrLabel(
@@ -569,16 +570,17 @@ function iterGroupValues(group: Result, env: EvalEnv): Result[] {
   if (isIssueResult(group)) throw new TypeError(group.message);
   if (isEntryGroupResult(group))
     return group.entryIds.map((id) => env.resolve(id));
-  if (isResultGroupResult(group)) return group.items.map((it) => it.result);
+  if (isResultGroupResult(group)) return group.items.map((item) => item.result);
   throw new TypeError(ISSUE.group);
 }
 
 function groupNumbersOpt(group: Result, env: EvalEnv): number[] {
   const out: number[] = [];
-  for (const v of iterGroupValues(group, env)) {
-    if (isIssueResult(v)) throw new TypeError(v.message);
-    if (isBlankResult(v)) continue;
-    if (isScalarResult(v) && typeof v.result === "number") out.push(v.result);
+  for (const result of iterGroupValues(group, env)) {
+    if (isIssueResult(result)) throw new TypeError(result.message);
+    if (isBlankResult(result)) continue;
+    if (isScalarResult(result) && typeof result.result === "number")
+      out.push(result.result);
     else throw new TypeError(ISSUE.numOrBlank);
   }
   return out;
@@ -586,10 +588,11 @@ function groupNumbersOpt(group: Result, env: EvalEnv): number[] {
 
 function groupTextsOpt(group: Result, env: EvalEnv): string[] {
   const out: string[] = [];
-  for (const v of iterGroupValues(group, env)) {
-    if (isIssueResult(v)) throw new TypeError(v.message);
-    if (isBlankResult(v)) continue;
-    if (isScalarResult(v) && typeof v.result === "string") out.push(v.result);
+  for (const result of iterGroupValues(group, env)) {
+    if (isIssueResult(result)) throw new TypeError(result.message);
+    if (isBlankResult(result)) continue;
+    if (isScalarResult(result) && typeof result.result === "string")
+      out.push(result.result);
     else throw new TypeError(ISSUE.textOrBlank);
   }
   return out;
@@ -598,10 +601,10 @@ function groupTextsOpt(group: Result, env: EvalEnv): string[] {
 function reduceNumbers(
   group: Result,
   env: EvalEnv,
-  op: (ns: number[]) => number | null,
+  op: (numbers: number[]) => number | null,
 ): number | null {
-  const ns = groupNumbersOpt(group, env);
-  return ns.length ? op(ns) : null;
+  const numbers = groupNumbersOpt(group, env);
+  return numbers.length ? op(numbers) : null;
 }
 
 const GROUP_SPEC = {

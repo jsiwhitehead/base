@@ -8,8 +8,16 @@ import type {
   Transaction,
   ViewName,
 } from "../src/core";
-import { DEFAULT_TARGET, createCore } from "../src/core";
+import { createCore, DEFAULT_TARGET } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
+
+export function expectFocused(
+  selection: Selection,
+): asserts selection is Extract<Selection, { type: "focused" }> {
+  expect(selection.type).toBe("focused");
+  if (selection.type !== "focused")
+    throw new Error("Expected focused selection");
+}
 
 export function makePureCore(): { core: Core; rootId: ItemId } {
   const { constraints } = splitViewRegistrations(viewRegistrations);
@@ -48,22 +56,15 @@ export function requireCreatedEntryId(txn: Transaction): number {
   return created[0]!.entry.id;
 }
 
-function expectFocused(
-  sel: Selection,
-): asserts sel is Extract<Selection, { type: "focused" }> {
-  expect(sel.type).toBe("focused");
-  if (sel.type !== "focused") throw new Error("Expected focused selection");
-}
-
 export function expectSel(
   core: { selection(): Selection },
   want: { container: ItemId; item: ItemId; target?: string },
 ): void {
-  const sel = core.selection();
-  expectFocused(sel);
-  expect(sel.focus.container).toBe(want.container);
-  expect(sel.focus.item).toBe(want.item);
-  expect(sel.target).toBe(want.target ?? DEFAULT_TARGET);
+  const selection = core.selection();
+  expectFocused(selection);
+  expect(selection.focus.container).toBe(want.container);
+  expect(selection.focus.item).toBe(want.item);
+  expect(selection.target).toBe(want.target ?? DEFAULT_TARGET);
 }
 
 export function mkBlank(
@@ -143,12 +144,12 @@ export function assertCoreInvariants(core: Core, rootId: ItemId): void {
     if (seen.has(id)) continue;
     seen.add(id);
 
-    const it = core.item(id);
+    const item = core.item(id);
     const isQuery =
-      it.mode.type === "connected" && it.mode.conn.type === "query";
+      item.mode.type === "connected" && item.mode.conn.type === "query";
 
-    if (it.content.type !== "group") continue;
-    for (const childId of it.content.children) {
+    if (item.content.type !== "group") continue;
+    for (const childId of item.content.children) {
       const loc = core.locate(childId);
       if (!loc) {
         expect(core.item(childId).mode.type).toBe("readonly");

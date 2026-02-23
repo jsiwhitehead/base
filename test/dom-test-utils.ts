@@ -1,13 +1,15 @@
-import { afterEach, beforeAll } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { afterEach, beforeAll } from "bun:test";
 
 import type { ItemId } from "../src/core";
 import { createCore } from "../src/core";
 import type { UiCore } from "../src/dom";
 import { createUiCoreRuntime } from "../src/setup";
 import { viewRegistrations } from "../src/views";
+
 export {
   childrenOf,
+  expectFocused,
   expectSel,
   mkBlank,
   mkGroup,
@@ -79,15 +81,25 @@ export async function flushDomEffects(turns = 2): Promise<void> {
   }
 }
 
-function queryTargetInput(
+export function queryTargetInput(
   root: ParentNode,
   target: string,
 ): HTMLTextAreaElement | HTMLInputElement | null {
-  const sel = `textarea[data-target="${target}"], input[data-target="${target}"]`;
-  return root.querySelector(sel) as
+  const selector = `textarea[data-target="${target}"], input[data-target="${target}"]`;
+  return root.querySelector(selector) as
     | HTMLTextAreaElement
     | HTMLInputElement
     | null;
+}
+
+export function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
+  return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
+}
+
+export function requireFrameEl(root: ParentNode, id: ItemId): HTMLElement {
+  const frameEl = findFrameEl(root, id);
+  if (!frameEl) throw new Error(`Missing frame element for id=${String(id)}`);
+  return frameEl;
 }
 
 export function requireTargetInput(

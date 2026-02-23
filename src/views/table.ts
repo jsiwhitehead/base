@@ -429,9 +429,8 @@ function createTableView(args: {
   };
 
   const dispatch = (intent: Intent): void => {
-    const sel0 = core.selection();
-    if (sel0.type !== "focused") return;
-    const selection = sel0;
+    const selection = core.selection();
+    if (selection.type !== "focused") return;
 
     switch (intent.type) {
       case "NAV": {

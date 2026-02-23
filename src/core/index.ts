@@ -13,10 +13,10 @@ import {
 } from "./eval";
 import { interpretExpr } from "./lang";
 import type {
-  ApplyResult as ModelApplyResult,
   Entry,
   EntryContent,
   EntryId,
+  ModelApplyResult,
   Op,
   Transaction,
   TransactionMeta,
@@ -34,11 +34,6 @@ import type { ViewConstraint } from "./sync";
 import { contentSatisfiesConstraint, enforceViewConstraints } from "./sync";
 
 export type ItemId = string;
-
-const DEFAULT_TARGET = "default" as const;
-const LABEL_TARGET = "label" as const;
-const VALUE_TARGET = "value" as const;
-const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
 type Focus = { container: ItemId; item: ItemId };
 type Caret = { start: number; end: number };
@@ -67,6 +62,11 @@ type KeyIntentInput = {
   altKey: boolean;
   shiftKey: boolean;
 };
+
+const DEFAULT_TARGET = "default" as const;
+const LABEL_TARGET = "label" as const;
+const VALUE_TARGET = "value" as const;
+const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
 function parseKeyIntent(input: KeyIntentInput): Intent | null {
   if (input.key === "Escape") {
@@ -183,11 +183,11 @@ function assertNever(_exhaustive: never, message: string): never {
   throw new Error(message);
 }
 
+const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
 function storedFromValue(v: ValueOrBlank): EntryContent {
   return v === null ? { type: "blank" } : { type: "scalar", value: v };
 }
-
-const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
 export function isNumericLikeValue(value: ValueOrBlank): boolean {
   if (typeof value === "number") return Number.isFinite(value);
@@ -520,11 +520,16 @@ export function createCore(opts: {
     setSelection(selNow);
   };
 
-  const childrenOfResolved = (base: ItemRef, v: Result): readonly ItemId[] => {
-    if (isEntryGroupResult(v))
-      return v.entryIds.map((eid) => itemIdOf(eid, []));
-    if (isResultGroupResult(v))
-      return v.items.map((_it, i) => itemIdOf(base.entryId, [...base.path, i]));
+  const childrenOfResolved = (
+    base: ItemRef,
+    result: Result,
+  ): readonly ItemId[] => {
+    if (isEntryGroupResult(result))
+      return result.entryIds.map((entryId) => itemIdOf(entryId, []));
+    if (isResultGroupResult(result))
+      return result.items.map((_item, i) =>
+        itemIdOf(base.entryId, [...base.path, i]),
+      );
     return [];
   };
 
@@ -546,20 +551,23 @@ export function createCore(opts: {
     return { result: cur, ...(label ? { label } : {}) };
   };
 
-  const toContent = (ref: ItemRef, v: Result): Content => {
-    if (isBlankResult(v)) return { type: "value", value: null };
-    if (isIssueResult(v)) return { type: "issue", message: v.message };
-    if (isScalarResult(v)) {
-      const x = v.result;
+  const toContent = (ref: ItemRef, result: Result): Content => {
+    if (isBlankResult(result)) return { type: "value", value: null };
+    if (isIssueResult(result))
+      return { type: "issue", message: result.message };
+    if (isScalarResult(result)) {
+      const scalar = result.result;
       return {
         type: "value",
         value:
-          x === true || typeof x === "number" || typeof x === "string"
-            ? x
+          scalar === true ||
+          typeof scalar === "number" ||
+          typeof scalar === "string"
+            ? scalar
             : null,
       };
     }
-    return { type: "group", children: childrenOfResolved(ref, v) };
+    return { type: "group", children: childrenOfResolved(ref, result) };
   };
 
   const item = (id: ItemId): Item => {
@@ -773,6 +781,52 @@ export function createCore(opts: {
     return merged;
   };
 
+  const applyRemotePipeline = (
+    txn: Transaction,
+    inverseAcc: Op[],
+  ): ModelApplyResult => {
+    let merged = emptyModelApply;
+
+    const modelApply = model.apply(txn);
+    merged = mergeModelApply(merged, modelApply);
+
+    const constraintApply = applyConstraintOps(modelApply.touched, inverseAcc);
+    merged = mergeModelApply(merged, constraintApply);
+
+    const selection = selectionSignal.peek();
+    if (!selectionStillValid(selection)) setSelection({ type: "idle" });
+
+    return merged;
+  };
+
+  const applyUserPipeline = (
+    txn: Transaction,
+    inverseAcc: Op[],
+  ): ModelApplyResult => {
+    let merged = emptyModelApply;
+    const anchor = captureRepairAnchor();
+    const isUser = txn.meta?.source === "user";
+
+    const { result: userApply, inverseOps } = applyTxnWithInverse(txn);
+    inverseAcc.push(...inverseOps);
+    merged = mergeModelApply(merged, userApply);
+
+    const constraintApply = applyConstraintOps(userApply.touched, inverseAcc);
+    merged = mergeModelApply(merged, constraintApply);
+
+    repairSelectionAfterLocalApply(anchor);
+
+    if (isUser) {
+      const inverse = model.ops.transaction(inverseAcc.toReversed(), {
+        source: "undo",
+      });
+      history.undo.push({ user: txn, inverse });
+      history.redo = [];
+    }
+
+    return merged;
+  };
+
   const applyPipeline = (txn: Transaction): ApplyResult => {
     let final = emptyModelApply;
     const inverseAcc: Op[] = [];
@@ -782,37 +836,11 @@ export function createCore(opts: {
       const isRemote = source === "remote";
 
       if (isRemote) {
-        const res = model.apply(txn);
-        final = mergeModelApply(final, res);
-
-        const constraintRes = applyConstraintOps(res.touched, inverseAcc);
-        final = mergeModelApply(final, constraintRes);
-
-        const sel = selectionSignal.peek();
-        if (!selectionStillValid(sel)) setSelection({ type: "idle" });
-
+        final = mergeModelApply(final, applyRemotePipeline(txn, inverseAcc));
         return;
       }
 
-      const anchor = captureRepairAnchor();
-      const isUser = source === "user";
-
-      const { result: userRes, inverseOps: invUser } = applyTxnWithInverse(txn);
-      inverseAcc.push(...invUser);
-      final = mergeModelApply(final, userRes);
-
-      const constraintRes = applyConstraintOps(userRes.touched, inverseAcc);
-      final = mergeModelApply(final, constraintRes);
-
-      repairSelectionAfterLocalApply(anchor);
-
-      if (isUser) {
-        const inverse = model.ops.transaction(inverseAcc.toReversed(), {
-          source: "undo",
-        });
-        history.undo.push({ user: txn, inverse });
-        history.redo = [];
-      }
+      final = mergeModelApply(final, applyUserPipeline(txn, inverseAcc));
     });
 
     return toApplyResult(final);
@@ -840,9 +868,9 @@ export function createCore(opts: {
 
   const applyLocal = (txn: Transaction): ApplyResult => {
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
-    const res = applyPipeline(stamped);
+    const applyResult = applyPipeline(stamped);
     sendLocalTxn(stamped);
-    return res;
+    return applyResult;
   };
 
   const applyRemote = (txn: Transaction): ApplyResult => {
@@ -969,9 +997,9 @@ export function createCore(opts: {
   const undo = (): ApplyResult => {
     const last = history.undo.pop() ?? null;
     if (!last) return toApplyResult(emptyModelApply);
-    const res = applyLocal(last.inverse);
+    const applyResult = applyLocal(last.inverse);
     history.redo.push(last);
-    return res;
+    return applyResult;
   };
 
   const redo = (): ApplyResult => {
@@ -979,10 +1007,10 @@ export function createCore(opts: {
     if (!last) return toApplyResult(emptyModelApply);
 
     const replay = model.ops.transaction(last.user.ops, { source: "redo" });
-    const res = applyLocal(replay);
+    const applyResult = applyLocal(replay);
     history.undo.push(last);
 
-    return res;
+    return applyResult;
   };
 
   const focus = (

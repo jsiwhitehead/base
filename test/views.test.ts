@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import type { Focus, Intent, ItemId, ViewName } from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
-import { caretAt, caret0, type DomView, type UiCore } from "../src/dom";
+import type { DomView, UiCore } from "../src/dom";
+import { caretAt, caret0 } from "../src/dom";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -14,14 +15,18 @@ import {
   mkBlank,
   mkGroup,
   pointerDown,
+  requireFrameEl,
   requireTargetInput,
-  valueOfId,
   setFormula,
+  valueOfId,
   setView,
 } from "./dom-test-utils";
 
 const viewFactories = Object.fromEntries(
-  Object.entries(viewRegistrations).map(([k, v]) => [k, v.factory]),
+  Object.entries(viewRegistrations).map(([viewName, registration]) => [
+    viewName,
+    registration.factory,
+  ]),
 ) as Record<ViewName, (typeof viewRegistrations)[ViewName]["factory"]>;
 
 function mountDomView(view: DomView): () => void {
@@ -82,16 +87,6 @@ function intentFromKey(
   }
 
   return null;
-}
-
-function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
-  return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
-}
-
-function requireFrameEl(root: ParentNode, id: ItemId): HTMLElement {
-  const frameEl = findFrameEl(root, id);
-  if (!frameEl) throw new Error(`Missing frame element for id=${String(id)}`);
-  return frameEl;
 }
 
 type ElSnapshot = {

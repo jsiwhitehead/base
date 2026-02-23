@@ -14,6 +14,13 @@ type SliderOpts = { min?: number; max?: number; step?: number };
 
 type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
 
+type SliderMountCtx = {
+  core: UiCore;
+  id: ItemId;
+  focus: Focus;
+  resolvedOpts: SliderResolvedOpts;
+};
+
 const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
   min: 0,
   max: 100,
@@ -33,6 +40,18 @@ const nativeRangeKeys = new Set([
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
+
+function snapToStep(
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+): number {
+  const clamped = clamp(value, min, max);
+  if (!Number.isFinite(step) || step <= 0) return clamped;
+  const steps = Math.round((clamped - min) / step);
+  return clamp(min + steps * step, min, max);
+}
 
 function toNumberOr(value: ValueOrBlank, fallback: number): number {
   if (typeof value === "number")
@@ -60,7 +79,7 @@ function precisionFromStep(step: number): number {
 
 function formatNumberForStep(value: number, step: number): string {
   const precision = precisionFromStep(step);
-  return precision <= 0 ? String(Math.trunc(value)) : value.toFixed(precision);
+  return precision <= 0 ? value.toFixed(0) : value.toFixed(precision);
 }
 
 const canSetValue = (core: UiCore, id: ItemId): boolean => {
@@ -81,13 +100,6 @@ const cmd = {
     core.commit((t) => t.setValue(id, value));
   },
 } as const;
-
-type SliderMountCtx = {
-  core: UiCore;
-  id: ItemId;
-  focus: Focus;
-  resolvedOpts: SliderResolvedOpts;
-};
 
 function buildSliderBody({
   core,
@@ -133,8 +145,13 @@ function buildSliderBody({
 
     ctx.effect(() => {
       const currentValue = getValueOr(core, id, resolvedOpts.min);
-      const clamped = clamp(currentValue, resolvedOpts.min, resolvedOpts.max);
-      const valueText = formatNumberForStep(clamped, resolvedOpts.step);
+      const snapped = snapToStep(
+        currentValue,
+        resolvedOpts.min,
+        resolvedOpts.max,
+        resolvedOpts.step,
+      );
+      const valueText = formatNumberForStep(snapped, resolvedOpts.step);
 
       if (input.value !== valueText) input.value = valueText;
       if (valueEl.textContent !== valueText) valueEl.textContent = valueText;
@@ -161,14 +178,14 @@ function createSliderView(args: {
   const viewFocus: Focus = args.focus ?? { container: id, item: id };
 
   const dispatch = (intent: Intent): void => {
-    const sel0 = core.selection();
-    if (sel0.type !== "focused") return;
-    const sel = sel0;
+    const selection = core.selection();
+    if (selection.type !== "focused") return;
 
     switch (intent.type) {
       case "CONFIRM":
-        if (sel.focus.item !== id) return;
-        if (sel.target === VALUE_TARGET) core.focus(sel.focus, DEFAULT_TARGET);
+        if (selection.focus.item !== id) return;
+        if (selection.target === VALUE_TARGET)
+          core.focus(selection.focus, DEFAULT_TARGET);
         return;
       case "NAV":
       case "TAB":

@@ -12,16 +12,16 @@ import {
 } from "./core-test-utils";
 
 function assertSelectionValid(core: Core): void {
-  const sel = core.selection();
-  if (sel.type === "idle") return;
+  const selection = core.selection();
+  if (selection.type === "idle") return;
 
-  expect(core.item(sel.focus.item).content.type).not.toBe("issue");
-  expect(core.item(sel.focus.container).content.type).not.toBe("issue");
+  expect(core.item(selection.focus.item).content.type).not.toBe("issue");
+  expect(core.item(selection.focus.container).content.type).not.toBe("issue");
 
-  if (sel.focus.item === sel.focus.container) return;
-  const loc = core.locate(sel.focus.item);
+  if (selection.focus.item === selection.focus.container) return;
+  const loc = core.locate(selection.focus.item);
   expect(loc).not.toBeNull();
-  expect(loc!.parentId).toBe(sel.focus.container);
+  expect(loc!.parentId).toBe(selection.focus.container);
 }
 
 function countReachable(core: Core, rootId: ItemId): number {

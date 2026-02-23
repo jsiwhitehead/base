@@ -17,9 +17,9 @@ import {
   getTextForTarget,
   primaryEditTarget,
 } from "../core";
+import { createComponent, el } from "./base";
 import type { Component, UiCore } from "./runtime";
 import { typeCharIntoFocusedTextInput } from "./runtime";
-import { createComponent, el } from "./base";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -38,12 +38,12 @@ export const caretEnd: () => Caret = () => ({
   end: Number.MAX_SAFE_INTEGER,
 });
 
+export type NavDir = Extract<Intent, { type: "NAV" }>["dir"];
+export type TextFieldKind = "isolated" | "traversable";
+
 function prevent(e: Event): void {
   e.preventDefault?.();
 }
-
-export type NavDir = Extract<Intent, { type: "NAV" }>["dir"];
-export type TextFieldKind = "isolated" | "traversable";
 
 function textInput(multiline: boolean): TextInputElement {
   const inputEl = document.createElement(multiline ? "textarea" : "input") as
@@ -142,12 +142,12 @@ export function buildTextField(
     let draft = "";
 
     const isThisTargetFocused = (): boolean => {
-      const sel = core.selection();
+      const selection = core.selection();
       return (
-        sel.type === "focused" &&
-        sel.focus.item === opts.focus.item &&
-        sel.focus.container === opts.focus.container &&
-        sel.target === opts.target
+        selection.type === "focused" &&
+        selection.focus.item === opts.focus.item &&
+        selection.focus.container === opts.focus.container &&
+        selection.target === opts.target
       );
     };
 
@@ -549,8 +549,8 @@ export function buildItemHeader(
         createComponent(core, (rowCtx) => {
           const row = el("div", "ui-header-conn-row");
           const keyEl = el("div", "ui-header-conn-key");
-          const valEl = el("div", "ui-header-conn-val");
-          row.append(keyEl, valEl);
+          const valueEl = el("div", "ui-header-conn-val");
+          row.append(keyEl, valueEl);
 
           const fieldSignal = computed(() => {
             const fields = fieldsSignal.value;
@@ -563,7 +563,7 @@ export function buildItemHeader(
           });
 
           rowCtx.mount(
-            valEl,
+            valueEl,
             buildTextField(core, {
               focus: args.focus,
               target: connTarget(key),

@@ -36,35 +36,6 @@ export const Results = {
   }),
 } as const;
 
-export const isPresent = (result: Result): boolean =>
-  result.type !== "blank" && result.type !== "issue";
-export const isTrue = (result: Result): boolean =>
-  result.type === "scalar" && result.result === true;
-
-export function isBlankResult(v: Result): v is BlankResult {
-  return v.type === "blank";
-}
-
-export function isIssueResult(v: Result): v is IssueResult {
-  return v.type === "issue";
-}
-
-export function isScalarResult(v: Result): v is ScalarResult {
-  return v.type === "scalar";
-}
-
-export function isEntryGroupResult(v: Result): v is EntryGroupResult {
-  return v.type === "entry-group";
-}
-
-export function isResultGroupResult(v: Result): v is ResultGroupResult {
-  return v.type === "result-group";
-}
-
-function assertNever(_exhaustive: never, message: string): never {
-  throw new Error(message);
-}
-
 export type EvalEnv = {
   lookup(name: string): Result;
   resolve(id: EntryId): Result;
@@ -74,10 +45,49 @@ export type EvalEnv = {
 type Interpreter = (expr: string, env: EvalEnv) => Result;
 
 type EvalCtx = { visiting: Set<EntryId> };
-const createEvalCtx = (): EvalCtx => ({ visiting: new Set<EntryId>() });
-
 const CYCLIC_DEPENDENCY_MESSAGE = "Cyclic dependency";
 const MISSING_ENTRY_MESSAGE = "Missing entry";
+const createEvalCtx = (): EvalCtx => ({ visiting: new Set<EntryId>() });
+
+const SORT_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
+
+type SortKey =
+  | { rank: 0; value: number }
+  | { rank: 1; value: string }
+  | { rank: 2 }
+  | { rank: 3 }
+  | { rank: 4 };
+
+export const isPresent = (result: Result): boolean =>
+  result.type !== "blank" && result.type !== "issue";
+export const isTrue = (result: Result): boolean =>
+  result.type === "scalar" && result.result === true;
+
+export function isBlankResult(result: Result): result is BlankResult {
+  return result.type === "blank";
+}
+
+export function isIssueResult(result: Result): result is IssueResult {
+  return result.type === "issue";
+}
+
+export function isScalarResult(result: Result): result is ScalarResult {
+  return result.type === "scalar";
+}
+
+export function isEntryGroupResult(result: Result): result is EntryGroupResult {
+  return result.type === "entry-group";
+}
+
+export function isResultGroupResult(
+  result: Result,
+): result is ResultGroupResult {
+  return result.type === "result-group";
+}
+
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
+}
 
 function withVisiting(ctx: EvalCtx, id: EntryId, run: () => Result): Result {
   if (ctx.visiting.has(id)) return Results.issue(CYCLIC_DEPENDENCY_MESSAGE);
@@ -90,15 +100,6 @@ function withVisiting(ctx: EvalCtx, id: EntryId, run: () => Result): Result {
     ctx.visiting.delete(id);
   }
 }
-
-const SORT_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
-
-type SortKey =
-  | { rank: 0; value: number }
-  | { rank: 1; value: string }
-  | { rank: 2 }
-  | { rank: 3 }
-  | { rank: 4 };
 
 const sortKeyFor = (result: Result): SortKey => {
   if (isBlankResult(result) || isIssueResult(result)) return { rank: 4 };
@@ -185,10 +186,10 @@ export function createEvaluator(opts: {
     return Results.issue(`Unbound identifier: ${name}`);
   };
 
-  const materializeEntryGroups = (v: Result, ctx: EvalCtx): Result => {
-    if (isEntryGroupResult(v)) {
+  const materializeEntryGroups = (result: Result, ctx: EvalCtx): Result => {
+    if (isEntryGroupResult(result)) {
       return Results.resultGroup(
-        v.entryIds
+        result.entryIds
           .filter((id) => model.hasEntry(id))
           .map((id) => {
             const label = model.readEntry(id).label || undefined;
@@ -199,15 +200,15 @@ export function createEvaluator(opts: {
           }),
       );
     }
-    if (isResultGroupResult(v)) {
+    if (isResultGroupResult(result)) {
       return Results.resultGroup(
-        v.items.map((it) => ({
-          ...(it.label ? { label: it.label } : {}),
-          result: materializeEntryGroups(it.result, ctx),
+        result.items.map((item) => ({
+          ...(item.label ? { label: item.label } : {}),
+          result: materializeEntryGroups(item.result, ctx),
         })),
       );
     }
-    return v;
+    return result;
   };
 
   type UnwrapEntryGroupResult =
@@ -216,12 +217,13 @@ export function createEvaluator(opts: {
     | { type: "ok"; entryIds: readonly EntryId[] };
 
   const unwrapEntryGroup = (
-    v: Result,
+    result: Result,
     typeMessage: string,
   ): UnwrapEntryGroupResult => {
-    if (isBlankResult(v)) return { type: "blank" };
-    if (isIssueResult(v)) return { type: "issue", result: v };
-    if (isEntryGroupResult(v)) return { type: "ok", entryIds: v.entryIds };
+    if (isBlankResult(result)) return { type: "blank" };
+    if (isIssueResult(result)) return { type: "issue", result };
+    if (isEntryGroupResult(result))
+      return { type: "ok", entryIds: result.entryIds };
     return { type: "issue", result: Results.issue(typeMessage) };
   };
 
@@ -304,7 +306,7 @@ export function createEvaluator(opts: {
         rows.push({ rowId, i, key });
       }
       rows.sort((a, b) => compareSortKey(a.key, b.key) || a.i - b.i);
-      entryIds = rows.map((r) => r.rowId);
+      entryIds = rows.map((row) => row.rowId);
     }
 
     return Results.entryGroup(entryIds);
@@ -350,8 +352,8 @@ export function createEvaluator(opts: {
   const result = (id: EntryId): Result => resultSignal(id).value;
 
   const entryIds = (id: EntryId): EntryId[] => {
-    const v = result(id);
-    return isEntryGroupResult(v) ? [...v.entryIds] : [];
+    const resultValue = result(id);
+    return isEntryGroupResult(resultValue) ? [...resultValue.entryIds] : [];
   };
 
   const prune = (ids: readonly EntryId[]): void => {

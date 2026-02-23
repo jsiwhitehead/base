@@ -1,24 +1,19 @@
-import type { ItemId, ViewName } from "./core";
+import type { Core, CorePlatformHooks, ItemId, ViewName } from "./core";
+import { createCore } from "./core";
 import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV } from "./dev";
+import type { DomRuntime, UiCore } from "./dom";
 import {
   bindItemFrame,
+  bindUiRuntime,
+  buildDropIndicator,
   createComponent,
   createDragController,
-  buildDropIndicator,
   el,
-  type DomRuntime,
-  type UiCore,
-  bindUiRuntime,
   typeCharIntoFocusedTextInput,
 } from "./dom";
-import type { Core, CorePlatformHooks } from "./core";
-import { createCore } from "./core";
-import {
-  splitViewRegistrations,
-  viewRegistrations,
-  type ViewRegistration,
-} from "./views";
+import type { ViewRegistration } from "./views";
+import { splitViewRegistrations, viewRegistrations } from "./views";
 
 const SHOW_DEBUG_PANEL = true;
 

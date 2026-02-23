@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import type { ItemId, Transaction } from "../src/core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
-import { bindItemFrame, createComponent, el, type UiCore } from "../src/dom";
+import type { UiCore } from "../src/dom";
+import { bindItemFrame, createComponent, el } from "../src/dom";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -15,9 +16,10 @@ import {
   mkGroup,
   pointerDown,
   requireCreatedEntryId,
+  requireFrameEl,
   requireTargetInput,
-  valueOfId,
   setView,
+  valueOfId,
 } from "./dom-test-utils";
 
 function mountAppShell(core: UiCore, rootId: ItemId): () => void {
@@ -45,14 +47,6 @@ function mountAppShell(core: UiCore, rootId: ItemId): () => void {
     appRoot.dispose();
     document.body.replaceChildren();
   };
-}
-
-function requireFrame(root: ParentNode, id: ItemId): HTMLElement {
-  const hit = root.querySelector(
-    `.ui-frame[data-id="${id}"]`,
-  ) as HTMLElement | null;
-  if (!hit) throw new Error(`Missing frame id=${id}`);
-  return hit;
 }
 
 describe("system/bootstrap & lifecycle", () => {
@@ -92,7 +86,7 @@ describe("system/keyboard routing & focus ownership", () => {
     const unmount = mountAppShell(core, rootId);
     await flushDomEffects();
 
-    const c11Frame = requireFrame(document.body, c11);
+    const c11Frame = requireFrameEl(document.body, c11);
     pointerDown(c11Frame);
     await flushDomEffects();
 
@@ -123,10 +117,10 @@ describe("system/history across views", () => {
 
     core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
     await flushDomEffects();
-    dispatchKey(requireFrame(document.body, a), "Enter");
+    dispatchKey(requireFrameEl(document.body, a), "Enter");
     await flushDomEffects();
     const aInput = requireTargetInput(
-      requireFrame(document.body, a),
+      requireFrameEl(document.body, a),
       VALUE_TARGET,
     );
     aInput.value = "x2";
@@ -135,10 +129,10 @@ describe("system/history across views", () => {
 
     core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
     await flushDomEffects();
-    dispatchKey(requireFrame(document.body, c11), "Enter");
+    dispatchKey(requireFrameEl(document.body, c11), "Enter");
     await flushDomEffects();
     const cInput = requireTargetInput(
-      requireFrame(document.body, c11),
+      requireFrameEl(document.body, c11),
       VALUE_TARGET,
     );
     cInput.value = "9";
@@ -160,8 +154,8 @@ describe("system/history across views", () => {
     expect(valueOfId(core, a)).toBe("x2");
     expect(valueOfId(core, c11)).toBe("9");
 
-    const sel = core.selection();
-    expect(sel.type).toBe("focused");
+    const selection = core.selection();
+    expect(selection.type).toBe("focused");
 
     unmount();
   });
@@ -221,7 +215,7 @@ describe("system/collab + local history", () => {
     await flushDomEffects();
 
     expect(valueOfId(core, x)).toBe(7);
-    expect(requireFrame(document.body, x).isConnected).toBe(true);
+    expect(requireFrameEl(document.body, x).isConnected).toBe(true);
 
     unmount();
     core.dispose();

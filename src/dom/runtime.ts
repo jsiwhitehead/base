@@ -26,6 +26,29 @@ export type ViewFactory<C extends Core = Core> = (args: {
   focus?: Focus;
 }) => DomView;
 
+type TargetBinding = {
+  getEl: () => HTMLElement | null;
+  caret?: { set(pos: number): void; getLength(): number };
+};
+
+type TargetBindingRecord = {
+  binding: TargetBinding;
+  token: number;
+};
+
+type AttachTargetOpts = {
+  focus: Focus;
+  target: string;
+  getEl: () => HTMLElement | null;
+  caret?: { set(pos: number): void; getLength(): number };
+};
+
+type MountViewOpts = {
+  id: ItemId;
+  focus?: Focus;
+  view: ViewName;
+};
+
 const itemKey = (id: ItemId): string => id;
 const keyOf = (f: Focus): string =>
   `${itemKey(f.container)}::${itemKey(f.item)}`;
@@ -102,29 +125,6 @@ function computeAnchoredPos(
   const lineStart = anchor === "top" ? 0 : nl + 1;
   return lineStart + clamp(column, 0, text.length - lineStart);
 }
-
-type TargetBinding = {
-  getEl: () => HTMLElement | null;
-  caret?: { set(pos: number): void; getLength(): number };
-};
-
-type TargetBindingRecord = {
-  binding: TargetBinding;
-  token: number;
-};
-
-type AttachTargetOpts = {
-  focus: Focus;
-  target: string;
-  getEl: () => HTMLElement | null;
-  caret?: { set(pos: number): void; getLength(): number };
-};
-
-type MountViewOpts = {
-  id: ItemId;
-  focus?: Focus;
-  view: ViewName;
-};
 
 export type DomRuntime = {
   syncSelection(next: Selection): void;

@@ -1,5 +1,5 @@
-import { batch, computed, signal } from "@preact/signals-core";
 import type { ReadonlySignal, Signal } from "@preact/signals-core";
+import { batch, computed, signal } from "@preact/signals-core";
 
 import { DEV, devAssert } from "../dev";
 
@@ -34,36 +34,6 @@ export type Entry = {
 };
 
 type GroupEntry = Entry & { content: GroupContent };
-
-function isBlankContent(content: EntryContent): content is BlankContent {
-  return content.type === "blank";
-}
-
-function isScalarContent(content: EntryContent): content is ScalarContent {
-  return content.type === "scalar";
-}
-
-export function isGroupContent(content: EntryContent): content is GroupContent {
-  return content.type === "group";
-}
-
-export function isFormulaContent(
-  content: EntryContent,
-): content is FormulaContent {
-  return content.type === "formula";
-}
-
-export function isQueryContent(content: EntryContent): content is QueryContent {
-  return content.type === "query";
-}
-
-function isGroupEntry(entry: Entry): entry is GroupEntry {
-  return isGroupContent(entry.content);
-}
-
-function assertNever(_exhaustive: never, message: string): never {
-  throw new Error(message);
-}
 
 type SnapshotContent =
   | { type: "blank" }
@@ -120,7 +90,7 @@ export type Transaction = {
   readonly meta?: TransactionMeta;
 };
 
-export type ApplyResult = {
+export type ModelApplyResult = {
   readonly created: readonly EntryId[];
   readonly touched: readonly EntryId[];
   readonly moved: readonly MoveResult[];
@@ -160,7 +130,7 @@ export type Model = {
   findChildIdByLabel(groupId: EntryId, label: string): EntryId | null;
   locateInParent(childId: EntryId): LocateInParentResult | null;
 
-  apply(txn: Transaction): ApplyResult;
+  apply(txn: Transaction): ModelApplyResult;
 
   snapshot(id: EntryId): SnapshotEntry;
   pruneUnreachable(): { removed: number; removedIds: EntryId[] };
@@ -175,6 +145,36 @@ type EntrySnapshotRecord = {
   record: EntryRecord;
   entry: Entry;
 };
+
+function isBlankContent(content: EntryContent): content is BlankContent {
+  return content.type === "blank";
+}
+
+function isScalarContent(content: EntryContent): content is ScalarContent {
+  return content.type === "scalar";
+}
+
+export function isGroupContent(content: EntryContent): content is GroupContent {
+  return content.type === "group";
+}
+
+export function isFormulaContent(
+  content: EntryContent,
+): content is FormulaContent {
+  return content.type === "formula";
+}
+
+export function isQueryContent(content: EntryContent): content is QueryContent {
+  return content.type === "query";
+}
+
+function isGroupEntry(entry: Entry): entry is GroupEntry {
+  return isGroupContent(entry.content);
+}
+
+function assertNever(_exhaustive: never, message: string): never {
+  throw new Error(message);
+}
 
 function clampIndex(i: number, len: number): number {
   return Math.max(0, Math.min(i, len));
@@ -529,7 +529,7 @@ export function createModel(): Model {
     };
   };
 
-  const apply = (txn: Transaction): ApplyResult => {
+  const apply = (txn: Transaction): ModelApplyResult => {
     const created: EntryId[] = [];
     const touched = new Set<EntryId>();
     const moved: MoveResult[] = [];
@@ -551,19 +551,23 @@ export function createModel(): Model {
               break;
 
             case "move": {
-              const res = move(op.spec);
-              moved.push(res);
+              const moveResult = move(op.spec);
+              moved.push(moveResult);
               touched.add(op.spec.childId);
-              if (res.fromParentId != null) touched.add(res.fromParentId);
-              if (res.toParentId != null) touched.add(res.toParentId);
+              if (moveResult.fromParentId != null)
+                touched.add(moveResult.fromParentId);
+              if (moveResult.toParentId != null)
+                touched.add(moveResult.toParentId);
               break;
             }
 
             case "remove": {
-              const res = remove(op.id);
-              touched.add(res.removedId);
-              if (res.parentTouched != null) touched.add(res.parentTouched);
-              for (const cid of res.orphanedChildren) touched.add(cid);
+              const removeResult = remove(op.id);
+              touched.add(removeResult.removedId);
+              if (removeResult.parentTouched != null)
+                touched.add(removeResult.parentTouched);
+              for (const orphanedChildId of removeResult.orphanedChildren)
+                touched.add(orphanedChildId);
               break;
             }
 

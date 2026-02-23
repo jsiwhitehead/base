@@ -21,9 +21,9 @@ import {
   bindItemFrame,
   buildItemHeader,
   buildTextField,
-  clampCaretToText,
   caret0,
   caretAt,
+  clampCaretToText,
   createComponent,
   el,
   handleContainerIntent,
@@ -508,12 +508,12 @@ function buildChildOuterFrame(
       };
 
       const labelFocused = computed(() => {
-        const sel = core.selection();
+        const selection = core.selection();
         return (
-          sel.type === "focused" &&
-          sel.focus.item === focus.item &&
-          sel.focus.container === focus.container &&
-          sel.target === LABEL_TARGET
+          selection.type === "focused" &&
+          selection.focus.item === focus.item &&
+          selection.focus.container === focus.container &&
+          selection.target === LABEL_TARGET
         );
       });
 
@@ -656,185 +656,218 @@ function createOutlineView(args: {
 
   const editPointsSignal = computed(() => collectEditPoints(core, rootId));
 
-  const dispatch = (intent: Intent): void => {
-    const sel0 = core.selection();
-    if (sel0.type !== "focused") return;
-    const sel = sel0;
+  const tryHandleEmptyGroupShortcut = (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "TYPE" | "CONFIRM" }>,
+  ): boolean => {
+    if (sel.target !== DEFAULT_TARGET) return false;
+    if (core.item(sel.focus.item).content.type !== "group") return false;
+    if (childrenOf(core, sel.focus.item).length !== 0) return false;
 
-    if (
-      intent.type === "TYPE" &&
-      sel.target === DEFAULT_TARGET &&
-      intent.char === "="
-    ) {
-      const did = handleContainerIntent({ core, sel, intent });
-      if (did) return;
+    const groupId = sel.focus.item;
+    if (core.item(groupId).mode.type === "readonly") return true;
+
+    cmd.convertEmptyGroupToValue(core, groupId);
+
+    if (intent.type === "TYPE") {
+      core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
+      queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
+      return true;
     }
 
-    if (
-      sel.target === DEFAULT_TARGET &&
-      core.item(sel.focus.item).content.type === "group" &&
-      childrenOf(core, sel.focus.item).length === 0 &&
-      (intent.type === "TYPE" || intent.type === "CONFIRM")
-    ) {
-      const groupId = sel.focus.item;
-      if (core.item(groupId).mode.type === "readonly") return;
+    core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
+    return true;
+  };
 
-      cmd.convertEmptyGroupToValue(core, groupId);
+  const handleTabIntent = (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "TAB" }>,
+  ): void => {
+    const wasEditing = sel.target !== DEFAULT_TARGET;
+    const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
+    const fromCaret = wasEditing ? (intent.caret ?? null) : null;
 
-      if (intent.type === "TYPE") {
-        core.focus(sel.focus, VALUE_TARGET, { caret: SELECT_ALL });
-        queueMicrotask(() => typeCharIntoFocusedTextInput(intent.char));
-        return;
-      }
+    let nextFocus = cmd.changeNesting(
+      core,
+      rootId,
+      sel,
+      intent.shift ? "out" : "in",
+    );
+    if (!nextFocus && intent.shift) {
+      nextFocus = cmd.promoteChildToRoot(core, rootId, sel.focus.item);
+    }
+    if (!nextFocus) return;
 
-      core.focus(sel.focus, VALUE_TARGET, { caret: caret0() });
+    if (!wasEditing) {
+      core.focus(nextFocus, DEFAULT_TARGET);
       return;
     }
 
-    switch (intent.type) {
-      case "TAB": {
-        const wasEditing = sel.target !== DEFAULT_TARGET;
-        const fromTarget = wasEditing ? sel.target : DEFAULT_TARGET;
-        const fromCaret = wasEditing ? (intent.caret ?? null) : null;
+    const validTargets = new Set(editTargetsForItem(core, nextFocus.item));
+    const nextTarget = validTargets.has(fromTarget)
+      ? fromTarget
+      : DEFAULT_TARGET;
 
-        let nextFocus = cmd.changeNesting(
+    if (nextTarget === DEFAULT_TARGET) {
+      core.focus(nextFocus, DEFAULT_TARGET);
+      return;
+    }
+
+    const text = getTextForTarget(core, nextFocus.item, nextTarget);
+    const nextCaret = fromCaret
+      ? clampCaretToText(fromCaret, text)
+      : caretAt(text.length);
+
+    core.focus(nextFocus, nextTarget, { caret: nextCaret });
+  };
+
+  const handleNavIntent = (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "NAV" }>,
+  ): void => {
+    if (sel.target === DEFAULT_TARGET) {
+      const dir = intent.dir === "out" ? "left" : intent.dir;
+
+      const fromId = sel.focus.item;
+      let nextId: ItemId | null = null;
+
+      if (dir === "left") nextId = parentOf(core, rootId, fromId);
+      else if (dir === "right")
+        nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
+      else if (dir === "up") nextId = prevSibling(core, fromId);
+      else if (dir === "down") nextId = nextSibling(core, fromId);
+
+      if (!nextId) return;
+
+      core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET);
+      return;
+    }
+
+    const move = plan.moveEditPoint(
+      core,
+      rootId,
+      editPointsSignal.value,
+      sel,
+      intent.dir,
+    );
+    if (!move) return;
+    core.focus(move.focus, move.target, { caret: move.caret });
+  };
+
+  const handleConfirmIntent = (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "CONFIRM" }>,
+  ): void => {
+    if (sel.target !== DEFAULT_TARGET) {
+      if (sel.target === VALUE_TARGET && intent.caret) {
+        const nextId = cmd.splitAt(
           core,
-          rootId,
           sel,
-          intent.shift ? "out" : "in",
+          intent.caret.start,
+          intent.caret.end,
         );
-        if (!nextFocus && intent.shift) {
-          nextFocus = cmd.promoteChildToRoot(core, rootId, sel.focus.item);
-        }
-        if (!nextFocus) return;
-
-        if (!wasEditing) {
-          core.focus(nextFocus, DEFAULT_TARGET);
-          return;
-        }
-
-        const validTargets = new Set(editTargetsForItem(core, nextFocus.item));
-        const nextTarget = validTargets.has(fromTarget)
-          ? fromTarget
-          : DEFAULT_TARGET;
-
-        if (nextTarget === DEFAULT_TARGET) {
-          core.focus(nextFocus, DEFAULT_TARGET);
-          return;
-        }
-
-        const txt = getTextForTarget(core, nextFocus.item, nextTarget);
-        const nextCaret = fromCaret
-          ? clampCaretToText(fromCaret, txt)
-          : caretAt(txt.length);
-
-        core.focus(nextFocus, nextTarget, { caret: nextCaret });
-        return;
-      }
-      case "NAV": {
-        if (sel.target === DEFAULT_TARGET) {
-          const dir = intent.dir === "out" ? "left" : intent.dir;
-
-          const fromId = sel.focus.item;
-          let nextId: ItemId | null = null;
-
-          if (dir === "left") nextId = parentOf(core, rootId, fromId);
-          else if (dir === "right")
-            nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
-          else if (dir === "up") nextId = prevSibling(core, fromId);
-          else if (dir === "down") nextId = nextSibling(core, fromId);
-
-          if (!nextId) return;
-
-          core.focus(focusFor(core, rootId, nextId), DEFAULT_TARGET);
-          return;
-        }
-
-        const move = plan.moveEditPoint(
-          core,
-          rootId,
-          editPointsSignal.value,
-          sel,
-          intent.dir,
-        );
-        if (!move) return;
-        core.focus(move.focus, move.target, { caret: move.caret });
-        return;
-      }
-      case "TYPE": {
-        if (sel.target !== DEFAULT_TARGET) return;
-        handleContainerIntent({ core, sel, intent });
-        return;
-      }
-      case "CONFIRM": {
-        if (sel.target !== DEFAULT_TARGET) {
-          if (sel.target === VALUE_TARGET && intent.caret) {
-            const nextId = cmd.splitAt(
-              core,
-              sel,
-              intent.caret.start,
-              intent.caret.end,
-            );
-            if (!nextId) return;
-            core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
-              caret: caret0(),
-            });
-            return;
-          }
-
-          core.focus(sel.focus, DEFAULT_TARGET);
-          return;
-        }
-
-        const did = handleContainerIntent({ core, sel, intent });
-        if (did) return;
-
-        const nextId = cmd.insertSibling(core, sel, "after");
         if (!nextId) return;
         core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
           caret: caret0(),
         });
         return;
       }
-      case "DELETE": {
-        const id = sel.focus.item;
 
-        if (sel.target === DEFAULT_TARGET) {
-          if (core.item(id).mode.type === "readonly") return;
-          cmd.removeAndPruneAncestors(core, rootId, id);
-          return;
-        }
+      core.focus(sel.focus, DEFAULT_TARGET);
+      return;
+    }
 
-        if (sel.target !== VALUE_TARGET) return;
+    const did = handleContainerIntent({ core, sel, intent });
+    if (did) return;
 
-        const snap = core.item(id);
-        if (!(snap.mode.type === "plain" && snap.content.type === "value"))
-          return;
+    const nextId = cmd.insertSibling(core, sel, "after");
+    if (!nextId) return;
+    core.focus(focusFor(core, rootId, nextId), VALUE_TARGET, {
+      caret: caret0(),
+    });
+  };
 
-        const text = valueToText(snap.content.value);
+  const handleDeleteIntent = (
+    sel: Extract<Selection, { type: "focused" }>,
+    intent: Extract<Intent, { type: "DELETE" }>,
+  ): void => {
+    const id = sel.focus.item;
 
-        if (text.length > 0) {
-          const joined = cmd.joinBoundary(core, rootId, sel, intent.dir);
-          if (!joined) return;
-          core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
-            caret: joined.caret,
-          });
-          return;
-        }
+    if (sel.target === DEFAULT_TARGET) {
+      if (core.item(id).mode.type === "readonly") return;
+      cmd.removeAndPruneAncestors(core, rootId, id);
+      return;
+    }
 
-        const dest = plan.adjacentEditStopAfterDeletion(
-          core,
-          rootId,
-          editPointsSignal.value,
-          sel,
-          intent.dir,
-        );
+    if (sel.target !== VALUE_TARGET) return;
 
-        cmd.removeAndPruneAncestors(core, rootId, id);
+    const item = core.item(id);
+    if (!(item.mode.type === "plain" && item.content.type === "value")) return;
 
-        if (dest) core.focus(dest.focus, dest.target, { caret: dest.caret });
+    const text = valueToText(item.content.value);
+
+    if (text.length > 0) {
+      const joined = cmd.joinBoundary(core, rootId, sel, intent.dir);
+      if (!joined) return;
+      core.focus(focusFor(core, rootId, joined.id), VALUE_TARGET, {
+        caret: joined.caret,
+      });
+      return;
+    }
+
+    const destination = plan.adjacentEditStopAfterDeletion(
+      core,
+      rootId,
+      editPointsSignal.value,
+      sel,
+      intent.dir,
+    );
+
+    cmd.removeAndPruneAncestors(core, rootId, id);
+
+    if (destination) {
+      core.focus(destination.focus, destination.target, {
+        caret: destination.caret,
+      });
+    }
+  };
+
+  const dispatch = (intent: Intent): void => {
+    const selection = core.selection();
+    if (selection.type !== "focused") return;
+    const sel = selection;
+
+    if (
+      intent.type === "TYPE" &&
+      sel.target === DEFAULT_TARGET &&
+      intent.char === "=" &&
+      handleContainerIntent({ core, sel, intent })
+    )
+      return;
+
+    if (
+      (intent.type === "TYPE" || intent.type === "CONFIRM") &&
+      tryHandleEmptyGroupShortcut(sel, intent)
+    )
+      return;
+
+    switch (intent.type) {
+      case "TAB":
+        handleTabIntent(sel, intent);
         return;
-      }
+      case "NAV":
+        handleNavIntent(sel, intent);
+        return;
+      case "TYPE":
+        if (sel.target !== DEFAULT_TARGET) return;
+        handleContainerIntent({ core, sel, intent });
+        return;
+      case "CONFIRM":
+        handleConfirmIntent(sel, intent);
+        return;
+      case "DELETE":
+        handleDeleteIntent(sel, intent);
+        return;
     }
   };
 
