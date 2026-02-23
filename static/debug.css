@@ -1,9 +1,9 @@
 .ui-debug {
-  position: sticky;
-  top: 10px;
-  max-height: calc(100vh - 20px);
+  height: 100%;
   min-width: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   overscroll-behavior: contain;
   background: #f5f6f8;
   border: 1px solid #d6d9de;
@@ -15,6 +15,7 @@
 
 .ui-debug-header {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 4px;
   margin-bottom: 10px;
@@ -27,9 +28,11 @@
 
 .ui-debug-section {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 6px;
   margin-top: 10px;
+  min-height: 0;
 }
 
 .ui-debug-title {
@@ -50,4 +53,17 @@
   max-width: 100%;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.ui-debug-section:last-child .ui-debug-pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre;
+  word-break: normal;
+}
+
+.ui-debug-section:last-child {
+  flex: 1 1 auto;
+  min-height: 0;
 }

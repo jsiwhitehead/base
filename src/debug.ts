@@ -37,15 +37,30 @@ type DebugLast =
 
 type DebugState = {
   lastSignal: ReadonlySignal<DebugLast | null>;
+  recentSignal: ReadonlySignal<readonly string[]>;
   setLast(next: DebugLast | null): void;
+  pushRecent(line: string): void;
 };
 
 export function createDebugState(): DebugState {
   const last = signal<DebugLast | null>(null);
+  const recent = signal<readonly string[]>([]);
+  let seq = 0;
+  const RECENT_LIMIT = 50;
   return {
     lastSignal: last,
+    recentSignal: recent,
     setLast(next) {
       last.value = next;
+    },
+    pushRecent(line) {
+      seq += 1;
+      const next = `#${seq} ${line}`;
+      const items = recent.value;
+      recent.value =
+        items.length >= RECENT_LIMIT
+          ? [...items.slice(items.length - RECENT_LIMIT + 1), next]
+          : [...items, next];
     },
   };
 }
@@ -66,6 +81,7 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
     const result = commitCore(run);
     const selectionAfter = readSelection();
     debug.setLast({ type: "commit", selectionBefore, selectionAfter, result });
+    debug.pushRecent(`commit ${applyResultSummary(result)}`);
     return result;
   };
 
@@ -74,6 +90,7 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
     const result = undoCore();
     const selectionAfter = readSelection();
     debug.setLast({ type: "undo", selectionBefore, selectionAfter, result });
+    debug.pushRecent(`undo ${applyResultSummary(result)}`);
     return result;
   };
 
@@ -82,6 +99,7 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
     const result = redoCore();
     const selectionAfter = readSelection();
     debug.setLast({ type: "redo", selectionBefore, selectionAfter, result });
+    debug.pushRecent(`redo ${applyResultSummary(result)}`);
     return result;
   };
 
@@ -97,6 +115,9 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
       target,
       ...(opts.caret ? { caret: opts.caret } : {}),
     });
+    debug.pushRecent(
+      `focus ${recentSelectionSummary(selectionAfter)}${opts.caret ? ` caret=${opts.caret.start}-${opts.caret.end}` : ""}`,
+    );
   };
 
   core.blur = () => {
@@ -104,10 +125,12 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
     blurCore();
     const selectionAfter = readSelection();
     debug.setLast({ type: "blur", selectionBefore, selectionAfter });
+    debug.pushRecent(`blur ${recentSelectionSummary(selectionAfter)}`);
   };
 
   core.dispose = () => {
     debug.setLast({ type: "dispose" });
+    debug.pushRecent("dispose");
     disposeCore();
   };
 
@@ -145,6 +168,16 @@ function selectionText(selection: Selection): string {
 
 function applyResultSummary(r: ApplyResult): string {
   return `created: ${r.created.length}, touched: ${r.touched.length}, moved: ${r.moved.length}`;
+}
+
+function recentLinesText(lines: readonly string[]): string {
+  if (!lines.length) return "(none)";
+  return [...lines].reverse().join("\n");
+}
+
+function recentSelectionSummary(selection: Selection): string {
+  if (selection.type === "idle") return "selection=idle";
+  return `item=${selection.focus.item} container=${selection.focus.container} target=${selection.target}`;
 }
 
 function lastText(last: DebugLast | null): string {
@@ -239,11 +272,20 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
     const bDom = el("pre", "ui-debug-pre");
     secDom.append(hDom, bDom);
 
-    root.append(header, secSelection, secActive, secItem, secDom);
+    const secRecent = el("div", "ui-debug-section");
+    const hRecent = el("div", "ui-debug-title", "Recent Events");
+    const bRecent = el("pre", "ui-debug-pre");
+    secRecent.append(hRecent, bRecent);
+
+    root.append(header, secSelection, secActive, secItem, secDom, secRecent);
 
     ctx.effect(() => {
       const last = debug.lastSignal.value;
       lastLine.textContent = lastText(last);
+    });
+
+    ctx.effect(() => {
+      bRecent.textContent = recentLinesText(debug.recentSignal.value);
     });
 
     ctx.effect(() => {

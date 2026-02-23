@@ -262,12 +262,14 @@ Forbidden at this boundary:
 ```text
 #root
   .ui-root
-    .ui-main.ui-frame
-      .ui-body.<root-view>
+    .ui-main-scroll
+      .ui-main.ui-frame
+        .ui-body.<root-view>
 ```
 
 - `.ui-main` MUST be the root `.ui-frame` for the root item.
 - `.ui-main` MUST be the only tabbable element (`tabIndex=0`).
+- `.ui-main-scroll` MAY provide main-column scroll containment.
 - `.ui-body.<root-view>` MUST be the view root used for active view resolution.
 
 API-level runtime details belong in `docs/dom-runtime.md`.

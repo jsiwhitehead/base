@@ -76,21 +76,35 @@
   }
 
   #root {
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     padding: var(--ui-space-pad);
+    overflow: hidden;
   }
 
   .ui-root {
     min-width: 0;
+    height: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--ui-sidebar);
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--ui-space-gap);
-    align-items: start;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .ui-root[data-debug="on"] {
+    grid-template-columns: minmax(0, 1fr) var(--ui-sidebar);
   }
 
   .ui-main,
+  .ui-main-scroll,
   .ui-body {
     min-width: 0;
+    min-height: 0;
+  }
+
+  .ui-main-scroll {
+    overflow: auto;
   }
 
   .ui-main {

@@ -176,7 +176,10 @@ describe("core stress/view switching", () => {
 
     for (let i = 0; i < 180; i += 1) {
       core.commit((t) => {
-        t.setView(table, i % 3 === 0 ? "table" : i % 3 === 1 ? "outline" : null);
+        t.setView(
+          table,
+          i % 3 === 0 ? "table" : i % 3 === 1 ? "outline" : null,
+        );
         t.setView(scalar, i % 2 === 0 ? "slider" : "outline");
       });
       if (i % 30 === 0) assertCoreInvariants(core, rootId);

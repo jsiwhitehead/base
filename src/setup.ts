@@ -20,6 +20,8 @@ import {
   type ViewRegistration,
 } from "./views";
 
+const SHOW_DEBUG_PANEL = true;
+
 export function createUiCoreRuntime(args?: {
   views?: Partial<Record<ViewName, ViewRegistration>>;
   collab?: Parameters<typeof createCore>[0]["collab"];
@@ -78,6 +80,7 @@ export type CreateAppOpts = {
 export function createApp(opts: CreateAppOpts): App {
   const rootView = opts.rootView ?? "outline";
   const hostEl = opts.host;
+  const showDebugPanel = DEV && SHOW_DEBUG_PANEL;
 
   const {
     core: uiCore,
@@ -88,8 +91,8 @@ export function createApp(opts: CreateAppOpts): App {
     views: viewRegistrations,
   });
 
-  const debug = createDebugState();
-  const core = instrumentCore(uiCore, debug);
+  const debug = showDebugPanel ? createDebugState() : null;
+  const core = debug ? instrumentCore(uiCore, debug) : uiCore;
   const uninstallGlobal = runtime.installGlobalListeners(window);
 
   core.commit((t) => {
@@ -117,7 +120,9 @@ export function createApp(opts: CreateAppOpts): App {
   const indicator = buildDropIndicator(drag.state);
 
   const root = el("div", "ui-root");
+  root.dataset.debug = showDebugPanel ? "on" : "off";
   const main = appRoot.el;
+  const mainScroll = el("div", "ui-main-scroll");
 
   main.addEventListener(
     "pointerdown",
@@ -133,11 +138,12 @@ export function createApp(opts: CreateAppOpts): App {
     { capture: true },
   );
 
-  root.append(main, indicator.el);
+  mainScroll.append(main);
+  root.append(mainScroll, indicator.el);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
-  if (DEV) {
+  if (debug) {
     debugPanel = buildDebugPanel({
       core,
       debug,
