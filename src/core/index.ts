@@ -14,6 +14,7 @@ import {
 import { interpretExpr } from "./lang";
 import type {
   ApplyDelta,
+  SnapshotData,
   Entry,
   EntryContent,
   EntryId,
@@ -24,6 +25,7 @@ import type {
 } from "./model";
 import {
   createModel,
+  createModelFromSnapshot,
   isFormulaContent,
   isQueryContent,
   makeBlankEntry,
@@ -263,6 +265,8 @@ export type Core = {
   item(id: ItemId): Item;
 
   view(id: ItemId): ViewName;
+  exportSnapshot(): SnapshotData;
+  importSnapshot(snapshot: SnapshotData): void;
 
   commit(run: (t: Tx) => void): void;
 
@@ -364,7 +368,7 @@ export function createCore(opts: {
 } {
   const constraints = opts.constraints ?? {};
 
-  const model = createModel();
+  let model = createModel();
 
   const rootEntryId = model.createId();
   model.setRoot(rootEntryId);
@@ -372,7 +376,7 @@ export function createCore(opts: {
     model.ops.transaction([model.ops.create(makeGroupEntry(rootEntryId))]),
   );
 
-  const evaluator = createEvaluator({ model, interpret: interpretExpr });
+  let evaluator = createEvaluator({ model, interpret: interpretExpr });
 
   let core!: Core;
 
@@ -853,6 +857,17 @@ export function createCore(opts: {
     for (const id of removedIds) viewSignalCache.delete(id);
   };
 
+  const resetPostImportState = (): void => {
+    history.undo = [];
+    history.redo = [];
+    viewSignalCache.clear();
+    setSelection({
+      type: "focused",
+      focus: { container: rootId, item: rootId },
+      target: DEFAULT_TARGET,
+    });
+  };
+
   const applyRemotePipeline = (
     txn: Transaction,
     inverseAcc: Op[],
@@ -967,6 +982,26 @@ export function createCore(opts: {
       return;
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
     applyPipeline(model.ops.transaction(txn.ops, meta));
+  };
+
+  const exportSnapshot = (): SnapshotData => model.exportSnapshot();
+
+  const importSnapshot = (snapshot: SnapshotData): void => {
+    if (snapshot.rootId !== rootEntryId) {
+      throw new Error("snapshot.rootId must match core root id");
+    }
+
+    const nextModel = createModelFromSnapshot(snapshot);
+    const nextEvaluator = createEvaluator({ model: nextModel, interpret: interpretExpr });
+    const prevEvaluator = evaluator;
+
+    batch(() => {
+      model = nextModel;
+      evaluator = nextEvaluator;
+      resetPostImportState();
+    });
+
+    prevEvaluator.dispose();
   };
 
   const commit = (run: (t: Tx) => void): void => {
@@ -1325,6 +1360,8 @@ export function createCore(opts: {
     item,
 
     view,
+    exportSnapshot,
+    importSnapshot,
 
     commit,
 
@@ -1350,6 +1387,7 @@ export type {
   KeyIntentInput,
   NavDir,
   Selection,
+  SnapshotData,
   Transaction,
   ViewConstraint,
   ViewName,

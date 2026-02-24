@@ -35,10 +35,10 @@ export type Entry = {
 
 type GroupEntry = Entry & { content: GroupContent };
 
-type SnapshotContent =
+export type SnapshotNodeContent =
   | { type: "blank" }
   | { type: "scalar"; value: Scalar }
-  | { type: "group"; childIds: SnapshotEntry[] }
+  | { type: "group"; children: SnapshotNode[] }
   | { type: "formula"; expr: string }
   | {
       type: "query";
@@ -47,10 +47,17 @@ type SnapshotContent =
       orderBy: string;
     };
 
-type SnapshotEntry = {
+export type SnapshotNode = {
+  id: EntryId;
   label?: string;
   view?: ViewName;
-  content: SnapshotContent;
+  content: SnapshotNodeContent;
+};
+
+export type SnapshotData = {
+  rootId: EntryId;
+  nextId: EntryId;
+  root: SnapshotNode;
 };
 
 type MoveSpec = {
@@ -131,7 +138,8 @@ export type Model = {
 
   apply(txn: Transaction): ApplyDelta;
 
-  snapshot(id: EntryId): SnapshotEntry;
+  snapshot(id: EntryId): SnapshotNode;
+  exportSnapshot(): SnapshotData;
 };
 
 type EntryRecord = {
@@ -725,7 +733,7 @@ export function createModel(): Model {
     }
   }
 
-  const snapshotContent = (content: EntryContent): SnapshotContent => {
+  const snapshotNodeContent = (content: EntryContent): SnapshotNodeContent => {
     switch (content.type) {
       case "blank":
         return { type: "blank" };
@@ -743,23 +751,30 @@ export function createModel(): Model {
       case "group":
         return {
           type: "group",
-          childIds: content.childIds.map(snapshot),
+          children: content.childIds.map(snapshot),
         };
       default:
         return assertNever(content, "Unknown entry content");
     }
   };
 
-  const snapshot = (id: EntryId): SnapshotEntry => {
+  const snapshot = (id: EntryId): SnapshotNode => {
     const entry = entrySignal(id).value;
     const label = normalizeLabel(entry.label) ? entry.label : undefined;
     const view = entry.view ?? undefined;
     return {
+      id: entry.id,
       ...(label ? { label } : {}),
       ...(view ? { view } : {}),
-      content: snapshotContent(entry.content),
+      content: snapshotNodeContent(entry.content),
     };
   };
+
+  const exportSnapshot = (): SnapshotData => ({
+    rootId: rootId(),
+    nextId,
+    root: snapshot(rootId()),
+  });
 
   return {
     setRoot,
@@ -786,5 +801,176 @@ export function createModel(): Model {
     apply,
 
     snapshot,
+    exportSnapshot,
   };
+}
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return !!x && typeof x === "object";
+}
+
+function readInt(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || !Number.isFinite(value))
+    throw new Error(`${path} must be a finite integer`);
+  return value;
+}
+
+function readString(value: unknown, path: string): string {
+  if (typeof value !== "string") throw new Error(`${path} must be a string`);
+  return value;
+}
+
+function readOptionalString(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  return readString(value, path);
+}
+
+function readOptionalView(value: unknown, path: string): ViewName | undefined {
+  if (value === undefined) return undefined;
+  if (value === "outline" || value === "table" || value === "slider") return value;
+  throw new Error(`${path} must be a valid view name`);
+}
+
+function readScalar(value: unknown, path: string): Scalar {
+  if (value === true) return value;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new Error(`${path} must be true, a finite number, or a string`);
+}
+
+type ParsedSnapshotNode = {
+  id: EntryId;
+  label: string;
+  view: ViewName | null;
+  content: EntryContent;
+  children: ParsedSnapshotNode[];
+};
+
+function parseSnapshotNode(
+  input: unknown,
+  path: string,
+  seen: Set<EntryId>,
+  maxIdRef: { value: number },
+): ParsedSnapshotNode {
+  if (!isRecord(input)) throw new Error(`${path} must be an object`);
+
+  const id = readInt(input.id, `${path}.id`) as EntryId;
+  if (seen.has(id)) throw new Error(`${path}.id duplicates entry id ${id}`);
+  seen.add(id);
+  if (id > maxIdRef.value) maxIdRef.value = id;
+
+  const label = readOptionalString(input.label, `${path}.label`) ?? "";
+  const view = readOptionalView(input.view, `${path}.view`) ?? null;
+
+  const contentInput = input.content;
+  if (!isRecord(contentInput)) throw new Error(`${path}.content must be an object`);
+  const kind = contentInput.type;
+  if (typeof kind !== "string")
+    throw new Error(`${path}.content.type must be a string`);
+
+  switch (kind) {
+    case "blank":
+      return { id, label, view, content: { type: "blank" }, children: [] };
+    case "scalar":
+      return {
+        id,
+        label,
+        view,
+        content: {
+          type: "scalar",
+          value: readScalar(contentInput.value, `${path}.content.value`),
+        },
+        children: [],
+      };
+    case "formula":
+      return {
+        id,
+        label,
+        view,
+        content: {
+          type: "formula",
+          expr: readString(contentInput.expr, `${path}.content.expr`),
+        },
+        children: [],
+      };
+    case "query":
+      return {
+        id,
+        label,
+        view,
+        content: {
+          type: "query",
+          from: readString(contentInput.from, `${path}.content.from`),
+          where: readString(contentInput.where, `${path}.content.where`),
+          orderBy: readString(contentInput.orderBy, `${path}.content.orderBy`),
+        },
+        children: [],
+      };
+    case "group": {
+      const childrenInput = contentInput.children;
+      if (!Array.isArray(childrenInput))
+        throw new Error(`${path}.content.children must be an array`);
+      const children = childrenInput.map((child, i) =>
+        parseSnapshotNode(child, `${path}.content.children[${i}]`, seen, maxIdRef),
+      );
+      return {
+        id,
+        label,
+        view,
+        content: { type: "group", childIds: [] },
+        children,
+      };
+    }
+    default:
+      throw new Error(`${path}.content.type is invalid`);
+  }
+}
+
+export function createModelFromSnapshot(snapshot: SnapshotData): Model {
+  if (!isRecord(snapshot)) throw new Error("snapshot must be an object");
+
+  const rootId = readInt(snapshot.rootId, "snapshot.rootId") as EntryId;
+  const nextId = readInt(snapshot.nextId, "snapshot.nextId") as EntryId;
+  const seen = new Set<EntryId>();
+  const maxIdRef = { value: 0 };
+  const root = parseSnapshotNode(snapshot.root, "snapshot.root", seen, maxIdRef);
+
+  if (root.id !== rootId) throw new Error("snapshot.rootId must match snapshot.root.id");
+  if (nextId <= maxIdRef.value)
+    throw new Error("snapshot.nextId must be greater than all entry ids");
+
+  const model = createModel();
+  model.setRoot(rootId);
+  model.setNextId(nextId);
+
+  const createOps: Op[] = [];
+  const moveOps: Op[] = [];
+
+  const queueNode = (node: ParsedSnapshotNode): void => {
+    createOps.push(
+      model.ops.create({
+        id: node.id,
+        parentId: null,
+        label: node.label,
+        view: node.view,
+        content: node.content,
+      }),
+    );
+
+    for (let i = 0; i < node.children.length; i += 1) {
+      const child = node.children[i]!;
+      queueNode(child);
+      moveOps.push(
+        model.ops.move({
+          childId: child.id,
+          toParentId: node.id,
+          toIndex: i,
+        }),
+      );
+    }
+  };
+
+  queueNode(root);
+  model.apply(model.ops.transaction([...createOps, ...moveOps]));
+  return model;
 }

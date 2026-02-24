@@ -394,6 +394,23 @@ Rules:
 - Core MAY coalesce adjacent user text edits in the same focused target into a single undo step.
 - A new edit MUST clear the redo stack.
 
+## Snapshot import/export
+
+```ts
+core.exportSnapshot(): SnapshotData
+core.importSnapshot(snapshot: SnapshotData): void
+```
+
+Rules:
+
+- `core.exportSnapshot()` MUST return the full stored tree state (IDs, labels, views, content, structure, root ID, next ID).
+- `core.importSnapshot(...)` MUST replace Core state atomically or throw.
+- Invalid snapshots MUST throw and MUST NOT mutate existing Core state.
+- `snapshot.rootId` MUST match the existing Core root ID.
+- Successful import MUST clear undo/redo history.
+- Successful import MUST reset selection to root with `DEFAULT_TARGET`.
+- `SnapshotData` MUST NOT include selection/caret, history, caches, or debug state.
+
 ## Helper functions
 
 ### `fieldsFromConn(conn)`
@@ -474,6 +491,8 @@ Core exports:
 - `core.selection`
 - `core.locate`
 - `core.view`
+- `core.exportSnapshot`
+- `core.importSnapshot`
 - `core.commit`
 - `core.undo`
 - `core.redo`
@@ -498,6 +517,7 @@ Type exports:
 - `Selection`
 - `Focus`
 - `Caret`
+- `SnapshotData`
 - `Transaction`
 - `ViewName`
 - `ViewConstraint`
