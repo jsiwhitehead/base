@@ -1,4 +1,4 @@
-import type { Focus, Intent, ItemId, ValueOrBlank } from "../core";
+import type { Focus, Intent, ItemId, ValueOrBlank, ViewShape } from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
 import type { Component, DomView, UiCore } from "../dom";
 import {
@@ -82,21 +82,9 @@ function formatNumberForStep(value: number, step: number): string {
   return precision <= 0 ? value.toFixed(0) : value.toFixed(precision);
 }
 
-const canSetValue = (core: UiCore, id: ItemId): boolean => {
-  const item = core.item(id);
-  return item.mode.type === "plain" && item.content.type === "value";
-};
-
-const getValueOr = (core: UiCore, id: ItemId, fallback: number): number => {
-  const item = core.item(id);
-  if (item.content.type === "value")
-    return toNumberOr(item.content.value, fallback);
-  return fallback;
-};
-
 const cmd = {
   setValue(core: UiCore, id: ItemId, value: number): void {
-    if (!Number.isFinite(value) || !canSetValue(core, id)) return;
+    if (!Number.isFinite(value)) return;
     core.commit((t) => t.setValue(id, value));
   },
 } as const;
@@ -108,6 +96,7 @@ function buildSliderBody({
   resolvedOpts,
 }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
+    const sliderReader = core.shapeReader(id, sliderShape);
     const root = el("div");
     setBodyClasses(root, "slider");
     bindItemFrame(ctx, { core, focus }, root);
@@ -144,7 +133,7 @@ function buildSliderBody({
     ctx.target(focus, VALUE_TARGET, () => input);
 
     ctx.effect(() => {
-      const currentValue = getValueOr(core, id, resolvedOpts.min);
+      const currentValue = toNumberOr(sliderReader.value(), resolvedOpts.min);
       const snapped = snapToStep(
         currentValue,
         resolvedOpts.min,
@@ -155,11 +144,6 @@ function buildSliderBody({
 
       if (input.value !== valueText) input.value = valueText;
       if (valueEl.textContent !== valueText) valueEl.textContent = valueText;
-    });
-
-    ctx.effect(() => {
-      const shouldDisable = !canSetValue(core, id);
-      if (input.disabled !== shouldDisable) input.disabled = shouldDisable;
     });
 
     return root;
@@ -211,7 +195,11 @@ function createSliderView(args: {
   };
 }
 
+export const sliderShape = {
+  type: "value",
+} as const satisfies ViewShape;
+
 export const sliderView: ViewRegistration = {
   factory: createSliderView,
-  constraint: { content: "value" },
+  shape: sliderShape,
 };

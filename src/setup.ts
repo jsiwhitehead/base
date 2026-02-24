@@ -27,7 +27,7 @@ export function createUiCoreRuntime(args?: {
   runtime: DomRuntime;
 } {
   const views = args?.views ?? {};
-  const { constraints, factories } = splitViewRegistrations(views);
+  const { shapes, factories } = splitViewRegistrations(views);
 
   let runtime: DomRuntime | null = null;
   const platform: CorePlatformHooks = {
@@ -45,7 +45,7 @@ export function createUiCoreRuntime(args?: {
   };
 
   const { core: pureCore, rootId } = createCore({
-    constraints,
+    shapes,
     ...(args?.collab ? { collab: args.collab } : {}),
     platform,
   });
@@ -104,8 +104,7 @@ export function createApp(opts: CreateAppOpts): App {
     bindItemFrame(ctx, { core, focus }, rootFrame);
 
     ctx.slot(rootFrame, () => {
-      const wanted = core.view(rootId);
-      return core.mountView({ id: rootId, focus, view: wanted });
+      return core.mountView({ id: rootId, containerId: rootId });
     });
 
     return rootFrame;

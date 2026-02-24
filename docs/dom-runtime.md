@@ -129,6 +129,7 @@ Rules:
 - Effect MUST rerun when its reactive dependencies change.
 - If `run` returns a cleanup function, that cleanup MUST run before reruns.
 - Effect cleanup MUST run on component disposal.
+- If `run` throws a typed Core read invalidation error during teardown/update races, the runtime MAY stop that effect and dispose it instead of rethrowing; other errors MUST still surface.
 
 ### `ctx.mount(host, child)`
 

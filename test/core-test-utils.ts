@@ -21,8 +21,8 @@ export function expectFocused(
 }
 
 export function makePureCore(): { core: Core; rootId: ItemId } {
-  const { constraints } = splitViewRegistrations(viewRegistrations);
-  return createCore({ constraints });
+  const { shapes } = splitViewRegistrations(viewRegistrations);
+  return createCore({ shapes });
 }
 
 export function valueOf(content: Content): true | number | string | null {
@@ -57,7 +57,9 @@ export function requireCreatedEntryId(txn: Transaction): number {
   return created[0]!.entry.id;
 }
 
-export function exportSnapshot(core: Pick<Core, "exportSnapshot">): SnapshotData {
+export function exportSnapshot(
+  core: Pick<Core, "exportSnapshot">,
+): SnapshotData {
   return core.exportSnapshot();
 }
 

@@ -33,8 +33,7 @@ function mountAppShell(core: UiCore, rootId: ItemId): () => void {
     bindItemFrame(ctx, { core, focus }, rootFrame);
 
     ctx.slot(rootFrame, () => {
-      const wanted = core.view(rootId);
-      return core.mountView({ id: rootId, focus, view: wanted });
+      return core.mountView({ id: rootId, containerId: focus.container });
     });
 
     return rootFrame;

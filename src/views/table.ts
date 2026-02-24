@@ -1,6 +1,14 @@
 import { computed } from "@preact/signals-core";
 
-import type { Caret, Focus, Intent, ItemId, Selection } from "../core";
+import type {
+  Caret,
+  Focus,
+  Intent,
+  ItemId,
+  Selection,
+  ShapeReaderFromShape,
+  ViewShape,
+} from "../core";
 import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
 import type { Component, DomView, NavDir, UiCore } from "../dom";
 import {
@@ -16,8 +24,11 @@ import {
 } from "../dom";
 import type { ViewRegistration } from "./index";
 
+type TableReader = ShapeReaderFromShape<typeof tableShape>;
+type RowReader = ReturnType<TableReader["child"]>;
+
 type TableSignals = {
-  rows: { value: ItemId[] };
+  rows: { value: readonly ItemId[] };
   schemaRowId: { value: ItemId };
   colCount: { value: number };
 };
@@ -25,18 +36,10 @@ type TableSignals = {
 type TableMountCtx = {
   core: UiCore;
   tableId: ItemId;
+  reader: TableReader;
   signals: TableSignals;
   dispatch: (intent: Intent) => void;
 };
-
-const childrenOf = (core: UiCore, id: ItemId): readonly ItemId[] => {
-  const content = core.item(id).content;
-  return content.type === "group" ? content.children : [];
-};
-
-const rowIds = (core: UiCore, tableId: ItemId): ItemId[] => [
-  ...childrenOf(core, tableId),
-];
 
 function isRowContainerSel(
   sel: Extract<Selection, { type: "focused" }>,
@@ -46,7 +49,7 @@ function isRowContainerSel(
 }
 
 function isCellSel(
-  core: UiCore,
+  reader: TableReader,
   tableId: ItemId,
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "focused" }>,
@@ -54,29 +57,29 @@ function isCellSel(
   const rowId = sel.focus.container;
   if (rowId === tableId) return false;
   if (!rows.includes(rowId)) return false;
-  return childrenOf(core, rowId).includes(sel.focus.item);
+  return reader.child(rowId).childIds().includes(sel.focus.item);
 }
 
 function isCellContainerSel(
-  core: UiCore,
+  reader: TableReader,
   tableId: ItemId,
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "focused" }>,
 ): boolean {
-  return sel.target === DEFAULT_TARGET && isCellSel(core, tableId, rows, sel);
+  return sel.target === DEFAULT_TARGET && isCellSel(reader, tableId, rows, sel);
 }
 
 function isCellValueSel(
-  core: UiCore,
+  reader: TableReader,
   tableId: ItemId,
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "focused" }>,
 ): boolean {
-  return sel.target === VALUE_TARGET && isCellSel(core, tableId, rows, sel);
+  return sel.target === VALUE_TARGET && isCellSel(reader, tableId, rows, sel);
 }
 
-function cellColIdx(core: UiCore, rowId: ItemId, cellId: ItemId): number {
-  return childrenOf(core, rowId).indexOf(cellId);
+function cellColIdx(rowReader: RowReader, cellId: ItemId): number {
+  return rowReader.childIds().indexOf(cellId);
 }
 
 function focusRowContainer(
@@ -103,7 +106,7 @@ function focusCellContainer(
 
 const plan = {
   navMove(
-    core: UiCore,
+    reader: TableReader,
     tableId: ItemId,
     rows: readonly ItemId[],
     colCount: number,
@@ -112,6 +115,7 @@ const plan = {
   ): { focus: Focus; target: string; caret: Caret } | null {
     if (isRowContainerSel(sel, tableId)) {
       const rowId = sel.focus.item;
+      const rowReader = reader.child(rowId);
       const rowIdx = rows.indexOf(rowId);
       if (rowIdx < 0) return null;
 
@@ -127,50 +131,53 @@ const plan = {
 
       if (dir === "right") {
         const firstCell =
-          colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+          colCount > 0 ? (rowReader.childIds()[0] ?? null) : null;
         return firstCell ? focusCellContainer(rowId, firstCell) : null;
       }
 
       return null;
     }
 
-    if (!isCellSel(core, tableId, rows, sel)) return null;
+    if (!isCellSel(reader, tableId, rows, sel)) return null;
 
     const rowId = sel.focus.container;
     const cellId = sel.focus.item;
+    const rowReader = reader.child(rowId);
 
     const rowIdx = rows.indexOf(rowId);
     if (rowIdx < 0) return null;
 
-    const colIdx = cellColIdx(core, rowId, cellId);
+    const colIdx = cellColIdx(rowReader, cellId);
     if (colIdx < 0) return null;
 
     if (dir === "left") {
       if (colIdx === 0) return focusRowContainer(tableId, rowId);
-      const prev = childrenOf(core, rowId)[colIdx - 1] ?? null;
+      const prev = rowReader.childIds()[colIdx - 1] ?? null;
       return prev ? focusCellContainer(rowId, prev) : null;
     }
 
     if (dir === "right") {
-      const next = childrenOf(core, rowId)[colIdx + 1] ?? null;
+      const next = rowReader.childIds()[colIdx + 1] ?? null;
       return next ? focusCellContainer(rowId, next) : null;
     }
 
     if (dir === "up") {
       const prevRow = rows[rowIdx - 1] ?? null;
       if (!prevRow) return null;
-      const prevCell = childrenOf(core, prevRow)[colIdx] ?? null;
+      const prevRowReader = reader.child(prevRow);
+      const prevCell = prevRowReader.childIds()[colIdx] ?? null;
       return prevCell ? focusCellContainer(prevRow, prevCell) : null;
     }
 
     const nextRow = rows[rowIdx + 1] ?? null;
     if (!nextRow) return null;
-    const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
+    const nextRowReader = reader.child(nextRow);
+    const nextCell = nextRowReader.childIds()[colIdx] ?? null;
     return nextCell ? focusCellContainer(nextRow, nextCell) : null;
   },
 
   tabMove(
-    core: UiCore,
+    reader: TableReader,
     tableId: ItemId,
     rows: readonly ItemId[],
     colCount: number,
@@ -182,26 +189,27 @@ const plan = {
     if (isRowContainerSel(sel, tableId)) {
       if (shift) return null;
       const rowId = sel.focus.item;
-      const firstCell =
-        colCount > 0 ? (childrenOf(core, rowId)[0] ?? null) : null;
+      const rowReader = reader.child(rowId);
+      const firstCell = colCount > 0 ? (rowReader.childIds()[0] ?? null) : null;
       return firstCell ? focusCellContainer(rowId, firstCell) : null;
     }
 
-    if (!isCellSel(core, tableId, rows, sel)) return null;
+    if (!isCellSel(reader, tableId, rows, sel)) return null;
 
     const rowId = sel.focus.container;
     const cellId = sel.focus.item;
+    const rowReader = reader.child(rowId);
 
     const rowIdx = rows.indexOf(rowId);
     if (rowIdx < 0) return null;
 
-    const colIdx = cellColIdx(core, rowId, cellId);
+    const colIdx = cellColIdx(rowReader, cellId);
     if (colIdx < 0) return null;
 
     const nextCol = colIdx + dir;
 
     if (nextCol >= 0 && nextCol < colCount) {
-      const nextCell = childrenOf(core, rowId)[nextCol] ?? null;
+      const nextCell = rowReader.childIds()[nextCol] ?? null;
       return nextCell ? focusCellContainer(rowId, nextCell) : null;
     }
 
@@ -209,38 +217,42 @@ const plan = {
     if (!nextRow) return null;
 
     if (dir > 0) {
+      const nextRowReader = reader.child(nextRow);
       const firstCell =
-        colCount > 0 ? (childrenOf(core, nextRow)[0] ?? null) : null;
+        colCount > 0 ? (nextRowReader.childIds()[0] ?? null) : null;
       return firstCell
         ? focusCellContainer(nextRow, firstCell)
         : focusRowContainer(tableId, nextRow);
     }
 
+    const nextRowReader = reader.child(nextRow);
     const lastCell =
-      colCount > 0 ? (childrenOf(core, nextRow)[colCount - 1] ?? null) : null;
+      colCount > 0 ? (nextRowReader.childIds()[colCount - 1] ?? null) : null;
     return lastCell
       ? focusCellContainer(nextRow, lastCell)
       : focusRowContainer(tableId, nextRow);
   },
 
   enterMove(
-    core: UiCore,
+    reader: TableReader,
     rows: readonly ItemId[],
     sel: Extract<Selection, { type: "focused" }>,
   ): { focus: Focus; target: string; caret: Caret } | null {
     const rowId = sel.focus.container;
     const cellId = sel.focus.item;
+    const rowReader = reader.child(rowId);
 
     const rowIdx = rows.indexOf(rowId);
     if (rowIdx < 0) return null;
 
-    const colIdx = cellColIdx(core, rowId, cellId);
+    const colIdx = cellColIdx(rowReader, cellId);
     if (colIdx < 0) return null;
 
     const nextRow = rows[rowIdx + 1] ?? null;
     if (!nextRow) return null;
 
-    const nextCell = childrenOf(core, nextRow)[colIdx] ?? null;
+    const nextRowReader = reader.child(nextRow);
+    const nextCell = nextRowReader.childIds()[colIdx] ?? null;
     return nextCell ? focusCellContainer(nextRow, nextCell) : null;
   },
 } as const;
@@ -249,9 +261,9 @@ const cmd = {
   addRowAfter(
     core: UiCore,
     tableId: ItemId,
+    rows: readonly ItemId[],
     afterRowId: ItemId | null,
   ): ItemId {
-    const rows = rowIds(core, tableId);
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
 
@@ -274,7 +286,7 @@ const cmd = {
 } as const;
 
 function buildHeader(mountCtx: TableMountCtx): Component {
-  const { core, signals } = mountCtx;
+  const { core, reader, signals } = mountCtx;
 
   return createComponent(core, (ctx) => {
     const header = el("div", "ui-table-header");
@@ -283,7 +295,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
 
     ctx.list<ItemId>(
       header,
-      () => childrenOf(core, signals.schemaRowId.value),
+      () => reader.child(signals.schemaRowId.value).childIds(),
       (cellId) =>
         createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-cell");
@@ -334,8 +346,7 @@ function buildDataCell(core: UiCore, rowId: ItemId, cellId: ItemId): Component {
     bindItemFrame(ctx, { core, focus }, host);
 
     ctx.slot(host, () => {
-      const wanted = core.view(cellId);
-      return core.mountView({ id: cellId, focus, view: wanted });
+      return core.mountView({ id: cellId, containerId: rowId });
     });
 
     return host;
@@ -343,7 +354,8 @@ function buildDataCell(core: UiCore, rowId: ItemId, cellId: ItemId): Component {
 }
 
 function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
-  const { core, tableId, signals } = mountCtx;
+  const { core, tableId, reader, signals } = mountCtx;
+  const rowReader = reader.child(rowId);
 
   return createComponent(core, (ctx) => {
     const row = el("div", "ui-table-row");
@@ -385,7 +397,7 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
     ctx.list<ItemId>(
       row,
-      () => childrenOf(core, rowId).slice(0, signals.colCount.value),
+      () => rowReader.childIds().slice(0, signals.colCount.value),
       (cellId) => buildDataCell(core, rowId, cellId),
     );
 
@@ -416,10 +428,12 @@ function createTableView(args: {
 }): DomView {
   const { core, id: tableId } = args;
 
-  const rowsSignal = computed(() => rowIds(core, tableId));
-  const schemaRowIdSignal = computed(() => rowsSignal.value[0]!);
+  const tableReader = core.shapeReader(tableId, tableShape);
+
+  const rowsSignal = computed(() => tableReader.childIds());
+  const schemaRowIdSignal = computed(() => rowsSignal.value[0]);
   const colCountSignal = computed(
-    () => childrenOf(core, schemaRowIdSignal.value).length,
+    () => tableReader.child(schemaRowIdSignal.value).childIds().length,
   );
 
   const signals: TableSignals = {
@@ -472,7 +486,7 @@ function createTableView(args: {
         const colCount = signals.colCount.value;
 
         const nextFocus = plan.navMove(
-          core,
+          tableReader,
           tableId,
           rows,
           colCount,
@@ -491,7 +505,7 @@ function createTableView(args: {
         const colCount = signals.colCount.value;
 
         const nextFocus = plan.tabMove(
-          core,
+          tableReader,
           tableId,
           rows,
           colCount,
@@ -507,8 +521,8 @@ function createTableView(args: {
       case "CONFIRM": {
         const rows = signals.rows.value;
         if (selection.target !== DEFAULT_TARGET) {
-          if (isCellValueSel(core, tableId, rows, selection)) {
-            const next = plan.enterMove(core, rows, selection);
+          if (isCellValueSel(tableReader, tableId, rows, selection)) {
+            const next = plan.enterMove(tableReader, rows, selection);
             const dest = next ?? {
               focus: selection.focus,
               target: DEFAULT_TARGET,
@@ -523,18 +537,23 @@ function createTableView(args: {
         }
 
         if (isRowContainerSel(selection, tableId)) {
-          const newId = cmd.addRowAfter(core, tableId, selection.focus.item);
+          const newId = cmd.addRowAfter(
+            core,
+            tableId,
+            signals.rows.value,
+            selection.focus.item,
+          );
           core.focus({ container: tableId, item: newId }, DEFAULT_TARGET);
           return;
         }
-        if (!isCellContainerSel(core, tableId, rows, selection)) return;
+        if (!isCellContainerSel(tableReader, tableId, rows, selection)) return;
         handleContainerIntent({ core, sel: selection, intent });
         return;
       }
       case "TYPE": {
         if (selection.target !== DEFAULT_TARGET) return;
         const rows = signals.rows.value;
-        if (!isCellContainerSel(core, tableId, rows, selection)) return;
+        if (!isCellContainerSel(tableReader, tableId, rows, selection)) return;
         handleContainerIntent({ core, sel: selection, intent });
         return;
       }
@@ -558,7 +577,7 @@ function createTableView(args: {
         }
 
         const rows = signals.rows.value;
-        if (!isCellContainerSel(core, tableId, rows, selection)) return;
+        if (!isCellContainerSel(tableReader, tableId, rows, selection)) return;
         cmd.clearCell(core, selection.focus.item);
         return;
       }
@@ -572,7 +591,13 @@ function createTableView(args: {
     const inner = el("div", "ui-table-inner");
     root.append(inner);
 
-    const mountCtx: TableMountCtx = { core, tableId, signals, dispatch };
+    const mountCtx: TableMountCtx = {
+      core,
+      tableId,
+      reader: tableReader,
+      signals,
+      dispatch,
+    };
     ctx.mount(inner, buildHeader(mountCtx));
     ctx.mount(inner, buildBody(mountCtx));
 
@@ -588,12 +613,17 @@ function createTableView(args: {
   };
 }
 
+export const tableShape = {
+  type: "group",
+  children: {
+    type: "group",
+    children: { type: "any" },
+  },
+  nonEmpty: true,
+  alignChildren: true,
+} as const satisfies ViewShape;
+
 export const tableView: ViewRegistration = {
   factory: createTableView,
-  constraint: {
-    content: "group",
-    nonEmpty: true,
-    children: { content: "group", viewLocked: true },
-    shapeSync: true,
-  },
+  shape: tableShape,
 };

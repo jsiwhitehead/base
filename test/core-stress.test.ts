@@ -165,7 +165,7 @@ describe("core stress/rapid structural edits", () => {
 });
 
 describe("core stress/view switching", () => {
-  test("repeated view switching with constraints keeps valid structure", () => {
+  test("repeated view switching with shapes keeps valid structure", () => {
     const { core, rootId } = makePureCore();
     const table = mkGroup(core, rootId, { label: "table" });
     const row = mkGroup(core, table, { label: "row" });

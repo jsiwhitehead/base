@@ -1,4 +1,4 @@
-import type { ViewConstraint, ViewName } from "../core";
+import type { ViewShape, ViewName } from "../core";
 import type { UiCore, ViewFactory } from "../dom";
 import { outlineView } from "./outline";
 import { sliderView } from "./slider";
@@ -6,7 +6,7 @@ import { tableView } from "./table";
 
 export type ViewRegistration = {
   factory: ViewFactory<UiCore>;
-  constraint?: ViewConstraint;
+  shape?: ViewShape;
 };
 
 export const viewRegistrations: Record<ViewName, ViewRegistration> = {
@@ -18,10 +18,10 @@ export const viewRegistrations: Record<ViewName, ViewRegistration> = {
 export function splitViewRegistrations(
   regs: Partial<Record<ViewName, ViewRegistration>>,
 ): {
-  constraints: Partial<Record<ViewName, ViewConstraint>>;
+  shapes: Partial<Record<ViewName, ViewShape>>;
   factories: Partial<Record<ViewName, ViewFactory<UiCore>>>;
 } {
-  const constraints: Partial<Record<ViewName, ViewConstraint>> = {};
+  const shapes: Partial<Record<ViewName, ViewShape>> = {};
   const factories: Partial<Record<ViewName, ViewFactory<UiCore>>> = {};
 
   for (const [name, reg] of Object.entries(regs) as [
@@ -29,8 +29,8 @@ export function splitViewRegistrations(
     ViewRegistration,
   ][]) {
     factories[name] = reg.factory;
-    if (reg.constraint) constraints[name] = reg.constraint;
+    if (reg.shape) shapes[name] = reg.shape;
   }
 
-  return { constraints, factories };
+  return { shapes, factories };
 }

@@ -17,7 +17,6 @@ import {
   pointerDown,
   requireFrameEl,
   requireTargetInput,
-  setFormula,
   valueOfId,
   setView,
 } from "./dom-test-utils";
@@ -794,26 +793,6 @@ describe("views/slider", () => {
     await flushDomEffects();
 
     expect(valueOfId(core, s)).toBe(42);
-
-    unmount();
-  });
-
-  test("input is disabled when not editable", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const s = mkBlank(core, rootId, { label: "s", value: 5 });
-    setView(core, s, "slider");
-
-    const { unmount } = await mountView({ view: "slider", core, id: s });
-
-    setFormula(core, s, "unknown_name");
-    await flushDomEffects();
-
-    const input = document.body.querySelector(
-      'input[type="range"]',
-    ) as HTMLInputElement;
-    expect(input).toBeTruthy();
-    expect(input.disabled).toBe(true);
 
     unmount();
   });

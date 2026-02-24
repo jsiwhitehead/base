@@ -194,11 +194,26 @@ describe("core/basics", () => {
 
     const snap = core.item(d);
     expect(snap.content.type).toBe("group");
-    if (snap.content.type !== "group") throw new Error("Expected group content");
+    if (snap.content.type !== "group")
+      throw new Error("Expected group content");
 
     const derived = snap.content.children[0];
     if (!derived) throw new Error("Expected derived child");
     expect(core.view(derived)).toBe("outline");
+  });
+
+  test("view falls back to outline for shape-incompatible preferred view and recovers", () => {
+    const { core, rootId } = makeCoreForTest();
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+
+    setView(core, s, "slider");
+    expect(core.view(s)).toBe("slider");
+
+    setFormula(core, s, "unknown_name");
+    expect(core.view(s)).toBe("outline");
+
+    core.commit((t) => t.setValue(s, 7));
+    expect(core.view(s)).toBe("slider");
   });
 });
 
@@ -351,7 +366,9 @@ describe("core/tree editing", () => {
     expect(core.locate(cell)).toBe(null);
 
     const snap = exportSnapshot(core);
-    expect(JSON.stringify(snap)).not.toContain(`\"id\":${Number(g.slice(0, -1))}`);
+    expect(JSON.stringify(snap)).not.toContain(
+      `\"id\":${Number(g.slice(0, -1))}`,
+    );
     assertCoreInvariants(core, rootId);
   });
 });
@@ -560,8 +577,8 @@ describe("core/query", () => {
   });
 });
 
-describe("core/view constraints & rules", () => {
-  test("table constraint coerces table item to group; rows become group", () => {
+describe("core/view shapes & rules", () => {
+  test("table shape coerces table item to group; rows become group", () => {
     const { core, rootId } = makeCoreForTest();
 
     const tableId = mkBlank(core, rootId, { label: "table", value: "x" });
@@ -787,7 +804,11 @@ describe("core/snapshot", () => {
         includeCaret: true,
       }).tree,
     ).toEqual(beforeTree.tree);
-    expectSel(core, { container: rootId, item: rootId, target: DEFAULT_TARGET });
+    expectSel(core, {
+      container: rootId,
+      item: rootId,
+      target: DEFAULT_TARGET,
+    });
   });
 
   test("importSnapshot invalid input throws and leaves state unchanged", () => {
@@ -816,7 +837,11 @@ describe("core/snapshot", () => {
     const snap = core.exportSnapshot();
     core.importSnapshot(snap);
 
-    expectSel(core, { container: rootId, item: rootId, target: DEFAULT_TARGET });
+    expectSel(core, {
+      container: rootId,
+      item: rootId,
+      target: DEFAULT_TARGET,
+    });
 
     core.undo();
     expect(valueOfId(core, x)).toBe(2);
@@ -887,8 +912,8 @@ describe("core/selection validity & repair", () => {
       },
     };
 
-    const { constraints } = splitViewRegistrations(viewRegistrations);
-    const { core, rootId } = createCore({ constraints, collab });
+    const { shapes } = splitViewRegistrations(viewRegistrations);
+    const { core, rootId } = createCore({ shapes, collab });
 
     let g = "";
     let x = "";
@@ -945,9 +970,9 @@ describe("core/id stability", () => {
 
 describe("core/determinism", () => {
   test("same sequence of transactions produces the same final state", () => {
-    const { constraints } = splitViewRegistrations(viewRegistrations);
+    const { shapes } = splitViewRegistrations(viewRegistrations);
     const runScenario = () => {
-      const { core, rootId } = createCore({ constraints });
+      const { core, rootId } = createCore({ shapes });
       let g = "";
       let a = "";
       let b = "";
@@ -1003,7 +1028,7 @@ describe("core/collab (wire contract)", () => {
       onRemote(txn);
     };
 
-    const { core, rootId } = createCore({ constraints: {}, collab });
+    const { core, rootId } = createCore({ shapes: {}, collab });
 
     let x = "";
     core.commit((t) => {

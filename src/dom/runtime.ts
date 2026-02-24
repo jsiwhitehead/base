@@ -45,8 +45,7 @@ type AttachTargetOpts = {
 
 type MountViewOpts = {
   id: ItemId;
-  focus?: Focus;
-  view: ViewName;
+  containerId: ItemId;
 };
 
 const itemKey = (id: ItemId): string => id;
@@ -381,15 +380,16 @@ export function createRuntime(opts: {
 
   const mountView = (mountOpts: MountViewOpts): Component => {
     const id = mountOpts.id;
-    const focus: Focus = mountOpts.focus ?? { container: id, item: id };
-    const factory = views[mountOpts.view] ?? views.outline;
+    const focus: Focus = { container: mountOpts.containerId, item: id };
+    const core = opts.getCore();
+    const resolvedView = core.view(id);
+    const factory = views[resolvedView] ?? views.outline;
     if (!factory) {
       throw new Error(
-        `No view factory available for '${mountOpts.view}' and outline fallback is missing`,
+        `No view factory available for '${resolvedView}' and outline fallback is missing`,
       );
     }
 
-    const core = opts.getCore();
     const view = factory({ core, id, focus });
 
     const unreg = registerViewRoot({

@@ -1,7 +1,7 @@
 import { signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
-import type { Focus, Intent, ItemId, ViewName } from "../src/core";
+import type { Focus, Intent, ItemId } from "../src/core";
 import {
   DEFAULT_TARGET,
   LABEL_TARGET,
@@ -30,6 +30,7 @@ import {
   requireTargetInput,
   setFormula,
   setQuery,
+  setView,
 } from "./dom-test-utils";
 
 function mount(c: Component): () => void {
@@ -1092,20 +1093,26 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const { core } = makeCoreRuntime();
 
     expect(() =>
-      core.mountView({ id: "not-an-id" as ItemId, view: "outline" }),
+      core.mountView({
+        id: "not-an-id" as ItemId,
+        containerId: "not-an-id" as ItemId,
+      }),
     ).toThrow();
     expect(() =>
-      core.mountView({ id: "999999:" as ItemId, view: "outline" }),
+      core.mountView({
+        id: "999999:" as ItemId,
+        containerId: "999999:" as ItemId,
+      }),
     ).toThrow();
   });
 
-  test("mountView falls back to outline when requested view factory is missing", () => {
-    const { core, rootId } = makeCoreRuntime({ views: viewRegistrations });
+  test("mountView falls back to outline when resolved view factory is missing", () => {
+    const { slider: _slider, ...viewsWithoutSlider } = viewRegistrations;
+    const { core, rootId } = makeCoreRuntime({ views: viewsWithoutSlider });
+    const s = mkBlank(core, rootId, { label: "s", value: 1 });
+    setView(core, s, "slider");
 
-    const mounted = core.mountView({
-      id: rootId,
-      view: "nonexistent" as ViewName,
-    });
+    const mounted = core.mountView({ id: s, containerId: rootId });
 
     expect(mounted.el.classList.contains("ui-body")).toBe(true);
     expect(mounted.el.classList.contains("ui-outline")).toBe(true);
@@ -1116,8 +1123,6 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("mountView throws when requested view and outline fallback are both missing", () => {
     const { core, rootId } = makeCoreRuntime({ views: {} });
 
-    expect(() =>
-      core.mountView({ id: rootId, view: "nonexistent" as ViewName }),
-    ).toThrow();
+    expect(() => core.mountView({ id: rootId, containerId: rootId })).toThrow();
   });
 });

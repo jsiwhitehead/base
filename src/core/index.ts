@@ -1,23 +1,15 @@
 import type { ReadonlySignal } from "@preact/signals-core";
 import { batch, computed, signal } from "@preact/signals-core";
 
-import type { Result } from "./eval";
-import {
-  createEvaluator,
-  isBlankResult,
-  isEntryGroupResult,
-  isIssueResult,
-  isResultGroupResult,
-  isScalarResult,
-} from "./eval";
+import { createEvaluator } from "./eval";
 import { interpretExpr } from "./lang";
 import type {
   ApplyDelta,
-  SnapshotData,
   Entry,
   EntryContent,
   EntryId,
   Op,
+  SnapshotData,
   Transaction,
   TransactionMeta,
   ViewName,
@@ -25,15 +17,39 @@ import type {
 import {
   createModel,
   createModelFromSnapshot,
-  isFormulaContent,
-  isQueryContent,
   makeBlankEntry,
   makeGroupEntry,
 } from "./model";
-import type { ViewConstraint } from "./sync";
-import { contentSatisfiesConstraint, enforceViewConstraints } from "./sync";
-
-export type ItemId = string;
+import type {
+  Connected,
+  Content,
+  Item,
+  ItemId,
+  Mode,
+  Value,
+  ValueOrBlank,
+} from "./read";
+import {
+  createReadApi,
+  entryIdFromItemId,
+  isCoreReadError,
+  itemIdOf,
+  parseItemId,
+  refFromItemId,
+} from "./read";
+import type {
+  AnyShapeReader,
+  GroupShapeReader,
+  ReadFromShape,
+  ShapeReaderFromShape,
+  ValueShapeReader,
+  ViewShape,
+} from "./shape";
+import {
+  createShapeReader,
+  enforceViewShapes,
+  isShapeCompatible,
+} from "./shape";
 
 type Focus = { container: ItemId; item: ItemId };
 type Caret = { start: number; end: number };
@@ -115,31 +131,6 @@ function parseKeyIntent(input: KeyIntentInput): Intent | null {
   return null;
 }
 
-export type Value = true | number | string;
-export type ValueOrBlank = Value | null;
-
-export type Content =
-  | { type: "value"; value: ValueOrBlank }
-  | { type: "issue"; message: string }
-  | { type: "group"; children: readonly ItemId[] };
-
-export type Connected =
-  | { type: "formula"; expr: string }
-  | { type: "query"; from: string; where: string; orderBy: string };
-
-type Mode =
-  | { type: "readonly" }
-  | { type: "plain" }
-  | { type: "connected"; conn: Connected };
-
-type Item = {
-  id: ItemId;
-  label?: string;
-  content: Content;
-  mode: Mode;
-};
-
-type ItemRef = { entryId: EntryId; path: readonly number[] };
 type RepairAnchorStep = { parentId: EntryId; index: number };
 type RepairAnchor = { steps: readonly RepairAnchorStep[] };
 type TextHistoryGroupKey = {
@@ -164,42 +155,6 @@ type CapturedSubtree = {
 
 const TEXT_HISTORY_COALESCE_MS = 1000;
 
-const itemIdOf = (entryId: EntryId, path: readonly number[] = []): ItemId =>
-  `${String(entryId)}:${path.length ? path.join(",") : ""}`;
-
-const parseItemId = (id: ItemId): ItemRef | null => {
-  const i = id.indexOf(":");
-  if (i === -1) return null;
-
-  const head = id.slice(0, i);
-  const entryId = Number(head);
-  if (!Number.isFinite(entryId)) return null;
-
-  const rest = id.slice(i + 1);
-  if (!rest.trim()) return { entryId: entryId as EntryId, path: [] };
-
-  const parts = rest.split(",");
-  const path: number[] = [];
-  for (const p of parts) {
-    const n = Number(p);
-    if (!Number.isFinite(n)) return null;
-    path.push(n);
-  }
-
-  return { entryId: entryId as EntryId, path };
-};
-
-const refFromItemId = (id: ItemId): ItemRef => {
-  const ref = parseItemId(id);
-  if (!ref) throw new Error("Invalid item id");
-  return ref;
-};
-
-const entryIdFromItemId = (id: ItemId): EntryId | null => {
-  const ref = parseItemId(id);
-  return ref && ref.path.length === 0 ? ref.entryId : null;
-};
-
 function assertNever(_exhaustive: never, message: string): never {
   throw new Error(message);
 }
@@ -217,23 +172,6 @@ export function isNumericLikeValue(value: ValueOrBlank): boolean {
   if (!t) return false;
   if (!NUMERIC_VALUE_RE.test(t)) return false;
   return Number.isFinite(Number(t));
-}
-
-function modeFromContent(ref: ItemRef, c: EntryContent): Mode {
-  if (ref.path.length) return { type: "readonly" };
-  if (isFormulaContent(c))
-    return { type: "connected", conn: { type: "formula", expr: c.expr } };
-  if (isQueryContent(c))
-    return {
-      type: "connected",
-      conn: {
-        type: "query",
-        from: c.from,
-        where: c.where,
-        orderBy: c.orderBy,
-      },
-    };
-  return { type: "plain" };
 }
 
 export type Tx = {
@@ -262,6 +200,10 @@ export type Core = {
   dispose(): void;
 
   item(id: ItemId): Item;
+  shapeReader<S extends ViewShape>(
+    id: ItemId,
+    shape: S,
+  ): ShapeReaderFromShape<S>;
 
   view(id: ItemId): ViewName;
   exportSnapshot(): SnapshotData;
@@ -358,14 +300,14 @@ type CorePlatformHooks = {
 export type { CorePlatformHooks };
 
 export function createCore(opts: {
-  constraints?: Partial<Record<ViewName, ViewConstraint>>;
+  shapes?: Partial<Record<ViewName, ViewShape>>;
   collab?: CollabWire;
   platform?: CorePlatformHooks;
 }): {
   core: Core;
   rootId: ItemId;
 } {
-  const constraints = opts.constraints ?? {};
+  const shapes = opts.shapes ?? {};
 
   let model = createModel();
 
@@ -513,74 +455,12 @@ export function createCore(opts: {
     setSelection(selNow);
   };
 
-  const childrenOfResolved = (
-    base: ItemRef,
-    result: Result,
-  ): readonly ItemId[] => {
-    if (isEntryGroupResult(result))
-      return result.entryIds.map((entryId) => itemIdOf(entryId, []));
-    if (isResultGroupResult(result))
-      return result.items.map((_item, i) =>
-        itemIdOf(base.entryId, [...base.path, i]),
-      );
-    return [];
-  };
+  const read = createReadApi({
+    getEvaluator: () => evaluator,
+    getModel: () => model,
+  });
 
-  const resolve = (ref: ItemRef): { result: Result; label?: string } => {
-    let cur: Result = evaluator.result(ref.entryId);
-    let label: string | undefined =
-      model.readEntry(ref.entryId).label.trim() || undefined;
-
-    for (let i = 0; i < ref.path.length; i++) {
-      const idx = ref.path[i]!;
-      if (!isResultGroupResult(cur))
-        throw new Error("Invalid item path");
-      const item = cur.items[idx];
-      if (!item) throw new Error("Invalid item path");
-      label = item.label?.trim() || undefined;
-      cur = item.result;
-    }
-
-    return { result: cur, ...(label ? { label } : {}) };
-  };
-
-  const toContent = (ref: ItemRef, result: Result): Content => {
-    if (isBlankResult(result)) return { type: "value", value: null };
-    if (isIssueResult(result))
-      return { type: "issue", message: result.message };
-    if (isScalarResult(result)) {
-      const scalar = result.result;
-      return {
-        type: "value",
-        value:
-          scalar === true ||
-          typeof scalar === "number" ||
-          typeof scalar === "string"
-            ? scalar
-            : null,
-      };
-    }
-    return { type: "group", children: childrenOfResolved(ref, result) };
-  };
-
-  const item = (id: ItemId): Item => {
-    const ref = refFromItemId(id);
-    const resolved = resolve(ref);
-    const content = toContent(ref, resolved.result);
-
-    let mode: Mode = { type: "readonly" };
-    if (!ref.path.length) {
-      const stored = model.readEntry(ref.entryId).content;
-      mode = modeFromContent(ref, stored);
-    }
-
-    return {
-      id,
-      ...(resolved.label ? { label: resolved.label } : {}),
-      content,
-      mode,
-    };
-  };
+  const item = (id: ItemId): Item => read.item(id);
 
   const viewSignalCache = new Map<EntryId, ReadonlySignal<ViewName>>();
 
@@ -601,14 +481,9 @@ export function createCore(opts: {
         const vk = model.entrySignal(eid).value.view;
         const wanted = vk ?? "outline";
         if (wanted === "outline") return "outline";
-
-        const content = item(itemIdOf(eid)).content;
-        const isGroup = content.type === "group";
-
-        return contentSatisfiesConstraint(
-          { isGroup, childCount: isGroup ? content.children.length : 0 },
-          constraints[wanted],
-        )
+        const shape = shapes[wanted];
+        if (!shape) return wanted;
+        return isShapeCompatible(read, itemIdOf(eid), shape)
           ? wanted
           : "outline";
       });
@@ -645,7 +520,8 @@ export function createCore(opts: {
       out: Op[],
       opts?: { skipRoot?: true },
     ): void => {
-      if (!opts?.skipRoot) out.push(model.ops.create(entryForRestoreCreate(node.entry)));
+      if (!opts?.skipRoot)
+        out.push(model.ops.create(entryForRestoreCreate(node.entry)));
       for (const child of node.children) pushCreateOpsForSubtree(child, out);
     };
 
@@ -729,7 +605,9 @@ export function createCore(opts: {
 
         const parentId = cur.parentId;
         if (parentId == null)
-          throw new Error("Remove inverse expects non-root item to have a parent");
+          throw new Error(
+            "Remove inverse expects non-root item to have a parent",
+          );
         const loc = model.locateInParent(id0);
         const prevIndex = loc?.index ?? undefined;
         pushChildRestoreMoves(subtree, inverses);
@@ -759,13 +637,13 @@ export function createCore(opts: {
     return { delta, inverseOps };
   };
 
-  const applyConstraintOps = (
+  const applyShapeRuleOps = (
     touchedIds: readonly EntryId[],
     inverseAcc: Op[],
   ): ApplyDelta => {
     let merged = emptyApply;
 
-    enforceViewConstraints(model, constraints, touchedIds, (ops) => {
+    enforceViewShapes(model, shapes, touchedIds, (ops) => {
       const txn = model.ops.transaction(ops, { source: "rule" });
       const { delta, inverseOps } = applyTxnWithInverse(txn);
       inverseAcc.push(...inverseOps);
@@ -872,8 +750,8 @@ export function createCore(opts: {
     const modelDelta = model.apply(txn);
     merged = mergeApply(merged, modelDelta);
 
-    const constraintDelta = applyConstraintOps(modelDelta.touched, inverseAcc);
-    merged = mergeApply(merged, constraintDelta);
+    const shapeRuleDelta = applyShapeRuleOps(modelDelta.touched, inverseAcc);
+    merged = mergeApply(merged, shapeRuleDelta);
 
     const selection = selectionSignal.peek();
     if (!selectionStillValid(selection)) setSelection({ type: "idle" });
@@ -894,8 +772,8 @@ export function createCore(opts: {
     inverseAcc.push(...inverseOps);
     merged = mergeApply(merged, userDelta);
 
-    const constraintDelta = applyConstraintOps(userDelta.touched, inverseAcc);
-    merged = mergeApply(merged, constraintDelta);
+    const shapeRuleDelta = applyShapeRuleOps(userDelta.touched, inverseAcc);
+    merged = mergeApply(merged, shapeRuleDelta);
 
     repairSelectionAfterLocalApply(anchor);
 
@@ -931,12 +809,14 @@ export function createCore(opts: {
       if (isRemote) {
         final = mergeApply(final, applyRemotePipeline(txn, inverseAcc));
       } else {
-        final = mergeApply(final, applyUserPipeline(txn, inverseAcc, userHistoryCtx));
+        final = mergeApply(
+          final,
+          applyUserPipeline(txn, inverseAcc, userHistoryCtx),
+        );
       }
 
       clearCachesForRemovedEntries(final.removed);
     });
-
   };
 
   let localSeq = 0;
@@ -987,7 +867,10 @@ export function createCore(opts: {
     }
 
     const nextModel = createModelFromSnapshot(snapshot);
-    const nextEvaluator = createEvaluator({ model: nextModel, interpret: interpretExpr });
+    const nextEvaluator = createEvaluator({
+      model: nextModel,
+      interpret: interpretExpr,
+    });
     const prevEvaluator = evaluator;
 
     batch(() => {
@@ -997,6 +880,14 @@ export function createCore(opts: {
     });
 
     prevEvaluator.dispose();
+  };
+
+  const shapeReader = <S extends ViewShape>(
+    id: ItemId,
+    shape: S,
+  ): ShapeReaderFromShape<S> => {
+    read.item(id);
+    return createShapeReader(read, id, shape);
   };
 
   const commit = (run: (t: Tx) => void): void => {
@@ -1353,6 +1244,7 @@ export function createCore(opts: {
     },
 
     item,
+    shapeReader,
 
     view,
     exportSnapshot,
@@ -1376,16 +1268,28 @@ export function createCore(opts: {
 }
 
 export type {
+  AnyShapeReader,
   Caret,
+  Connected,
+  Content,
   Focus,
+  GroupShapeReader,
   Intent,
+  Item,
+  ItemId,
   KeyIntentInput,
+  Mode,
   NavDir,
+  ReadFromShape,
   Selection,
   SnapshotData,
+  ShapeReaderFromShape,
   Transaction,
-  ViewConstraint,
+  Value,
+  ValueOrBlank,
+  ValueShapeReader,
   ViewName,
+  ViewShape,
 };
 
 export {
@@ -1395,3 +1299,5 @@ export {
   connTarget,
   parseKeyIntent,
 };
+
+export { isCoreReadError };

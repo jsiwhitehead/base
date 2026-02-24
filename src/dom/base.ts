@@ -1,7 +1,7 @@
 import { computed, effect } from "@preact/signals-core";
 
 import type { Focus, ViewName } from "../core";
-import { DEFAULT_TARGET, isNumericLikeValue } from "../core";
+import { DEFAULT_TARGET, isCoreReadError, isNumericLikeValue } from "../core";
 import { DEV, devAssert } from "../dev";
 import type { Component, UiCore } from "./runtime";
 
@@ -195,6 +195,28 @@ export function createComponent(
 ): Component {
   const bag = new Disposer();
 
+  const addSafeEffect = (run: () => void | (() => void)): void => {
+    let disposeEffect: (() => void) | null = null;
+    let stopped = false;
+
+    const stop = (): void => {
+      if (stopped) return;
+      stopped = true;
+      disposeEffect?.();
+    };
+
+    disposeEffect = effect(() => {
+      if (stopped) return;
+      try {
+        return run();
+      } catch (err) {
+        if (!isCoreReadError(err)) throw err;
+        queueMicrotask(stop);
+      }
+    });
+    bag.add(stop);
+  };
+
   const ctx: Ctx = {
     on(target, type, handler, opts) {
       const listener = (event: Event) =>
@@ -206,7 +228,7 @@ export function createComponent(
     },
 
     effect(run) {
-      bag.add(effect(run));
+      addSafeEffect(run);
     },
 
     mount(host, child) {
@@ -218,7 +240,7 @@ export function createComponent(
       const region = createRegion(host);
       let cur: Component | null = null;
 
-      const disposeEffect = effect(() => {
+      addSafeEffect(() => {
         const next = getComponent();
 
         region.clear();
@@ -229,7 +251,6 @@ export function createComponent(
       });
 
       bag.add(() => {
-        disposeEffect();
         cur?.dispose();
         region.dispose();
       });
@@ -247,12 +268,11 @@ export function createComponent(
         return { element: c.el, dispose: c.dispose };
       });
 
-      const disposeEffect = effect(() => {
+      addSafeEffect(() => {
         childManager.update(getIds());
       });
 
       bag.add(() => {
-        disposeEffect();
         childManager.dispose();
         region.dispose();
       });
@@ -298,9 +318,9 @@ export function bindItemFrame(
       sel.focus.container === spec.focus.container
     );
   });
-  const isIssue = computed(
-    () => spec.core.item(spec.focus.item).content.type === "issue",
-  );
+  const isIssue = computed(() => {
+    return spec.core.item(spec.focus.item).content.type === "issue";
+  });
   const isNumeric = computed(() => {
     const content = spec.core.item(spec.focus.item).content;
     return content.type === "value" && isNumericLikeValue(content.value);

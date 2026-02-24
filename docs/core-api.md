@@ -26,7 +26,7 @@ Rules:
 - Core MUST be the single source of truth for state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
 - Collaboration transactions use the exported `Transaction` wire type (model/entry-level ops), while normal editing APIs remain item-based (`core.commit(...)` and `tx.*`).
-- `createCore` MAY receive a constraints registry (`ViewConstraint` by `ViewName`) used by `core.view(...)` resolution and post-transaction constraint enforcement.
+- `createCore` MAY receive a view-shape registry (`ViewShape` by `ViewName`) used by `core.view(...)` resolution and post-transaction shape enforcement.
 - `createCore` MAY receive platform callbacks (`CorePlatformHooks`) for DOM/runtime-owned behavior while preserving Core semantics.
 - A Core instance owns all state and MUST be explicitly disposed.
 
@@ -317,7 +317,7 @@ Rules:
 - `getActiveViewIntentHandler` allows Core intent routing to delegate non-global intents to the active mounted view without depending on DOM runtime internals.
 - `typeCharAtFocusedTarget` allows Core root-intent semantics (`TYPE`) to trigger platform text insertion after Core updates selection.
 
-## Views and constraints
+## Views and shapes
 
 ```ts
 core.view(id): ViewName
@@ -325,11 +325,11 @@ core.view(id): ViewName
 
 `core.view(id)` behavior:
 
-- Returns the current semantically resolved view name for the item.
+- Returns the current resolved view name for the item (stored preference or `"outline"`).
 - `core.view(id)` MUST throw if `id` is malformed, missing, or resolves to an invalid derived path.
 - `core.view(id)` MUST support valid derived IDs.
-- If the stored view has a constraint and the item's resolved content does not satisfy it, Core MUST return `"outline"`. The stored view preference MUST be preserved on the item.
-- `core.view(id)` resolves semantic view eligibility only; DOM factory availability and mounting fallback are runtime concerns (`docs/dom-runtime.md`).
+- `core.view(id)` MUST resolve shaped-view eligibility against the current resolved item data and return `"outline"` when the preferred shaped view is currently incompatible.
+- DOM factory availability and mounting fallback are runtime concerns (`docs/dom-runtime.md`).
 
 ### Active view and keyboard routing
 
@@ -344,38 +344,45 @@ Rules:
 - Core MUST handle root bootstrap intents globally. From root container focus, only `NAV right`, `TAB`, `CONFIRM`, and `TYPE` are enabled; each MUST follow the corresponding Outline behavior (`docs/views-spec.md`).
 - View behavior MUST remain intent-driven (semantic), not raw-key driven.
 
-### View constraints
+### View shapes
 
-Views MAY declare structural constraints as part of application/view registration, but Core receives only the constraints registry.
+Views MAY declare structural shapes as part of application/view registration, but Core receives only the shape registry.
 
 ```ts
-type ViewConstraint = {
-  content: "group" | "value" | "any";
-  nonEmpty?: true;
-  children?: {
-    content: "group" | "value" | "any";
-    viewLocked?: true;
-  };
-  shapeSync?: true;
-};
+type ViewShape =
+  | { type: "any" }
+  | { type: "value" }
+  | {
+      type: "group";
+      children: ViewShape;
+      nonEmpty?: true;
+    }
+  | {
+      type: "group";
+      children: Extract<ViewShape, { type: "group" }>;
+      nonEmpty?: true;
+      alignChildren?: true;
+    };
 ```
 
-Constraint meanings:
+Shape meanings:
 
-- `content`: required content shape for the item. `"value"` means non-group.
-- `nonEmpty`: constrained group MUST have at least one direct child.
-- `children.content`: required content shape for direct children of a constrained group.
-- `children.viewLocked`: children MUST have their stored view cleared to `null`.
-- `shapeSync`: direct children MUST share the same labeled column set and order.
+- `type`: required node shape for the item. `"value"` means value-content (blank/scalar) and excludes issue/group results.
+- `children`: required shape for direct children of a constrained group (group shapes only).
+- `nonEmpty`: constrained group MUST have at least one direct child (group shapes only).
+- `alignChildren`: direct child groups MUST share the same labeled child set and order by label (group shapes only, and only valid when `children` is a group shape).
+- Child view locking is inferred from `children`: if `children.type !== "any"`, direct children MUST have their stored view cleared to `null`.
+- Nested shapes MUST be enforced recursively by applying `children` at each matching group node.
 
 Enforcement rules:
 
-- Constraint enforcement MUST run after every transaction (`commit`, `undo`, `redo`, remote apply).
-- Enforcement MUST only coerce plain items (blank, value, group). Connected items (formula, query) MUST NOT be coerced; mismatches are handled at view resolution time (see `core.view(id)`).
-- Content coercion MUST run before non-empty enforcement. Non-empty enforcement MUST run before children coercion. Children coercion MUST run before shape sync.
-- If a content constraint cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
+- Shape enforcement MUST run after every transaction (`commit`, `undo`, `redo`, remote apply).
+- Enforcement MUST only coerce plain items (blank, value, group).
+- Connected items (formula, query) MUST NOT be coerced. Shape incompatibility for non-plain items MUST NOT clear the stored view; render fallback is handled by `core.view(id)`.
+- Content coercion MUST run before non-empty enforcement. Non-empty enforcement MUST run before children coercion. Children coercion MUST run before child alignment (`alignChildren`).
+- If a shape requirement cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
 - If `nonEmpty` is set and the constrained group is empty, enforcement MUST create one direct child.
-- Shape sync MUST elect a leader row, then create missing columns, reorder mismatched columns, and remove excess columns in other rows.
+- Label alignment MUST elect a leader child group, then create missing labeled children, reorder mismatched labeled children, and remove excess labeled children in other child groups.
 - Coercion ops MUST be captured for undo/redo.
 
 ## Undo and redo
@@ -520,7 +527,7 @@ Type exports:
 - `SnapshotData`
 - `Transaction`
 - `ViewName`
-- `ViewConstraint`
+- `ViewShape`
 
 Constant exports:
 

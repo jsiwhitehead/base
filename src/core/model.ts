@@ -346,7 +346,8 @@ export function createModel(): Model {
     let cur: EntryId | null = toParentId;
     while (cur != null) {
       if (!entries.has(cur)) break;
-      if (cur === childId) throw new Error("Cannot move item into its descendant");
+      if (cur === childId)
+        throw new Error("Cannot move item into its descendant");
       cur = entryRecord(cur).entrySignal.peek().parentId;
     }
 
@@ -810,7 +811,11 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 }
 
 function readInt(value: unknown, path: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || !Number.isFinite(value))
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    !Number.isFinite(value)
+  )
     throw new Error(`${path} must be a finite integer`);
   return value;
 }
@@ -827,7 +832,8 @@ function readOptionalString(value: unknown, path: string): string | undefined {
 
 function readOptionalView(value: unknown, path: string): ViewName | undefined {
   if (value === undefined) return undefined;
-  if (value === "outline" || value === "table" || value === "slider") return value;
+  if (value === "outline" || value === "table" || value === "slider")
+    return value;
   throw new Error(`${path} must be a valid view name`);
 }
 
@@ -863,7 +869,8 @@ function parseSnapshotNode(
   const view = readOptionalView(input.view, `${path}.view`) ?? null;
 
   const contentInput = input.content;
-  if (!isRecord(contentInput)) throw new Error(`${path}.content must be an object`);
+  if (!isRecord(contentInput))
+    throw new Error(`${path}.content must be an object`);
   const kind = contentInput.type;
   if (typeof kind !== "string")
     throw new Error(`${path}.content.type must be a string`);
@@ -911,7 +918,12 @@ function parseSnapshotNode(
       if (!Array.isArray(childrenInput))
         throw new Error(`${path}.content.children must be an array`);
       const children = childrenInput.map((child, i) =>
-        parseSnapshotNode(child, `${path}.content.children[${i}]`, seen, maxIdRef),
+        parseSnapshotNode(
+          child,
+          `${path}.content.children[${i}]`,
+          seen,
+          maxIdRef,
+        ),
       );
       return {
         id,
@@ -933,9 +945,15 @@ export function createModelFromSnapshot(snapshot: SnapshotData): Model {
   const nextId = readInt(snapshot.nextId, "snapshot.nextId") as EntryId;
   const seen = new Set<EntryId>();
   const maxIdRef = { value: 0 };
-  const root = parseSnapshotNode(snapshot.root, "snapshot.root", seen, maxIdRef);
+  const root = parseSnapshotNode(
+    snapshot.root,
+    "snapshot.root",
+    seen,
+    maxIdRef,
+  );
 
-  if (root.id !== rootId) throw new Error("snapshot.rootId must match snapshot.root.id");
+  if (root.id !== rootId)
+    throw new Error("snapshot.rootId must match snapshot.root.id");
   if (nextId <= maxIdRef.value)
     throw new Error("snapshot.nextId must be greater than all entry ids");
 
