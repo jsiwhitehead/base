@@ -3,7 +3,6 @@ import { batch, computed, signal } from "@preact/signals-core";
 
 import type { Result } from "./eval";
 import {
-  Results,
   createEvaluator,
   isBlankResult,
   isEntryGroupResult,
@@ -535,9 +534,9 @@ export function createCore(opts: {
     for (let i = 0; i < ref.path.length; i++) {
       const idx = ref.path[i]!;
       if (!isResultGroupResult(cur))
-        return { result: Results.issue("Invalid path") };
+        throw new Error("Invalid item path");
       const item = cur.items[idx];
-      if (!item) return { result: Results.issue("Invalid path") };
+      if (!item) throw new Error("Invalid item path");
       label = item.label?.trim() || undefined;
       cur = item.result;
     }
@@ -565,38 +564,34 @@ export function createCore(opts: {
   };
 
   const item = (id: ItemId): Item => {
-    try {
-      const ref = refFromItemId(id);
-      const resolved = resolve(ref);
-      const content = toContent(ref, resolved.result);
+    const ref = refFromItemId(id);
+    const resolved = resolve(ref);
+    const content = toContent(ref, resolved.result);
 
-      let mode: Mode = { type: "readonly" };
-      if (!ref.path.length) {
-        const stored = model.readEntry(ref.entryId).content;
-        mode = modeFromContent(ref, stored);
-      }
-
-      return {
-        id,
-        ...(resolved.label ? { label: resolved.label } : {}),
-        content,
-        mode,
-      };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return {
-        id,
-        content: { type: "issue", message: msg },
-        mode: { type: "readonly" },
-      };
+    let mode: Mode = { type: "readonly" };
+    if (!ref.path.length) {
+      const stored = model.readEntry(ref.entryId).content;
+      mode = modeFromContent(ref, stored);
     }
+
+    return {
+      id,
+      ...(resolved.label ? { label: resolved.label } : {}),
+      content,
+      mode,
+    };
   };
 
   const viewSignalCache = new Map<EntryId, ReadonlySignal<ViewName>>();
 
   const view = (id: ItemId): ViewName => {
-    const eid = entryIdFromItemId(id);
-    if (eid == null) return "outline";
+    const ref = refFromItemId(id);
+    if (ref.path.length) {
+      item(id);
+      return "outline";
+    }
+    const eid = ref.entryId;
+    if (!model.hasEntry(eid)) throw new Error("Unknown entry id");
 
     let sig = viewSignalCache.get(eid);
     if (!sig) {
@@ -711,6 +706,8 @@ export function createCore(opts: {
         const subtree = captureSubtree(id0);
         if (id0 === rootEntryId) {
           if (subtree.entry.content.type === "group") {
+            pushChildRestoreMoves(subtree, inverses);
+            pushCreateOpsForSubtree(subtree, inverses, { skipRoot: true });
             inverses.push(
               model.ops.patch(id0, {
                 label: subtree.entry.label,
@@ -718,8 +715,6 @@ export function createCore(opts: {
                 content: { type: "group", childIds: [] },
               }),
             );
-            pushCreateOpsForSubtree(subtree, inverses, { skipRoot: true });
-            pushChildRestoreMoves(subtree, inverses);
           } else {
             inverses.push(
               model.ops.patch(id0, {

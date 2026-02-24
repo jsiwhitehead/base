@@ -5,6 +5,7 @@ import type {
   Core,
   ItemId,
   Selection,
+  SnapshotData,
   Transaction,
   ViewName,
 } from "../src/core";
@@ -54,6 +55,14 @@ export function requireCreatedEntryId(txn: Transaction): number {
     throw new Error(`Expected exactly one create op, got ${created.length}`);
   }
   return created[0]!.entry.id;
+}
+
+export function exportSnapshot(core: Pick<Core, "exportSnapshot">): SnapshotData {
+  return core.exportSnapshot();
+}
+
+export function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 export function expectSel(

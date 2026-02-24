@@ -6,7 +6,9 @@ import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
   assertCoreInvariants,
   childrenOf,
+  cloneJson,
   expectSel,
+  exportSnapshot,
   makePureCore,
   mkBlank,
   mkGroup,
@@ -164,16 +166,39 @@ describe("core/basics", () => {
     });
   });
 
-  test("item(invalid format) returns issue (does not throw)", () => {
+  test("item(invalid format) throws", () => {
     const { core } = makeCoreForTest();
 
-    expect(core.item("not-an-id").content.type).toBe("issue");
+    expect(() => core.item("not-an-id")).toThrow();
   });
 
-  test("item(valid format, missing item) returns issue (does not throw)", () => {
+  test("item(valid format, missing item) throws", () => {
     const { core } = makeCoreForTest();
 
-    expect(core.item("999999:").content.type).toBe("issue");
+    expect(() => core.item("999999:")).toThrow();
+  });
+
+  test("view(invalid format) and view(missing item) throw", () => {
+    const { core } = makeCoreForTest();
+
+    expect(() => core.view("not-an-id")).toThrow();
+    expect(() => core.view("999999:")).toThrow();
+  });
+
+  test("view supports valid derived ids and returns outline", () => {
+    const { core, rootId } = makeCoreForTest();
+    const rows = mkGroup(core, rootId, { label: "rows" });
+    mkBlank(core, rows, { label: "r1", value: 1 });
+    const d = mkBlank(core, rootId, { label: "d" });
+    setFormula(core, d, "rows");
+
+    const snap = core.item(d);
+    expect(snap.content.type).toBe("group");
+    if (snap.content.type !== "group") throw new Error("Expected group content");
+
+    const derived = snap.content.children[0];
+    if (!derived) throw new Error("Expected derived child");
+    expect(core.view(derived)).toBe("outline");
   });
 });
 
@@ -303,9 +328,30 @@ describe("core/tree editing", () => {
     expect(
       childrenOf(core, rootId).some((id) => core.item(id).label === "g"),
     ).toBe(false);
-    expect(core.item(g).content.type).toBe("issue");
+    expect(() => core.item(g)).toThrow();
     expect(core.locate(g)).toBe(null);
 
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("remove deletes descendants (cascade delete)", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const g = mkGroup(core, rootId, { label: "g" });
+    const row = mkGroup(core, g, { label: "row" });
+    const cell = mkBlank(core, row, { label: "cell", value: 1 });
+
+    core.commit((t) => t.remove(g));
+
+    expect(() => core.item(g)).toThrow();
+    expect(() => core.item(row)).toThrow();
+    expect(() => core.item(cell)).toThrow();
+    expect(core.locate(g)).toBe(null);
+    expect(core.locate(row)).toBe(null);
+    expect(core.locate(cell)).toBe(null);
+
+    const snap = exportSnapshot(core);
+    expect(JSON.stringify(snap)).not.toContain(`\"id\":${Number(g.slice(0, -1))}`);
     assertCoreInvariants(core, rootId);
   });
 });
@@ -564,6 +610,60 @@ describe("core/view constraints & rules", () => {
 });
 
 describe("core/history", () => {
+  test("setValue edits on same item coalesce into one undo step", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 0 });
+    core.focus({ container: rootId, item: x }, VALUE_TARGET);
+
+    core.commit((t) => t.setValue(x, 1));
+    core.commit((t) => t.setValue(x, 2));
+    core.commit((t) => t.setValue(x, 3));
+    expect(valueOfId(core, x)).toBe(3);
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe(0);
+
+    core.redo();
+    expect(valueOfId(core, x)).toBe(3);
+  });
+
+  test("setValue edits on different items do not coalesce", () => {
+    const { core, rootId } = makeCoreForTest();
+    const a = mkBlank(core, rootId, { label: "a", value: 1 });
+    const b = mkBlank(core, rootId, { label: "b", value: 2 });
+
+    core.commit((t) => t.setValue(a, 10));
+    core.commit((t) => t.setValue(b, 20));
+
+    core.undo();
+    expect(valueOfId(core, a)).toBe(10);
+    expect(valueOfId(core, b)).toBe(2);
+
+    core.undo();
+    expect(valueOfId(core, a)).toBe(1);
+    expect(valueOfId(core, b)).toBe(2);
+  });
+
+  test("structural edit does not coalesce with text edits", () => {
+    const { core, rootId } = makeCoreForTest();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: 1 });
+    const y = mkBlank(core, g, { label: "y", value: 2 });
+
+    core.commit((t) => t.setValue(x, 10));
+    core.commit((t) => t.move(y, rootId, { at: 0 }));
+    core.commit((t) => t.setValue(x, 11));
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe(10);
+
+    core.undo();
+    expect(childrenOf(core, g)).toEqual([x, y]);
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe(1);
+  });
+
   test("undo/redo restores structure and values; redo cleared after new commit", () => {
     const { core, rootId } = makeCoreForTest();
 
@@ -603,6 +703,132 @@ describe("core/history", () => {
     ).toBe(true);
 
     assertCoreInvariants(core, rootId);
+  });
+
+  test("remove subtree undo/redo preserves descendant ids", () => {
+    const { core, rootId } = makeCoreForTest();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const row = mkGroup(core, g, { label: "row" });
+    const cell = mkBlank(core, row, { label: "cell", value: 1 });
+
+    core.commit((t) => t.remove(g));
+    expect(() => core.item(row)).toThrow();
+    expect(() => core.item(cell)).toThrow();
+
+    core.undo();
+    expect(childrenOf(core, rootId)).toContain(g);
+    expect(childrenOf(core, g)).toContain(row);
+    expect(childrenOf(core, row)).toContain(cell);
+    expect(valueOfId(core, cell)).toBe(1);
+
+    core.redo();
+    expect(() => core.item(g)).toThrow();
+    expect(() => core.item(row)).toThrow();
+    expect(() => core.item(cell)).toThrow();
+  });
+
+  test("removing root clears root and undo restores previous root subtree", () => {
+    const { core, rootId } = makeCoreForTest();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: 1 });
+
+    core.commit((t) => t.remove(rootId));
+
+    const rootAfter = core.item(rootId);
+    expect(rootAfter.content.type).toBe("value");
+    expect(rootAfter.mode.type).toBe("plain");
+    expect(rootAfter.label ?? "").toBe("");
+    expect(() => core.item(g)).toThrow();
+    expect(() => core.item(x)).toThrow();
+
+    core.undo();
+    expect(childrenOf(core, rootId)).toEqual([g]);
+    expect(childrenOf(core, g)).toEqual([x]);
+    expect(valueOfId(core, x)).toBe(1);
+  });
+});
+
+describe("core/snapshot", () => {
+  test("exportSnapshot returns full state including rootId/nextId/root", () => {
+    const { core, rootId } = makeCoreForTest();
+    const g = mkGroup(core, rootId, { label: "g", view: "table" });
+    mkBlank(core, g, { label: "x", value: 1 });
+
+    const snap = core.exportSnapshot();
+
+    expect(snap.rootId).toBe(Number(rootId.slice(0, rootId.indexOf(":"))));
+    expect(typeof snap.nextId).toBe("number");
+    expect(snap.nextId).toBeGreaterThan(snap.rootId);
+    expect(snap.root.id).toBe(snap.rootId);
+    expect(snap.root.content.type).toBe("group");
+  });
+
+  test("export/import snapshot roundtrip preserves state and ids", () => {
+    const { core, rootId } = makeCoreForTest();
+    const table = mkGroup(core, rootId, { label: "table", view: "table" });
+    const row = mkGroup(core, table, { label: "row" });
+    const a = mkBlank(core, row, { label: "a", value: 1 });
+    const q = mkBlank(core, rootId, { label: "q" });
+    setQuery(core, q, { from: "table", where: "", orderBy: "label" });
+    core.focus({ container: row, item: a }, VALUE_TARGET);
+
+    const beforeTree = snapshotState(core, rootId, {
+      viewIds: [rootId, table, row, a, q],
+      includeCaret: true,
+    });
+    const snap = core.exportSnapshot();
+
+    core.importSnapshot(snap);
+
+    expect(core.exportSnapshot()).toEqual(snap);
+    expect(
+      snapshotState(core, rootId, {
+        viewIds: [rootId, table, row, a, q],
+        includeCaret: true,
+      }).tree,
+    ).toEqual(beforeTree.tree);
+    expectSel(core, { container: rootId, item: rootId, target: DEFAULT_TARGET });
+  });
+
+  test("importSnapshot invalid input throws and leaves state unchanged", () => {
+    const { core, rootId } = makeCoreForTest();
+    const g = mkGroup(core, rootId, { label: "g" });
+    mkBlank(core, g, { label: "x", value: 1 });
+
+    const beforeState = snapshotState(core, rootId, { viewIds: [rootId, g] });
+    const beforeSnap = core.exportSnapshot();
+    const invalid = cloneJson(beforeSnap);
+    invalid.nextId = invalid.rootId;
+
+    expect(() => core.importSnapshot(invalid)).toThrow();
+    expect(core.exportSnapshot()).toEqual(beforeSnap);
+    expect(snapshotState(core, rootId, { viewIds: [rootId, g] })).toEqual(
+      beforeState,
+    );
+  });
+
+  test("importSnapshot clears history and resets selection", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+    core.commit((t) => t.setValue(x, 2));
+    core.focus({ container: rootId, item: x }, VALUE_TARGET);
+
+    const snap = core.exportSnapshot();
+    core.importSnapshot(snap);
+
+    expectSel(core, { container: rootId, item: rootId, target: DEFAULT_TARGET });
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe(2);
+  });
+
+  test("importSnapshot rejects rootId mismatch", () => {
+    const { core } = makeCoreForTest();
+    const snap = core.exportSnapshot();
+    const invalid = cloneJson(snap);
+    invalid.rootId += 1;
+
+    expect(() => core.importSnapshot(invalid)).toThrow();
   });
 });
 

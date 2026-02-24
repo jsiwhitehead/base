@@ -392,7 +392,7 @@ describe("views/outline", () => {
     await flushDomEffects();
 
     expect(valueOfId(core, a)).toBe("hithere");
-    expect(core.item(b).content.type).toBe("issue");
+    expect(() => core.item(b)).toThrow();
     expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
 
     unmount();

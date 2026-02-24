@@ -1088,19 +1088,15 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     c1();
   });
 
-  test("mountView treats item ids as opaque and can render fallback issue snapshots", () => {
+  test("mountView throws for invalid or missing item ids", () => {
     const { core } = makeCoreRuntime();
 
-    const bad1 = core.mountView({ id: "not-an-id" as ItemId, view: "outline" });
-    const bad2 = core.mountView({ id: "999999:" as ItemId, view: "outline" });
-
-    expect(bad1.el.classList.contains("ui-body")).toBe(true);
-    expect(bad1.el.classList.contains("ui-outline")).toBe(true);
-    expect(bad2.el.classList.contains("ui-body")).toBe(true);
-    expect(bad2.el.classList.contains("ui-outline")).toBe(true);
-
-    bad1.dispose();
-    bad2.dispose();
+    expect(() =>
+      core.mountView({ id: "not-an-id" as ItemId, view: "outline" }),
+    ).toThrow();
+    expect(() =>
+      core.mountView({ id: "999999:" as ItemId, view: "outline" }),
+    ).toThrow();
   });
 
   test("mountView falls back to outline when requested view factory is missing", () => {

@@ -80,11 +80,10 @@ core.item(id): Item
 
 Returns the current item snapshot.
 
-Fallback behavior:
+Rules:
 
-- If `id` cannot be resolved, `core.item(id)` MUST still return an `Item`.
-- The fallback item MUST use `content.type === "issue"`.
-- The fallback item MUST use `mode.type === "readonly"`.
+- `core.item(id)` MUST throw if `id` is malformed, missing, or resolves to an invalid derived path.
+- `core.item(id)` MUST support valid derived IDs.
 
 ## Item content
 
@@ -327,7 +326,8 @@ core.view(id): ViewName
 `core.view(id)` behavior:
 
 - Returns the current semantically resolved view name for the item.
-- If `id` is missing, invalid, or stored view cannot be resolved, Core MUST return the default view name (`"outline"`).
+- `core.view(id)` MUST throw if `id` is malformed, missing, or resolves to an invalid derived path.
+- `core.view(id)` MUST support valid derived IDs.
 - If the stored view has a constraint and the item's resolved content does not satisfy it, Core MUST return `"outline"`. The stored view preference MUST be preserved on the item.
 - `core.view(id)` resolves semantic view eligibility only; DOM factory availability and mounting fallback are runtime concerns (`docs/dom-runtime.md`).
 

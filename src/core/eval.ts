@@ -343,6 +343,8 @@ export function createEvaluator(opts: {
   }
 
   const resultSignal = (id: EntryId): ReadonlySignal<Result> => {
+    if (!model.hasEntry(id))
+      return computed(() => Results.issue(MISSING_ENTRY_MESSAGE));
     const cacheRecord = cacheRecordFor(id);
     return (cacheRecord.resultSignal ??= computed(() =>
       evaluateResult(id, createEvalCtx()),
