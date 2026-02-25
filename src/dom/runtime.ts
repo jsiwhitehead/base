@@ -23,7 +23,7 @@ export type DomView = {
 export type ViewFactory<C extends Core = Core> = (args: {
   core: C;
   id: ItemId;
-  focus?: Focus;
+  focus: Focus;
 }) => DomView;
 
 type TargetBinding = {

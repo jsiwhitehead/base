@@ -65,10 +65,10 @@ export type ValueShapeReader = BaseShapeReader & {
 
 export type GroupShapeReader<G extends GroupViewShape> = BaseShapeReader & {
   childIds(): ChildListForGroup<G, ItemId>;
-  child(id: ItemId): ShapeReaderFromShape<ChildShapeOfGroup<G>>;
+  child(id: ItemId): ReaderForShape<ChildShapeOfGroup<G>>;
 };
 
-export type ShapeReaderFromShape<S extends ViewShape> = S extends {
+export type ReaderForShape<S extends ViewShape> = S extends {
   type: "any";
 }
   ? AnyShapeReader
@@ -78,11 +78,15 @@ export type ShapeReaderFromShape<S extends ViewShape> = S extends {
       ? GroupShapeReader<S>
       : never;
 
+export function defineShape<const S extends ViewShape>(shape: S): S {
+  return shape;
+}
+
 export function createShapeReader<S extends ViewShape>(
   read: ReadApi,
   id: ItemId,
   shape: S,
-): ShapeReaderFromShape<S> {
+): ReaderForShape<S> {
   const readLabel = (itemId: ItemId): string | null =>
     read.item(itemId).label ?? null;
 
@@ -102,12 +106,12 @@ export function createShapeReader<S extends ViewShape>(
   const build = <T extends ViewShape>(
     itemId: ItemId,
     nodeShape: T,
-  ): ShapeReaderFromShape<T> => {
+  ): ReaderForShape<T> => {
     if (nodeShape.type === "any") {
       return {
         id: itemId,
         label: () => readLabel(itemId),
-      } as ShapeReaderFromShape<T>;
+      } as ReaderForShape<T>;
     }
 
     if (nodeShape.type === "value") {
@@ -115,7 +119,7 @@ export function createShapeReader<S extends ViewShape>(
         id: itemId,
         label: () => readLabel(itemId),
         value: () => readValue(itemId),
-      } as ShapeReaderFromShape<T>;
+      } as ReaderForShape<T>;
     }
 
     const childShape = nodeShape.children;
@@ -132,7 +136,7 @@ export function createShapeReader<S extends ViewShape>(
           throw new CoreReadError("Shape reader child id not found");
         return build(cid, childShape);
       },
-    } as unknown as ShapeReaderFromShape<T>;
+    } as unknown as ReaderForShape<T>;
   };
 
   return build(id, shape);

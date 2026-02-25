@@ -290,6 +290,7 @@ Rules:
 
 - Selection MUST be the single source of truth for focus state.
 - A focused selection MUST reference existing items, and `focus.item` MUST be within `focus.container`.
+- Self-container focus (`focus.container === focus.item`) MUST be valid only for the root item.
 - `core.focus` MUST default `target` to `DEFAULT_TARGET` and MUST apply no caret unless `opts.caret` is provided.
 - After any apply, if selection is invalid, Core MUST repair it.
 - For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor, choosing the original sibling slot index at the nearest surviving anchored parent level, otherwise the previous sibling.
@@ -318,6 +319,18 @@ Rules:
 - `typeCharAtFocusedTarget` allows Core root-intent semantics (`TYPE`) to trigger platform text insertion after Core updates selection.
 
 ## Views and shapes
+
+```ts
+core.reader(id, shape): ReaderForShape<typeof shape>
+```
+
+Returns a typed shape reader for `id` using the provided `ViewShape`.
+
+Rules:
+
+- `core.reader(id, shape)` MUST throw if `id` is malformed, missing, or resolves to an invalid derived path.
+- `core.reader(id, shape)` MUST support valid derived IDs.
+- Callers MUST provide a shape compatible with the access pattern they intend to use; incompatible reads MAY throw when reader methods are called.
 
 ```ts
 core.view(id): ViewName
@@ -498,6 +511,7 @@ Core exports:
 - `core.selection`
 - `core.locate`
 - `core.view`
+- `core.reader`
 - `core.exportSnapshot`
 - `core.importSnapshot`
 - `core.commit`
@@ -528,6 +542,7 @@ Type exports:
 - `Transaction`
 - `ViewName`
 - `ViewShape`
+- `ReaderForShape`
 
 Constant exports:
 
@@ -539,6 +554,7 @@ Constant exports:
 Function exports:
 
 - `parseKeyIntent`
+- `defineShape`
 - `fieldsFromConn`
 - `editTargetsForItem`
 - `getTextForTarget`

@@ -41,12 +41,13 @@ import type {
   AnyShapeReader,
   GroupShapeReader,
   ReadFromShape,
-  ShapeReaderFromShape,
+  ReaderForShape,
   ValueShapeReader,
   ViewShape,
 } from "./shape";
 import {
   createShapeReader,
+  defineShape,
   enforceViewShapes,
   isShapeCompatible,
 } from "./shape";
@@ -200,27 +201,21 @@ export type Core = {
   dispose(): void;
 
   item(id: ItemId): Item;
-  shapeReader<S extends ViewShape>(
-    id: ItemId,
-    shape: S,
-  ): ShapeReaderFromShape<S>;
-
+  reader<S extends ViewShape>(id: ItemId, shape: S): ReaderForShape<S>;
   view(id: ItemId): ViewName;
-  exportSnapshot(): SnapshotData;
-  importSnapshot(snapshot: SnapshotData): void;
+  locate(id: ItemId): LocateResult | null;
+  selection(): Selection;
+
+  focus(focus: Focus, target?: string, opts?: FocusOpts): void;
+  blur(): void;
+  dispatch(intent: Intent): void;
 
   commit(run: (t: Tx) => void): void;
-
   undo(): void;
   redo(): void;
 
-  selection(): Selection;
-  focus(focus: Focus, target?: string, opts?: FocusOpts): void;
-  blur(): void;
-
-  locate(id: ItemId): LocateResult | null;
-
-  dispatch(intent: Intent): void;
+  exportSnapshot(): SnapshotData;
+  importSnapshot(snapshot: SnapshotData): void;
 };
 
 type ConnField = {
@@ -342,7 +337,7 @@ export function createCore(opts: {
     const containerEid = entryIdFromItemId(sel.focus.container);
     if (itemEid == null || containerEid == null) return false;
     if (!model.hasEntry(itemEid) || !model.hasEntry(containerEid)) return false;
-    if (itemEid === containerEid) return true;
+    if (itemEid === containerEid) return itemEid === rootEntryId;
 
     const loc = model.locateInParent(itemEid);
     return !!loc && loc.parentId === containerEid;
@@ -424,8 +419,10 @@ export function createCore(opts: {
       const childId = siblings[index] ?? siblings[index - 1] ?? null;
       if (childId == null || !model.hasEntry(childId)) continue;
 
-      const id = itemIdOf(childId);
-      return { container: id, item: id };
+      return {
+        container: itemIdOf(parentId),
+        item: itemIdOf(childId),
+      };
     }
 
     return null;
@@ -882,12 +879,28 @@ export function createCore(opts: {
     prevEvaluator.dispose();
   };
 
-  const shapeReader = <S extends ViewShape>(
+  const reader = <S extends ViewShape>(
     id: ItemId,
     shape: S,
-  ): ShapeReaderFromShape<S> => {
+  ): ReaderForShape<S> => {
     read.item(id);
     return createShapeReader(read, id, shape);
+  };
+
+  const selection = (): Selection => selectionSignal.value;
+
+  const locate = (id: ItemId): LocateResult | null => {
+    const ref = parseItemId(id);
+    if (!ref || ref.path.length) return null;
+
+    const loc = model.locateInParent(ref.entryId);
+    if (!loc) return null;
+
+    return {
+      parentId: itemIdOf(loc.parentId),
+      index: loc.index,
+      siblings: loc.childIds.map((eid) => itemIdOf(eid)),
+    };
   };
 
   const commit = (run: (t: Tx) => void): void => {
@@ -1036,22 +1049,6 @@ export function createCore(opts: {
 
   const blur = (): void => {
     setSelection({ type: "idle" });
-  };
-
-  const selection = (): Selection => selectionSignal.value;
-
-  const locate = (id: ItemId): LocateResult | null => {
-    const ref = parseItemId(id);
-    if (!ref || ref.path.length) return null;
-
-    const loc = model.locateInParent(ref.entryId);
-    if (!loc) return null;
-
-    return {
-      parentId: itemIdOf(loc.parentId),
-      index: loc.index,
-      siblings: loc.childIds.map((eid) => itemIdOf(eid)),
-    };
   };
 
   const unsubscribeCollab = opts.collab
@@ -1244,24 +1241,21 @@ export function createCore(opts: {
     },
 
     item,
-    shapeReader,
-
+    reader,
     view,
-    exportSnapshot,
-    importSnapshot,
+    locate,
+    selection,
+
+    focus,
+    blur,
+    dispatch,
 
     commit,
-
     undo,
     redo,
 
-    selection,
-    focus,
-    blur,
-
-    locate,
-
-    dispatch,
+    exportSnapshot,
+    importSnapshot,
   };
 
   return { core, rootId };
@@ -1283,7 +1277,7 @@ export type {
   ReadFromShape,
   Selection,
   SnapshotData,
-  ShapeReaderFromShape,
+  ReaderForShape,
   Transaction,
   Value,
   ValueOrBlank,
@@ -1301,3 +1295,4 @@ export {
 };
 
 export { isCoreReadError };
+export { defineShape };

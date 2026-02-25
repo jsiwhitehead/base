@@ -124,14 +124,10 @@ async function mountView(args: {
   view: Extract<ViewName, "outline" | "table" | "slider">;
   core: UiCore;
   id: ItemId;
-  focus?: Focus;
+  focus: Focus;
 }) {
   const { view, core, id, focus } = args;
-  const domView = viewFactories[view]({
-    core,
-    id,
-    ...(focus === undefined ? {} : { focus }),
-  });
+  const domView = viewFactories[view]({ core, id, focus });
   const unmount = mountDomView(domView);
   await flushDomEffects();
   return { domView, unmount };
@@ -144,7 +140,12 @@ describe("views/outline", () => {
 
     core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
 
-    const { unmount } = await mountView({ view: "outline", core, id: rootId });
+    const { unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+      focus: { container: rootId, item: rootId },
+    });
 
     const placeholder = document.body.querySelector(
       ".ui-outline-placeholder",
@@ -166,6 +167,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "Enter");
@@ -191,6 +193,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "a");
@@ -218,6 +221,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "ArrowRight");
@@ -267,6 +271,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "Tab");
@@ -305,6 +310,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "Tab", { shiftKey: true });
@@ -329,6 +335,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "Tab", { shiftKey: true });
@@ -353,6 +360,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     domView.onIntent?.({ type: "CONFIRM", caret: caretAt(2) });
@@ -385,6 +393,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "Backspace");
@@ -408,6 +417,7 @@ describe("views/outline", () => {
       view: "outline",
       core,
       id: rootId,
+      focus: { container: rootId, item: rootId },
     });
 
     fireViewKey(domView, "ArrowUp");
@@ -436,7 +446,12 @@ describe("views/outline", () => {
 
     core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
 
-    const { unmount } = await mountView({ view: "outline", core, id: rootId });
+    const { unmount } = await mountView({
+      view: "outline",
+      core,
+      id: rootId,
+      focus: { container: rootId, item: rootId },
+    });
 
     const aFrame0 = requireFrameEl(document.body, a);
     const bFrame0 = requireFrameEl(document.body, b);
@@ -467,7 +482,12 @@ describe("views/table", () => {
 
     core.focus({ container: tableId, item: tableId }, DEFAULT_TARGET);
 
-    const { unmount } = await mountView({ view: "table", core, id: tableId });
+    const { unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+      focus: { container: tableId, item: tableId },
+    });
 
     const header = document.body.querySelector(
       ".ui-table-header",
@@ -500,6 +520,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
+      focus: { container: tableId, item: tableId },
     });
 
     fireViewKey(domView, "ArrowDown");
@@ -538,6 +559,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
+      focus: { container: tableId, item: tableId },
     });
 
     fireViewKey(domView, "ArrowRight");
@@ -579,6 +601,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
+      focus: { container: tableId, item: tableId },
     });
 
     fireViewKey(domView, "Tab");
@@ -614,6 +637,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
+      focus: { container: tableId, item: tableId },
     });
 
     fireViewKey(domView, "Enter");
@@ -640,6 +664,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
+      focus: { container: tableId, item: tableId },
     });
 
     core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
@@ -677,6 +702,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
+      focus: { container: tableId, item: tableId },
     });
 
     fireViewKey(domView, "ArrowUp");
@@ -710,9 +736,14 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
 
-    core.focus({ container: s, item: s }, DEFAULT_TARGET);
+    core.focus({ container: rootId, item: s }, DEFAULT_TARGET);
 
-    const { unmount } = await mountView({ view: "slider", core, id: s });
+    const { unmount } = await mountView({
+      view: "slider",
+      core,
+      id: s,
+      focus: { container: rootId, item: s },
+    });
 
     requireFrameEl(document.body, s);
 
@@ -735,9 +766,14 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
 
-    core.focus({ container: s, item: s }, DEFAULT_TARGET);
+    core.focus({ container: rootId, item: s }, DEFAULT_TARGET);
 
-    const { unmount } = await mountView({ view: "slider", core, id: s });
+    const { unmount } = await mountView({
+      view: "slider",
+      core,
+      id: s,
+      focus: { container: rootId, item: s },
+    });
 
     const input = document.body.querySelector(
       'input[type="range"]',
@@ -747,7 +783,7 @@ describe("views/slider", () => {
     pointerDown(input);
     await flushDomEffects();
 
-    expectSel(core, { container: s, item: s, target: VALUE_TARGET });
+    expectSel(core, { container: rootId, item: s, target: VALUE_TARGET });
 
     unmount();
   });
@@ -758,9 +794,14 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
 
-    core.focus({ container: s, item: s }, DEFAULT_TARGET);
+    core.focus({ container: rootId, item: s }, DEFAULT_TARGET);
 
-    const { unmount } = await mountView({ view: "slider", core, id: s });
+    const { unmount } = await mountView({
+      view: "slider",
+      core,
+      id: s,
+      focus: { container: rootId, item: s },
+    });
 
     const input = document.body.querySelector(
       'input[type="range"]',
@@ -781,7 +822,12 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 0 });
     setView(core, s, "slider");
 
-    const { unmount } = await mountView({ view: "slider", core, id: s });
+    const { unmount } = await mountView({
+      view: "slider",
+      core,
+      id: s,
+      focus: { container: rootId, item: s },
+    });
 
     const input = document.body.querySelector(
       'input[type="range"]',
@@ -805,17 +851,20 @@ describe("views/slider", () => {
 
     const other = mkBlank(core, rootId, { label: "o", value: 1 });
 
-    core.focus({ container: s, item: s }, VALUE_TARGET, { caret: caret0() });
+    core.focus({ container: rootId, item: s }, VALUE_TARGET, {
+      caret: caret0(),
+    });
 
     const { domView, unmount } = await mountView({
       view: "slider",
       core,
       id: s,
+      focus: { container: rootId, item: s },
     });
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
-    expectSel(core, { container: s, item: s, target: DEFAULT_TARGET });
+    expectSel(core, { container: rootId, item: s, target: DEFAULT_TARGET });
 
     core.focus({ container: rootId, item: other }, VALUE_TARGET, {
       caret: caret0(),

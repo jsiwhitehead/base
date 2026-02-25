@@ -1,6 +1,12 @@
-import type { Focus, Intent, ItemId, ValueOrBlank, ViewShape } from "../core";
-import { DEFAULT_TARGET, VALUE_TARGET } from "../core";
-import type { Component, DomView, UiCore } from "../dom";
+import type {
+  Focus,
+  Intent,
+  ItemId,
+  ReaderForShape,
+  ValueOrBlank,
+} from "../core";
+import { DEFAULT_TARGET, VALUE_TARGET, defineShape } from "../core";
+import type { Component, UiCore } from "../dom";
 import {
   bindItemFrame,
   caret0,
@@ -8,20 +14,25 @@ import {
   el,
   setBodyClasses,
 } from "../dom";
-import type { ViewRegistration } from "./index";
+import { defineShapedView } from "./index";
 
-type SliderOpts = { min?: number; max?: number; step?: number };
+const sliderShape = defineShape({
+  type: "value",
+});
 
-type SliderResolvedOpts = Required<Pick<SliderOpts, "min" | "max" | "step">>;
+type SliderOpts = { min: number; max: number; step: number };
 
 type SliderMountCtx = {
   core: UiCore;
   id: ItemId;
+  reader: SliderReader;
+  opts: SliderOpts;
   focus: Focus;
-  resolvedOpts: SliderResolvedOpts;
 };
 
-const DEFAULT_SLIDER_OPTS: SliderResolvedOpts = {
+type SliderReader = ReaderForShape<typeof sliderShape>;
+
+const DEFAULT_SLIDER_OPTS: SliderOpts = {
   min: 0,
   max: 100,
   step: 1,
@@ -92,20 +103,20 @@ const cmd = {
 function buildSliderBody({
   core,
   id,
+  reader,
+  opts,
   focus,
-  resolvedOpts,
 }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
-    const sliderReader = core.shapeReader(id, sliderShape);
     const root = el("div");
     setBodyClasses(root, "slider");
     bindItemFrame(ctx, { core, focus }, root);
 
     const input = document.createElement("input");
     input.type = "range";
-    input.min = String(resolvedOpts.min);
-    input.max = String(resolvedOpts.max);
-    input.step = String(resolvedOpts.step);
+    input.min = String(opts.min);
+    input.max = String(opts.max);
+    input.step = String(opts.step);
     input.tabIndex = -1;
 
     const valueEl = el("div", "ui-slider-value");
@@ -133,14 +144,9 @@ function buildSliderBody({
     ctx.target(focus, VALUE_TARGET, () => input);
 
     ctx.effect(() => {
-      const currentValue = toNumberOr(sliderReader.value(), resolvedOpts.min);
-      const snapped = snapToStep(
-        currentValue,
-        resolvedOpts.min,
-        resolvedOpts.max,
-        resolvedOpts.step,
-      );
-      const valueText = formatNumberForStep(snapped, resolvedOpts.step);
+      const currentValue = toNumberOr(reader.value(), opts.min);
+      const snapped = snapToStep(currentValue, opts.min, opts.max, opts.step);
+      const valueText = formatNumberForStep(snapped, opts.step);
 
       if (input.value !== valueText) input.value = valueText;
       if (valueEl.textContent !== valueText) valueEl.textContent = valueText;
@@ -150,56 +156,37 @@ function buildSliderBody({
   });
 }
 
-function createSliderView(args: {
-  core: UiCore;
-  id: ItemId;
-  focus?: Focus;
-}): DomView {
-  const { core, id } = args;
+export const sliderView = defineShapedView(
+  sliderShape,
+  ({ core, id, reader, focus }) => {
+    const opts = DEFAULT_SLIDER_OPTS;
 
-  const resolvedOpts = DEFAULT_SLIDER_OPTS;
+    const onIntent = (intent: Intent): void => {
+      const selection = core.selection();
+      if (selection.type !== "focused") return;
 
-  const viewFocus: Focus = args.focus ?? { container: id, item: id };
+      switch (intent.type) {
+        case "CONFIRM":
+          if (selection.focus.item !== id) return;
+          if (selection.target === VALUE_TARGET)
+            core.focus(selection.focus, DEFAULT_TARGET);
+          return;
+        case "NAV":
+        case "TAB":
+        case "TYPE":
+        case "DELETE":
+          return;
+      }
+    };
 
-  const dispatch = (intent: Intent): void => {
-    const selection = core.selection();
-    if (selection.type !== "focused") return;
+    const body = buildSliderBody({
+      core,
+      id,
+      reader,
+      opts,
+      focus,
+    });
 
-    switch (intent.type) {
-      case "CONFIRM":
-        if (selection.focus.item !== id) return;
-        if (selection.target === VALUE_TARGET)
-          core.focus(selection.focus, DEFAULT_TARGET);
-        return;
-      case "NAV":
-      case "TAB":
-      case "TYPE":
-      case "DELETE":
-        return;
-    }
-  };
-
-  const body = buildSliderBody({
-    core,
-    id,
-    focus: viewFocus,
-    resolvedOpts,
-  });
-
-  return {
-    root: body.el,
-    onIntent: dispatch,
-    dispose() {
-      body.dispose();
-    },
-  };
-}
-
-export const sliderShape = {
-  type: "value",
-} as const satisfies ViewShape;
-
-export const sliderView: ViewRegistration = {
-  factory: createSliderView,
-  shape: sliderShape,
-};
+    return { onIntent, body };
+  },
+);
