@@ -1,25 +1,12 @@
 import type { ReadonlySignal } from "@preact/signals-core";
-import { batch, computed, signal } from "@preact/signals-core";
+import { batch, computed } from "@preact/signals-core";
 
+import { createCommitController } from "./commit";
+import type { Tx } from "./commit";
 import { createEvaluator } from "./eval";
 import { interpretExpr } from "./lang";
-import type {
-  ApplyDelta,
-  Entry,
-  EntryContent,
-  EntryId,
-  Op,
-  SnapshotData,
-  Transaction,
-  TransactionMeta,
-  ViewName,
-} from "./model";
-import {
-  createModel,
-  createModelFromSnapshot,
-  makeBlankEntry,
-  makeGroupEntry,
-} from "./model";
+import type { EntryId, SnapshotData, Transaction, ViewName } from "./model";
+import { createModel, createModelFromSnapshot, makeGroupEntry } from "./model";
 import type {
   Connected,
   Content,
@@ -37,6 +24,13 @@ import {
   parseItemId,
   refFromItemId,
 } from "./read";
+import { createSelectionController } from "./select";
+import type {
+  FocusOpts,
+  Location,
+  NonEditingFocusSelection,
+  Selection,
+} from "./select";
 import type {
   AnyShapeReader,
   GroupShapeReader,
@@ -45,30 +39,14 @@ import type {
   ValueShapeReader,
   ViewShape,
 } from "./shape";
-import {
-  createShapeReader,
-  defineShape,
-  enforceViewShapes,
-  isShapeCompatible,
-} from "./shape";
-
-type Focus = { container: ItemId; item: ItemId };
-type Caret = { start: number; end: number };
-
-type Selection =
-  | { type: "idle" }
-  | { type: "focused"; focus: Focus; target: string; caret?: Caret };
+import { createShapeReader, defineShape, isShapeCompatible } from "./shape";
 
 type NavDir = "left" | "right" | "up" | "down" | "out";
 
 type Intent =
-  | {
-      type: "NAV";
-      dir: NavDir;
-      mode: "step" | "jump";
-    }
-  | { type: "CONFIRM"; caret?: Caret }
-  | { type: "TAB"; shift: boolean; caret?: Caret }
+  | { type: "NAV"; dir: NavDir; mode: "step" | "jump" }
+  | { type: "CONFIRM"; caret?: number }
+  | { type: "TAB"; shift: boolean; caret?: number }
   | { type: "TYPE"; char: string }
   | { type: "DELETE"; dir: "backward" | "forward" };
 
@@ -80,8 +58,8 @@ type KeyIntentInput = {
   shiftKey: boolean;
 };
 
-const DEFAULT_TARGET = "default" as const;
 const LABEL_TARGET = "label" as const;
+const ITEM_TARGET = "item" as const;
 const VALUE_TARGET = "value" as const;
 const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
@@ -132,39 +110,7 @@ function parseKeyIntent(input: KeyIntentInput): Intent | null {
   return null;
 }
 
-type RepairAnchorStep = { parentId: EntryId; index: number };
-type RepairAnchor = { steps: readonly RepairAnchorStep[] };
-type TextHistoryGroupKey = {
-  kind: "text";
-  itemId: ItemId;
-  target: string;
-};
-type UndoHistoryEntry = {
-  user: Transaction;
-  inverse: Transaction;
-  groupedAt: number;
-  groupKey: TextHistoryGroupKey | null;
-};
-type UserCommitHistoryCtx = {
-  selection: Selection;
-  startedAt: number;
-};
-type CapturedSubtree = {
-  entry: Entry;
-  children: CapturedSubtree[];
-};
-
-const TEXT_HISTORY_COALESCE_MS = 1000;
-
-function assertNever(_exhaustive: never, message: string): never {
-  throw new Error(message);
-}
-
 const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
-
-function storedFromValue(v: ValueOrBlank): EntryContent {
-  return v === null ? { type: "blank" } : { type: "scalar", value: v };
-}
 
 export function isNumericLikeValue(value: ValueOrBlank): boolean {
   if (typeof value === "number") return Number.isFinite(value);
@@ -174,22 +120,6 @@ export function isNumericLikeValue(value: ValueOrBlank): boolean {
   if (!NUMERIC_VALUE_RE.test(t)) return false;
   return Number.isFinite(Number(t));
 }
-
-export type Tx = {
-  setLabel(id: ItemId, label: string): void;
-  setView(id: ItemId, view: ViewName | null): void;
-
-  setValue(id: ItemId, value: ValueOrBlank): void;
-  setConnected(id: ItemId, conn: Connected): void;
-  setGroup(id: ItemId): void;
-
-  insertChild(parentId: ItemId, opts?: { at?: number }): ItemId;
-
-  move(id: ItemId, toParentId: ItemId, opts?: { at?: number }): void;
-  remove(id: ItemId): void;
-};
-
-type FocusOpts = { caret?: Caret };
 
 type LocateResult = {
   parentId: ItemId;
@@ -206,13 +136,17 @@ export type Core = {
   locate(id: ItemId): LocateResult | null;
   selection(): Selection;
 
-  focus(focus: Focus, target?: string, opts?: FocusOpts): void;
-  blur(): void;
+  focus(
+    selection: Extract<Selection, { type: "editing" }>,
+    opts?: FocusOpts,
+  ): void;
+  focus(selection: NonEditingFocusSelection, opts?: never): void;
   dispatch(intent: Intent): void;
 
   commit(run: (t: Tx) => void): void;
   undo(): void;
   redo(): void;
+  undoBoundary(): void;
 
   exportSnapshot(): SnapshotData;
   importSnapshot(snapshot: SnapshotData): void;
@@ -280,6 +214,73 @@ export function getTextForTarget(
   );
 }
 
+export function indentItemInPlace(core: Core, id: ItemId): ItemId | null {
+  const snap = core.item(id);
+  if (snap.mode.type !== "plain") return null;
+  if (snap.content.type === "issue") return null;
+
+  const value = snap.content.type === "value" ? snap.content.value : null;
+  const children =
+    snap.content.type === "group" ? [...snap.content.children] : null;
+
+  let childId: ItemId | null = null;
+  core.commit((t) => {
+    t.setGroup(id);
+    childId = t.insertChild(id, { at: 0 });
+    if (!children) {
+      t.setValue(childId, value);
+      return;
+    }
+    t.setGroup(childId);
+    for (let i = 0; i < children.length; i += 1) {
+      t.move(children[i]!, childId, { at: i });
+    }
+  });
+
+  return childId;
+}
+
+export function patchConn(
+  conn: Connected,
+  key: string,
+  text: string,
+): Connected {
+  if (conn.type === "formula") {
+    if (key !== "expr") return conn;
+    return { type: "formula", expr: text };
+  }
+  if (key === "from") return { ...conn, from: text };
+  if (key === "where") return { ...conn, where: text };
+  if (key === "orderBy") return { ...conn, orderBy: text };
+  return conn;
+}
+
+export function applyTypeToPrimaryTarget(
+  core: Core,
+  id: ItemId,
+  char: string,
+): { target: string; caret: number } | null {
+  const target = primaryEditTarget(core, id);
+  if (!target) return null;
+  const caret = char.length;
+
+  if (target === VALUE_TARGET) {
+    core.commit((t) => t.setValue(id, char));
+    return { target, caret };
+  }
+
+  if (!target.startsWith("conn:")) return null;
+
+  const key = target.slice("conn:".length);
+  const snap = core.item(id);
+  if (snap.mode.type !== "connected") return null;
+
+  const nextConn = patchConn(snap.mode.conn, key, char);
+  core.commit((t) => t.setConnected(id, nextConn));
+
+  return { target, caret };
+}
+
 type CollabWire = {
   origin: string;
   send(txn: Transaction): void;
@@ -287,9 +288,10 @@ type CollabWire = {
 };
 
 type CorePlatformHooks = {
-  onSelectionChange?: (selection: Selection) => void;
-  getActiveViewIntentHandler?: () => ((intent: Intent) => void) | null;
-  typeCharAtFocusedTarget?: (text: string) => void;
+  onSelectionChange?: (selection: Selection, caret?: number) => void;
+  resolveIntentHandler?: (
+    selection: Selection,
+  ) => ((intent: Intent) => void) | null;
 };
 
 export type { CorePlatformHooks };
@@ -298,10 +300,7 @@ export function createCore(opts: {
   shapes?: Partial<Record<ViewName, ViewShape>>;
   collab?: CollabWire;
   platform?: CorePlatformHooks;
-}): {
-  core: Core;
-  rootId: ItemId;
-} {
+}): { core: Core; rootId: ItemId } {
   const shapes = opts.shapes ?? {};
 
   let model = createModel();
@@ -317,140 +316,25 @@ export function createCore(opts: {
   let core!: Core;
 
   const rootId = itemIdOf(rootEntryId);
-  const selectionSignal = signal<Selection>({
-    type: "focused",
-    focus: { container: rootId, item: rootId },
-    target: DEFAULT_TARGET,
+  const rootFocus: Location = { container: rootId, item: rootId };
+  const selectionController = createSelectionController({
+    getModel: () => model,
+    rootEntryId,
+    rootFocus,
+    ...(opts.platform?.onSelectionChange
+      ? { onSelectionChange: opts.platform.onSelectionChange }
+      : {}),
   });
-
-  const getActiveViewIntentHandler = (): ((intent: Intent) => void) | null =>
-    opts.platform?.getActiveViewIntentHandler?.() ?? null;
-
-  const emitSelectionChange = (sel: Selection): void => {
-    opts.platform?.onSelectionChange?.(sel);
-  };
-
-  const isValidFocusedSelection = (
-    sel: Extract<Selection, { type: "focused" }>,
-  ): boolean => {
-    const itemEid = entryIdFromItemId(sel.focus.item);
-    const containerEid = entryIdFromItemId(sel.focus.container);
-    if (itemEid == null || containerEid == null) return false;
-    if (!model.hasEntry(itemEid) || !model.hasEntry(containerEid)) return false;
-    if (itemEid === containerEid) return itemEid === rootEntryId;
-
-    const loc = model.locateInParent(itemEid);
-    return !!loc && loc.parentId === containerEid;
-  };
-
-  const setSelection = (next: Selection): void => {
-    const repairToRoot = (): Selection => {
-      if (!model.hasEntry(rootEntryId)) return { type: "idle" };
-      return {
-        type: "focused",
-        focus: { container: rootId, item: rootId },
-        target: DEFAULT_TARGET,
-      };
-    };
-
-    if (next.type === "idle") {
-      selectionSignal.value = next;
-      emitSelectionChange(next);
-      return;
-    }
-
-    const repaired = isValidFocusedSelection(next) ? next : repairToRoot();
-    selectionSignal.value = repaired;
-    emitSelectionChange(repaired);
-  };
-
-  const history: {
-    undo: UndoHistoryEntry[];
-    redo: UndoHistoryEntry[];
-  } = {
-    undo: [],
-    redo: [],
-  };
-
-  const emptyApply: ApplyDelta = {
-    removed: [],
-    touched: [],
-  };
-
-  const mergeApply = (a: ApplyDelta, b: ApplyDelta): ApplyDelta => ({
-    removed: Array.from(new Set([...a.removed, ...b.removed])),
-    touched: Array.from(new Set([...a.touched, ...b.touched])),
-  });
-
-  const selectionStillValid = (sel: Selection): boolean => {
-    if (sel.type === "idle") return true;
-    return isValidFocusedSelection(sel);
-  };
-
-  const captureRepairAnchor = (): RepairAnchor | null => {
-    const sel = selectionSignal.peek();
-    if (sel.type !== "focused") return null;
-
-    const leafId =
-      entryIdFromItemId(sel.focus.item) ??
-      entryIdFromItemId(sel.focus.container);
-    if (leafId == null) return null;
-
-    const steps: RepairAnchorStep[] = [];
-    let cur = leafId;
-    while (true) {
-      const loc = model.locateInParent(cur);
-      if (!loc) break;
-      steps.push({ parentId: loc.parentId, index: loc.index });
-      cur = loc.parentId;
-    }
-
-    return { steps };
-  };
-
-  const resolveRepairAnchor = (anchor: RepairAnchor): Focus | null => {
-    for (let i = anchor.steps.length - 1; i >= 0; i--) {
-      const { parentId, index } = anchor.steps[i]!;
-      if (!model.hasEntry(parentId)) continue;
-
-      const siblings = model.childIdsOf(parentId);
-      if (!siblings.length) continue;
-
-      const childId = siblings[index] ?? siblings[index - 1] ?? null;
-      if (childId == null || !model.hasEntry(childId)) continue;
-
-      return {
-        container: itemIdOf(parentId),
-        item: itemIdOf(childId),
-      };
-    }
-
-    return null;
-  };
-
-  const repairSelectionAfterLocalApply = (
-    anchor: RepairAnchor | null,
-  ): void => {
-    const selNow = selectionSignal.peek();
-    if (selectionStillValid(selNow)) {
-      setSelection(selNow);
-      return;
-    }
-
-    if (anchor) {
-      const focus = resolveRepairAnchor(anchor);
-      if (focus) {
-        setSelection({
-          type: "focused",
-          focus,
-          target: DEFAULT_TARGET,
-        });
-        return;
-      }
-    }
-
-    setSelection(selNow);
-  };
+  const {
+    selection,
+    focus,
+    setSelection,
+    peekSelection,
+    captureRepairAnchor,
+    repairAfterLocalApply,
+    coerceAfterRemoteApply,
+    resetToRoot,
+  } = selectionController;
 
   const read = createReadApi({
     getEvaluator: () => evaluator,
@@ -490,235 +374,6 @@ export function createCore(opts: {
     return sig.value;
   };
 
-  const captureInverseForTxn = (txn: Transaction): Op[] => {
-    const inverses: Op[] = [];
-
-    const captureSubtree = (rootEntryId: EntryId): CapturedSubtree => {
-      const entry = model.peekEntry(rootEntryId);
-      const childIds =
-        entry.content.type === "group" ? model.childIdsOf(rootEntryId) : [];
-      return {
-        entry,
-        children: childIds.map((childId) => captureSubtree(childId)),
-      };
-    };
-
-    const entryForRestoreCreate = (entry: Entry): Entry => {
-      if (entry.content.type !== "group") return { ...entry, parentId: null };
-      return {
-        ...entry,
-        parentId: null,
-        content: { type: "group", childIds: [] },
-      };
-    };
-
-    const pushCreateOpsForSubtree = (
-      node: CapturedSubtree,
-      out: Op[],
-      opts?: { skipRoot?: true },
-    ): void => {
-      if (!opts?.skipRoot)
-        out.push(model.ops.create(entryForRestoreCreate(node.entry)));
-      for (const child of node.children) pushCreateOpsForSubtree(child, out);
-    };
-
-    const pushChildRestoreMoves = (node: CapturedSubtree, out: Op[]): void => {
-      for (let i = 0; i < node.children.length; i += 1) {
-        const child = node.children[i]!;
-        out.push(
-          model.ops.move({
-            childId: child.entry.id,
-            toParentId: node.entry.id,
-            toIndex: i,
-          }),
-        );
-        pushChildRestoreMoves(child, out);
-      }
-    };
-
-    for (const op of txn.ops) {
-      if (op.type === "create") {
-        inverses.push(model.ops.remove(op.entry.id));
-        continue;
-      }
-
-      if (op.type === "patch") {
-        if (!model.hasEntry(op.id)) continue;
-        const cur = model.peekEntry(op.id);
-        const next: Parameters<typeof model.ops.patch>[1] = {};
-        if (op.next.label !== undefined) next.label = cur.label;
-        if (op.next.view !== undefined) next.view = cur.view;
-        if (op.next.content !== undefined) next.content = cur.content;
-        inverses.push(model.ops.patch(op.id, next));
-        continue;
-      }
-
-      if (op.type === "move") {
-        const childId = op.spec.childId;
-        if (!model.hasEntry(childId)) continue;
-        const child = model.peekEntry(childId);
-        const parentId = child.parentId;
-        if (parentId == null)
-          throw new Error("Move inverse expects child to have a parent");
-        const loc = model.locateInParent(childId);
-        inverses.push(
-          model.ops.move({
-            childId,
-            toParentId: parentId,
-            ...(loc ? { toIndex: loc.index } : {}),
-          }),
-        );
-        continue;
-      }
-
-      if (op.type === "remove") {
-        const id0 = op.id;
-        if (!model.hasEntry(id0)) continue;
-
-        const cur = model.peekEntry(id0);
-        const subtree = captureSubtree(id0);
-        if (id0 === rootEntryId) {
-          if (subtree.entry.content.type === "group") {
-            pushChildRestoreMoves(subtree, inverses);
-            pushCreateOpsForSubtree(subtree, inverses, { skipRoot: true });
-            inverses.push(
-              model.ops.patch(id0, {
-                label: subtree.entry.label,
-                view: subtree.entry.view,
-                content: { type: "group", childIds: [] },
-              }),
-            );
-          } else {
-            inverses.push(
-              model.ops.patch(id0, {
-                label: subtree.entry.label,
-                view: subtree.entry.view,
-                content: subtree.entry.content,
-              }),
-            );
-          }
-          continue;
-        }
-
-        const parentId = cur.parentId;
-        if (parentId == null)
-          throw new Error(
-            "Remove inverse expects non-root item to have a parent",
-          );
-        const loc = model.locateInParent(id0);
-        const prevIndex = loc?.index ?? undefined;
-        pushChildRestoreMoves(subtree, inverses);
-        inverses.push(
-          model.ops.move({
-            childId: id0,
-            toParentId: parentId,
-            ...(prevIndex != null ? { toIndex: prevIndex } : {}),
-          }),
-        );
-        pushCreateOpsForSubtree(subtree, inverses);
-
-        continue;
-      }
-
-      assertNever(op, "Unhandled op");
-    }
-
-    return inverses;
-  };
-
-  const applyTxnWithInverse = (
-    txn: Transaction,
-  ): { delta: ApplyDelta; inverseOps: Op[] } => {
-    const inverseOps = captureInverseForTxn(txn);
-    const delta = model.apply(txn);
-    return { delta, inverseOps };
-  };
-
-  const applyShapeRuleOps = (
-    touchedIds: readonly EntryId[],
-    inverseAcc: Op[],
-  ): ApplyDelta => {
-    let merged = emptyApply;
-
-    enforceViewShapes(model, shapes, touchedIds, (ops) => {
-      const txn = model.ops.transaction(ops, { source: "rule" });
-      const { delta, inverseOps } = applyTxnWithInverse(txn);
-      inverseAcc.push(...inverseOps);
-      merged = mergeApply(merged, delta);
-    });
-
-    return merged;
-  };
-
-  const classifyTextHistoryGroup = (
-    txn: Transaction,
-    sel: Selection,
-  ): TextHistoryGroupKey | null => {
-    if (sel.type !== "focused") return null;
-    if (sel.target !== VALUE_TARGET) return null;
-    if (txn.ops.length !== 1) return null;
-
-    const op = txn.ops[0];
-    if (!op) return null;
-    if (
-      op.type !== "patch" ||
-      op.next.label !== undefined ||
-      op.next.view !== undefined
-    ) {
-      return null;
-    }
-
-    const content = op.next.content;
-    if (!content || (content.type !== "blank" && content.type !== "scalar")) {
-      return null;
-    }
-
-    const focusedEntryId = entryIdFromItemId(sel.focus.item);
-    if (focusedEntryId == null || focusedEntryId !== op.id) return null;
-
-    return { kind: "text", itemId: sel.focus.item, target: sel.target };
-  };
-
-  const canCoalesceUndoEntries = (
-    prev: UndoHistoryEntry | null,
-    next: UndoHistoryEntry,
-  ): boolean => {
-    const prevKey = prev?.groupKey;
-    const nextKey = next.groupKey;
-    if (!prevKey || !nextKey) return false;
-
-    return (
-      prevKey.itemId === nextKey.itemId &&
-      prevKey.target === nextKey.target &&
-      next.groupedAt - prev.groupedAt <= TEXT_HISTORY_COALESCE_MS
-    );
-  };
-
-  const mergeUndoEntries = (
-    prev: UndoHistoryEntry,
-    next: UndoHistoryEntry,
-  ): UndoHistoryEntry => ({
-    user: {
-      ops: [...prev.user.ops, ...next.user.ops],
-      ...(next.user.meta ? { meta: next.user.meta } : {}),
-    },
-    inverse: {
-      ops: [...next.inverse.ops, ...prev.inverse.ops],
-      ...(next.inverse.meta ? { meta: next.inverse.meta } : {}),
-    },
-    groupedAt: next.groupedAt,
-    groupKey: next.groupKey,
-  });
-
-  const pushOrCoalesceUndoEntry = (entry: UndoHistoryEntry): void => {
-    const last = history.undo.at(-1) ?? null;
-    if (!canCoalesceUndoEntries(last, entry)) {
-      history.undo.push(entry);
-      return;
-    }
-    history.undo[history.undo.length - 1] = mergeUndoEntries(last!, entry);
-  };
-
   const clearCachesForRemovedEntries = (
     removedIds: readonly EntryId[],
   ): void => {
@@ -726,135 +381,24 @@ export function createCore(opts: {
     evaluator.prune(removedIds);
     for (const id of removedIds) viewSignalCache.delete(id);
   };
-
-  const resetPostImportState = (): void => {
-    history.undo = [];
-    history.redo = [];
-    viewSignalCache.clear();
-    setSelection({
-      type: "focused",
-      focus: { container: rootId, item: rootId },
-      target: DEFAULT_TARGET,
-    });
-  };
-
-  const applyRemotePipeline = (
-    txn: Transaction,
-    inverseAcc: Op[],
-  ): ApplyDelta => {
-    let merged = emptyApply;
-
-    const modelDelta = model.apply(txn);
-    merged = mergeApply(merged, modelDelta);
-
-    const shapeRuleDelta = applyShapeRuleOps(modelDelta.touched, inverseAcc);
-    merged = mergeApply(merged, shapeRuleDelta);
-
-    const selection = selectionSignal.peek();
-    if (!selectionStillValid(selection)) setSelection({ type: "idle" });
-
-    return merged;
-  };
-
-  const applyUserPipeline = (
-    txn: Transaction,
-    inverseAcc: Op[],
-    userHistoryCtx: UserCommitHistoryCtx | null = null,
-  ): ApplyDelta => {
-    let merged = emptyApply;
-    const anchor = captureRepairAnchor();
-    const isUser = txn.meta?.source === "user";
-
-    const { delta: userDelta, inverseOps } = applyTxnWithInverse(txn);
-    inverseAcc.push(...inverseOps);
-    merged = mergeApply(merged, userDelta);
-
-    const shapeRuleDelta = applyShapeRuleOps(userDelta.touched, inverseAcc);
-    merged = mergeApply(merged, shapeRuleDelta);
-
-    repairSelectionAfterLocalApply(anchor);
-
-    if (isUser) {
-      const inverse = model.ops.transaction(inverseAcc.toReversed(), {
-        source: "undo",
-      });
-      pushOrCoalesceUndoEntry({
-        user: txn,
-        inverse,
-        groupedAt: userHistoryCtx?.startedAt ?? Date.now(),
-        groupKey: userHistoryCtx
-          ? classifyTextHistoryGroup(txn, userHistoryCtx.selection)
-          : null,
-      });
-      history.redo = [];
-    }
-
-    return merged;
-  };
-
-  const applyPipeline = (
-    txn: Transaction,
-    userHistoryCtx: UserCommitHistoryCtx | null = null,
-  ): void => {
-    let final = emptyApply;
-    const inverseAcc: Op[] = [];
-    const source = txn.meta?.source;
-
-    batch(() => {
-      const isRemote = source === "remote";
-
-      if (isRemote) {
-        final = mergeApply(final, applyRemotePipeline(txn, inverseAcc));
-      } else {
-        final = mergeApply(
-          final,
-          applyUserPipeline(txn, inverseAcc, userHistoryCtx),
-        );
-      }
-
-      clearCachesForRemovedEntries(final.removed);
-    });
-  };
-
-  let localSeq = 0;
-
-  const stampLocalMeta = (
-    meta: TransactionMeta | undefined,
-  ): TransactionMeta => {
-    const base = meta ?? {};
-    const origin = opts.collab?.origin;
-    const seq = origin ? ++localSeq : undefined;
-    return {
-      ...base,
-      ...(origin ? { origin } : {}),
-      ...(seq != null ? { seq } : {}),
-    };
-  };
-
-  const sendLocalTxn = (txn: Transaction): void => {
-    if (!opts.collab) return;
-    opts.collab.send(txn);
-  };
-
-  const applyLocal = (
-    txn: Transaction,
-    userHistoryCtx: UserCommitHistoryCtx | null = null,
-  ): void => {
-    const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
-    applyPipeline(stamped, userHistoryCtx);
-    sendLocalTxn(stamped);
-  };
-
-  const applyRemote = (txn: Transaction): void => {
-    if (
-      opts.collab &&
-      txn.meta?.origin &&
-      txn.meta.origin === opts.collab.origin
-    )
-      return;
-    const meta = { ...(txn.meta ?? {}), source: "remote" as const };
-    applyPipeline(model.ops.transaction(txn.ops, meta));
-  };
+  const {
+    commit,
+    undo,
+    redo,
+    undoBoundary,
+    applyRemote,
+    resetState: resetCommitState,
+  } = createCommitController({
+    getModel: () => model,
+    shapes,
+    rootEntryId,
+    getSelection: () => peekSelection(),
+    captureRepairAnchor,
+    repairAfterLocalApply,
+    coerceAfterRemoteApply,
+    clearCachesForRemovedEntries,
+    ...(opts.collab ? { collab: opts.collab } : {}),
+  });
 
   const exportSnapshot = (): SnapshotData => model.exportSnapshot();
 
@@ -873,7 +417,9 @@ export function createCore(opts: {
     batch(() => {
       model = nextModel;
       evaluator = nextEvaluator;
-      resetPostImportState();
+      viewSignalCache.clear();
+      resetCommitState();
+      resetToRoot();
     });
 
     prevEvaluator.dispose();
@@ -886,8 +432,6 @@ export function createCore(opts: {
     read.item(id);
     return createShapeReader(read, id, shape);
   };
-
-  const selection = (): Selection => selectionSignal.value;
 
   const locate = (id: ItemId): LocateResult | null => {
     const ref = parseItemId(id);
@@ -903,196 +447,19 @@ export function createCore(opts: {
     };
   };
 
-  const commit = (run: (t: Tx) => void): void => {
-    const userHistoryCtx: UserCommitHistoryCtx = {
-      selection: selectionSignal.peek(),
-      startedAt: Date.now(),
-    };
-    const ops: Op[] = [];
-    const pendingCreated = new Set<EntryId>();
-
-    const requireTxEntryId = (id: ItemId, opName: string): EntryId => {
-      const ref = parseItemId(id);
-      if (!ref) throw new Error(`${opName} expects a valid item id`);
-
-      const { entryId, path } = ref;
-      if (path.length !== 0)
-        throw new Error(`${opName} does not accept readonly/derived item ids`);
-      if (!model.hasEntry(entryId) && !pendingCreated.has(entryId)) {
-        throw new Error(`${opName} expects an existing item id`);
-      }
-
-      return entryId;
-    };
-
-    const t: Tx = {
-      setLabel: (id, label) => {
-        const eid = requireTxEntryId(id, "setLabel");
-        ops.push(model.ops.patch(eid, { label }));
-      },
-
-      setView: (id, view) => {
-        const eid = requireTxEntryId(id, "setView");
-        ops.push(model.ops.patch(eid, { view }));
-      },
-
-      setValue: (id, value) => {
-        const eid = requireTxEntryId(id, "setValue");
-        ops.push(model.ops.patch(eid, { content: storedFromValue(value) }));
-      },
-
-      setConnected: (id, conn) => {
-        const eid = requireTxEntryId(id, "setConnected");
-
-        if (conn.type === "formula") {
-          ops.push(
-            model.ops.patch(eid, {
-              content: { type: "formula", expr: conn.expr },
-            }),
-          );
-          return;
-        }
-
-        ops.push(
-          model.ops.patch(eid, {
-            content: {
-              type: "query",
-              from: conn.from,
-              where: conn.where,
-              orderBy: conn.orderBy,
-            },
-          }),
-        );
-      },
-
-      setGroup: (id) => {
-        const eid = requireTxEntryId(id, "setGroup");
-        ops.push(
-          model.ops.patch(eid, { content: { type: "group", childIds: [] } }),
-        );
-      },
-
-      insertChild: (parentId, insertOpts) => {
-        const parentEid = requireTxEntryId(parentId, "insertChild");
-
-        const id = model.createId();
-        const entry: Entry = makeBlankEntry(id);
-        pendingCreated.add(id);
-
-        ops.push(model.ops.create(entry));
-        ops.push(
-          model.ops.move({
-            childId: id,
-            toParentId: parentEid,
-            ...(insertOpts?.at != null ? { toIndex: insertOpts.at } : {}),
-          }),
-        );
-
-        return itemIdOf(id);
-      },
-
-      move: (id, toParentId, moveOpts) => {
-        const childEid = requireTxEntryId(id, "move");
-        const toParentEid = requireTxEntryId(toParentId, "move");
-
-        ops.push(
-          model.ops.move({
-            childId: childEid,
-            toParentId: toParentEid,
-            ...(moveOpts?.at != null ? { toIndex: moveOpts.at } : {}),
-          }),
-        );
-      },
-
-      remove: (id) => {
-        const eid = requireTxEntryId(id, "remove");
-        ops.push(model.ops.remove(eid));
-      },
-    };
-
-    run(t);
-    if (!ops.length) return;
-
-    const txn = model.ops.transaction(ops, { source: "user" });
-    applyLocal(txn, userHistoryCtx);
-  };
-
-  const undo = (): void => {
-    const last = history.undo.pop() ?? null;
-    if (!last) return;
-    applyLocal(last.inverse);
-    history.redo.push(last);
-  };
-
-  const redo = (): void => {
-    const last = history.redo.pop() ?? null;
-    if (!last) return;
-
-    const replay = model.ops.transaction(last.user.ops, { source: "redo" });
-    applyLocal(replay);
-    history.undo.push(last);
-  };
-
-  const focus = (
-    nextFocus: Focus,
-    target: string = DEFAULT_TARGET,
-    focusOpts: FocusOpts = {},
-  ) => {
-    const shouldApplyCaret = target !== DEFAULT_TARGET && !!focusOpts.caret;
-    setSelection({
-      type: "focused",
-      focus: nextFocus,
-      target,
-      ...(shouldApplyCaret ? { caret: focusOpts.caret } : {}),
-    });
-  };
-
-  const blur = (): void => {
-    setSelection({ type: "idle" });
-  };
-
   const unsubscribeCollab = opts.collab
     ? opts.collab.subscribe((txn) => {
         applyRemote(txn);
       })
     : null;
 
-  const wrapRootIntoChild = (): ItemId | null => {
-    const rootItem = item(rootId);
-    const rootView = view(rootId);
-    const rootChildren =
-      rootItem.content.type === "group" ? [...rootItem.content.children] : [];
-    let wrappedId: ItemId = "";
-
-    core.commit((t) => {
-      if (rootItem.content.type !== "group") t.setGroup(rootId);
-
-      wrappedId = t.insertChild(rootId, { at: 0 });
-      t.setLabel(wrappedId, "");
-      t.setView(wrappedId, rootView);
-
-      if (rootItem.mode.type === "connected") {
-        t.setConnected(wrappedId, rootItem.mode.conn);
-        return;
-      }
-
-      if (rootItem.content.type === "value") {
-        t.setValue(wrappedId, rootItem.content.value);
-        return;
-      }
-
-      t.setGroup(wrappedId);
-      for (const childId of rootChildren) t.move(childId, wrappedId);
-    });
-
-    return wrappedId || null;
-  };
-
   const handleRootIntent = (intent: Intent, sel: Selection): boolean => {
     if (
-      sel.type !== "focused" ||
-      sel.focus.item !== rootId ||
-      sel.focus.container !== rootId
+      sel.type !== "item" ||
+      sel.anchor.item !== rootId ||
+      sel.anchor.container !== rootId ||
+      sel.head.item !== rootId ||
+      sel.head.container !== rootId
     ) {
       return false;
     }
@@ -1100,41 +467,26 @@ export function createCore(opts: {
 
     switch (intent.type) {
       case "NAV": {
-        if (sel.target !== DEFAULT_TARGET) return false;
-        if (intent.dir === "out") {
-          setSelection({ type: "idle" });
-          return true;
-        }
-
+        if (intent.dir === "out") return false;
         if (intent.dir !== "right") return false;
         if (rootItem.content.type !== "group") return false;
-
-        const firstChildId = rootItem.content.children[0];
+        const firstChildId = rootItem.content.children[0] ?? null;
         if (!firstChildId) return false;
+        const firstChild: Location = { container: rootId, item: firstChildId };
 
-        setSelection({
-          type: "focused",
-          focus: { container: rootId, item: firstChildId },
-          target: DEFAULT_TARGET,
-        });
+        setSelection({ type: "item", anchor: firstChild, head: firstChild });
         return true;
       }
 
       case "TAB": {
         if (intent.shift) return false;
 
-        const wrappedId = wrapRootIntoChild();
+        const wrappedId = indentItemInPlace(core, rootId);
         if (wrappedId) {
-          const wrappedTargets = editTargetsForItem(core, wrappedId);
-          const target =
-            sel.target === DEFAULT_TARGET || wrappedTargets.includes(sel.target)
-              ? sel.target
-              : DEFAULT_TARGET;
-
           setSelection({
-            type: "focused",
-            focus: { container: rootId, item: wrappedId },
-            target,
+            type: "item",
+            anchor: { container: rootId, item: wrappedId },
+            head: { container: rootId, item: wrappedId },
           });
         }
         return true;
@@ -1142,22 +494,24 @@ export function createCore(opts: {
 
       case "CONFIRM":
       case "TYPE": {
-        if (sel.target !== DEFAULT_TARGET) return false;
         const rootIsEditable = rootItem.mode.type !== "readonly";
         const rootIsEmptyGroup =
           rootItem.content.type === "group" &&
           rootItem.content.children.length === 0;
 
         let target: string;
-        let caret: Caret;
+        let caret: number;
 
         if (rootIsEditable && rootIsEmptyGroup) {
-          core.commit((t) => t.setValue(rootId, ""));
-          target = VALUE_TARGET;
-          caret =
-            intent.type === "CONFIRM"
-              ? { start: 0, end: 0 }
-              : { start: 0, end: Number.MAX_SAFE_INTEGER };
+          if (intent.type === "TYPE") {
+            core.commit((t) => t.setValue(rootId, intent.char));
+            target = VALUE_TARGET;
+            caret = intent.char.length;
+          } else {
+            core.commit((t) => t.setValue(rootId, ""));
+            target = VALUE_TARGET;
+            caret = 0;
+          }
         } else {
           const t = primaryEditTarget(core, rootId);
           if (!t) {
@@ -1165,13 +519,17 @@ export function createCore(opts: {
               intent.type === "CONFIRM" &&
               rootItem.content.type === "group"
             ) {
-              const firstChildId = rootItem.content.children[0];
+              const firstChildId = rootItem.content.children[0] ?? null;
               if (!firstChildId) return false;
+              const firstChild: Location = {
+                container: rootId,
+                item: firstChildId,
+              };
 
               setSelection({
-                type: "focused",
-                focus: { container: rootId, item: firstChildId },
-                target: DEFAULT_TARGET,
+                type: "item",
+                anchor: firstChild,
+                head: firstChild,
               });
               return true;
             }
@@ -1181,22 +539,16 @@ export function createCore(opts: {
           target = t;
           if (intent.type === "CONFIRM") {
             const pos = getTextForTarget(core, rootId, target).length;
-            caret = { start: pos, end: pos };
+            caret = pos;
           } else {
-            caret = { start: 0, end: Number.MAX_SAFE_INTEGER };
+            const applied = applyTypeToPrimaryTarget(core, rootId, intent.char);
+            if (!applied) return false;
+            target = applied.target;
+            caret = applied.caret;
           }
         }
 
-        setSelection({
-          type: "focused",
-          focus: sel.focus,
-          target,
-          caret,
-        });
-
-        if (intent.type === "TYPE") {
-          opts.platform?.typeCharAtFocusedTarget?.(intent.char);
-        }
+        setSelection({ type: "editing", location: rootFocus, target }, caret);
 
         return true;
       }
@@ -1209,11 +561,28 @@ export function createCore(opts: {
   const handleNavOut = (sel: Selection): boolean => {
     if (sel.type === "idle") return true;
 
-    if (sel.target !== DEFAULT_TARGET) {
+    if (sel.type === "editing") {
+      setSelection({ type: "item", anchor: sel.location, head: sel.location });
+      return true;
+    }
+
+    if (sel.type === "item") {
+      const containerEid = entryIdFromItemId(sel.anchor.container);
+      if (containerEid == null) {
+        setSelection({ type: "idle" });
+        return true;
+      }
+      const parentLoc = model.locateInParent(containerEid);
+      if (!parentLoc) {
+        setSelection({ type: "idle" });
+        return true;
+      }
+      const grandparentId = itemIdOf(parentLoc.parentId);
+      const parentId = itemIdOf(containerEid);
       setSelection({
-        type: "focused",
-        focus: sel.focus,
-        target: DEFAULT_TARGET,
+        type: "item",
+        anchor: { container: grandparentId, item: parentId },
+        head: { container: grandparentId, item: parentId },
       });
       return true;
     }
@@ -1222,7 +591,7 @@ export function createCore(opts: {
   };
 
   const dispatch = (intent: Intent): void => {
-    const sel = selectionSignal.peek();
+    const sel = peekSelection();
 
     if (intent.type === "NAV" && intent.dir === "out" && handleNavOut(sel)) {
       return;
@@ -1230,7 +599,7 @@ export function createCore(opts: {
 
     if (handleRootIntent(intent, sel)) return;
 
-    getActiveViewIntentHandler()?.(intent);
+    opts.platform?.resolveIntentHandler?.(sel)?.(intent);
   };
 
   core = {
@@ -1247,12 +616,12 @@ export function createCore(opts: {
     selection,
 
     focus,
-    blur,
     dispatch,
 
     commit,
     undo,
     redo,
+    undoBoundary,
 
     exportSnapshot,
     importSnapshot,
@@ -1263,10 +632,9 @@ export function createCore(opts: {
 
 export type {
   AnyShapeReader,
-  Caret,
   Connected,
   Content,
-  Focus,
+  Location,
   GroupShapeReader,
   Intent,
   Item,
@@ -1279,6 +647,7 @@ export type {
   SnapshotData,
   ReaderForShape,
   Transaction,
+  Tx,
   Value,
   ValueOrBlank,
   ValueShapeReader,
@@ -1286,13 +655,8 @@ export type {
   ViewShape,
 };
 
-export {
-  DEFAULT_TARGET,
-  LABEL_TARGET,
-  VALUE_TARGET,
-  connTarget,
-  parseKeyIntent,
-};
+export { LABEL_TARGET, VALUE_TARGET, connTarget, parseKeyIntent };
+export { ITEM_TARGET };
 
 export { isCoreReadError };
 export { defineShape };

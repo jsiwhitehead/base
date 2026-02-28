@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Core, ItemId, Transaction, ViewName } from "../src/core";
-import { createCore, DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
+import { createCore, VALUE_TARGET } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
   assertCoreInvariants,
@@ -45,10 +45,14 @@ type TreeShape =
 type SelectionSnapshot =
   | { type: "idle" }
   | {
-      type: "focused";
-      focus: { container: ItemId; item: ItemId };
+      type: "item";
+      anchor: { container: ItemId; item: ItemId };
+      head: { container: ItemId; item: ItemId };
+    }
+  | {
+      type: "editing";
+      location: { container: ItemId; item: ItemId };
       target: string;
-      caret?: { start: number; end: number };
     };
 
 function groupLabels(core: Core, id: ItemId): string[] {
@@ -76,40 +80,27 @@ function tree(core: Core, id: ItemId): TreeShape {
   };
 }
 
-function snapshotSelection(
-  core: Core,
-  opts: { includeCaret?: boolean } = {},
-): SelectionSnapshot {
+function snapshotSelection(core: Core): SelectionSnapshot {
   const selection = core.selection();
   if (selection.type === "idle") return { type: "idle" };
-
-  if (!opts.includeCaret || !selection.caret)
-    return {
-      type: "focused",
-      focus: selection.focus,
-      target: selection.target,
-    };
-
+  if (selection.type === "item")
+    return { type: "item", anchor: selection.anchor, head: selection.head };
   return {
-    type: "focused",
-    focus: selection.focus,
+    type: "editing",
+    location: selection.location,
     target: selection.target,
-    caret: { start: selection.caret.start, end: selection.caret.end },
   };
 }
 
 function snapshotState(
   core: Core,
   rootId: ItemId,
-  opts: { viewIds?: readonly ItemId[]; includeCaret?: boolean } = {},
+  opts: { viewIds?: readonly ItemId[] } = {},
 ): {
   tree: TreeShape;
   selection: SelectionSnapshot;
   views?: Record<ItemId, ViewName>;
 } {
-  const caretOpts =
-    opts.includeCaret === undefined ? {} : { includeCaret: opts.includeCaret };
-
   const views =
     opts.viewIds && opts.viewIds.length
       ? Object.fromEntries(opts.viewIds.map((id) => [id, core.view(id)]))
@@ -117,7 +108,7 @@ function snapshotState(
 
   return {
     tree: tree(core, rootId),
-    selection: snapshotSelection(core, caretOpts),
+    selection: snapshotSelection(core),
     ...(views ? { views } : {}),
   };
 }
@@ -126,7 +117,7 @@ function expectCommitThrowsNoChange(
   core: Core,
   rootId: ItemId,
   run: Parameters<Core["commit"]>[0],
-  opts: { viewIds?: readonly ItemId[]; includeCaret?: boolean } = {},
+  opts: { viewIds?: readonly ItemId[] } = {},
 ): void {
   const before = snapshotState(core, rootId, opts);
   expect(() => core.commit(run)).toThrow();
@@ -138,20 +129,21 @@ function assertFocusedSelectionStructurallyValid(
   rootId: ItemId,
 ): void {
   const selection = core.selection();
-  if (selection.type === "idle") return;
-
-  const item = core.item(selection.focus.item);
-  const container = core.item(selection.focus.container);
-  expect(item.content.type).not.toBe("issue");
-  expect(container.content.type).not.toBe("issue");
-
-  if (selection.focus.item === selection.focus.container) return;
-
-  const loc = core.locate(selection.focus.item);
-  expect(loc).not.toBeNull();
-  expect(loc!.parentId).toBe(selection.focus.container);
-
-  assertCoreInvariants(core, rootId);
+  if (selection.type === "editing") {
+    const item = core.item(selection.location.item);
+    const container = core.item(selection.location.container);
+    expect(item.content.type).not.toBe("issue");
+    expect(container.content.type).not.toBe("issue");
+    if (selection.location.item === selection.location.container) return;
+    const loc = core.locate(selection.location.item);
+    expect(loc).not.toBeNull();
+    expect(loc!.parentId).toBe(selection.location.container);
+    assertCoreInvariants(core, rootId);
+  } else if (selection.type === "item") {
+    const anchor = core.item(selection.anchor.item);
+    expect(anchor.content.type).not.toBe("issue");
+    assertCoreInvariants(core, rootId);
+  }
 }
 
 describe("core/basics", () => {
@@ -159,11 +151,7 @@ describe("core/basics", () => {
     const { core, rootId } = makeCoreForTest();
 
     expect(core.item(rootId).content.type).toBe("group");
-    expectSel(core, {
-      container: rootId,
-      item: rootId,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: rootId, item: rootId });
   });
 
   test("item(invalid format) throws", () => {
@@ -630,7 +618,11 @@ describe("core/history", () => {
   test("setValue edits on same item coalesce into one undo step", () => {
     const { core, rootId } = makeCoreForTest();
     const x = mkBlank(core, rootId, { label: "x", value: 0 });
-    core.focus({ container: rootId, item: x }, VALUE_TARGET);
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
 
     core.commit((t) => t.setValue(x, 1));
     core.commit((t) => t.setValue(x, 2));
@@ -688,7 +680,11 @@ describe("core/history", () => {
     const a = mkBlank(core, g, { label: "a", value: 1 });
     const b = mkBlank(core, g, { label: "b", value: 2 });
 
-    core.focus({ container: g, item: a }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: g, item: a },
+      head: { container: g, item: a },
+    });
 
     const before = tree(core, rootId);
 
@@ -787,11 +783,14 @@ describe("core/snapshot", () => {
     const a = mkBlank(core, row, { label: "a", value: 1 });
     const q = mkBlank(core, rootId, { label: "q" });
     setQuery(core, q, { from: "table", where: "", orderBy: "label" });
-    core.focus({ container: row, item: a }, VALUE_TARGET);
+    core.focus({
+      type: "editing",
+      location: { container: row, item: a },
+      target: VALUE_TARGET,
+    });
 
     const beforeTree = snapshotState(core, rootId, {
       viewIds: [rootId, table, row, a, q],
-      includeCaret: true,
     });
     const snap = core.exportSnapshot();
 
@@ -799,16 +798,9 @@ describe("core/snapshot", () => {
 
     expect(core.exportSnapshot()).toEqual(snap);
     expect(
-      snapshotState(core, rootId, {
-        viewIds: [rootId, table, row, a, q],
-        includeCaret: true,
-      }).tree,
+      snapshotState(core, rootId, { viewIds: [rootId, table, row, a, q] }).tree,
     ).toEqual(beforeTree.tree);
-    expectSel(core, {
-      container: rootId,
-      item: rootId,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: rootId, item: rootId });
   });
 
   test("importSnapshot invalid input throws and leaves state unchanged", () => {
@@ -832,16 +824,16 @@ describe("core/snapshot", () => {
     const { core, rootId } = makeCoreForTest();
     const x = mkBlank(core, rootId, { label: "x", value: 1 });
     core.commit((t) => t.setValue(x, 2));
-    core.focus({ container: rootId, item: x }, VALUE_TARGET);
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
 
     const snap = core.exportSnapshot();
     core.importSnapshot(snap);
 
-    expectSel(core, {
-      container: rootId,
-      item: rootId,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: rootId, item: rootId });
 
     core.undo();
     expect(valueOfId(core, x)).toBe(2);
@@ -858,15 +850,23 @@ describe("core/snapshot", () => {
 });
 
 describe("core/selection validity & repair", () => {
-  test("focus with invalid container/item pair repairs to valid selection", () => {
+  test("focus keeps existing editing selection even when container/item pair is mismatched", () => {
     const { core, rootId } = makePureCore();
     const g1 = mkGroup(core, rootId, { label: "g1" });
     const g2 = mkGroup(core, rootId, { label: "g2" });
     const x = mkBlank(core, g2, { label: "x", value: 1 });
 
-    core.focus({ container: g1, item: x }, DEFAULT_TARGET);
+    core.focus({
+      type: "editing",
+      location: { container: g1, item: x },
+      target: VALUE_TARGET,
+    });
 
-    assertFocusedSelectionStructurallyValid(core, rootId);
+    expect(core.selection()).toEqual({
+      type: "editing",
+      location: { container: g1, item: x },
+      target: VALUE_TARGET,
+    });
     core.dispose();
   });
 
@@ -879,7 +879,11 @@ describe("core/selection validity & repair", () => {
     void a;
     void c;
 
-    core.focus({ container: g, item: b }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: g, item: b },
+      head: { container: g, item: b },
+    });
     core.commit((t) => t.remove(b));
 
     assertFocusedSelectionStructurallyValid(core, rootId);
@@ -892,7 +896,11 @@ describe("core/selection validity & repair", () => {
     const g2 = mkGroup(core, rootId, { label: "g2" });
     const x = mkBlank(core, g1, { label: "x", value: 1 });
 
-    core.focus({ container: g1, item: x }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: g1, item: x },
+      head: { container: g1, item: x },
+    });
     core.commit((t) => t.move(x, g2));
 
     assertFocusedSelectionStructurallyValid(core, rootId);
@@ -926,7 +934,11 @@ describe("core/selection validity & repair", () => {
       t.setValue(x, 1);
     });
 
-    core.focus({ container: g, item: x }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: g, item: x },
+      head: { container: g, item: x },
+    });
 
     const createTxn = {
       ops: [
@@ -991,7 +1003,11 @@ describe("core/determinism", () => {
         t.move(b, g, { at: 0 });
         t.setValue(a, 10);
       });
-      core.focus({ container: g, item: b }, VALUE_TARGET);
+      core.focus({
+        type: "editing",
+        location: { container: g, item: b },
+        target: VALUE_TARGET,
+      });
       core.undo();
       core.redo();
 

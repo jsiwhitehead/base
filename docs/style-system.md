@@ -10,7 +10,7 @@ This document defines:
 - CSS layering responsibilities.
 - Shared primitives (`frame`, `body`, `header`, `rail`, `wash`).
 - Universal state styling (`.is-focused`, `.is-issue`, and derived variables).
-- Focus language (item vs target, container vs edit, control vs editor).
+- Location language (item vs target, container vs edit, control vs editor).
 - Issue language and issue/focus interaction.
 
 ## Deep feel and visual language
@@ -50,7 +50,7 @@ The system should feel stable in the hands.
 - Predictable: behaviour is consistent across contexts.
 - Steady: navigation and editing feel deliberate rather than reactive.
 - Reversible: change feels safe and recoverable.
-- Coherent in focus: container focus and edit focus are distinct and visually legible.
+- Coherent in focus: item selection and edit focus are distinct and visually legible.
 
 ### Visual grammar
 
@@ -59,7 +59,7 @@ The system uses a small set of stable primitives that remain consistent across v
 - Frame/body separation: structure is expressed in the frame; content is expressed in the body.
 - Rails: structural markers and continuity cues.
 - Header: a compact, contained identity surface for each item.
-- Wash: the primary indicator of container focus.
+- Wash: the primary indicator of item selection.
 - State language: a consistent vocabulary for focus, selection, editability, and issues.
 - Quiet persistence: structure is legible without being loud.
 
@@ -210,7 +210,7 @@ The rail is the primary structural marker for boundaries and item focus. Each it
 Rules:
 
 - Each item MUST render a rail segment and it MUST NOT behave as a generic card border.
-- Focus and issue styling MUST be local to the item's own rail segment.
+- Location and issue styling MUST be local to the item's own rail segment.
 - Rail segments MUST NOT merge across siblings (the gap must remain visible).
 - Rail segments SHOULD be square-ended at internal joins (between siblings).
 - Rail segments SHOULD be rounded only at the outer ends of a contiguous group (first and last segment).
@@ -230,7 +230,7 @@ Rules:
 
 - Wash MUST be subtle and frame-local.
 - Wash MUST NOT appear by default for edit focus.
-- Wash SHOULD appear only for container focus (`DEFAULT_TARGET`).
+- Wash SHOULD appear only for item selection (`ITEM_TARGET`).
 
 ## State model
 
@@ -270,7 +270,7 @@ Rules:
 - Rail/header/wash MUST use frame-derived variables.
 - DOM focus MAY be used only for container vs edit mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
 
-## Focus language
+## Location language
 
 ### Item focus vs target focus
 
@@ -283,13 +283,13 @@ Rules:
 - Target focus MUST be communicated locally at the active control/editor.
 - Target focus MUST NOT be expressed as a container-level ring.
 
-### Container focus vs edit focus
+### Item selection vs edit focus
 
-Container focus (`DEFAULT_TARGET`) represents active item, not active field.
+Item selection (`ITEM_TARGET`) represents active item, not active field.
 
 Rules:
 
-- Container focus: rail tint active, wash MAY be active, local rings SHOULD be absent.
+- Item selection: rail tint active, wash MAY be active, local rings SHOULD be absent.
 - Edit focus (non-default target): rail tint remains active, wash SHOULD be off, local affordance MUST appear on active target.
 
 ### How DOM focus is used
@@ -300,12 +300,12 @@ Signals:
 
 - `.ui-frame.is-focused`: authoritative item focus.
 - `.ui-frame:focus`: container itself has DOM focus.
-- `.ui-frame:focus-within`: DOM focus is inside the item (including container focus).
+- `.ui-frame:focus-within`: DOM focus is inside the item (including item selection).
 - `input/textarea/select/button:focus`: the active control/editor.
 
 Model:
 
-- Container focus: `.ui-frame.is-focused:focus` (wash MAY be on).
+- Item selection: `.ui-frame.is-focused:focus` (wash MAY be on).
 - Edit focus: `.ui-frame.is-focused:focus-within:not(:focus)` (wash SHOULD be off; local affordance on `:focus`).
 - Target affordances SHOULD use `:focus`, not `:focus-visible`.
 
@@ -313,9 +313,9 @@ Model:
 
 Rules:
 
-- Root container focus MAY use a thin edge rail on `.ui-main`.
+- Root item selection MAY use a thin edge rail on `.ui-main`.
 - Root rail color SHOULD use frame-derived `--rail-tint` in both base and focused states.
-- Root container focus MAY use the same wash behavior as focused item frames.
+- Root item selection MAY use the same wash behavior as focused item frames.
 - Root focus styling MUST stay lightweight and MUST NOT imply item header/card framing.
 
 ### Control focus vs editor focus
@@ -352,7 +352,7 @@ Rules:
 Rules:
 
 - Issue state MUST remain dominant for frame-derived palette decisions.
-- Focus affordances SHOULD remain usable without hiding issue state.
+- Location affordances SHOULD remain usable without hiding issue state.
 
 ### Recommended visual grammar
 
@@ -362,7 +362,7 @@ Issue-only (not focused):
 - Header: gentle issue fill.
 - Wash: off.
 
-Issue + container focus:
+Issue + item selection:
 
 - Rail: stronger issue tint.
 - Header: stronger issue fill.
@@ -450,11 +450,11 @@ Frame-derived variables:
 - `--value-ink`: value text ink.
 - Default neutral bases: `--ui-color-rail` for rail tint, `--ui-color-header` for header fill; `--ui-color-surface` remains the generic panel/surface neutral.
 
-Focus grammar:
+Location grammar:
 
 - Item focus = rail tint (+ optional wash).
 - Target focus = local affordance only.
-- Container focus = wash on, no local rings.
+- Item selection = wash on, no local rings.
 - Edit focus = wash off, local ring/caret on active target.
 
 Rail rules

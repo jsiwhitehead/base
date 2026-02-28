@@ -1,24 +1,21 @@
 import type {
-  Focus,
+  Location,
   Intent,
   ItemId,
   ReaderForShape,
   ValueOrBlank,
 } from "../core";
-import { DEFAULT_TARGET, VALUE_TARGET, defineShape } from "../core";
+import { VALUE_TARGET, defineShape } from "../core";
 import type { Component, UiCore } from "../dom";
 import {
   bindItemFrame,
-  caret0,
   createComponent,
+  defineShapedView,
   el,
   setBodyClasses,
 } from "../dom";
-import { defineShapedView } from "./index";
 
-const sliderShape = defineShape({
-  type: "value",
-});
+const sliderShape = defineShape({ type: "value" });
 
 type SliderOpts = { min: number; max: number; step: number };
 
@@ -27,16 +24,12 @@ type SliderMountCtx = {
   id: ItemId;
   reader: SliderReader;
   opts: SliderOpts;
-  focus: Focus;
+  focus: Location;
 };
 
 type SliderReader = ReaderForShape<typeof sliderShape>;
 
-const DEFAULT_SLIDER_OPTS: SliderOpts = {
-  min: 0,
-  max: 100,
-  step: 1,
-};
+const DEFAULT_SLIDER_OPTS: SliderOpts = { min: 0, max: 100, step: 1 };
 
 const nativeRangeKeys = new Set([
   "ArrowLeft",
@@ -128,7 +121,10 @@ function buildSliderBody({
     };
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
-      core.focus(focus, VALUE_TARGET, { caret: caret0() });
+      core.focus(
+        { type: "editing", location: focus, target: VALUE_TARGET },
+        { caret: 0 },
+      );
       e.stopPropagation();
     });
 
@@ -163,13 +159,13 @@ export const sliderView = defineShapedView(
 
     const onIntent = (intent: Intent): void => {
       const selection = core.selection();
-      if (selection.type !== "focused") return;
+      if (selection.type !== "editing") return;
 
       switch (intent.type) {
         case "CONFIRM":
-          if (selection.focus.item !== id) return;
+          if (selection.location.item !== id) return;
           if (selection.target === VALUE_TARGET)
-            core.focus(selection.focus, DEFAULT_TARGET);
+            core.focus({ type: "item", location: selection.location });
           return;
         case "NAV":
         case "TAB":
@@ -179,13 +175,7 @@ export const sliderView = defineShapedView(
       }
     };
 
-    const body = buildSliderBody({
-      core,
-      id,
-      reader,
-      opts,
-      focus,
-    });
+    const body = buildSliderBody({ core, id, reader, opts, focus });
 
     return { onIntent, body };
   },

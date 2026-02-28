@@ -1,27 +1,29 @@
 import { signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
-import type { Focus, Intent, ItemId } from "../src/core";
-import {
-  DEFAULT_TARGET,
-  LABEL_TARGET,
-  VALUE_TARGET,
-  connTarget,
-} from "../src/core";
+import type { Location, Intent, ItemId } from "../src/core";
+import { LABEL_TARGET, VALUE_TARGET, connTarget } from "../src/core";
 import type { Component } from "../src/dom";
 import {
   bindItemFrame,
   buildItemHeader,
   buildTextField,
   createComponent,
+  domPointToTextOffset,
   el,
-  handleContainerIntent,
+  getPlainTextFromDataTransfer,
+  handleItemIntent,
+  readPlainTextFromContentEditable,
+  renderPlainTextToContentEditable,
+  setDomCaret,
+  setDomSelectionRange,
+  textOffsetToDomPoint,
+  writePlainTextClipboard,
 } from "../src/dom";
 import { viewRegistrations } from "../src/views";
 
 import {
   dispatchKey,
-  expectFocused,
   flushDomEffects,
   makeCoreRuntime,
   mkBlank,
@@ -66,6 +68,25 @@ function connTargetsInHeaderConn(root: ParentNode): string[] {
   return els
     .map((e) => e.dataset.target ?? "")
     .filter((t) => t.startsWith("conn:"));
+}
+
+type MockTransfer = {
+  _data: Record<string, string>;
+  setData(type: string, value: string): void;
+  getData(type: string): string;
+};
+
+function makeMockTransfer(seed?: Record<string, string>): MockTransfer {
+  const data = { ...(seed ?? {}) };
+  return {
+    _data: data,
+    setData(type, value) {
+      data[type] = value;
+    },
+    getData(type) {
+      return data[type] ?? "";
+    },
+  };
 }
 
 describe("dom runtime: createComponent + Ctx primitives", () => {
@@ -334,11 +355,85 @@ describe("dom runtime: createComponent + Ctx primitives", () => {
   });
 });
 
+describe("dom/contenteditable utility contracts", () => {
+  test("render/read plain text round-trips with trailing-newline sentinel", () => {
+    const surface = el("div");
+
+    renderPlainTextToContentEditable(surface, "a\n");
+
+    expect([...surface.childNodes].map((n) => n.nodeName)).toEqual([
+      "#text",
+      "BR",
+      "BR",
+    ]);
+    const sentinel = surface.lastChild as HTMLBRElement | null;
+    expect(sentinel?.dataset.ceSentinel).toBe("1");
+    expect(readPlainTextFromContentEditable(surface)).toBe("a\n");
+  });
+
+  test("readPlainTextFromContentEditable converts block wrappers to line breaks", () => {
+    const surface = el("div");
+    surface.innerHTML = "<div>a</div><div>b</div>";
+
+    expect(readPlainTextFromContentEditable(surface)).toBe("a\nb");
+  });
+
+  test("textOffsetToDomPoint and domPointToTextOffset round-trip logical offsets", () => {
+    const surface = el("div");
+    renderPlainTextToContentEditable(surface, "ab\ncd");
+
+    for (let offset = 0; offset <= 5; offset += 1) {
+      const point = textOffsetToDomPoint(surface, offset);
+      expect(domPointToTextOffset(surface, point.node, point.offset)).toBe(
+        offset,
+      );
+    }
+  });
+
+  test("setDomSelectionRange and setDomCaret update window selection", () => {
+    const surface = el("div");
+    document.body.append(surface);
+    renderPlainTextToContentEditable(surface, "hello");
+
+    const anchor = textOffsetToDomPoint(surface, 2);
+    const focus = textOffsetToDomPoint(surface, 4);
+
+    expect(setDomSelectionRange(anchor, focus)).toBe(true);
+    const sel = window.getSelection();
+    expect(sel?.toString()).toBe("ll");
+    expect(sel?.isCollapsed).toBe(false);
+
+    expect(setDomCaret(textOffsetToDomPoint(surface, 1))).toBe(true);
+    expect(sel?.isCollapsed).toBe(true);
+    expect(sel?.toString()).toBe("");
+    document.body.replaceChildren();
+  });
+
+  test("data transfer helpers read and write text/plain", () => {
+    const transfer = makeMockTransfer({ "text/plain": "hello" });
+    expect(
+      getPlainTextFromDataTransfer(transfer as unknown as DataTransfer),
+    ).toBe("hello");
+
+    const ev = new Event("copy", {
+      bubbles: true,
+      cancelable: true,
+    }) as ClipboardEvent;
+    Object.defineProperty(ev, "clipboardData", {
+      value: makeMockTransfer(),
+      configurable: true,
+    });
+
+    expect(writePlainTextClipboard(ev, "x")).toBe(true);
+    expect(ev.clipboardData?.getData("text/plain")).toBe("x");
+  });
+});
+
 describe("bindItemFrame contract", () => {
   test("sets baseline frame attributes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
@@ -360,7 +455,7 @@ describe("bindItemFrame contract", () => {
   test("pointerdown focuses core and stops propagation", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const parentSaw = spy();
 
@@ -384,9 +479,10 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     const selection = core.selection();
-    expectFocused(selection);
-    expect(selection.focus).toEqual(focus);
-    expect(selection.target).toBe(DEFAULT_TARGET);
+    expect(selection.type).toBe("item");
+    if (selection.type !== "item") throw new Error("Expected item selection");
+    expect(selection.head.container).toBe(focus.container);
+    expect(selection.head.item).toBe(focus.item);
     expect(parentSaw.count()).toBe(0);
 
     unmount();
@@ -396,7 +492,7 @@ describe("bindItemFrame contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
@@ -409,11 +505,19 @@ describe("bindItemFrame contract", () => {
 
     const frame = c.el as HTMLElement;
 
-    core.focus({ container: rootId, item: other }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: other },
+      head: { container: rootId, item: other },
+    });
     await flushDomEffects();
     expect(frame.classList.contains("is-focused")).toBe(false);
 
-    core.focus(focus, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: focus.container, item: focus.item },
+      head: { container: focus.container, item: focus.item },
+    });
     await flushDomEffects();
     expect(frame.classList.contains("is-focused")).toBe(true);
 
@@ -429,7 +533,7 @@ describe("buildTextField contract", () => {
   test("renders wrapper/input with required attributes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const text = signal("hello");
 
@@ -460,7 +564,7 @@ describe("buildTextField contract", () => {
   test("autosize mirror exists + syncs (including trailing newline)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const text = signal("");
 
@@ -469,7 +573,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: true,
       autosize: true,
-      editModel: "live",
       commit: (t) => {
         text.value = t;
       },
@@ -486,6 +589,8 @@ describe("buildTextField contract", () => {
     expect(mirror.getAttribute("aria-hidden")).toBe("true");
 
     const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
 
     setInputValueAndFireInput(inp, "a");
     await flushDomEffects();
@@ -498,10 +603,10 @@ describe("buildTextField contract", () => {
     unmount();
   });
 
-  test("live model commits on every input", async () => {
+  test("default draft model does not commit on input until blur", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -511,42 +616,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: false,
       autosize: false,
-      editModel: "live",
-      commit: (t) => {
-        commit.fn(t);
-        text.value = t;
-      },
-      getState: () => ({ text: text.value, readOnly: false }),
-    });
-
-    const unmount = mount(c);
-    await flushDomEffects();
-
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
-
-    setInputValueAndFireInput(inp, "h");
-    setInputValueAndFireInput(inp, "hi");
-    await flushDomEffects();
-
-    expect(commit.calls.map((c) => c[0])).toEqual(["h", "hi"]);
-
-    unmount();
-  });
-
-  test("draft begins on focus; commits on blur", async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
-
-    const commit = spy<[string]>();
-    const text = signal("");
-
-    const c = buildTextField(core, {
-      focus,
-      target: VALUE_TARGET,
-      multiline: false,
-      autosize: false,
-      editModel: "draft",
       commit: (t) => {
         commit.fn(t);
         text.value = t;
@@ -561,8 +630,45 @@ describe("buildTextField contract", () => {
     inp.focus();
     await flushDomEffects();
 
-    inp.setRangeText("draft", 0, 0, "end");
-    inp.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    setInputValueAndFireInput(inp, "h");
+    setInputValueAndFireInput(inp, "hi");
+    await flushDomEffects();
+
+    expect(commit.calls).toHaveLength(0);
+
+    inp.blur();
+    await flushDomEffects();
+
+    expect(commit.calls.map((c) => c[0])).toEqual(["hi"]);
+
+    unmount();
+  });
+
+  test("focus + blur without edits does not commit", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { container: rootId, item: id };
+
+    const commit = spy<[string]>();
+    const text = signal("");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        commit.fn(t);
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
     await flushDomEffects();
 
     expect(commit.count()).toBe(0);
@@ -570,7 +676,7 @@ describe("buildTextField contract", () => {
     inp.blur();
     await flushDomEffects();
 
-    expect(commit.calls.map((c) => c[0])).toEqual(["draft"]);
+    expect(commit.count()).toBe(0);
 
     unmount();
   });
@@ -578,7 +684,7 @@ describe("buildTextField contract", () => {
   test("Escape cancels draft (reverts to baseline) without committing", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const commit = spy<[string]>();
     const text = signal("base");
@@ -588,7 +694,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: false,
       autosize: false,
-      editModel: "draft",
       commit: (t) => {
         commit.fn(t);
         text.value = t;
@@ -620,7 +725,7 @@ describe("buildTextField contract", () => {
   test("traversable draft: Tab yields commit and bubbles; Enter yields commit and bubbles", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -630,7 +735,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: false,
       autosize: false,
-      editModel: "draft",
       kind: "traversable",
       commit: (t) => {
         commit.fn(t);
@@ -676,7 +780,7 @@ describe("buildTextField contract", () => {
   test("isolated: stops propagation for most keys; Enter/Tab commit + exit", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const commit = spy<[string]>();
     const exit = spy();
@@ -687,7 +791,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: false,
       autosize: false,
-      editModel: "draft",
       kind: "isolated",
       onExitToContainer: () => exit.fn(),
       commit: (t) => {
@@ -741,7 +844,7 @@ describe("buildTextField contract", () => {
   test("traversable: Backspace at start yields; Delete at end yields", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -751,7 +854,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: false,
       autosize: false,
-      editModel: "draft",
       kind: "traversable",
       commit: (t) => {
         commit.fn(t);
@@ -799,7 +901,7 @@ describe("buildTextField contract", () => {
   test("traversable textarea: Up/Down yield only on first/last line", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -809,7 +911,6 @@ describe("buildTextField contract", () => {
       target: VALUE_TARGET,
       multiline: true,
       autosize: false,
-      editModel: "draft",
       kind: "traversable",
       commit: (t) => {
         commit.fn(t);
@@ -857,7 +958,7 @@ describe("buildItemHeader contract", () => {
   test("always renders label field (LABEL_TARGET)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const c = buildItemHeader(core, {
       focus,
@@ -879,7 +980,7 @@ describe("buildItemHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setFormula(core, id, "");
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const c = buildItemHeader(core, {
       focus,
@@ -905,7 +1006,7 @@ describe("buildItemHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const c = buildItemHeader(core, {
       focus,
@@ -935,7 +1036,7 @@ describe("buildItemHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
-    const focus: Focus = { container: rootId, item: id };
+    const focus: Location = { container: rootId, item: id };
 
     const c = buildItemHeader(core, {
       focus,
@@ -963,13 +1064,11 @@ describe("buildItemHeader contract", () => {
   });
 });
 
-describe("smoke: container TYPE intent microtask path", () => {
+describe("smoke: container TYPE intent model-apply path", () => {
   test("TYPE moves to primary edit target and types a character", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Focus = { container: rootId, item: id };
-
-    const valueText = signal("");
+    const focus: Location = { container: rootId, item: id };
 
     const c = createComponent(core, (ctx) => {
       const host = el("div");
@@ -982,11 +1081,17 @@ describe("smoke: container TYPE intent microtask path", () => {
         target: VALUE_TARGET,
         multiline: false,
         autosize: false,
-        editModel: "live",
         commit: (t) => {
-          valueText.value = t;
+          core.commit((tx) => tx.setValue(id, t));
         },
-        getState: () => ({ text: valueText.value, readOnly: false }),
+        getState: () => {
+          const snap = core.item(id);
+          const text =
+            snap.content.type === "value"
+              ? String(snap.content.value ?? "")
+              : "";
+          return { text, readOnly: false };
+        },
       });
 
       ctx.mount(frame, field);
@@ -997,12 +1102,17 @@ describe("smoke: container TYPE intent microtask path", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    core.focus(focus, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: focus.container, item: focus.item },
+      head: { container: focus.container, item: focus.item },
+    });
     await flushDomEffects();
 
     const selection = core.selection();
-    expectFocused(selection);
-    const ok = handleContainerIntent({
+    expect(selection.type).toBe("item");
+    if (selection.type !== "item") throw new Error("Expected item selection");
+    const ok = handleItemIntent({
       core,
       sel: selection,
       intent: { type: "TYPE", char: "a" } as Extract<Intent, { type: "TYPE" }>,
@@ -1013,8 +1123,9 @@ describe("smoke: container TYPE intent microtask path", () => {
     await flushDomEffects();
 
     const sel1 = core.selection();
-    expectFocused(sel1);
-    expect(sel1.focus).toEqual(focus);
+    expect(sel1.type).toBe("editing");
+    if (sel1.type !== "editing") throw new Error("Expected editing selection");
+    expect(sel1.location).toEqual(focus);
     expect(sel1.target).toBe(VALUE_TARGET);
 
     const inp = requireTargetInput(c.el, VALUE_TARGET);
@@ -1025,24 +1136,13 @@ describe("smoke: container TYPE intent microtask path", () => {
 });
 
 describe("dom runtime: UiCore target binding and view mounting", () => {
-  test("focus prefers exact target binding and falls back to DEFAULT_TARGET", async () => {
+  test("edit with exact target binding focuses correct element", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
     const focus = { container: rootId, item: x };
 
-    const defaultEl = document.createElement("button");
     const valueEl = document.createElement("input");
-    document.body.append(defaultEl, valueEl);
-
-    const cleanDefault = core.attachTarget({
-      focus,
-      target: DEFAULT_TARGET,
-      getEl: () => defaultEl,
-    });
-
-    core.focus(focus, VALUE_TARGET);
-    await flushDomEffects();
-    expect(document.activeElement).toBe(defaultEl);
+    document.body.append(valueEl);
 
     const cleanValue = core.attachTarget({
       focus,
@@ -1050,12 +1150,11 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
       getEl: () => valueEl,
     });
 
-    core.focus(focus, VALUE_TARGET);
+    core.focus({ type: "editing", location: focus, target: VALUE_TARGET });
     await flushDomEffects();
     expect(document.activeElement).toBe(valueEl);
 
     cleanValue();
-    cleanDefault();
   });
 
   test("new binding for same (focus, target) replaces previous binding", async () => {
@@ -1069,19 +1168,19 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
 
     const c1 = core.attachTarget({
       focus,
-      target: DEFAULT_TARGET,
+      target: VALUE_TARGET,
       getEl: () => first,
     });
-    core.focus(focus, DEFAULT_TARGET);
+    core.focus({ type: "editing", location: focus, target: VALUE_TARGET });
     await flushDomEffects();
     expect(document.activeElement).toBe(first);
 
     const c2 = core.attachTarget({
       focus,
-      target: DEFAULT_TARGET,
+      target: VALUE_TARGET,
       getEl: () => second,
     });
-    core.focus(focus, DEFAULT_TARGET);
+    core.focus({ type: "editing", location: focus, target: VALUE_TARGET });
     await flushDomEffects();
     expect(document.activeElement).toBe(second);
 

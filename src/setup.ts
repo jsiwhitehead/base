@@ -10,9 +10,8 @@ import {
   createComponent,
   createDragController,
   el,
-  typeCharIntoFocusedTextInput,
 } from "./dom";
-import type { ViewRegistration } from "./views";
+import type { ViewRegistration } from "./dom";
 import { splitViewRegistrations, viewRegistrations } from "./views";
 
 const SHOW_DEBUG_PANEL = true;
@@ -20,27 +19,17 @@ const SHOW_DEBUG_PANEL = true;
 export function createUiCoreRuntime(args?: {
   views?: Partial<Record<ViewName, ViewRegistration>>;
   collab?: Parameters<typeof createCore>[0]["collab"];
-}): {
-  core: UiCore;
-  pureCore: Core;
-  rootId: ItemId;
-  runtime: DomRuntime;
-} {
+}): { core: UiCore; pureCore: Core; rootId: ItemId; runtime: DomRuntime } {
   const views = args?.views ?? {};
   const { shapes, factories } = splitViewRegistrations(views);
 
   let runtime: DomRuntime | null = null;
   const platform: CorePlatformHooks = {
-    onSelectionChange(selection) {
-      runtime?.syncSelection(selection);
+    onSelectionChange(selection, caret) {
+      runtime?.syncSelection(selection, caret);
     },
-    getActiveViewIntentHandler() {
-      return runtime?.getActiveViewOnIntent() ?? null;
-    },
-    typeCharAtFocusedTarget(text) {
-      queueMicrotask(() => {
-        typeCharIntoFocusedTextInput(text);
-      });
+    resolveIntentHandler(selection) {
+      return runtime?.resolveIntentHandler(selection) ?? null;
     },
   };
 
@@ -53,24 +42,12 @@ export function createUiCoreRuntime(args?: {
   const bound = bindUiRuntime({ core: pureCore, views: factories });
   runtime = bound.runtime;
 
-  return {
-    core: bound.core,
-    pureCore,
-    rootId,
-    runtime: bound.runtime,
-  };
+  return { core: bound.core, pureCore, rootId, runtime: bound.runtime };
 }
 
-export type App = {
-  core: UiCore;
-  rootId: ItemId;
-  dispose(): void;
-};
+export type App = { core: UiCore; rootId: ItemId; dispose(): void };
 
-export type CreateAppOpts = {
-  host: HTMLElement;
-  rootView?: ViewName;
-};
+export type CreateAppOpts = { host: HTMLElement; rootView?: ViewName };
 
 export function createApp(opts: CreateAppOpts): App {
   const rootView = opts.rootView ?? "outline";
@@ -82,9 +59,7 @@ export function createApp(opts: CreateAppOpts): App {
     pureCore,
     rootId,
     runtime,
-  } = createUiCoreRuntime({
-    views: viewRegistrations,
-  });
+  } = createUiCoreRuntime({ views: viewRegistrations });
 
   const debug = showDebugPanel ? createDebugState() : null;
   const core = debug ? instrumentCore(uiCore, debug) : uiCore;

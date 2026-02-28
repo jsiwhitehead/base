@@ -25,6 +25,7 @@
   - Core API and semantics: `docs/core-api.md`
   - DOM runtime and lifecycle: `docs/dom-runtime.md`
   - View behavior: `docs/views-spec.md`
+  - Contenteditable outline: `docs/content-editable.md`
   - Style system: `docs/style-system.md`
   - Architecture invariants: `docs/architecture.md`
 - Choose the smallest possible change that solves the task.
@@ -55,6 +56,7 @@
 
 - Core API or semantics changed: `docs/core-api.md`.
 - DOM runtime or lifecycle changed: `docs/dom-runtime.md`.
+- Contenteditable outline pipeline or contracts changed: `docs/content-editable.md`.
 - Styling or tokens changed: `docs/style-system.md`.
 - View behavior changed: `docs/views-spec.md`.
 - Architecture invariants changed: `docs/architecture.md`.
@@ -66,5 +68,6 @@
 - `docs/architecture.md`
 - `docs/core-api.md`
 - `docs/dom-runtime.md`
-- `docs/style-system.md`
 - `docs/views-spec.md`
+- `docs/content-editable.md`
+- `docs/style-system.md`

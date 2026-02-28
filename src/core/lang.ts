@@ -36,8 +36,7 @@ const ISSUE = {
 } as const;
 
 const GRAMMAR = ohm.grammar(String.raw`
-Script {
-  Start         = Expr
+Script {  Start         = Expr
 
   Expr          = Or
 

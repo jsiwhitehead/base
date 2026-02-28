@@ -1,10 +1,25 @@
-import type { Core, Focus, Intent, ItemId, Selection, ViewName } from "../core";
-import { DEFAULT_TARGET, parseKeyIntent } from "../core";
+import type {
+  Core,
+  Location,
+  Intent,
+  ItemId,
+  ReaderForShape,
+  Selection,
+  ViewShape,
+  ViewName,
+} from "../core";
+import { ITEM_TARGET, parseKeyIntent } from "../core";
 
 type Anchor = "top" | "bottom";
 
 type RuntimeEffect =
-  | { type: "FOCUS"; focus: Focus; target: string; anchor?: Anchor }
+  | {
+      type: "FOCUS";
+      focus: Location;
+      target: string;
+      anchor?: Anchor;
+      caret?: number;
+    }
   | { type: "CLEAR_FOCUS" };
 
 type ViewHandle = {
@@ -15,6 +30,7 @@ type ViewHandle = {
 export type Component = { el: HTMLElement; dispose(): void };
 
 export type DomView = {
+  body?: object;
   root: HTMLElement;
   onIntent?: (intent: Intent) => void;
   dispose(): void;
@@ -23,33 +39,87 @@ export type DomView = {
 export type ViewFactory<C extends Core = Core> = (args: {
   core: C;
   id: ItemId;
-  focus: Focus;
+  focus: Location;
 }) => DomView;
+
+export type ViewRegistration = {
+  factory: ViewFactory<UiCore>;
+  shape?: ViewShape;
+};
+
+type ViewMountArgs = { core: UiCore; id: ItemId; focus: Location };
+
+export type AuthoredView = {
+  onIntent?: (intent: Intent) => void;
+  body: Component;
+};
+
+export type ShapedViewRegistration<S extends ViewShape> = {
+  factory: ViewFactory<UiCore>;
+  shape: S;
+};
+
+export function defineView(
+  mount: (args: ViewMountArgs) => AuthoredView,
+): ViewRegistration {
+  return {
+    factory: (args) => {
+      const view = mount(args);
+      return {
+        body: view.body,
+        root: view.body.el,
+        ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+        dispose() {
+          view.body.dispose();
+        },
+      };
+    },
+  };
+}
+
+export function defineShapedView<S extends ViewShape>(
+  shape: S,
+  mount: (
+    args: Omit<ViewMountArgs, "focus"> & {
+      reader: ReaderForShape<S>;
+      focus: Location;
+    },
+  ) => AuthoredView,
+): ShapedViewRegistration<S> {
+  return {
+    shape,
+    factory: ({ core, id, focus }) => {
+      const view = mount({ core, id, reader: core.reader(id, shape), focus });
+      return {
+        body: view.body,
+        root: view.body.el,
+        ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+        dispose() {
+          view.body.dispose();
+        },
+      };
+    },
+  };
+}
 
 type TargetBinding = {
   getEl: () => HTMLElement | null;
   caret?: { set(pos: number): void; getLength(): number };
 };
 
-type TargetBindingRecord = {
-  binding: TargetBinding;
-  token: number;
-};
+type TargetBindingRecord = { binding: TargetBinding; token: number };
 
 type AttachTargetOpts = {
-  focus: Focus;
+  focus: Location;
   target: string;
   getEl: () => HTMLElement | null;
   caret?: { set(pos: number): void; getLength(): number };
 };
 
-type MountViewOpts = {
-  id: ItemId;
-  containerId: ItemId;
-};
+type MountViewOpts = { id: ItemId; containerId: ItemId };
 
 const itemKey = (id: ItemId): string => id;
-const keyOf = (f: Focus): string =>
+const keyOf = (f: Location): string =>
   `${itemKey(f.container)}::${itemKey(f.item)}`;
 
 const clamp = (n: number, lo: number, hi: number): number =>
@@ -65,38 +135,29 @@ function assertNever(_exhaustive: never, message: string): never {
   throw new Error(message);
 }
 
-export function typeCharIntoFocusedTextInput(text: string): void {
-  const activeEl = document.activeElement;
-  if (
-    !(
-      activeEl instanceof HTMLInputElement ||
-      activeEl instanceof HTMLTextAreaElement
-    )
-  )
-    return;
-  if (activeEl.readOnly || activeEl.disabled) return;
-
-  const start = activeEl.selectionStart ?? 0;
-  const end = activeEl.selectionEnd ?? start;
-
-  activeEl.setRangeText(text, start, end, "end");
-  activeEl.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
 function normalizeEffectsForSelection(
   sel: Selection,
   effects: RuntimeEffect[],
+  caret?: number,
 ): RuntimeEffect[] {
   const hasClear = effects.some((e) => e.type === "CLEAR_FOCUS");
   const hasFocus = effects.some((e) => e.type === "FOCUS");
 
-  if (sel.type === "idle")
+  if (sel.type === "idle" || sel.type === "item")
     return hasClear ? effects : [...effects, { type: "CLEAR_FOCUS" }];
 
   if (hasClear) return effects;
   if (hasFocus) return effects;
 
-  return [...effects, { type: "FOCUS", focus: sel.focus, target: sel.target }];
+  return [
+    ...effects,
+    {
+      type: "FOCUS",
+      focus: sel.location,
+      target: sel.target,
+      ...(caret !== undefined ? { caret } : {}),
+    },
+  ];
 }
 
 function viewAtTarget(
@@ -126,7 +187,7 @@ function computeAnchoredPos(
 }
 
 export type DomRuntime = {
-  syncSelection(next: Selection): void;
+  syncSelection(next: Selection, caret?: number): void;
 
   attachTarget(opts: AttachTargetOpts): () => void;
 
@@ -134,7 +195,7 @@ export type DomRuntime = {
 
   installGlobalListeners(win?: Window): () => void;
 
-  getActiveViewOnIntent(): ((intent: Intent) => void) | null;
+  resolveIntentHandler(selection: Selection): ((intent: Intent) => void) | null;
 
   dispose(): void;
 };
@@ -144,29 +205,20 @@ export function createRuntime(opts: {
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
   dispatchIntent: (intent: Intent) => void;
   getSelection: () => Selection;
+  undo: () => void;
+  redo: () => void;
 }): DomRuntime {
   const views = opts.views;
 
   const bindings = new Map<string, Map<string, TargetBindingRecord>>();
 
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
-  let activeView: ViewHandle | null = null;
+  const mountedViewsByItem = new Map<ItemId, ViewHandle>();
 
   let pending: { selection: Selection; effects: RuntimeEffect[] } | null = null;
   let flushScheduled = false;
 
-  const getActiveView = (): ViewHandle | null => activeView;
-
-  const setActiveView = (v: ViewHandle | null): void => {
-    activeView = v;
-  };
-
-  const updateActiveViewForTarget = (target: EventTarget | null): void => {
-    const hit = viewAtTarget(viewRoots, target);
-    setActiveView(hit);
-  };
-
-  const focusMapFor = (focus: Focus): Map<string, TargetBindingRecord> => {
+  const focusMapFor = (focus: Location): Map<string, TargetBindingRecord> => {
     const focusKey = keyOf(focus);
     let targetBindings = bindings.get(focusKey);
     if (!targetBindings) {
@@ -177,40 +229,74 @@ export function createRuntime(opts: {
   };
 
   const resolveBinding = (
-    focus: Focus,
+    focus: Location,
     target: string,
   ): TargetBinding | null => {
     const targetBindings = bindings.get(keyOf(focus));
     if (!targetBindings) return null;
-    return (
-      targetBindings.get(target)?.binding ??
-      targetBindings.get(DEFAULT_TARGET)?.binding ??
-      null
-    );
+    return targetBindings.get(target)?.binding ?? null;
+  };
+
+  const resolveViewForFocusTarget = (
+    focus: Location,
+    target: string,
+  ): ViewHandle | null => {
+    const fromBinding = (binding: TargetBinding | null): ViewHandle | null => {
+      const el = binding?.getEl() ?? null;
+      if (!el) return null;
+      return viewAtTarget(viewRoots, el);
+    };
+
+    const direct = fromBinding(resolveBinding(focus, target));
+    if (direct) return direct;
+
+    if (target !== ITEM_TARGET) return null;
+
+    const resolveByMountedItem = (itemId: ItemId): ViewHandle | null => {
+      const core = opts.getCore();
+      let cur: ItemId | null = itemId;
+      while (cur) {
+        const mounted = mountedViewsByItem.get(cur);
+        if (mounted) return mounted;
+        const loc = core.locate(cur);
+        cur = loc?.parentId ?? null;
+      }
+      return null;
+    };
+
+    const byItem = resolveByMountedItem(focus.item);
+    if (byItem) return byItem;
+
+    const targetBindings = bindings.get(keyOf(focus));
+    if (!targetBindings) return null;
+
+    for (const rec of targetBindings.values()) {
+      const viaSiblingTarget = fromBinding(rec.binding);
+      if (viaSiblingTarget) return viaSiblingTarget;
+    }
+    return null;
   };
 
   const applyDomFocus = (
     sel: Selection,
     focusEff: Extract<RuntimeEffect, { type: "FOCUS" }>,
   ): void => {
-    if (sel.type !== "focused") return;
+    if (sel.type !== "editing") return;
 
-    const binding = resolveBinding(sel.focus, sel.target);
+    const binding = resolveBinding(sel.location, sel.target);
     const targetEl = (binding?.getEl() as HTMLElement | null) ?? null;
     if (!binding || !targetEl) return;
-
-    updateActiveViewForTarget(targetEl);
 
     const wasFocused = document.activeElement === targetEl;
     if (!wasFocused) targetEl.focus({ preventScroll: true });
 
-    const caret = sel.caret;
-    const canCaret = !!caret && !!binding.caret;
+    const caret = focusEff.caret;
+    const canCaret = caret !== undefined && !!binding.caret;
     const shouldUpdateCaret = canCaret && (!wasFocused || !!focusEff.anchor);
 
     if (shouldUpdateCaret) {
       const len = binding.caret!.getLength();
-      binding.caret!.set(clamp(caret!.end, 0, len));
+      binding.caret!.set(clamp(caret!, 0, len));
       return;
     }
 
@@ -236,7 +322,6 @@ export function createRuntime(opts: {
         case "CLEAR_FOCUS": {
           const active = document.activeElement;
           if (active instanceof HTMLElement) active.blur();
-          setActiveView(null);
           break;
         }
         default:
@@ -266,15 +351,17 @@ export function createRuntime(opts: {
   const enqueueDomEffects = (
     sel: Selection,
     effects: RuntimeEffect[],
+    caret?: number,
   ): void => {
-    scheduleEffects(sel, normalizeEffectsForSelection(sel, effects));
+    scheduleEffects(sel, normalizeEffectsForSelection(sel, effects, caret));
   };
 
-  const syncSelection = (next: Selection): void => {
-    enqueueDomEffects(next, []);
+  const syncSelection = (next: Selection, caret?: number): void => {
+    enqueueDomEffects(next, [], caret);
   };
 
   const registerViewRoot = (view: {
+    id: ItemId;
     root: HTMLElement;
     onIntent?: (intent: Intent) => void;
   }): (() => void) => {
@@ -284,9 +371,11 @@ export function createRuntime(opts: {
     };
 
     viewRoots.set(handle.root, handle);
+    mountedViewsByItem.set(view.id, handle);
 
     return () => {
-      if (getActiveView() === handle) setActiveView(null);
+      viewRoots.delete(handle.root);
+      mountedViewsByItem.delete(view.id);
     };
   };
 
@@ -318,9 +407,9 @@ export function createRuntime(opts: {
 
       const sel = opts.getSelection();
       if (
-        sel.type === "focused" &&
-        keyOf(sel.focus) === focusKey &&
-        (sel.target === targetKey || targetKey === DEFAULT_TARGET)
+        sel.type === "editing" &&
+        keyOf(sel.location) === focusKey &&
+        sel.target === targetKey
       ) {
         scheduleEffects(sel, [{ type: "CLEAR_FOCUS" }]);
       }
@@ -328,6 +417,15 @@ export function createRuntime(opts: {
   };
 
   const dispatchKeyDown = (e: KeyboardEvent) => {
+    if ((e.target as HTMLElement | null)?.isContentEditable) return;
+
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) opts.redo();
+      else opts.undo();
+      return;
+    }
+
     const intent = parseKeyIntent({
       key: e.key,
       ctrlKey: !!e.ctrlKey,
@@ -345,9 +443,7 @@ export function createRuntime(opts: {
         active instanceof HTMLInputElement ||
         active instanceof HTMLTextAreaElement
       ) {
-        const start = active.selectionStart ?? 0;
-        const end = active.selectionEnd ?? start;
-        intent.caret = { start, end };
+        intent.caret = active.selectionEnd ?? active.selectionStart ?? 0;
       }
     }
 
@@ -359,28 +455,16 @@ export function createRuntime(opts: {
       dispatchKeyDown(e);
     };
 
-    const onPointerDownCapture = (e: PointerEvent) => {
-      updateActiveViewForTarget(e.target);
-    };
-
-    const onFocusInCapture = (e: FocusEvent) => {
-      updateActiveViewForTarget(e.target);
-    };
-
     win.addEventListener("keydown", onKeyDown);
-    win.addEventListener("pointerdown", onPointerDownCapture, true);
-    win.addEventListener("focusin", onFocusInCapture, true);
 
     return () => {
       win.removeEventListener("keydown", onKeyDown);
-      win.removeEventListener("pointerdown", onPointerDownCapture, true);
-      win.removeEventListener("focusin", onFocusInCapture, true);
     };
   };
 
   const mountView = (mountOpts: MountViewOpts): Component => {
     const id = mountOpts.id;
-    const focus: Focus = { container: mountOpts.containerId, item: id };
+    const focus: Location = { container: mountOpts.containerId, item: id };
     const core = opts.getCore();
     const resolvedView = core.view(id);
     const factory = views[resolvedView] ?? views.outline;
@@ -393,6 +477,7 @@ export function createRuntime(opts: {
     const view = factory({ core, id, focus });
 
     const unreg = registerViewRoot({
+      id,
       root: view.root,
       ...(view.onIntent ? { onIntent: view.onIntent } : {}),
     });
@@ -406,12 +491,20 @@ export function createRuntime(opts: {
     };
   };
 
-  const getActiveViewOnIntent = (): ((intent: Intent) => void) | null =>
-    getActiveView()?.onIntent ?? null;
+  const resolveIntentHandler = (
+    selection: Selection,
+  ): ((intent: Intent) => void) | null => {
+    if (selection.type === "idle") return null;
+    const view =
+      selection.type === "editing"
+        ? resolveViewForFocusTarget(selection.location, selection.target)
+        : resolveViewForFocusTarget(selection.anchor, ITEM_TARGET);
+    return view?.onIntent ?? null;
+  };
 
   const dispose = (): void => {
     bindings.clear();
-    activeView = null;
+    mountedViewsByItem.clear();
     pending = null;
     flushScheduled = false;
   };
@@ -421,7 +514,7 @@ export function createRuntime(opts: {
     attachTarget,
     mountView,
     installGlobalListeners,
-    getActiveViewOnIntent,
+    resolveIntentHandler,
     dispose,
   };
 }
@@ -446,16 +539,15 @@ function createUiCore(core: Core, runtime: DomRuntime): UiCore {
 export function bindUiRuntime(args: {
   core: Core;
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
-}): {
-  core: UiCore;
-  runtime: DomRuntime;
-} {
+}): { core: UiCore; runtime: DomRuntime } {
   let uiCore!: UiCore;
   const runtime = createRuntime({
     getCore: () => uiCore,
     views: args.views,
     dispatchIntent: (intent) => args.core.dispatch(intent),
     getSelection: () => args.core.selection(),
+    undo: () => args.core.undo(),
+    redo: () => args.core.redo(),
   });
   uiCore = createUiCore(args.core, runtime);
   runtime.syncSelection(args.core.selection());

@@ -1,7 +1,7 @@
 import { computed, effect } from "@preact/signals-core";
 
-import type { Focus, ViewName } from "../core";
-import { DEFAULT_TARGET, isCoreReadError, isNumericLikeValue } from "../core";
+import type { Location, ViewName } from "../core";
+import { ITEM_TARGET, isCoreReadError, isNumericLikeValue } from "../core";
 import { DEV, devAssert } from "../dev";
 import type { Component, UiCore } from "./runtime";
 
@@ -26,7 +26,7 @@ type Ctx = {
   ): void;
 
   target(
-    focus: Focus,
+    focus: Location,
     target: string,
     getEl: () => HTMLElement | null,
     opts?: { caret?: { set(pos: number): void; getLength(): number } },
@@ -284,7 +284,7 @@ export function createComponent(
           focus,
           target,
           getEl,
-          ...(opts?.caret ? { caret: opts.caret } : {}),
+          ...(opts?.caret !== undefined ? { caret: opts.caret } : {}),
         }),
       );
     },
@@ -303,20 +303,30 @@ export function createComponent(
 
 export function bindItemFrame(
   ctx: Ctx,
-  spec: { core: UiCore; focus: Focus },
+  spec: { core: UiCore; focus: Location },
   frameEl: HTMLElement,
 ): void {
   frameEl.classList.add("ui-frame");
   frameEl.dataset.id = spec.focus.item;
   if (!frameEl.hasAttribute("tabindex")) frameEl.tabIndex = -1;
 
+  const sameFocus = (a: Location, b: Location): boolean =>
+    a.container === b.container && a.item === b.item;
+
   const isFocused = computed(() => {
     const sel = spec.core.selection();
-    return (
-      sel.type === "focused" &&
-      sel.focus.item === spec.focus.item &&
-      sel.focus.container === spec.focus.container
-    );
+    if (sel.type === "editing") {
+      return (
+        sel.location.item === spec.focus.item &&
+        sel.location.container === spec.focus.container
+      );
+    }
+    if (sel.type === "item") {
+      return (
+        sameFocus(sel.anchor, spec.focus) || sameFocus(sel.head, spec.focus)
+      );
+    }
+    return false;
   });
   const isIssue = computed(() => {
     return spec.core.item(spec.focus.item).content.type === "issue";
@@ -326,12 +336,11 @@ export function bindItemFrame(
     return content.type === "value" && isNumericLikeValue(content.value);
   });
 
-  ctx.target(spec.focus, DEFAULT_TARGET, () => frameEl);
-
   ctx.on(frameEl, "pointerdown", (e: PointerEvent) => {
-    spec.core.focus(spec.focus, DEFAULT_TARGET);
+    spec.core.focus({ type: "item", location: spec.focus });
     e.stopPropagation();
   });
+  ctx.target(spec.focus, ITEM_TARGET, () => frameEl);
 
   ctx.effect(() => {
     frameEl.classList.toggle("is-focused", isFocused.value);
@@ -342,4 +351,6 @@ export function bindItemFrame(
 
 export function setBodyClasses(root: HTMLElement, view: ViewName): void {
   root.classList.add("ui-body", `ui-${String(view)}`);
+  if (view === "outline") delete root.dataset.dragStart;
+  else root.dataset.dragStart = "block";
 }

@@ -21,7 +21,7 @@ This document covers:
 
 ## Shared assumptions
 
-All views inherit the universal controls model defined in `docs/architecture.md`, including target classification, edit target lists, container-focus behaviors, traversable-target yielding, and the escape ladder. Shared DOM runtime contracts (`docs/dom-runtime.md`) and visual language (`docs/style-system.md`) also apply.
+All views inherit the universal controls model defined in `docs/architecture.md`, including target classification, edit target lists, item-selection behaviors, traversable-target yielding, and the escape ladder. Shared DOM runtime contracts (`docs/dom-runtime.md`) and visual language (`docs/style-system.md`) also apply.
 
 ## View specification template
 
@@ -29,7 +29,7 @@ Each view section SHOULD follow this structure:
 
 - Purpose and mental model
 - Body DOM shape
-- Focus surfaces and targets
+- Location surfaces and targets
 - View-specific behaviors
 - Commands and state transitions
 - Edge cases and invariants
@@ -37,7 +37,7 @@ Each view section SHOULD follow this structure:
 
 View-specific behaviors SHOULD define:
 
-- **Navigation geometry**: how NAV moves at container focus.
+- **Navigation geometry**: how NAV moves at item selection.
 - **Tab action**: what Tab does structurally.
 - **Edit traversal scope**: how far the edit target traversal extends across items.
 - **Inter-item edge behavior**: what happens when Enter or boundary NAV overflows an item's edit target list.
@@ -66,7 +66,8 @@ Outline group body:
 
 ```text
 .ui-body.ui-outline
-  .ui-frame.ui-outline-child                   (target: DEFAULT_TARGET)
+  .ui-frame.ui-outline-child                   (target: ITEM_TARGET)
+    span.ui-outline-gutter
     [.ui-header subtree]                       (optional; targets: label, conn:*)
     [.ui-body.<child-view> subtree]            (mounted child view body)
   .ui-frame.ui-outline-child
@@ -77,7 +78,7 @@ Outline value body:
 
 ```text
 .ui-body.ui-outline
-  [.ui-textfield.ui-outline-value subtree]     (target: value)
+  span.ui-outline-value                        (target: value)
 ```
 
 Structural rules:
@@ -87,18 +88,26 @@ Structural rules:
 - Mounted child body subtree MAY swap by child view name, but `.ui-frame.ui-outline-child` MUST NOT.
 - When a group has zero children, Outline MUST render a body-only empty state.
 - Empty-state UI for an empty group MUST NOT be a focus surface and MUST NOT add edit targets.
-- For each `.ui-outline-child`, `--outline-header-h` SHOULD reflect the mounted direct-header height in px, or `0px` when no header is mounted.
+
+Content-editable rules:
+
+- `.ui-body.ui-outline` MUST carry `contenteditable="true"`.
+- Nested `.ui-body.ui-outline` elements MUST NOT redeclare `contenteditable`; they inherit from the root.
+- `span.ui-outline-gutter` MUST carry `contenteditable="false"`.
+- Outline MUST set `contenteditable="false"` on each mounted `.ui-header` element and on each mounted non-outline child view body root.
+- `.ui-body.ui-outline` is the only outline node that carries `contenteditable="true"`.
+- `span.ui-outline-value` MUST inherit editability from `.ui-body.ui-outline` when editable, and MUST carry `contenteditable="false"` when non-editable (for example readonly/connected/hidden cases).
 
 Notes:
 
 - For the current outline item, `.ui-frame` and `.ui-header` are outside `.ui-body.ui-outline` and are outer-view-owned.
 - For each visible child item, outline renders a `.ui-frame.ui-outline-child` that hosts the child's optional `.ui-header` subtree and mounted child body subtree.
 
-### Focus surfaces and targets
+### Location surfaces and targets
 
 Outline focus surfaces:
 
-- **Frame container focus**: `DEFAULT_TARGET` on the item's `.ui-frame` (outer view).
+- **Frame item selection**: `ITEM_TARGET` on the item's `.ui-frame` (outer view).
 - **Inline edit focus**:
   - `value` (body-owned)
   - `conn:*` (header-owned)
@@ -120,7 +129,7 @@ Notes:
 
 - Outline defines a traversal space for `NAV` while editing.
 - Groups participate in navigation but not in edit traversal.
-- Non-outline child views are treated as atomic traversal stops at `DEFAULT_TARGET` and are not traversed recursively.
+- Non-outline child views are treated as atomic traversal stops at `ITEM_TARGET` and are not traversed recursively.
 - Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/dom-runtime.md`.
 
 ### Header visibility policy
@@ -137,12 +146,13 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 
 Pointer hit routing inside `.ui-outline-child`:
 
-- Gutter/rail region (left of `--outline-indent`) keeps frame container behavior (`DEFAULT_TARGET`).
+- Gutter/rail region (left of `--outline-indent`) keeps frame container behavior (`ITEM_TARGET`). `span.ui-outline-gutter` MUST call `e.preventDefault()` on `pointerdown` (structural chrome requirement for `contenteditable` views; see `docs/content-editable.md`).
 - For the non-gutter content area, the value textarea SHOULD span under the header area while its text starts below the header via padding.
 - For clicks in the value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
 - Header interactive controls retain native behavior and MUST win hit-testing over body text-editing surfaces.
+- Outline MUST mark gutter, value, and header subtrees with `data-drag-start="block"` so shared drag runtime does not start drags from editing chrome.
 
-When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
+When a group is empty and item selection is on that group (`ITEM_TARGET`):
 
 - `TYPE "="` MUST convert the group to formula and focus `conn:expr` at caret start.
 - `TYPE` with any other character MUST convert the group to `value` with `""`, focus `value`, and type that character (replace behavior).
@@ -150,9 +160,9 @@ When a group is empty and container focus is on that group (`DEFAULT_TARGET`):
 
 #### Navigation geometry
 
-Container focus uses sibling-only vertical navigation. At boundaries (no parent, no child, no previous/next sibling), NAV is a no-op.
+Item selection uses sibling-only vertical navigation. At boundaries (no parent, no child, no previous/next sibling), NAV is a no-op.
 
-| NAV   | From container focus           |
+| NAV   | From item selection            |
 | ----- | ------------------------------ |
 | Up    | Previous sibling               |
 | Down  | Next sibling                   |
@@ -161,17 +171,24 @@ Container focus uses sibling-only vertical navigation. At boundaries (no parent,
 
 #### Tab action
 
-Tab changes structure. Tab wraps the focused item as `G(X)`. Shift+Tab unwraps the focused item's parent group when possible. If unwrap is not possible because the focused item is a direct child of `rootId`, Shift+Tab promotes that child into `rootId` (root id unchanged): remove all root siblings, then promote by content type (`value` becomes root value, `group` moves its children to root). Preserve the current target and caret when possible. Otherwise, no-op.
+Tab changes structure via **in-place body transforms** (item identity stays in place).
+
+- **Tab (indent)**: the focused item remains in place and keeps its **label** and **view**. Outline inserts a single child item and copies the focused item's **body content** into that child (the child is inserted "in the middle" rather than making the focused item a moved child). The focused item's label remains on the parent item. If the focused item is `connected`, indent is a no-op.
+- **Shift+Tab (outdent)**: the focused item's parent remains in place and keeps its **label** and **view**. Outline replaces the parent's **body content** with the focused child's body content, then removes the focused child and all its siblings under that parent. The focused child's label (if any) is discarded. If the parent is `connected`, outdent is a no-op.
+- Preserve the current target and caret when possible. Otherwise, no-op.
 
 #### Edit traversal scope
 
 Unified across all visible leaf items in depth-first order. Each leaf contributes its edit target list (per `docs/architecture.md`). Groups do not participate. These are concatenated into one continuous sequence of edit stops.
+
+For contenteditable-based implementations, this section specifies the required **outcomes** (focus/target/caret transitions), even when the browser's contenteditable event pipeline is the implementation mechanism instead of `onIntent`.
 
 #### Inter-item edge behavior
 
 Continue to the adjacent leaf's edit target in the unified traversal. Backward moves to the previous leaf's last target with caret at end. Forward moves to the next leaf's first target with caret at start. At the very first or last edit stop in the entire traversal, no-op.
 
 Enter from a plain value `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain value items, never to `conn:*` fields.
+Shift+Enter from a plain value `value` target inserts a newline in place within the same item and keeps edit focus on that item.
 
 Delete at boundary from a `conn:*` target is a no-op.
 
@@ -179,6 +196,8 @@ Delete at boundary from a `value` target is target-specific:
 
 - If the current text is non-empty, boundary delete joins adjacent plain value items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join boundary in the surviving item. Join only applies when both items are plain value items.
 - If the current text is empty, boundary delete removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
+
+When the contenteditable selection spans multiple plain value items within the same parent, delete/backspace merges the start item's text up to the selection start with the end item's text from the selection end, removing all spanned items between them. The caret lands at the merge point in the surviving start item. Constrained to same-parent siblings; cross-parent ranges are a no-op.
 
 #### DELETE policy
 
@@ -218,6 +237,7 @@ Outline value edit storage:
 ### Edge cases and invariants
 
 - Prune invariant: After any Outline structural edit, Outline MUST NOT leave any newly-empty groups in the edited ancestry; newly-empty groups MUST be removed immediately.
+- Root normalization: if a structural delete leaves the current Outline `rootId` as an empty group, Outline MUST convert that `rootId` to blank.
 - Outline MAY still encounter pre-existing empty groups (for example, from other views); these are handled by the placeholder rule.
 
 ### Styling notes
@@ -242,7 +262,7 @@ Rules:
 - Row item children represent cells.
 - Tables MUST always have at least one row.
 - Navigation follows spreadsheet-like row/column movement.
-- Table distinguishes **container focus** from **cell edit focus**.
+- Table distinguishes **item selection** from **cell edit focus**.
 
 ### Body DOM shape
 
@@ -257,10 +277,10 @@ Table body:
         [.ui-header subtree]                   (schema cell header; targets: label, conn:*)
       ...
     .ui-table-body
-      .ui-frame.ui-table-row                   (row target: DEFAULT_TARGET)
+      .ui-frame.ui-table-row                   (row target: ITEM_TARGET)
         .ui-table-cell.ui-table-first
           [.ui-header subtree]                 (row header; targets: label, conn:*)
-        .ui-frame.ui-table-cell                (cell target: DEFAULT_TARGET)
+        .ui-frame.ui-table-cell                (cell target: ITEM_TARGET)
           [.ui-body.<cell-view> subtree]       (mounted cell view body)
       ...
     ...
@@ -270,26 +290,28 @@ Structural rules:
 
 - `.ui-frame.ui-table-row` and `.ui-frame.ui-table-cell` wrappers MUST stay stable for visible rows/cells.
 - Cell bodies MAY swap by view name.
+- `.ui-body.ui-table` SHOULD set `data-drag-start="block"` to prevent drag-start from table editing/body surfaces while allowing frame-level drag interactions.
+- Slot-capable cell frames MUST set `data-drag-slot="true"` for shared drag slot resolution.
 
 Notes:
 
-- For the table item itself, `DEFAULT_TARGET` is on the table's `.ui-frame` outside `.ui-body.ui-table`.
-- Row/cell container focus in table body MUST be implemented as Core focus surfaces on `.ui-frame.ui-table-row` / `.ui-frame.ui-table-cell`, not raw DOM focus.
+- For the table item itself, `ITEM_TARGET` is on the table's `.ui-frame` outside `.ui-body.ui-table`.
+- Row/cell item selection in table body MUST be implemented as Core focus surfaces on `.ui-frame.ui-table-row` / `.ui-frame.ui-table-cell`, not raw DOM focus.
 
-### Focus surfaces and targets
+### Location surfaces and targets
 
 Table focus modes:
 
-- **Table frame container focus**:
-  - `DEFAULT_TARGET` on the table's `.ui-frame`
+- **Table frame item selection**:
+  - `ITEM_TARGET` on the table's `.ui-frame`
 
-- **Row container focus**:
+- **Row item selection**:
   - focus refers to a row item
-  - `DEFAULT_TARGET`
+  - `ITEM_TARGET`
 
-- **Cell container focus**:
+- **Cell item selection**:
   - focus refers to a cell item
-  - `DEFAULT_TARGET`
+  - `ITEM_TARGET`
 
 - **Cell edit focus**:
   - focus refers to a cell item
@@ -297,10 +319,10 @@ Table focus modes:
 
 Rules:
 
-- Table MUST distinguish container focus from `value` edit focus.
+- Table MUST distinguish item selection from `value` edit focus.
 - Table MUST NOT implement outline-style multi-target edit traversal.
-- `NAV` and `TAB` are container-focus operations in table mode.
-- Row/cell container focus MUST be implemented as Core focus surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
+- `NAV` and `TAB` are item-selection operations in table mode.
+- Row/cell item selection MUST be implemented as Core focus surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
 
 ### Schema row behavior
 
@@ -326,7 +348,7 @@ Grid over rows and cells. Row headers occupy column 0. Column headers occupy row
 
 #### Tab action
 
-Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows. From row container, Tab enters the first cell and Shift+Tab is a no-op. Tab from edit focus commits and performs the same cell-to-cell movement, landing at container focus on the destination.
+Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows. From row container, Tab enters the first cell and Shift+Tab is a no-op. Tab from edit focus commits and performs the same cell-to-cell movement, landing at item selection on the destination.
 
 #### Edit traversal scope
 
@@ -334,9 +356,9 @@ Scoped to a single item. The traversal moves through that item's edit targets on
 
 #### Inter-item edge behavior
 
-Enter commits and moves to the same-column cell in the next row at container focus. If there is no next row, no-op. Boundary NAV at the edge of an item's edit targets is a no-op.
+Enter commits and moves to the same-column cell in the next row at item selection. If there is no next row, no-op. Boundary NAV at the edge of an item's edit targets is a no-op.
 
-All table operations that cross items — NAV, Tab, and Enter — land at container focus on the destination. Edit is always entered explicitly via CONFIRM or TYPE.
+All table operations that cross items — NAV, Tab, and Enter — land at item selection on the destination. Edit is always entered explicitly via CONFIRM or TYPE.
 
 #### DELETE policy
 
@@ -345,7 +367,7 @@ Rows use remove with a last-row special case:
 - If the table has more than one row, remove the row. After removing a row, focus the next row at row container, then previous row, then table container.
 - If the row is the last remaining row, remove the whole table item.
 
-Cells use clear — reset the cell to blank and stay on the same cell at container focus.
+Cells use clear — reset the cell to blank and stay on the same cell at item selection.
 
 ### Commands and state transitions
 
@@ -399,12 +421,12 @@ Slider body:
   .ui-slider-value
 ```
 
-### Focus surfaces and targets
+### Location surfaces and targets
 
 Rules:
 
 - Slider uses:
-  - `DEFAULT_TARGET` on the slider frame.
+  - `ITEM_TARGET` on the slider frame.
   - `value` (`VALUE_TARGET`) on the `<input type="range">`.
 - Keyboard semantics are interpreted at view level.
 
@@ -457,8 +479,8 @@ Rules:
 A new view specification MUST define:
 
 - Body DOM shape (`.ui-body.<view>`) and stable wrappers.
-- Meaning of `DEFAULT_TARGET` in that view context.
-- Edit-target behavior from container focus.
+- Meaning of `ITEM_TARGET` in that view context.
+- Edit-target behavior from item selection.
 - Type-to-edit behavior.
 - Yielding behavior from editors (per `docs/dom-runtime.md`).
 - `DELETE` handling (or explicit no-op).

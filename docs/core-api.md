@@ -267,11 +267,17 @@ Rules:
 ```ts
 type Selection =
   | { type: "idle" }
-  | { type: "focused"; focus: Focus; target: string; caret?: Caret };
+  | { type: "editing"; location: Location; target: string }
+  | { type: "item"; anchor: Location; head: Location };
 
-type Focus = { container: ItemId; item: ItemId };
-type Caret = { start: number; end: number };
+type Location = { container: ItemId; item: ItemId };
 ```
+
+Variants:
+
+- `idle`: no focus.
+- `editing`: cursor active in a named text control (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`); the primary text-edit mode.
+- `item`: item-level keyboard cursor or structural multi-item selection; no text target.
 
 Read selection:
 
@@ -282,20 +288,26 @@ core.selection();
 Update selection:
 
 ```ts
-core.focus(focus, target?, opts?)
-core.blur()
+core.focus({ type: "editing", location, target }, opts?)
+core.focus({ type: "item", location })
+core.focus({ type: "item", anchor, head })
+core.focus({ type: "idle" })
 ```
 
 Rules:
 
 - Selection MUST be the single source of truth for focus state.
-- A focused selection MUST reference existing items, and `focus.item` MUST be within `focus.container`.
-- Self-container focus (`focus.container === focus.item`) MUST be valid only for the root item.
-- `core.focus` MUST default `target` to `DEFAULT_TARGET` and MUST apply no caret unless `opts.caret` is provided.
+- An editing selection MUST reference existing items.
+- Self-item selection (`location.container === location.item`) MUST be valid only for the root item.
+- `core.focus` is the canonical selection write API.
+- For editing selection, `core.focus` requires an explicit `target` (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`).
+- `opts.caret` is valid only with editing selection, is forwarded as an ephemeral side-channel to `onSelectionChange`, and MUST NOT be stored in `Selection`.
+- Item selection supports both `core.focus({ type: "item", anchor, head })` and the collapsed shorthand `core.focus({ type: "item", location })` (equivalent to `anchor=head=location`).
+- Item selection MUST remain valid as long as both endpoint locations are valid.
+- `core.focus(...)` validates selection by item existence and root self-selection constraints; it MUST NOT auto-normalize non-root container/item parent-child mismatches.
 - After any apply, if selection is invalid, Core MUST repair it.
-- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor, choosing the original sibling slot index at the nearest surviving anchored parent level, otherwise the previous sibling.
-- Local structural repair MUST set selection to `DEFAULT_TARGET` with no caret.
-- If local structural repair cannot produce a valid focus, Core MUST fall back to a valid Core-owned selection (root focus or `idle`).
+- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor, choosing the original sibling slot index at the nearest surviving anchored parent level, otherwise the previous sibling. If an item selection is invalid after apply, Core MUST repair to an item selection using the same ancestor-anchor strategy.
+- If local structural repair cannot produce a valid focus, Core MUST fall back to a valid Core-owned selection (root item selection or `idle`).
 - For remote apply, invalid selection MUST become `idle`.
 
 ## Core/platform boundary (`CorePlatformHooks`)
@@ -304,9 +316,10 @@ Rules:
 
 ```ts
 type CorePlatformHooks = {
-  onSelectionChange?: (selection: Selection) => void;
-  getActiveViewIntentHandler?: () => ((intent: Intent) => void) | null;
-  typeCharAtFocusedTarget?: (text: string) => void;
+  onSelectionChange?: (selection: Selection, caret?: number) => void;
+  resolveIntentHandler?: (
+    selection: Selection,
+  ) => ((intent: Intent) => void) | null;
 };
 ```
 
@@ -314,9 +327,9 @@ Rules:
 
 - Core MUST remain headless and MUST NOT depend on DOM APIs directly.
 - Platform callbacks MUST be optional so Core can run headless in tests/non-DOM contexts.
-- `onSelectionChange` is a notification hook used to synchronize platform focus state from Core selection.
-- `getActiveViewIntentHandler` allows Core intent routing to delegate non-global intents to the active mounted view without depending on DOM runtime internals.
-- `typeCharAtFocusedTarget` allows Core root-intent semantics (`TYPE`) to trigger platform text insertion after Core updates selection.
+- `onSelectionChange` is a notification hook used to synchronize platform focus state from Core selection. When called from `core.focus(...)` with editing selection, a numeric caret offset is forwarded as the second argument if provided via `opts.caret`. For non-editing `core.focus(...)`, no caret is forwarded.
+- `resolveIntentHandler` allows Core to delegate non-global intents to runtime-resolved mounted views.
+- Selection validity in Core MUST remain model-only and MUST NOT depend on runtime view/binding state.
 
 ## Views and shapes
 
@@ -350,11 +363,11 @@ Rules:
 
 - Core owns semantic intent parsing (`parseKeyIntent`) and routing.
 - DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
-- Core routes non-global intents through `getActiveViewIntentHandler()` when provided.
+- Core routes non-global intents through `resolveIntentHandler(selection)` when provided.
 - Core receives editor key events only when editors/controls allow those events to bubble (yield).
 - Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
 - Core MAY still handle explicit global commands while focus is in native text editors.
-- Core MUST handle root bootstrap intents globally. From root container focus, only `NAV right`, `TAB`, `CONFIRM`, and `TYPE` are enabled; each MUST follow the corresponding Outline behavior (`docs/views-spec.md`).
+- Core MUST handle root bootstrap intents globally. From root item selection, only `NAV right`, `TAB`, `CONFIRM`, and `TYPE` are enabled; each MUST follow the corresponding Outline behavior (`docs/views-spec.md`).
 - View behavior MUST remain intent-driven (semantic), not raw-key driven.
 
 ### View shapes
@@ -403,6 +416,7 @@ Enforcement rules:
 ```ts
 core.undo(): void
 core.redo(): void
+core.undoBoundary(): void
 ```
 
 Rules:
@@ -411,8 +425,9 @@ Rules:
 - Selection MUST be repaired to valid state.
 - Selection MUST NOT be historically restored.
 - Undo history MUST be linear.
-- Core MAY coalesce adjacent user text edits in the same focused target into a single undo step.
+- Core MAY coalesce adjacent user text edits in the same editing target into a single undo step.
 - A new edit MUST clear the redo stack.
+- `core.undoBoundary()` closes the active coalescing group. Any subsequent commit that would otherwise coalesce into the most recent entry MUST instead start a new entry. MUST be a no-op if no coalescing group is active.
 
 ## Snapshot import/export
 
@@ -428,7 +443,7 @@ Rules:
 - Invalid snapshots MUST throw and MUST NOT mutate existing Core state.
 - `snapshot.rootId` MUST match the existing Core root ID.
 - Successful import MUST clear undo/redo history.
-- Successful import MUST reset selection to root with `DEFAULT_TARGET`.
+- Successful import MUST reset selection to root item selection.
 - `SnapshotData` MUST NOT include selection/caret, history, caches, or debug state.
 
 ## Helper functions
@@ -446,6 +461,20 @@ Rules:
 - For `formula`: returns one field with key `"expr"`.
 - For `query`: returns fields `"from"`, `"where"`, `"orderBy"` in that order.
 - Field order MUST be canonical and stable.
+
+### `patchConn(conn, key, text)`
+
+```ts
+patchConn(conn: Connected, key: string, text: string): Connected
+```
+
+Returns a connected object with one field updated when `key` is recognized.
+
+Rules:
+
+- For `formula`, only `key === "expr"` updates the object.
+- For `query`, recognized keys are `"from"`, `"where"`, and `"orderBy"`.
+- For unknown keys, returns the original object unchanged.
 
 ### `editTargetsForItem(core, id)`
 
@@ -517,8 +546,8 @@ Core exports:
 - `core.commit`
 - `core.undo`
 - `core.redo`
+- `core.undoBoundary`
 - `core.focus`
-- `core.blur`
 - `core.dispatch`
 - `core.dispose`
 
@@ -536,8 +565,7 @@ Type exports:
 - `KeyIntentInput`
 - `NavDir`
 - `Selection`
-- `Focus`
-- `Caret`
+- `Location`
 - `SnapshotData`
 - `Transaction`
 - `ViewName`
@@ -546,7 +574,6 @@ Type exports:
 
 Constant exports:
 
-- `DEFAULT_TARGET`
 - `LABEL_TARGET`
 - `VALUE_TARGET`
 - `connTarget`

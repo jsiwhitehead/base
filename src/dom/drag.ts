@@ -15,11 +15,7 @@ export type DropTarget =
       axis: "horizontal" | "vertical";
       anchorEl: HTMLElement;
     }
-  | {
-      type: "slot";
-      itemId: ItemId;
-      anchorEl: HTMLElement;
-    };
+  | { type: "slot"; itemId: ItemId; anchorEl: HTMLElement };
 
 export type DragState =
   | { type: "idle" }
@@ -32,19 +28,24 @@ export type DragState =
     }
   | { type: "active"; itemId: ItemId; drop: DropTarget | null };
 
-export type DragController = {
-  state: Signal<DragState>;
-  dispose(): void;
-};
+export type DragController = { state: Signal<DragState>; dispose(): void };
 
 const DRAG_THRESHOLD_PX = 5;
 const SLOT_EDGE_FRACTION = 0.25;
+const DRAG_START_BLOCK_SELECTOR = '[data-drag-start="block"]';
 
 const INTERACTIVE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
 function isInteractiveEl(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return INTERACTIVE_TAGS.has(target.tagName) || target.isContentEditable;
+  return INTERACTIVE_TAGS.has(target.tagName);
+}
+
+function isDragStartBlocked(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (isInteractiveEl(target)) return true;
+  if (target.getAttribute("contenteditable") === "true") return true;
+  return !!target.closest(DRAG_START_BLOCK_SELECTOR);
 }
 
 function nearestFrame(
@@ -55,7 +56,7 @@ function nearestFrame(
     node;
     node = node.parentElement
   ) {
-    const id = node.dataset.id;
+    const id = node.dataset.id as ItemId | undefined;
     if (id && node.classList.contains("ui-frame"))
       return { el: node, itemId: id };
   }
@@ -258,7 +259,7 @@ export function createDragController(core: Core): DragController {
 
   const onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || state.value.type !== "idle") return;
-    if (isInteractiveEl(e.target)) return;
+    if (isDragStartBlocked(e.target)) return;
 
     const frame = nearestFrame(e.target);
     if (!frame) return;

@@ -1,265 +1,47 @@
 # Architecture
 
-This document is the canonical technical contract for the system. It defines the architecture layers, invariants, and extension rules that keep behavior stable across Core, runtime, and views. Specialized API/runtime/style/view details live in referenced docs.
+## System concept
 
-## Overview
+A tree-structured document editor. The data model is a recursive tree of **items**, each with a content type and a mode.
 
-The architecture guarantees predictable focus and selection behavior, stable DOM structure under selection changes, consistent intent routing, and strict ownership boundaries. Interaction is semantic and intent-driven, not raw DOM-keydown-driven. It also enforces layered dependency direction, target ownership, and structural stability so behavior remains deterministic as features evolve.
+**Content types:**
 
-## Core concepts and definitions
+- `value` — leaf node; holds a text string
+- `group` — container node; holds an ordered array of child `ItemId`s
+- `issue` — diagnostic node; holds a message string
 
-- Item: the primary state unit rendered in the UI tree.
-- View: behavior and layout logic used to render an item body and interpret view-level intents.
-- Component: reusable UI/runtime building block used inside views or shared DOM runtime utilities.
-- State: canonical application data owned by Core.
-- Rendering/runtime: DOM integration layer that mounts, updates, and disposes UI safely.
-- Layer/boundary: architectural partition (`core/`, `dom/`, `views/`, `setup.ts`, `main.ts`) with explicit ownership and dependency direction.
-- Selection: Core-owned current location in the item tree; source of truth for focus.
-- Focus: target-level focus state represented as `(itemId, target)`.
-- Target: stable identifier for a focus/edit surface (for example `DEFAULT_TARGET`, `label`, `conn:*`, `value`).
-- Frame/header/body: conceptual UI regions per rendered item; frame is the stable anchor, header is stable identity surface, body is view-specific content. This split defines ownership and stability contracts and does not require rigid DOM shape beyond the documented container/region contracts.
-- Intent: semantic interaction command parsed from input and routed by Core.
+**Modes:**
+
+- `plain` — freely editable
+- `readonly` — display only
+- `connected` — value is externally managed; display is read-only
+
+Items are identified by opaque `ItemId` strings. The tree has no fixed depth limit. The outline view renders a subtree rooted at a given `rootId`, recursively.
+
+---
 
 ## Layering model
 
-### Layers and ownership
+Five layers with strict one-directional dependencies:
 
-`core/`
+| Layer      | Owns                                                                                 | May depend on    |
+| ---------- | ------------------------------------------------------------------------------------ | ---------------- |
+| `core/`    | State, transactions, history, selection, intent parsing and routing                  | —                |
+| `dom/`     | View mounting/lifecycle, reactive primitives, shared controls, global input handling | core             |
+| `views/`   | View-specific body layout, intent interpretation, Core operation mapping             | core, dom        |
+| `setup.ts` | Composition of Core, dom runtime, and registered views; platform hook wiring         | core, dom, views |
+| `main.ts`  | Environment-specific bootstrap                                                       | setup            |
 
-- Owns state and transactions.
-- Owns selection and programmatic focus application.
-- Owns intent semantics and parsing (`keydown`-like input shape to intents).
-- Owns global intent handling semantics and routing to active views.
+**Outer view vs item view.** Each rendered item is composed of two layers of view responsibility:
 
-`dom/`
+- _Outer view_ — renders the stable frame; renders shared header surfaces; mounts the item view body; attaches outer-view-owned targets.
+- _Item view_ — renders `.ui-body.<view>`; renders view-specific body structure and controls; attaches body-owned targets only.
 
-- Owns shared DOM runtime lifecycle (mount/patch/dispose).
-- Owns stable dynamic mounting primitives (`ctx.slot`, `ctx.list`).
-- Owns shared controls and canonical frame/header binding helpers.
-- Owns global DOM input listeners and DOM-event-to-intent handoff.
-- Enforces runtime-side structural and focus contracts.
+Intent-handling follows the same split: the outer view handles item-selection intents and yielded keys from edit targets; item views define body field behavior and yield navigation at boundaries.
 
-`setup.ts`
+**Canonical container DOM:**
 
-- Owns shared composition of Core, DOM runtime, and registered views.
-- Owns Core platform-hook wiring to DOM/runtime behavior.
-- Owns reusable app assembly without environment-specific bootstrap/demo behavior.
-
-`views/`
-
-- Owns view-specific body layout and interaction behavior.
-- Owns intent interpretation within view semantics.
-- Owns mapping view intent outcomes to Core operations.
-- Owns body target binding and body-local controls.
-
-`main.ts`
-
-- Owns environment-specific bootstrap and demo wiring.
-- Defines root mount discovery and startup lifecycle.
-
-### Allowed dependencies
-
-| Layer | May depend on    |
-| ----- | ---------------- |
-| core  | (none)           |
-| dom   | core             |
-| views | core, dom        |
-| setup | core, dom, views |
-| main  | setup            |
-
-### Outer view vs item view split
-
-Outer view responsibilities:
-
-- Render the stable frame.
-- Render shared outer UI including header surfaces.
-- Mount the item view body subtree.
-- Attach outer-view-owned targets.
-
-Item view responsibilities:
-
-- Render `.ui-body.<view>` as the body root.
-- Render view-specific structure and controls.
-- Attach body-owned targets only.
-- Item views MUST NOT attach header-owned targets (`label`, `conn:*`).
-
-Intent-handling ownership:
-
-- The outer view handles all container-focus intents and all yielded keys from edit focus.
-- Item views mount the body field and define its input type. For text fields, this means `yieldNav=true` and boundary yielding. For non-text inputs (such as a slider's range input), the native input behavior applies.
-- A view that is only ever used as an item view (like slider) never handles container, label, or conn targets. It only defines behavior for its body-owned targets.
-
-## Invariants (must / must not)
-
-### Sources of truth
-
-- Core MUST be the single source of truth for state.
-- Selection MUST be the single source of truth for focus.
-- DOM and CSS MUST NOT be treated as authoritative focus/state sources.
-
-### Target-driven focus model
-
-- Focus MUST be represented as `(itemId, target)`.
-- The UI MUST be target-driven, not tab-order-driven.
-- `.ui-main` MUST be the only tabbable element.
-- Targets MUST remain stable across selection changes.
-
-### Ownership rules (frame/header/body)
-
-Shared targets:
-
-- `DEFAULT_TARGET`
-- `label`
-- `conn:*`
-- `value`
-
-- Frame MUST own `DEFAULT_TARGET`.
-- Header MUST own `label` and `conn:*`.
-- Body MUST own `value` and body-specific targets.
-- Body MUST NOT own `label` or `conn:*`.
-- Header MUST NOT own `value`.
-- A target MUST NOT have multiple owners.
-
-### Structural stability under selection
-
-- Each rendered item MUST map to exactly one stable `.ui-frame`.
-- Selection changes MUST be styling-only updates.
-- Selection changes MUST NOT remount frames.
-- Selection changes MUST NOT rebuild lists.
-- Selection changes MUST NOT switch body subtrees.
-- The body MUST remain structurally stable across selection changes.
-- Conditional mounting MUST use `ctx.slot`.
-- Repeated keyed mounting MUST use `ctx.list`.
-- Region hosts MUST NOT be manually cleared/replaced.
-- Manual child reconciliation in effects SHOULD be avoided.
-
-### Routing and interaction
-
-- DOM runtime MUST own the global `keydown` listener (bubble phase).
-- Keydown parsing MUST use Core-owned intent semantics (`parseKeyIntent`) rather than ad-hoc runtime/view parsing.
-- Core MUST handle global intents first (for example `NAV/out`).
-- Core MUST route non-global view intents to the active view handler.
-- DOM runtime MUST call `preventDefault()` on the original DOM event before dispatching a parsed intent to Core.
-- Native editors (`input`, `textarea`, `contenteditable`) SHOULD handle keydown locally by preserving native behavior and calling `stopPropagation()` so the global handler does not receive the event.
-- Controls MAY yield keys to Core by not calling `stopPropagation()` in the relevant key/case so the event bubbles to Core.
-- When yielding, controls SHOULD call `preventDefault()` when native editor behavior is not the intended behavior.
-
-### Pointer and propagation rules
-
-- Frame `pointerdown` MUST focus `DEFAULT_TARGET` and stop propagation.
-- Frame `pointerdown` MUST capture caret when the hit surface is text-editing content.
-- Editors/controls MUST focus their own target and stop propagation.
-
-### Universal controls model
-
-This section defines the complete keyboard interaction semantics shared across all views. Views inherit these rules and define only their view-specific geometry, traversal scope, and edge behaviors (see `docs/views-spec.md`).
-
-#### Target classification
-
-Every focusable surface is one of three kinds:
-
-| Kind        | Targets           | `yieldNav` | In edit traversal | Behavior                                               |
-| ----------- | ----------------- | ---------- | ----------------- | ------------------------------------------------------ |
-| Container   | `DEFAULT_TARGET`  | n/a        | No                | Structural commands: navigate, enter edit, delete, tab |
-| Isolated    | `label`           | `false`    | No                | Self-contained text editing                            |
-| Traversable | `conn:*`, `value` | `true`     | Yes               | Text editing with boundary yielding                    |
-
-**Container** is the outer shell for structural interaction. **Traversable** targets are for content editing in flow — they yield keys at text boundaries so the outer view can handle traversal and structural actions. **Isolated** targets are for infrequent identity editing — the label field consumes all input locally with two exceptions: Escape bubbles to the Core escape ladder, and Enter commits text and exits to container focus.
-
-#### Edit target list
-
-Every item has an ordered list of traversable edit targets, derived from its mode:
-
-| Item mode           | Edit target list                        |
-| ------------------- | --------------------------------------- |
-| Connected (formula) | `[conn:expr]`                           |
-| Connected (query)   | `[conn:from, conn:where, conn:orderBy]` |
-| Plain value         | `[value]`                               |
-| Readonly or group   | `[]` (empty)                            |
-
-The **primary edit target** is the first target in this list, or `null` if empty. This determines whether CONFIRM and TYPE from container focus have an edit target to enter.
-
-Readonly items have an empty edit target list. CONFIRM, TYPE, and DELETE from container focus are all no-ops for readonly items.
-
-#### Intent handler ownership
-
-| Target           | Owner  | Handler                                                     |
-| ---------------- | ------ | ----------------------------------------------------------- |
-| `DEFAULT_TARGET` | Frame  | Outer view                                                  |
-| `label`          | Header | Self-contained (no view handling needed)                    |
-| `conn:*`         | Header | Field yields at boundaries; outer view handles yielded keys |
-| `value`          | Body   | Item view mounts the field; outer view handles yielded keys |
-
-#### Behaviors from container focus
-
-| Intent    | Condition                  | Behavior                                                                                                                                                              |
-| --------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                                                                                                                            |
-| CONFIRM   | No primary target          | No-op                                                                                                                                                                 |
-| TYPE char | Primary target exists      | Enter edit on primary target, select all, insert char                                                                                                                 |
-| TYPE char | No primary target          | No-op                                                                                                                                                                 |
-| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                                                                                                                        |
-| NAV       | Always                     | Move by view navigation geometry and stay at container focus. Escape maps to NAV/out: exit editing to container focus, then follow root/global/view NAV-out handling. |
-| TAB       | Always                     | View-specific structural action                                                                                                                                       |
-| DELETE    | Item supports remove       | Remove item, focus next sibling at container; then previous sibling; then parent. If no destination, blur.                                                            |
-| DELETE    | Item supports clear        | Clear item to blank, stay on same item at container focus                                                                                                             |
-
-TYPE `=` overwrites existing content and converts the item to a formula-connected item. It is blocked only when the item is a non-empty group, since Core's group conversion rule prevents converting non-empty groups.
-
-NAV and TAB are no-ops when the movement would go beyond the edge of the view's geometry (first item, last item, root parent, childless leaf, etc).
-
-Whether DELETE removes or clears an item is determined by the view. Remove applies to items that are structural participants and can come and go. Clear applies to items that are positional slots in a fixed structure. DELETE is a no-op for readonly items.
-
-#### Behaviors from traversable targets
-
-Traversable fields (`conn:*`, `value`) handle text editing locally. Normal typing, cursor movement, and selection are handled by the native input. When the cursor reaches a text boundary and the user presses a navigation or structural key, the field commits any pending changes, calls `preventDefault`, and lets the event bubble. The outer view then handles the yielded key.
-
-**NAV at boundary**: All four arrow directions collapse to **backward** (left, up) or **forward** (right, down) in a one-dimensional edit traversal. Within a multiline field, up and down move between lines normally and only yield on the first or last line.
-
-When a boundary nav yields:
-
-1. **Intra-item**: if there is an adjacent edit target in the item's edit target list, move to it. Backward places caret at end. Forward places caret at start.
-2. **Inter-item**: if at the edge of the item's edit targets, behavior is view-specific (see `docs/views-spec.md`).
-
-**Enter**: means "commit and advance one edit stop forward." It follows the same two-step resolution as boundary nav:
-
-1. If there is a next edit target in the item's edit target list, move to it with caret at start.
-2. If at the last edit target, behavior is view-specific.
-
-**Tab**: commits and bubbles to the outer view, which performs its standard structural action — the same action as Tab from container focus. The outer view preserves the current target and clamps caret when possible after the structural change.
-
-**Delete at boundary**: Backspace at text start or Delete at text end commits and yields. The outer view decides what to do — behavior is view-specific, default is no-op.
-
-**Escape**: always bubbles to Core. Draft-mode fields cancel local draft first, then handle Escape as NAV/out: follow global/view NAV-out handling.
-
-**Live and draft edit models**: Traversable fields use one of two edit models. This affects when Core state updates but does not change controls behavior:
-
-| Model | Used by  | Core updates                           | Enter                | Escape                  |
-| ----- | -------- | -------------------------------------- | -------------------- | ----------------------- |
-| Live  | `value`  | Every keystroke                        | Advance              | Exit                    |
-| Draft | `conn:*` | On commit (Enter, Tab, boundary yield) | Commit, then advance | Cancel draft, then exit |
-
-Draft mode exists because intermediate values of formulas and queries would be invalid. From the user's perspective, all traversable targets behave the same way.
-
-## Runtime boundary (DOM integration)
-
-The runtime is the contract boundary between Core semantics and DOM behavior. It may manage mounting, patching, scheduling, and lifecycle, but must preserve architecture invariants.
-
-Allowed at this boundary:
-
-- Programmatic focus application from selection/target state.
-- Stable dynamic region mounting via runtime primitives.
-- Shared control behaviors that uphold routing and target contracts.
-
-Forbidden at this boundary:
-
-- Manual reconciliation that bypasses runtime region ownership.
-- Replacing/clearing region hosts owned by runtime primitives.
-- DOM-driven focus authority that diverges from Core selection.
-
-### Canonical container DOM
-
-```text
+```
 #root
   .ui-root
     .ui-main-scroll
@@ -267,89 +49,212 @@ Forbidden at this boundary:
         .ui-body.<root-view>
 ```
 
-- `.ui-main` MUST be the root `.ui-frame` for the root item.
-- `.ui-main` MUST be the only tabbable element (`tabIndex=0`).
-- `.ui-main-scroll` MAY provide main-column scroll containment.
-- `.ui-body.<root-view>` MUST be the view root used for active view resolution.
+`.ui-main` is the root `.ui-frame` and the only tabbable element (`tabIndex=0`).
 
-API-level runtime details belong in `docs/dom-runtime.md`.
+**View resolution and routing.** The active view resolves to the nearest containing mounted view root. It must update on pointer interactions and on programmatic focus application. Core routes all non-global view intents to that active view handler.
 
-### Core/platform seam
+**Model state vs view state.** Model state — the item tree, selection, history — is persisted, syncable, and undoable. View state — scroll position, drag, transient UI — is local and ephemeral; it must not enter the model. The test: would this appear in a snapshot, a sync operation, or an undo entry? If not, it is view state. Collapsed/expanded state is the canonical edge case — where it lives is a deliberate design decision with significant implications for sync and undo.
 
-- `Core` MUST remain headless and MUST NOT depend on DOM APIs or `dom/` modules.
-- Platform-specific behavior needed by Core semantics MUST be provided through injected callbacks wired in `src/setup.ts`.
-- `ItemId` MUST be treated as opaque outside Core internals.
+---
 
-## Views model
+## Selection model
 
-Views are the item-level behavior model layered on Core and runtime.
+```
+Selection =
+  | { type: "idle" }
+  | { type: "editing", location: Location, target: string }
+  | { type: "item", anchor: Location, head: Location }
 
-Responsibilities:
+Location = { container: ItemId, item: ItemId }
+```
 
-- Define body layout and view-specific composition.
-- Interpret routed intents semantically.
-- Translate intents into Core operations.
-- Bind body-owned targets consistently with ownership rules.
+`container` is the parent that logically owns the item in the view. `target` identifies which interaction mode is active.
 
-Composition model:
+**`idle`** — nothing focused.
 
-- Outer view renders stable frame/header surfaces and mounts the body root.
-- Item view renders `.ui-body.<view>` and owns view-specific body structure.
+**`editing`** — text edit mode. The browser cursor is inside the focused text target (`value`, `label`, or `conn:*`). The global intent dispatcher is suppressed while editing.
 
-View resolution/routing model:
+**`item`** — item-level range selection. One or more whole items selected as structural units, no text cursor. Used for bulk operations: delete, move, duplicate.
 
-- Active view resolves to the nearest containing mounted view root.
-- Active view MUST update on pointer interactions.
-- Active view MUST update on programmatic focus application.
-- Core routes view intents to that active view handler.
+**Anchor/head.** Any range selection is `{ anchor, head }` with both endpoints represented as `Location`. The anchor is fixed (where the selection started); the head moves as the user extends.
 
-View-specific behavior details belong in `docs/views-spec.md`.
+---
+
+## Reactive rendering
+
+`createComponent` creates a reactive component with a lifecycle context (`ctx`). Three primitives drive all model-to-DOM updates:
+
+- **`ctx.effect(fn)`** — runs `fn` immediately and re-runs whenever any signal read inside it changes. Syncs model state to specific DOM properties: text content, CSS classes, attributes.
+- **`ctx.list(container, getIds, buildItem)`** — keyed list reconciliation. When the list changes, only the diff is applied — new items mounted, removed items disposed, reordered items moved. Stable keys (item IDs) ensure existing DOM nodes are reused across structural changes.
+- **`ctx.slot(container, getComponent)`** — conditionally renders a single child component. Returns null to empty the slot, or a component to mount.
+
+Signal flow: model signal changes → effect re-runs → targeted DOM update. Structural changes trigger computed children signals → `ctx.list` reconciles the minimum diff. Only DOM nodes directly affected by changed signals are touched.
+
+---
+
+## Universal controls model
+
+The complete keyboard interaction contract shared across all views. Views define only their view-specific geometry, traversal scope, and edge behaviors — see `docs/views-spec.md`.
+
+### Target classification
+
+| Kind        | Targets           | `yieldNav` | In edit traversal | Behavior                                      |
+| ----------- | ----------------- | ---------- | ----------------- | --------------------------------------------- |
+| Container   | `ITEM_TARGET`     | n/a        | No                | Structural: navigate, enter edit, delete, tab |
+| Isolated    | `label`           | `false`    | No                | Self-contained text editing                   |
+| Traversable | `conn:*`, `value` | `true`     | Yes               | Text editing with boundary yielding           |
+
+Container is the outer shell for structural interaction. Traversable targets edit content in flow — they yield at text boundaries so the outer view handles traversal and structural actions. Isolated targets consume all input locally; exceptions: Escape bubbles to Core, Enter commits and exits.
+
+### Edit target list
+
+| Item mode           | Edit targets                            |
+| ------------------- | --------------------------------------- |
+| Connected (formula) | `[conn:expr]`                           |
+| Connected (query)   | `[conn:from, conn:where, conn:orderBy]` |
+| Plain value         | `[value]`                               |
+| Readonly or group   | `[]`                                    |
+
+The **primary edit target** is the first in this list, or `null` if empty. Readonly items have an empty list — CONFIRM, TYPE, and DELETE are no-ops.
+
+### Intent handler ownership
+
+| Target        | Owner  | Handler                                                     |
+| ------------- | ------ | ----------------------------------------------------------- |
+| `ITEM_TARGET` | Frame  | Outer view                                                  |
+| `label`       | Header | Self-contained                                              |
+| `conn:*`      | Header | Field yields at boundaries; outer view handles yielded keys |
+| `value`       | Body   | Item view mounts the field; outer view handles yielded keys |
+
+### Behaviors from item selection
+
+| Intent    | Condition                  | Behavior                                                        |
+| --------- | -------------------------- | --------------------------------------------------------------- |
+| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                      |
+| CONFIRM   | No primary target          | No-op                                                           |
+| TYPE char | Primary target exists      | Enter edit, select all, insert char                             |
+| TYPE char | No primary target          | No-op                                                           |
+| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                  |
+| NAV       | Always                     | Move by view geometry; stay in item selection. Escape → NAV/out |
+| TAB       | Always                     | View-specific structural action                                 |
+| DELETE    | Supports remove            | Remove item; focus next sibling, then previous, then parent     |
+| DELETE    | Supports clear             | Clear to blank; stay on same item                               |
+
+### Behaviors from traversable targets
+
+Normal typing, cursor movement, and selection are handled natively. At a text boundary on a navigation or structural key: field commits, calls `preventDefault`, and lets the event bubble. The outer view handles the yielded key.
+
+**NAV at boundary** — collapses to backward (left/up) or forward (right/down). Multiline fields yield only on the first or last line.
+
+1. _Intra-item_: move to adjacent edit target in the list. Backward → caret at end; forward → caret at start.
+2. _Inter-item_: at the edge of the item's edit targets, behavior is view-specific.
+
+**Enter** — commit and advance one edit stop forward. Same two-step resolution as boundary NAV.
+
+**Tab** — commits and bubbles; outer view performs its standard structural action.
+
+**Delete at boundary** — Backspace at start or Delete at end commits and yields; outer view decides.
+
+**Escape** — always bubbles to Core. Draft fields cancel draft first, then NAV/out.
+
+### Edit model
+
+For shared input-based fields (`buildTextField`), the edit model is draft-only:
+
+- Inputs keep a local draft while focused.
+- Core is updated on commit boundaries (blur/yield actions like Tab/Enter/boundary navigation/delete).
+- Escape cancels the local draft first, then control can bubble to Core (`NAV/out`).
+
+Contenteditable value surfaces follow their own pipeline and apply edits model-side via their observer/event flow rather than `buildTextField`.
+
+---
+
+## Model operations
+
+Structural edits are expressed as **Core commits** — atomic, synchronous transactions that update state and trigger reactive DOM reconciliation. The same operations are callable from any interaction path (contenteditable pipeline or intent pipeline) with no DOM side effects in the operations themselves.
+
+**Post-commit normalization.** After every transaction the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected — type coercion, `nonEmpty` enforcement, `alignChildren` sync — in the same undo unit. This is the only universal post-commit rule; all other cleanup is operation-specific.
+
+**View-local editing conventions.** Typed views only receive shape-conforming data — core falls back to outline when compatibility fails. Within that, a view renders all conforming state including state it would not normally produce, but may bundle additional cleanup into its own commits for UX conventions that don't rise to a model constraint. The distinction is _can render_ vs _wants to produce_. See `docs/views-spec.md`.
+
+---
+
+## Invariants
+
+### Sources of truth
+
+- Core is the single source of truth for state.
+- Selection is the single source of truth for focus.
+- DOM and CSS are never treated as authoritative state or focus sources.
+
+### Target-driven focus
+
+- Location is `(itemId, target)` — not DOM tab order.
+- `.ui-main` is the only tabbable element.
+- Targets remain stable across selection changes.
+
+### Ownership
+
+- Frame owns `ITEM_TARGET`. Header owns `label` and `conn:*`. Body owns `value` and body-specific targets.
+- Body MUST NOT own `label` or `conn:*`. Header MUST NOT own `value`.
+- A target MUST NOT have multiple owners.
+
+### Structural stability under selection
+
+- Each rendered item maps to exactly one stable `.ui-frame`.
+- Selection changes are styling-only — no remounting frames, no rebuilding lists, no switching body subtrees.
+- Conditional mounting uses `ctx.slot`. Repeated keyed mounting uses `ctx.list`.
+- Region hosts are not manually cleared or replaced.
+
+### Routing and interaction
+
+- DOM runtime owns the global `keydown` listener (bubble phase).
+- Intent parsing uses `parseKeyIntent` — not ad-hoc key parsing in views or runtime.
+- Core handles global intents first; non-global view intents are routed to the active view handler.
+- DOM runtime calls `preventDefault()` before dispatching a parsed intent.
+- Native editors handle keydown locally and call `stopPropagation()`. Controls may yield keys by not calling `stopPropagation()`.
+
+### Pointer and propagation
+
+- Frame `pointerdown` focuses `ITEM_TARGET` and stops propagation. Captures caret when the hit surface is text-editing content.
+- Editors and controls focus their own target and stop propagation.
+
+### Runtime boundary
+
+- Core is headless — no DOM APIs, no `dom/` dependencies.
+- Platform-specific behavior needed by Core is provided through injected callbacks wired in `setup.ts`.
+- Manual reconciliation that bypasses runtime region ownership is forbidden.
+- DOM-driven focus that diverges from Core selection is forbidden.
+
+---
 
 ## Extension points
 
 ### Adding a new view
 
-- MUST preserve outer view vs item view ownership split.
-- MUST preserve target ownership and structural stability invariants.
-- MUST implement behavior via intents, not ad-hoc raw key routing.
+- Preserve outer view vs item view ownership split.
+- Preserve target ownership and structural stability invariants.
+- Implement behavior via intents, not ad-hoc raw key handling.
 
 ### Adding a new target
 
-- MUST define exactly one owner (frame/header/body).
-- MUST remain stable under selection changes.
-- MUST not introduce implicit edit target via navigation.
+- Define exactly one owner (frame/header/body).
+- Keep stable under selection changes.
+- Do not introduce implicit edit target navigation.
 
-### Adding a new editor/control
+### Adding a new control
 
-- MUST participate in target-driven focus (not tab order).
-- MUST follow pointer propagation rules.
-- MUST follow Core routing/yielding behavior.
+- Participate in target-driven focus, not tab order.
+- Follow pointer propagation rules.
+- Follow Core routing and yielding behavior.
 
-### Adding a new subsystem/module
+### Adding a new module
 
-- MUST be placed in the correct layer and respect dependency direction.
-- MUST use stable layer entrypoints instead of deep cross-layer imports.
-- MUST avoid introducing cyclic dependencies.
+- Place in the correct layer; respect dependency direction.
+- Use stable layer entrypoints — avoid deep cross-layer imports.
+- Avoid cyclic dependencies.
+- Introduce a new abstraction when it clarifies ownership or creates a stable shared contract. Reuse existing abstractions when behavior fits. Promote to a layer entrypoint only when it is a stable contract used across a layer boundary.
 
-Decision rules:
+---
 
-- Introduce a new abstraction when it clarifies ownership, reduces cross-layer coupling, or creates a stable reusable contract.
-- Reuse existing abstractions when behavior already fits without widening public surface area.
-- Promote something to a layer entrypoint only when it is a stable shared contract used across a layer boundary.
-
-## Design rationale
-
-- Target-driven focus prevents focus instability caused by DOM tab-order drift.
-- Structural stability rules prevent selection-driven remount churn and identity loss.
-- Core-owned intent routing prevents behavior drift across views.
-- Runtime lifecycle constraints prevent leaked listeners/effects and orphan DOM state.
-- Strict dependency direction prevents cyclic coupling and hidden cross-layer breakage.
-
-## References
-
-- `docs/core-api.md`
-- `docs/dom-runtime.md`
-- `docs/style-system.md`
-- `docs/views-spec.md`
-- `CONTRIBUTING.md`
-- `AGENTS.md`
+_See also: `docs/core-api.md`, `docs/dom-runtime.md`, `docs/views-spec.md`, `docs/style-system.md`, `docs/content-editable.md`_

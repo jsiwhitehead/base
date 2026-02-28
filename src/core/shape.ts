@@ -6,11 +6,7 @@ import type { ItemId, ReadApi } from "./read";
 export type ViewShape = { type: "any" } | { type: "value" } | GroupViewShape;
 
 type GroupViewShape =
-  | {
-      type: "group";
-      children: ViewShape;
-      nonEmpty?: true;
-    }
+  | { type: "group"; children: ViewShape; nonEmpty?: true }
   | {
       type: "group";
       children: GroupViewShape;
@@ -27,10 +23,7 @@ type ChildListForGroup<G extends GroupViewShape, T> = G extends {
 type ChildShapeOfGroup<G extends GroupViewShape> = G["children"];
 type ReadChildOfGroup<G extends GroupViewShape> = ReadFromShape<G["children"]>;
 
-type ReadShapeAny = {
-  type: "any";
-  id: ItemId;
-};
+type ReadShapeAny = { type: "any"; id: ItemId };
 
 type ReadShapeValue = {
   type: "value";
@@ -52,10 +45,7 @@ export type ReadFromShape<S extends ViewShape> = S extends { type: "any" }
       ? ReadShapeGroup<S, ReadChildOfGroup<S>>
       : never;
 
-type BaseShapeReader = {
-  readonly id: ItemId;
-  label(): string | null;
-};
+type BaseShapeReader = { readonly id: ItemId; label(): string | null };
 
 export type AnyShapeReader = BaseShapeReader;
 
@@ -68,9 +58,7 @@ export type GroupShapeReader<G extends GroupViewShape> = BaseShapeReader & {
   child(id: ItemId): ReaderForShape<ChildShapeOfGroup<G>>;
 };
 
-export type ReaderForShape<S extends ViewShape> = S extends {
-  type: "any";
-}
+export type ReaderForShape<S extends ViewShape> = S extends { type: "any" }
   ? AnyShapeReader
   : S extends { type: "value" }
     ? ValueShapeReader

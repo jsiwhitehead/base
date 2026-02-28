@@ -10,10 +10,7 @@ export type ViewName = "outline" | "table" | "slider";
 
 type BlankContent = { type: "blank" };
 type ScalarContent = { type: "scalar"; value: Scalar };
-type GroupContent = {
-  type: "group";
-  childIds: readonly EntryId[];
-};
+type GroupContent = { type: "group"; childIds: readonly EntryId[] };
 type FormulaContent = { type: "formula"; expr: string };
 type QueryContent = {
   type: "query";
@@ -40,12 +37,7 @@ export type SnapshotNodeContent =
   | { type: "scalar"; value: Scalar }
   | { type: "group"; children: SnapshotNode[] }
   | { type: "formula"; expr: string }
-  | {
-      type: "query";
-      from: string;
-      where: string;
-      orderBy: string;
-    };
+  | { type: "query"; from: string; where: string; orderBy: string };
 
 export type SnapshotNode = {
   id: EntryId;
@@ -60,11 +52,7 @@ export type SnapshotData = {
   root: SnapshotNode;
 };
 
-type MoveSpec = {
-  childId: EntryId;
-  toParentId: EntryId;
-  toIndex?: number;
-};
+type MoveSpec = { childId: EntryId; toParentId: EntryId; toIndex?: number };
 
 type MoveResult = {
   fromParentId: EntryId | null;
@@ -147,10 +135,7 @@ type EntryRecord = {
   childLabelIndexSignal?: ReadonlySignal<Map<string, EntryId>>;
 };
 
-type EntrySnapshotRecord = {
-  record: EntryRecord;
-  entry: Entry;
-};
+type EntrySnapshotRecord = { record: EntryRecord; entry: Entry };
 
 function isBlankContent(content: EntryContent): content is BlankContent {
   return content.type === "blank";
@@ -309,11 +294,7 @@ export function createModel(): Model {
 
   const ops = {
     create: (entry: Entry): Op => ({ type: "create", entry }),
-    patch: (id: EntryId, next: EntryPatch): Op => ({
-      type: "patch",
-      id,
-      next,
-    }),
+    patch: (id: EntryId, next: EntryPatch): Op => ({ type: "patch", id, next }),
     move: (spec: MoveSpec): Op => ({ type: "move", spec }),
     remove: (id: EntryId): Op => ({ type: "remove", id }),
     transaction: (
@@ -401,10 +382,7 @@ export function createModel(): Model {
           expectGroupParent(toParentId);
         parentSignal.value = {
           ...parent,
-          content: {
-            type: "group",
-            childIds: preparedChildIds,
-          },
+          content: { type: "group", childIds: preparedChildIds },
         };
       }
 
@@ -466,10 +444,7 @@ export function createModel(): Model {
 
   const remove = (
     id: EntryId,
-  ): {
-    removedIds: EntryId[];
-    parentTouched: EntryId | null;
-  } => {
+  ): { removedIds: EntryId[]; parentTouched: EntryId | null } => {
     if (!entries.has(id)) throw new Error("Unknown entry");
 
     const record = entryRecord(id);
@@ -750,10 +725,7 @@ export function createModel(): Model {
           orderBy: content.orderBy,
         };
       case "group":
-        return {
-          type: "group",
-          children: content.childIds.map(snapshot),
-        };
+        return { type: "group", children: content.childIds.map(snapshot) };
       default:
         return assertNever(content, "Unknown entry content");
     }
@@ -979,11 +951,7 @@ export function createModelFromSnapshot(snapshot: SnapshotData): Model {
       const child = node.children[i]!;
       queueNode(child);
       moveOps.push(
-        model.ops.move({
-          childId: child.id,
-          toParentId: node.id,
-          toIndex: i,
-        }),
+        model.ops.move({ childId: child.id, toParentId: node.id, toIndex: i }),
       );
     }
   };

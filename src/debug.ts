@@ -1,8 +1,7 @@
 import type { ReadonlySignal } from "@preact/signals-core";
 import { signal } from "@preact/signals-core";
 
-import type { Caret, Core, Focus, ItemId, Selection } from "./core";
-import { DEFAULT_TARGET } from "./core";
+import type { Core, ItemId, Selection } from "./core";
 import type { Component, UiCore } from "./dom";
 import { createComponent, el } from "./dom";
 
@@ -16,14 +15,7 @@ type DebugLast =
       type: "focus";
       selectionBefore: Selection;
       selectionAfter: Selection;
-      focus: Focus;
-      target: string;
-      caret?: Caret;
-    }
-  | {
-      type: "blur";
-      selectionBefore: Selection;
-      selectionAfter: Selection;
+      caret?: number;
     }
   | { type: "dispose" };
 
@@ -68,8 +60,10 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
   const commitCore = core.commit.bind(core);
   const undoCore = core.undo.bind(core);
   const redoCore = core.redo.bind(core);
-  const focusCore = core.focus.bind(core);
-  const blurCore = core.blur.bind(core);
+  const focusCore = core.focus.bind(core) as (
+    selection: Selection,
+    opts?: { caret?: number },
+  ) => void;
   const disposeCore = core.dispose.bind(core);
   const selectionCore = core.selection.bind(core);
 
@@ -99,30 +93,20 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
     debug.pushRecent("redo");
   };
 
-  core.focus = (focus, target = DEFAULT_TARGET, opts = {}) => {
+  core.focus = ((selection: Selection, opts?: { caret?: number }) => {
     const selectionBefore = readSelection();
-    focusCore(focus, target, opts);
+    focusCore(selection, opts);
     const selectionAfter = readSelection();
     debug.setLast({
       type: "focus",
       selectionBefore,
       selectionAfter,
-      focus,
-      target,
-      ...(opts.caret ? { caret: opts.caret } : {}),
+      ...(opts?.caret !== undefined ? { caret: opts.caret } : {}),
     });
     debug.pushRecent(
-      `focus ${recentSelectionSummary(selectionAfter)}${opts.caret ? ` caret=${opts.caret.start}-${opts.caret.end}` : ""}`,
+      `focus ${recentSelectionSummary(selectionAfter)}${opts?.caret !== undefined ? ` caret=${opts.caret}` : ""}`,
     );
-  };
-
-  core.blur = () => {
-    const selectionBefore = readSelection();
-    blurCore();
-    const selectionAfter = readSelection();
-    debug.setLast({ type: "blur", selectionBefore, selectionAfter });
-    debug.pushRecent(`blur ${recentSelectionSummary(selectionAfter)}`);
-  };
+  }) as T["focus"];
 
   core.dispose = () => {
     debug.setLast({ type: "dispose" });
@@ -143,15 +127,20 @@ function safeJson(x: unknown): string {
 
 function selectionText(selection: Selection): string {
   if (selection.type === "idle") return "idle";
-  const caret = selection.caret
-    ? `caret: { start: ${selection.caret.start}, end: ${selection.caret.end} }`
-    : "caret: (none)";
+  const formatLocation = (container: ItemId, item: ItemId): string =>
+    `container=${container} item=${item}`;
+  if (selection.type === "item") {
+    return [
+      "item",
+      `anchor:    ${formatLocation(selection.anchor.container, selection.anchor.item)}`,
+      `head:      ${formatLocation(selection.head.container, selection.head.item)}`,
+    ].join("\n");
+  }
   return [
-    "focused",
-    `container: ${selection.focus.container}`,
-    `item:      ${selection.focus.item}`,
+    "editing",
+    `container: ${selection.location.container}`,
+    `item:      ${selection.location.item}`,
     `target:    ${selection.target}`,
-    caret,
   ].join("\n");
 }
 
@@ -162,7 +151,11 @@ function recentLinesText(lines: readonly string[]): string {
 
 function recentSelectionSummary(selection: Selection): string {
   if (selection.type === "idle") return "selection=idle";
-  return `item=${selection.focus.item} container=${selection.focus.container} target=${selection.target}`;
+  const formatLocation = (container: ItemId, item: ItemId): string =>
+    `container=${container} item=${item}`;
+  if (selection.type === "item")
+    return `selection=item anchor(${formatLocation(selection.anchor.container, selection.anchor.item)}) head(${formatLocation(selection.head.container, selection.head.item)})`;
+  return `editing item=${selection.location.item} container=${selection.location.container} target=${selection.target}`;
 }
 
 function lastText(last: DebugLast | null): string {
@@ -174,13 +167,11 @@ function lastText(last: DebugLast | null): string {
   }
 
   if (last.type === "focus") {
-    const caret = last.caret
-      ? ` caret:${last.caret.start}-${last.caret.end}`
-      : "";
-    return `last: focus target=${last.target}${caret}`;
+    const caret = last.caret !== undefined ? ` caret:${last.caret}` : "";
+    return `last: focus ${recentSelectionSummary(last.selectionAfter)}${caret}`;
   }
 
-  return "last: blur";
+  return "last: focus";
 }
 
 function probeUiFrame(
@@ -243,7 +234,7 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
     secSelection.append(hSel, bSel);
 
     const secActive = el("div", "ui-debug-section");
-    const hActive = el("div", "ui-debug-title", "Active DOM Focus");
+    const hActive = el("div", "ui-debug-title", "Active DOM Location");
     const bActive = el("pre", "ui-debug-pre");
     secActive.append(hActive, bActive);
 
@@ -278,16 +269,16 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
       bSel.textContent = selectionText(selection);
       bActive.textContent = activeDomFocusText();
 
-      if (selection.type !== "focused") {
+      if (selection.type !== "editing") {
         bItem.textContent = "(none)";
         bDom.textContent = "(none)";
         return;
       }
 
-      const snap = core.item(selection.focus.item);
+      const snap = core.item(selection.location.item);
       bItem.textContent = safeJson(snap);
 
-      const probe = probeUiFrame(probeRoot, selection.focus.item);
+      const probe = probeUiFrame(probeRoot, selection.location.item);
       if (!probe.mounted) {
         bDom.textContent = "mounted: no";
         return;

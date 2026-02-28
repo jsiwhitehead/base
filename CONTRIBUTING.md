@@ -130,8 +130,8 @@ Canonical domain terms (do not invent synonyms):
 - connected, formula, query
 - item, content, mode
 - group, value, issue
-- parent, child, sibling, location
-- intent, selection, focus, container, target, caret
+- parent, child, sibling
+- intent, selection, location, target
 - frame, header, body
 
 ## Common change patterns (how-tos)
@@ -140,7 +140,9 @@ Canonical domain terms (do not invent synonyms):
 
 - Change locations: `src/views/`, `src/setup.ts` for shared registration/composition, and possibly `src/main.ts` for demo/bootstrap-only wiring.
 - Check contracts: `docs/architecture.md`, `docs/views-spec.md`.
+- For contenteditable-based view behavior, check `docs/content-editable.md`.
 - Update docs: `docs/views-spec.md` if behavior changes.
+- Update docs: `docs/content-editable.md` when contenteditable pipeline/contracts change.
 - Validate: run typecheck, tests, format.
 
 ### Add a new component or control
@@ -203,7 +205,7 @@ Canonical domain terms (do not invent synonyms):
 Use backticks for:
 
 - symbols (for example `createComponent`)
-- literal tokens (for example `DEFAULT_TARGET`)
+- literal tokens (for example `ITEM_TARGET`)
 - CSS classes (for example `.ui-frame`)
 - file paths (for example `docs/core-api.md`)
 

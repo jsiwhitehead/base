@@ -41,22 +41,13 @@ export type Mode =
   | { type: "plain" }
   | { type: "connected"; conn: Connected };
 
-export type Item = {
-  id: ItemId;
-  label?: string;
-  content: Content;
-  mode: Mode;
-};
+export type Item = { id: ItemId; label?: string; content: Content; mode: Mode };
 
 export type ItemRef = { entryId: EntryId; path: readonly number[] };
 
-export type ReadEvaluator = {
-  result(id: EntryId): Result;
-};
+export type ReadEvaluator = { result(id: EntryId): Result };
 
-export type ReadApi = {
-  item(id: ItemId): Item;
-};
+export type ReadApi = { item(id: ItemId): Item };
 
 type CreateReadApiOpts = {
   getEvaluator: () => ReadEvaluator;

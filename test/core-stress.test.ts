@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Core, ItemId } from "../src/core";
-import { DEFAULT_TARGET } from "../src/core";
 import {
   assertCoreInvariants,
   childrenOf,
@@ -13,15 +12,18 @@ import {
 
 function assertSelectionValid(core: Core): void {
   const selection = core.selection();
-  if (selection.type === "idle") return;
-
-  expect(core.item(selection.focus.item).content.type).not.toBe("issue");
-  expect(core.item(selection.focus.container).content.type).not.toBe("issue");
-
-  if (selection.focus.item === selection.focus.container) return;
-  const loc = core.locate(selection.focus.item);
-  expect(loc).not.toBeNull();
-  expect(loc!.parentId).toBe(selection.focus.container);
+  if (selection.type === "editing") {
+    expect(core.item(selection.location.item).content.type).not.toBe("issue");
+    expect(core.item(selection.location.container).content.type).not.toBe(
+      "issue",
+    );
+    if (selection.location.item === selection.location.container) return;
+    const loc = core.locate(selection.location.item);
+    expect(loc).not.toBeNull();
+    expect(loc!.parentId).toBe(selection.location.container);
+  } else if (selection.type === "item") {
+    expect(core.item(selection.head.item).content.type).not.toBe("issue");
+  }
 }
 
 function countReachable(core: Core, rootId: ItemId): number {
@@ -86,7 +88,11 @@ describe("core stress/deep nesting", () => {
     }
 
     const leaf = mkBlank(core, parent, { label: "leaf", value: 1 });
-    core.focus({ container: parent, item: leaf }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: parent, item: leaf },
+      head: { container: parent, item: leaf },
+    });
 
     for (let i = 0; i < 30; i += 1) {
       core.commit((t) => t.setValue(leaf, i));
@@ -142,7 +148,11 @@ describe("core stress/rapid structural edits", () => {
     for (let i = 0; i < 40; i += 1) {
       pool.push(mkBlank(core, g1, { label: `x${i}`, value: i }));
     }
-    core.focus({ container: g1, item: pool[0] ?? g1 }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: g1, item: pool[0] ?? g1 },
+      head: { container: g1, item: pool[0] ?? g1 },
+    });
 
     for (let i = 0; i < 240; i += 1) {
       const id = pool[i % pool.length]!;

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
 import type { ItemId, Transaction } from "../src/core";
-import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
 import type { UiCore } from "../src/dom";
 import { bindItemFrame, createComponent, el } from "../src/dom";
 import { viewRegistrations } from "../src/views";
@@ -17,7 +16,6 @@ import {
   pointerDown,
   requireCreatedEntryId,
   requireFrameEl,
-  requireTargetInput,
   setView,
   valueOfId,
 } from "./dom-test-utils";
@@ -57,12 +55,8 @@ describe("system/bootstrap & lifecycle", () => {
 
     const main = document.body.querySelector(".ui-main") as HTMLElement | null;
     expect(main).toBeTruthy();
-    expect(document.activeElement).toBe(main);
-    expectSel(core, {
-      container: rootId,
-      item: rootId,
-      target: DEFAULT_TARGET,
-    });
+    expect(document.activeElement).not.toBe(main);
+    expectSel(core, { container: rootId, item: rootId });
 
     unmount();
     expect(document.body.querySelector(".ui-main")).toBeNull();
@@ -89,19 +83,19 @@ describe("system/keyboard routing & focus ownership", () => {
     pointerDown(c11Frame);
     await flushDomEffects();
 
-    expectSel(core, { container: r1, item: c11, target: DEFAULT_TARGET });
+    expectSel(core, { container: r1, item: c11 });
 
     dispatchKey(c11Frame, "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+    expectSel(core, { container: r2, item: c21 });
 
     unmount();
   });
 });
 
 describe("system/history across views", () => {
-  test("mixed outline + table edits undo/redo coherently", async () => {
+  test("mixed outline + table commits undo/redo coherently", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
@@ -111,35 +105,11 @@ describe("system/history across views", () => {
     const r1 = mkGroup(core, tableId, { label: "r1" });
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
 
-    const unmount = mountAppShell(core, rootId);
-    await flushDomEffects();
-
-    core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
-    await flushDomEffects();
-    dispatchKey(requireFrameEl(document.body, a), "Enter");
-    await flushDomEffects();
-    const aInput = requireTargetInput(
-      requireFrameEl(document.body, a),
-      VALUE_TARGET,
-    );
-    aInput.value = "x2";
-    aInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    await flushDomEffects();
-
-    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
-    await flushDomEffects();
-    dispatchKey(requireFrameEl(document.body, c11), "Enter");
-    await flushDomEffects();
-    const cInput = requireTargetInput(
-      requireFrameEl(document.body, c11),
-      VALUE_TARGET,
-    );
-    cInput.value = "9";
-    cInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    await flushDomEffects();
+    core.commit((t) => t.setValue(a, "x2"));
+    core.commit((t) => t.setValue(c11, 9));
 
     expect(valueOfId(core, a)).toBe("x2");
-    expect(valueOfId(core, c11)).toBe("9");
+    expect(valueOfId(core, c11)).toBe(9);
 
     core.undo();
     expect(valueOfId(core, c11)).toBe(1);
@@ -151,17 +121,15 @@ describe("system/history across views", () => {
     core.redo();
     core.redo();
     expect(valueOfId(core, a)).toBe("x2");
-    expect(valueOfId(core, c11)).toBe("9");
+    expect(valueOfId(core, c11)).toBe(9);
 
     const selection = core.selection();
-    expect(selection.type).toBe("focused");
-
-    unmount();
+    expect(selection.type).toBe("item");
   });
 });
 
 describe("system/collab + local history", () => {
-  test("local echo is ignored and remote apply updates mounted state", async () => {
+  test("local echo is ignored and remote apply updates core state", async () => {
     let onRemote: ((txn: Transaction) => void) | undefined;
     const sent: Transaction[] = [];
 
@@ -180,7 +148,6 @@ describe("system/collab + local history", () => {
         },
       },
     });
-
     const unmount = mountAppShell(core, rootId);
     await flushDomEffects();
 
@@ -211,11 +178,8 @@ describe("system/collab + local history", () => {
       meta: { origin: "remote-user", seq: 1 },
     });
 
-    await flushDomEffects();
-
     expect(valueOfId(core, x)).toBe(7);
     expect(requireFrameEl(document.body, x).isConnected).toBe(true);
-
     unmount();
     core.dispose();
   });

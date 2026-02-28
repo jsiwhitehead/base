@@ -9,15 +9,15 @@ import type {
   Transaction,
   ViewName,
 } from "../src/core";
-import { createCore, DEFAULT_TARGET } from "../src/core";
+import { createCore } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
 
-export function expectFocused(
+export function expectEditing(
   selection: Selection,
-): asserts selection is Extract<Selection, { type: "focused" }> {
-  expect(selection.type).toBe("focused");
-  if (selection.type !== "focused")
-    throw new Error("Expected focused selection");
+): asserts selection is Extract<Selection, { type: "editing" }> {
+  expect(selection.type).toBe("editing");
+  if (selection.type !== "editing")
+    throw new Error("Expected editing selection");
 }
 
 export function makePureCore(): { core: Core; rootId: ItemId } {
@@ -72,10 +72,19 @@ export function expectSel(
   want: { container: ItemId; item: ItemId; target?: string },
 ): void {
   const selection = core.selection();
-  expectFocused(selection);
-  expect(selection.focus.container).toBe(want.container);
-  expect(selection.focus.item).toBe(want.item);
-  expect(selection.target).toBe(want.target ?? DEFAULT_TARGET);
+  if (want.target !== undefined) {
+    expect(selection.type).toBe("editing");
+    if (selection.type !== "editing")
+      throw new Error("Expected editing selection");
+    expect(selection.location.container).toBe(want.container);
+    expect(selection.location.item).toBe(want.item);
+    expect(selection.target).toBe(want.target);
+  } else {
+    expect(selection.type).toBe("item");
+    if (selection.type !== "item") throw new Error("Expected item selection");
+    expect(selection.head.container).toBe(want.container);
+    expect(selection.head.item).toBe(want.item);
+  }
 }
 
 export function mkBlank(

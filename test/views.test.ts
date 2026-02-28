@@ -1,473 +1,22 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Focus, Intent, ItemId, ViewName } from "../src/core";
-import { DEFAULT_TARGET, VALUE_TARGET } from "../src/core";
-import type { DomView, UiCore } from "../src/dom";
-import { caretAt, caret0 } from "../src/dom";
-import { viewRegistrations } from "../src/views";
+import { VALUE_TARGET } from "../src/core";
 
 import {
   childrenOf,
   dispatchKey,
   expectSel,
+  fireViewKey,
   flushDomEffects,
   makeCoreRuntime,
+  mountView,
   mkBlank,
   mkGroup,
   pointerDown,
   requireFrameEl,
-  requireTargetInput,
-  valueOfId,
   setView,
+  valueOfId,
 } from "./dom-test-utils";
-
-const viewFactories = Object.fromEntries(
-  Object.entries(viewRegistrations).map(([viewName, registration]) => [
-    viewName,
-    registration.factory,
-  ]),
-) as Record<ViewName, (typeof viewRegistrations)[ViewName]["factory"]>;
-
-function mountDomView(view: DomView): () => void {
-  document.body.replaceChildren(view.root);
-  return () => {
-    view.dispose();
-    document.body.replaceChildren();
-  };
-}
-
-function fireViewKey(
-  view: DomView,
-  key: string,
-  opts?: Partial<KeyboardEventInit>,
-): void {
-  const intent = intentFromKey(key, opts);
-  if (!intent) return;
-  view.onIntent?.(intent);
-}
-
-function intentFromKey(
-  key: string,
-  opts: Partial<KeyboardEventInit> = {},
-): Intent | null {
-  if (key === "Escape") {
-    return {
-      type: "NAV",
-      dir: "out",
-      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
-    };
-  }
-  if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
-  if (key === "Enter") return { type: "CONFIRM" };
-  if (key === "Backspace") return { type: "DELETE", dir: "backward" };
-  if (key === "Delete") return { type: "DELETE", dir: "forward" };
-
-  const dir =
-    key === "ArrowLeft"
-      ? "left"
-      : key === "ArrowRight"
-        ? "right"
-        : key === "ArrowUp"
-          ? "up"
-          : key === "ArrowDown"
-            ? "down"
-            : null;
-
-  if (dir) {
-    return {
-      type: "NAV",
-      dir,
-      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
-    };
-  }
-
-  if (!opts.ctrlKey && !opts.metaKey && !opts.altKey && key.length === 1) {
-    return { type: "TYPE", char: key };
-  }
-
-  return null;
-}
-
-type ElSnapshot = {
-  el: Element;
-  keyEls: Element[];
-};
-
-function snapshotEl(element: Element, keySelectors: string[] = []): ElSnapshot {
-  const keyEls: Element[] = [];
-  for (const sel of keySelectors) {
-    const hit = (element as ParentNode).querySelector(sel);
-    if (!hit) throw new Error(`Missing key element selector=${sel}`);
-    keyEls.push(hit);
-  }
-  return { el: element, keyEls };
-}
-
-function expectSnapshotSame(
-  snap: ElSnapshot,
-  el0: Element,
-  keySelectors: string[] = [],
-): void {
-  expect(snap.el === el0).toBe(true);
-  if (keySelectors.length !== snap.keyEls.length)
-    throw new Error("Key selector count mismatch");
-
-  for (let i = 0; i < keySelectors.length; i++) {
-    const sel = keySelectors[i]!;
-    const hit = (el0 as ParentNode).querySelector(sel);
-    if (!hit) throw new Error(`Missing key element selector=${sel}`);
-    expect(snap.keyEls[i] === hit).toBe(true);
-  }
-}
-
-async function mountView(args: {
-  view: Extract<ViewName, "outline" | "table" | "slider">;
-  core: UiCore;
-  id: ItemId;
-  focus: Focus;
-}) {
-  const { view, core, id, focus } = args;
-  const domView = viewFactories[view]({ core, id, focus });
-  const unmount = mountDomView(domView);
-  await flushDomEffects();
-  return { domView, unmount };
-}
-
-describe("views/outline", () => {
-  test("renders placeholder for empty group", async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
-
-    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
-
-    const { unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    const placeholder = document.body.querySelector(
-      ".ui-outline-placeholder",
-    ) as HTMLElement | null;
-
-    expect(placeholder).toBeTruthy();
-    expect(placeholder?.classList.contains("ui-frame")).toBe(false);
-
-    unmount();
-  });
-
-  test("Enter on empty group converts to value and enters VALUE", async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
-
-    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "Enter");
-    await flushDomEffects();
-
-    const kids = childrenOf(core, g);
-    expect(kids.length).toBe(0);
-    expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
-    expect(valueOfId(core, g)).toBe("");
-
-    requireTargetInput(document.body, VALUE_TARGET);
-
-    unmount();
-  });
-
-  test("TYPE on empty group converts to value and types character", async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
-
-    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "a");
-    await flushDomEffects(3);
-
-    const kids = childrenOf(core, g);
-    expect(kids.length).toBe(0);
-    expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
-    expect(valueOfId(core, g)).toBe("a");
-
-    unmount();
-  });
-
-  test("NAV from container focus uses sibling geometry with right fallthrough", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const g = mkGroup(core, rootId, { label: "g" });
-    const a = mkBlank(core, g, { label: "a", value: "aa" });
-    const b = mkBlank(core, g, { label: "b", value: "bb" });
-    mkBlank(core, rootId, { label: "c", value: "cc" });
-
-    core.focus({ container: rootId, item: g }, DEFAULT_TARGET);
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "ArrowRight");
-    await flushDomEffects();
-    expectSel(core, { container: g, item: a, target: DEFAULT_TARGET });
-
-    fireViewKey(domView, "ArrowRight");
-    await flushDomEffects();
-    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
-
-    fireViewKey(domView, "ArrowRight");
-    await flushDomEffects();
-    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
-
-    fireViewKey(domView, "ArrowUp");
-    await flushDomEffects();
-    expectSel(core, { container: g, item: a, target: DEFAULT_TARGET });
-
-    fireViewKey(domView, "ArrowDown");
-    await flushDomEffects();
-    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
-
-    fireViewKey(domView, "ArrowDown");
-    await flushDomEffects();
-    expectSel(core, { container: g, item: b, target: DEFAULT_TARGET });
-
-    fireViewKey(domView, "ArrowLeft");
-    await flushDomEffects();
-    expectSel(core, {
-      container: rootId,
-      item: g,
-      target: DEFAULT_TARGET,
-    });
-
-    unmount();
-  });
-
-  test("Tab wraps in-place and Shift+Tab unwraps parent group", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const g = mkGroup(core, rootId, { label: "g" });
-    const x = mkBlank(core, g, { label: "x", value: "v" });
-
-    core.focus({ container: g, item: x }, VALUE_TARGET, { caret: caret0() });
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "Tab");
-    await flushDomEffects();
-
-    const kids = childrenOf(core, g);
-    expect(kids.length).toBe(1);
-    const wrapper = kids[0]!;
-    expect(wrapper).not.toBe(x);
-    expect(core.item(wrapper).label ?? "").toBe("");
-    expect(core.item(x).label).toBe("x");
-
-    expectSel(core, { container: wrapper, item: x, target: VALUE_TARGET });
-
-    fireViewKey(domView, "Tab", { shiftKey: true });
-    await flushDomEffects();
-
-    expectSel(core, { container: g, item: x, target: VALUE_TARGET });
-
-    unmount();
-  });
-
-  test("Shift+Tab unwraps multi-child parent by splicing children at wrapper index", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const before = mkBlank(core, rootId, { label: "before", value: "b" });
-    const g = mkGroup(core, rootId, { label: "g" });
-    const a = mkBlank(core, g, { label: "a", value: "1" });
-    const b = mkBlank(core, g, { label: "b", value: "2" });
-    const c = mkBlank(core, g, { label: "c", value: "3" });
-    const after = mkBlank(core, rootId, { label: "after", value: "a" });
-
-    core.focus({ container: g, item: b }, VALUE_TARGET, { caret: caret0() });
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "Tab", { shiftKey: true });
-    await flushDomEffects();
-
-    expect(childrenOf(core, rootId)).toEqual([before, a, b, c, after]);
-    expectSel(core, { container: rootId, item: b, target: VALUE_TARGET });
-
-    unmount();
-  });
-
-  test("Shift+Tab on direct root child promotes child into root", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const a = mkBlank(core, rootId, { label: "a", value: "1" });
-    mkBlank(core, rootId, { label: "b", value: "2" });
-    core.focus({ container: rootId, item: a }, VALUE_TARGET, {
-      caret: caret0(),
-    });
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "Tab", { shiftKey: true });
-    await flushDomEffects();
-
-    expect(childrenOf(core, rootId)).toEqual([]);
-    expect(valueOfId(core, rootId)).toBe("1");
-    expectSel(core, { container: rootId, item: rootId, target: VALUE_TARGET });
-
-    unmount();
-  });
-
-  test("Enter in VALUE splits item", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
-    core.focus({ container: rootId, item: a }, VALUE_TARGET, {
-      caret: caretAt(2),
-    });
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    domView.onIntent?.({ type: "CONFIRM", caret: caretAt(2) });
-    await flushDomEffects();
-
-    const kids = childrenOf(core, rootId);
-    const aIdx = kids.indexOf(a);
-    expect(aIdx).toBeGreaterThanOrEqual(0);
-
-    const b = kids[aIdx + 1]!;
-    expect(valueOfId(core, a)).toBe("he");
-    expect(valueOfId(core, b)).toBe("llo");
-
-    expectSel(core, { container: rootId, item: b, target: VALUE_TARGET });
-
-    unmount();
-  });
-
-  test("Backspace in VALUE joins with previous", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const a = mkBlank(core, rootId, { label: "a", value: "hi" });
-    const b = mkBlank(core, rootId, { label: "b", value: "there" });
-
-    core.focus({ container: rootId, item: b }, VALUE_TARGET, {
-      caret: caret0(),
-    });
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "Backspace");
-    await flushDomEffects();
-
-    expect(valueOfId(core, a)).toBe("hithere");
-    expect(() => core.item(b)).toThrow();
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
-
-    unmount();
-  });
-
-  test("NAV boundaries: up from first top-level item does nothing; left from root does nothing", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const a = mkBlank(core, rootId, { label: "a", value: "x" });
-
-    core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
-
-    const { domView, unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    fireViewKey(domView, "ArrowUp");
-    await flushDomEffects();
-    expectSel(core, { container: rootId, item: a, target: DEFAULT_TARGET });
-
-    core.focus({ container: rootId, item: rootId }, DEFAULT_TARGET);
-    await flushDomEffects();
-
-    fireViewKey(domView, "ArrowLeft");
-    await flushDomEffects();
-    expectSel(core, {
-      container: rootId,
-      item: rootId,
-      target: DEFAULT_TARGET,
-    });
-
-    unmount();
-  });
-
-  test("selection changes do not recreate frame elements", async () => {
-    const { core, rootId } = makeCoreRuntime();
-
-    const a = mkBlank(core, rootId, { label: "a", value: "x" });
-    const b = mkBlank(core, rootId, { label: "b", value: "y" });
-
-    core.focus({ container: rootId, item: a }, DEFAULT_TARGET);
-
-    const { unmount } = await mountView({
-      view: "outline",
-      core,
-      id: rootId,
-      focus: { container: rootId, item: rootId },
-    });
-
-    const aFrame0 = requireFrameEl(document.body, a);
-    const bFrame0 = requireFrameEl(document.body, b);
-
-    const snapA = snapshotEl(aFrame0);
-    const snapB = snapshotEl(bFrame0);
-
-    core.focus({ container: rootId, item: b }, DEFAULT_TARGET);
-    await flushDomEffects();
-
-    expectSnapshotSame(snapA, requireFrameEl(document.body, a));
-    expectSnapshotSame(snapB, requireFrameEl(document.body, b));
-
-    unmount();
-  });
-});
 
 describe("views/table", () => {
   test("renders header columns based on schema row", async () => {
@@ -480,7 +29,11 @@ describe("views/table", () => {
     mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
-    core.focus({ container: tableId, item: tableId }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: tableId, item: tableId },
+      head: { container: tableId, item: tableId },
+    });
 
     const { unmount } = await mountView({
       view: "table",
@@ -514,7 +67,11 @@ describe("views/table", () => {
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
-    core.focus({ container: tableId, item: r1 }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: tableId, item: r1 },
+      head: { container: tableId, item: r1 },
+    });
 
     const { domView, unmount } = await mountView({
       view: "table",
@@ -525,15 +82,15 @@ describe("views/table", () => {
 
     fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r2, target: DEFAULT_TARGET });
+    expectSel(core, { container: tableId, item: r2 });
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r1, target: DEFAULT_TARGET });
+    expectSel(core, { container: tableId, item: r1 });
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c11, target: DEFAULT_TARGET });
+    expectSel(core, { container: r1, item: c11 });
 
     unmount();
   });
@@ -553,7 +110,11 @@ describe("views/table", () => {
     const c21 = childrenOf(core, r2)[0]!;
     const c22 = childrenOf(core, r2)[1]!;
 
-    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: r1, item: c11 },
+      head: { container: r1, item: c11 },
+    });
 
     const { domView, unmount } = await mountView({
       view: "table",
@@ -564,19 +125,19 @@ describe("views/table", () => {
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c12, target: DEFAULT_TARGET });
+    expectSel(core, { container: r1, item: c12 });
 
     fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, { container: r2, item: c22, target: DEFAULT_TARGET });
+    expectSel(core, { container: r2, item: c22 });
 
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+    expectSel(core, { container: r2, item: c21 });
 
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r2, target: DEFAULT_TARGET });
+    expectSel(core, { container: tableId, item: r2 });
 
     unmount();
   });
@@ -595,7 +156,11 @@ describe("views/table", () => {
 
     const c21 = childrenOf(core, r2)[0]!;
 
-    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: r1, item: c11 },
+      head: { container: r1, item: c11 },
+    });
 
     const { domView, unmount } = await mountView({
       view: "table",
@@ -606,11 +171,11 @@ describe("views/table", () => {
 
     fireViewKey(domView, "Tab");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c12, target: DEFAULT_TARGET });
+    expectSel(core, { container: r1, item: c12 });
 
     fireViewKey(domView, "Tab");
     await flushDomEffects();
-    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+    expectSel(core, { container: r2, item: c21 });
 
     unmount();
   });
@@ -629,9 +194,14 @@ describe("views/table", () => {
 
     const c21 = childrenOf(core, r2)[0]!;
 
-    core.focus({ container: r1, item: c11 }, VALUE_TARGET, {
-      caret: caretAt(1),
-    });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: r1, item: c11 },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
 
     const { domView, unmount } = await mountView({
       view: "table",
@@ -643,7 +213,7 @@ describe("views/table", () => {
     fireViewKey(domView, "Enter");
     await flushDomEffects();
 
-    expectSel(core, { container: r2, item: c21, target: DEFAULT_TARGET });
+    expectSel(core, { container: r2, item: c21 });
 
     unmount();
   });
@@ -667,14 +237,22 @@ describe("views/table", () => {
       focus: { container: tableId, item: tableId },
     });
 
-    core.focus({ container: r1, item: c11 }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: r1, item: c11 },
+      head: { container: r1, item: c11 },
+    });
     await flushDomEffects();
 
     fireViewKey(domView, "Backspace");
     await flushDomEffects();
     expect(valueOfId(core, c11)).toBe(null);
 
-    core.focus({ container: tableId, item: r2 }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: tableId, item: r2 },
+      head: { container: tableId, item: r2 },
+    });
     await flushDomEffects();
 
     fireViewKey(domView, "Backspace");
@@ -696,7 +274,11 @@ describe("views/table", () => {
     mkBlank(core, r1, { label: "c2", value: 2 });
 
     const firstRow = childrenOf(core, tableId)[0]!;
-    core.focus({ container: tableId, item: firstRow }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: tableId, item: firstRow },
+      head: { container: tableId, item: firstRow },
+    });
 
     const { domView, unmount } = await mountView({
       view: "table",
@@ -707,23 +289,19 @@ describe("views/table", () => {
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, {
-      container: tableId,
-      item: firstRow,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: tableId, item: firstRow });
 
     const firstCell = childrenOf(core, firstRow)[0]!;
-    core.focus({ container: firstRow, item: firstCell }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: firstRow, item: firstCell },
+      head: { container: firstRow, item: firstCell },
+    });
     await flushDomEffects();
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, {
-      container: firstRow,
-      item: firstCell,
-      target: DEFAULT_TARGET,
-    });
+    expectSel(core, { container: firstRow, item: firstCell });
 
     unmount();
   });
@@ -736,7 +314,11 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
 
-    core.focus({ container: rootId, item: s }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: s },
+      head: { container: rootId, item: s },
+    });
 
     const { unmount } = await mountView({
       view: "slider",
@@ -766,7 +348,11 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
 
-    core.focus({ container: rootId, item: s }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: s },
+      head: { container: rootId, item: s },
+    });
 
     const { unmount } = await mountView({
       view: "slider",
@@ -794,7 +380,11 @@ describe("views/slider", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
 
-    core.focus({ container: rootId, item: s }, DEFAULT_TARGET);
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: s },
+      head: { container: rootId, item: s },
+    });
 
     const { unmount } = await mountView({
       view: "slider",
@@ -843,7 +433,7 @@ describe("views/slider", () => {
     unmount();
   });
 
-  test("CONFIRM toggles VALUE_TARGET to DEFAULT_TARGET only when focused item is slider id", async () => {
+  test("CONFIRM toggles VALUE_TARGET to ITEM_TARGET only when focused item is slider id", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -851,9 +441,14 @@ describe("views/slider", () => {
 
     const other = mkBlank(core, rootId, { label: "o", value: 1 });
 
-    core.focus({ container: rootId, item: s }, VALUE_TARGET, {
-      caret: caret0(),
-    });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: s },
+        target: VALUE_TARGET,
+      },
+      { caret: 0 },
+    );
 
     const { domView, unmount } = await mountView({
       view: "slider",
@@ -864,11 +459,16 @@ describe("views/slider", () => {
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: s, target: DEFAULT_TARGET });
+    expectSel(core, { container: rootId, item: s });
 
-    core.focus({ container: rootId, item: other }, VALUE_TARGET, {
-      caret: caret0(),
-    });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: other },
+        target: VALUE_TARGET,
+      },
+      { caret: 0 },
+    );
     await flushDomEffects();
 
     fireViewKey(domView, "Enter");

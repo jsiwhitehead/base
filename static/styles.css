@@ -127,7 +127,6 @@
     min-width: 0;
     border-radius: var(--ui-radius);
     background: var(--frame-wash);
-    cursor: pointer;
 
     --accent: var(--ui-color-focus);
     --rail-tint: var(--ui-color-rail);
@@ -379,6 +378,10 @@
     min-width: 0;
   }
 
+  .ui-outline[contenteditable="true"]:focus {
+    outline: none;
+  }
+
   .ui-outline .ui-outline-child {
     display: flex;
     flex-direction: column;
@@ -387,7 +390,6 @@
     min-width: 0;
 
     --outline-indent: calc(var(--ui-rail) + var(--ui-space-pad));
-    --outline-header-h: 0px;
     padding-left: var(--outline-indent);
   }
 
@@ -400,6 +402,10 @@
     background: var(--rail-tint);
     border-radius: 0;
     z-index: 3;
+  }
+
+  .ui-outline-gutter {
+    user-select: none;
   }
 
   .ui-outline > .ui-outline-child:first-child::before {
@@ -448,7 +454,9 @@
   }
 
   .ui-outline-value {
+    display: block;
     color: var(--value-ink);
+    white-space: pre-wrap;
   }
 
   .ui-outline-value .ui-textfield-mirror {
@@ -457,11 +465,11 @@
 
   .ui-outline-value .ui-textfield-input,
   .ui-outline-value .ui-textfield-mirror {
-    padding-top: calc(var(--outline-header-h) + var(--ui-space-gap));
+    padding-top: var(--ui-space-gap);
   }
 
   .ui-outline-value {
-    margin-top: calc(-1 * (var(--outline-header-h) + var(--ui-space-gap)));
+    margin-top: calc(-1 * var(--ui-space-gap));
   }
 
   .ui-outline .ui-outline-placeholder {

@@ -36,13 +36,15 @@ bun run format
 - `AGENTS.md`: coding-agent guardrails for safe, repo-consistent changes.
 - `docs/core-api.md`: Core API and state/transaction semantics.
 - `docs/dom-runtime.md`: runtime lifecycle, mounting, and shared controls.
-- `docs/style-system.md`: deep feel, visual grammar, and styling conventions.
 - `docs/views-spec.md`: view behavior and interaction specifics.
+- `docs/content-editable.md`: contenteditable event pipeline, text sync, and DOM contracts.
+- `docs/style-system.md`: deep feel, visual grammar, and styling conventions.
 
 ## Common tasks (links-first)
 
 - Add a view: `docs/views-spec.md`
 - Work with styling: `docs/style-system.md`
 - Understand rendering/runtime: `docs/dom-runtime.md`
+- Work with contenteditable behavior: `docs/content-editable.md`
 - Work with Core state/transactions: `docs/core-api.md`
 - Understand system invariants: `docs/architecture.md`

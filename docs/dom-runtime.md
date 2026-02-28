@@ -31,17 +31,24 @@ Base helpers:
 Controls/editing helpers:
 
 - `buildTextField`: canonical shared text editor component.
-- `caret0`, `caretAt`, `caretEnd`: caret constructors.
-- `clampCaretToText`: clamps a caret to text length.
-- `SELECT_ALL`: caret sentinel that selects all text.
-- `handleContainerIntent`: shared container-focus `TYPE`/`CONFIRM` adaptor for views.
+- `handleItemIntent`: shared item-selection `TYPE`/`CONFIRM` adaptor for views.
 - `moveWithinItemEditTargets`: intra-item traversable-target movement helper.
 - `resolveFocusAfterRemove`: canonical remove-focus destination helper.
+
+Contenteditable helpers:
+
+- `renderPlainTextToContentEditable`, `readPlainTextFromContentEditable`
+- `domPointToTextOffset`, `textOffsetToDomPoint`
+- `setDomSelectionRange`, `setDomCaret`
+- `getDomSelectionPointsInRoot`, `getMappedSelectionPointsInRoot`
+- `getMappedSelectionSnapshotInRoot`, `getDomRangeInRoot`, `getMappedSelectionRangeInRoot`
+- `getCollapsedCaretRectInSurface`, `getTextSurfaceLineRects`, `getDomPointFromViewport`
+- `getSurfaceFromNodeInRoot`, `getTextNodeFromMutationRecord`
+- `getPlainTextFromDataTransfer`, `writePlainTextClipboard`
 
 Connected header helpers:
 
 - `buildItemHeader`: canonical header subtree component.
-- `patchConn`: single-field connected patch helper.
 
 Drag helpers:
 
@@ -55,7 +62,6 @@ Runtime integration helpers/types:
 - `bindUiRuntime`: composes a headless `Core` with the DOM runtime and returns `{ core: UiCore, runtime }`.
 - `createRuntime`: low-level DOM runtime factory used by `bindUiRuntime`.
 - `DomRuntime`: runtime adapter type (selection sync, target binding, view mounting, listeners, disposal).
-- `typeCharIntoFocusedTextInput`: DOM helper used by platform callbacks; not part of Core.
 
 ## Core/runtime boundary
 
@@ -221,8 +227,8 @@ Rules:
 - Adds class `ui-frame`.
 - Sets `data-id = focus.item`.
 - If `tabindex` is absent, sets `tabIndex = -1`.
-- Registers `DEFAULT_TARGET` on `frameEl` via `ctx.target`.
-- On `pointerdown`, MUST focus Core on `DEFAULT_TARGET` for the same focus surface.
+- Registers `ITEM_TARGET` on `frameEl` via `ctx.target`.
+- On `pointerdown`, MUST focus Core on `ITEM_TARGET` for the same focus surface.
 - On `pointerdown`, MUST NOT set caret.
 - On `pointerdown`, MUST call `stopPropagation()`.
 - Pointerdown handling MUST apply only when the event reaches the frame (that is, it was not already handled/stopped by an inner control).
@@ -244,22 +250,16 @@ Intent routing:
 
 - Escape is represented as `NAV/out` and may be handled by the active view after Core global handling.
 
-### Caret constructors
-
-- `caret0()` returns `{ start: 0, end: 0 }`.
-- `caretAt(pos)` returns `{ start: pos, end: pos }`.
-- `caretEnd()` returns end-sentinel caret (`Number.MAX_SAFE_INTEGER`).
-- `SELECT_ALL`: caret constant `{ start: 0, end: Number.MAX_SAFE_INTEGER }` that selects all text when applied.
-
-### `handleContainerIntent({ core, sel, intent })`
+### `handleItemIntent({ core, sel, intent })`
 
 Behavior:
 
-- Handles container-focus `TYPE` and `CONFIRM` using canonical edit-target/text helpers.
-- For `TYPE`, enters primary edit target with select-all and inserts the character in a microtask.
+- Handles item-selection `TYPE` and `CONFIRM` for **input-based edit targets** (`value`, `label`, `conn:*` when those targets are bound to text inputs).
+- For `TYPE`, applies the character to the item's primary target model-side (`applyTypeToPrimaryTarget`) and focuses the resulting editing target with the returned caret.
 - For `TYPE "="` on an empty plain value item, converts to formula and focuses `conn:expr`.
 - For `CONFIRM`, enters primary edit target with caret at end.
 - Returns `true` when handled, else `false`.
+- **contenteditable value surfaces do not use this helper for `TYPE`.** Views with a contenteditable `value` target handle `TYPE` model-side: commit the character directly (`t.setValue(id, char)`) and focus `VALUE_TARGET` at the new caret. This is the same pattern the empty-group case already uses.
 
 ## `buildTextField` contract
 
@@ -275,7 +275,6 @@ buildTextField(core, {
   autosize?,
   className?,
   inputClassName?,
-  editModel?, // "draft" | "live"
   kind?, // "isolated" | "traversable"
   onExitToContainer?,
   commit(text),
@@ -309,11 +308,6 @@ Rules:
 - In autosize mode, `.ui-textfield-mirror` MUST be present and set `aria-hidden="true"`.
 
 ### Behavioral contract
-
-Edit models:
-
-- `live`: commit on every `input`; no draft session.
-- `draft` (default): local session with baseline/draft/dirty state.
 
 Draft model semantics:
 
@@ -374,15 +368,6 @@ Rules:
 
 ## Connected header helpers
 
-### `patchConn(conn, key, text)`
-
-Single-field patch helper.
-
-Rules:
-
-- Returns an updated connected object when `key` is recognized.
-- For unknown keys, returns the original object unchanged.
-
 ### `buildItemHeader(core, args)`
 
 Canonical header component for item UI.
@@ -407,6 +392,7 @@ Canonical produced structure:
 Rules:
 
 - Label text field uses target `LABEL_TARGET`.
+- Header root (`.ui-header`) MUST set `contenteditable="false"` when mounted in contenteditable-hosted views.
 - The label text field MUST use `buildTextField` with `kind="isolated"` (consumes Tab/arrows/Enter/Delete locally; only Escape bubbles).
 - Connected rows render only when `item.mode.type === "connected"`.
 - Each connected field MUST use `connTarget(field.key)` as target.
@@ -459,7 +445,9 @@ Creates a drag controller that manages pointer-driven item reordering.
 Rules:
 
 - Attaches global `pointerdown`, `pointermove`, `pointerup`, and `pointercancel` listeners.
-- Drags MUST NOT start on interactive elements (`input`, `textarea`, `select`, `button`, contenteditable) or readonly frames.
+- Drags MUST NOT start when the event target is inside an element marked `data-drag-start="block"`.
+- Drags MUST NOT start on interactive elements (`input`, `textarea`, `select`, `button`) or readonly frames.
+- Drags MUST NOT start on explicit `contenteditable="true"` edit surfaces (defensive guard; marker-based blocking remains the primary contract).
 - `DragState` transitions: `idle` → `pending` → `active` → `idle`.
 - While pending/active, `document.documentElement.dataset.dragState` is `"pending"` or `"active"`.
 - The dragged frame receives `is-dragging` while active.
@@ -472,6 +460,12 @@ Drop commit rules:
 - `gap` drop: moves the item to the target position; cleans up the source vacancy.
 - `slot` drop: swaps the item into the slot; labels are exchanged and the displaced item is removed.
 - Newly-empty ancestor groups at the source are pruned (non-slot sources only).
+
+Drag metadata contract:
+
+- `data-drag-start="block"` marks a subtree as drag-start blocked while preserving normal pointer behavior. Views SHOULD use this marker explicitly for all non-draggable editing/chrome subtrees.
+- `data-drag-slot="true"` marks a frame as eligible for slot-drop resolution.
+- `data-drag-axis="horizontal" | "vertical"` hints the parent frame axis for gap placement; default is vertical.
 
 ### `buildDropIndicator(dragState)`
 
@@ -511,5 +505,5 @@ Runtime (`dom/`) provides:
 System design docs define:
 
 - View architecture and composition.
-- Focus/selection routing policy.
+- Location/selection routing policy.
 - Visual language and layout rules.

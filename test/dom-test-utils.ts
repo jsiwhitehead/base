@@ -1,15 +1,14 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterEach, beforeAll } from "bun:test";
+import { afterEach, beforeAll, expect } from "bun:test";
 
-import type { ItemId } from "../src/core";
+import type { Location, Intent, ItemId, ViewName } from "../src/core";
 import { createCore } from "../src/core";
-import type { UiCore } from "../src/dom";
+import type { DomView, UiCore } from "../src/dom";
 import { createUiCoreRuntime } from "../src/setup";
 import { viewRegistrations } from "../src/views";
 
 export {
   childrenOf,
-  expectFocused,
   expectSel,
   mkBlank,
   mkGroup,
@@ -49,6 +48,176 @@ export function makeCoreRuntime(args?: {
     pureCore.dispose();
   });
   return { core, rootId };
+}
+
+const viewFactories = Object.fromEntries(
+  Object.entries(viewRegistrations).map(([viewName, registration]) => [
+    viewName,
+    registration.factory,
+  ]),
+) as Record<ViewName, (typeof viewRegistrations)[ViewName]["factory"]>;
+
+export async function mountView(args: {
+  view: Extract<ViewName, "outline" | "table" | "slider">;
+  core: UiCore;
+  id: ItemId;
+  focus: Location;
+}): Promise<{ domView: DomView; unmount: () => void }> {
+  const { view, core, id, focus } = args;
+  const domView = viewFactories[view]({ core, id, focus });
+  document.body.replaceChildren(domView.root);
+  const unmount = (): void => {
+    domView.dispose();
+    document.body.replaceChildren();
+  };
+  await flushDomEffects();
+  return { domView, unmount };
+}
+
+function intentFromKey(
+  key: string,
+  opts: Partial<KeyboardEventInit> = {},
+): Intent | null {
+  if (key === "Escape") {
+    return {
+      type: "NAV",
+      dir: "out",
+      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
+    };
+  }
+  if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
+  if (key === "Enter") return { type: "CONFIRM" };
+  if (key === "Backspace") return { type: "DELETE", dir: "backward" };
+  if (key === "Delete") return { type: "DELETE", dir: "forward" };
+
+  const dir =
+    key === "ArrowLeft"
+      ? "left"
+      : key === "ArrowRight"
+        ? "right"
+        : key === "ArrowUp"
+          ? "up"
+          : key === "ArrowDown"
+            ? "down"
+            : null;
+
+  if (dir) {
+    return {
+      type: "NAV",
+      dir,
+      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
+    };
+  }
+
+  if (!opts.ctrlKey && !opts.metaKey && !opts.altKey && key.length === 1) {
+    return { type: "TYPE", char: key };
+  }
+
+  return null;
+}
+
+export function fireViewKey(
+  view: DomView,
+  key: string,
+  opts?: Partial<KeyboardEventInit>,
+): void {
+  const intent = intentFromKey(key, opts);
+  if (!intent) return;
+  view.onIntent?.(intent);
+}
+
+type ElSnapshot = { el: Element; keyEls: Element[] };
+
+export function snapshotEl(
+  element: Element,
+  keySelectors: string[] = [],
+): ElSnapshot {
+  const keyEls: Element[] = [];
+  for (const sel of keySelectors) {
+    const hit = (element as ParentNode).querySelector(sel);
+    if (!hit) throw new Error(`Missing key element selector=${sel}`);
+    keyEls.push(hit);
+  }
+  return { el: element, keyEls };
+}
+
+export function expectSnapshotSame(
+  snap: ElSnapshot,
+  el0: Element,
+  keySelectors: string[] = [],
+): void {
+  expect(snap.el === el0).toBe(true);
+  if (keySelectors.length !== snap.keyEls.length)
+    throw new Error("Key selector count mismatch");
+
+  for (let i = 0; i < keySelectors.length; i++) {
+    const sel = keySelectors[i]!;
+    const hit = (el0 as ParentNode).querySelector(sel);
+    if (!hit) throw new Error(`Missing key element selector=${sel}`);
+    expect(snap.keyEls[i] === hit).toBe(true);
+  }
+}
+
+type CapturedWindowHandlers = {
+  emitPointer(
+    type: "pointermove" | "pointerup" | "pointercancel",
+    init: { pointerId?: number; clientX?: number; clientY?: number },
+  ): void;
+  emitKeydown(key: string): void;
+  dispose(): void;
+};
+
+export function installCapturedWindowHandlers(): CapturedWindowHandlers {
+  const origAdd = window.addEventListener.bind(window);
+  const origRemove = window.removeEventListener.bind(window);
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+
+  window.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ) => {
+    let set = listeners.get(type);
+    if (!set) {
+      set = new Set();
+      listeners.set(type, set);
+    }
+    set.add(listener);
+    return origAdd(type, listener, options as never);
+  }) as typeof window.addEventListener;
+
+  window.removeEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: EventListenerOptions | boolean,
+  ) => {
+    listeners.get(type)?.delete(listener);
+    return origRemove(type, listener, options as never);
+  }) as typeof window.removeEventListener;
+
+  const call = (type: string, ev: Event): void => {
+    for (const listener of listeners.get(type) ?? []) {
+      if (typeof listener === "function") listener(ev);
+      else listener.handleEvent(ev);
+    }
+  };
+
+  return {
+    emitPointer(type, init) {
+      call(type, {
+        pointerId: init.pointerId,
+        clientX: init.clientX ?? 0,
+        clientY: init.clientY ?? 0,
+      } as unknown as Event);
+    },
+    emitKeydown(key) {
+      call("keydown", new KeyboardEvent("keydown", { key }));
+    },
+    dispose() {
+      window.addEventListener = origAdd;
+      window.removeEventListener = origRemove;
+    },
+  };
 }
 
 export function dispatchKey(
@@ -92,7 +261,7 @@ export function queryTargetInput(
     | null;
 }
 
-export function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
+function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
   return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
 }
 
@@ -115,6 +284,49 @@ export function pointerDown(element: HTMLElement): void {
   element.dispatchEvent(
     new Event("pointerdown", { bubbles: true, cancelable: true }),
   );
+}
+
+export function dispatchPointerEvent(
+  target: EventTarget,
+  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+  init: {
+    button?: number;
+    pointerId?: number;
+    clientX?: number;
+    clientY?: number;
+    shiftKey?: boolean;
+    altKey?: boolean;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    bubbles?: boolean;
+    cancelable?: boolean;
+  } = {},
+): Event {
+  const ev = new PointerEvent(type, {
+    bubbles: init.bubbles ?? true,
+    cancelable: init.cancelable ?? true,
+    button: init.button ?? 0,
+    pointerId: init.pointerId ?? 1,
+    clientX: init.clientX ?? 0,
+    clientY: init.clientY ?? 0,
+    shiftKey: init.shiftKey ?? false,
+    altKey: init.altKey ?? false,
+    ctrlKey: init.ctrlKey ?? false,
+    metaKey: init.metaKey ?? false,
+  });
+  Object.defineProperties(ev, {
+    button: { value: init.button ?? 0, configurable: true },
+    pointerId: { value: init.pointerId ?? 1, configurable: true },
+    clientX: { value: init.clientX ?? 0, configurable: true },
+    clientY: { value: init.clientY ?? 0, configurable: true },
+    shiftKey: { value: init.shiftKey ?? false, configurable: true },
+    altKey: { value: init.altKey ?? false, configurable: true },
+    ctrlKey: { value: init.ctrlKey ?? false, configurable: true },
+    metaKey: { value: init.metaKey ?? false, configurable: true },
+  });
+
+  target.dispatchEvent(ev);
+  return ev;
 }
 
 export function requireEl<T extends Element>(
