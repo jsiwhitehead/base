@@ -18,24 +18,24 @@ import {
   renderPlainTextToContentEditable,
   textOffsetToDomPoint,
 } from "../../dom";
+import type { SuppressionFlag } from "../../dom";
 import {
-  deleteMultiItemValueRange,
-  deleteSingleItemValueRange,
-  focusFor,
+  deleteMultiItemRange,
+  deleteSingleItemRange,
+  locationFor,
   isPlainValueItem,
-  moveEditPoint,
+  moveNavPoint,
   outlineCmd,
   textLengthForTarget,
   valueToText,
-  type EditStop,
+  type NavPoint,
   type ModelPosition,
 } from "./logic";
 
-export const VALUE_SURFACE_SELECTOR = "[data-target='value']";
 export const ITEM_SELECTOR = "[data-id]";
-export const OUTLINE_VALUE_SELECTOR = ".ui-outline-value";
+export const VALUE_SELECTOR = ".ui-outline-value";
 
-export type SavedOutlineSelection = {
+export type SelectionSnapshot = {
   anchor: ModelPosition;
   focus: ModelPosition;
 };
@@ -44,9 +44,8 @@ export type InputState = {
   isComposing: boolean;
   compositionEndedAt: number;
   stickyCaretX: number | null;
-  savedSelectionOnEmbeddedBlur: SavedOutlineSelection | null;
-  shouldRestoreSelectionOnFocus: boolean;
-  lastValueSelectionKey: string | null;
+  savedSelection: SelectionSnapshot | null;
+  restoreSelectionOnFocus: boolean;
 };
 
 export type ApplyEditingResult = (args: {
@@ -56,47 +55,18 @@ export type ApplyEditingResult = (args: {
   reveal?: { offset: number; defer?: boolean };
 }) => void;
 
-export type TurnSuppressionFlag<T> = {
-  get: () => T;
-  set: (next: T) => void;
-  suppressForTurn: (next: T) => void;
-};
-
 export type EditCtx = {
   core: Core;
   rootId: ItemId;
   root: HTMLElement;
-  editStops: Signal<readonly EditStop[]>;
+  navPoints: Signal<readonly NavPoint[]>;
   applyEditingResult: ApplyEditingResult;
-  setCursorAndReveal: (itemId: ItemId, charOffset: number) => void;
+  setCursorAndReveal: (itemId: ItemId, offset: number) => void;
   drainObserver: () => void;
-  suppressMutationSync: TurnSuppressionFlag<boolean>;
-  suppressHistoryKeydown: TurnSuppressionFlag<"undo" | "redo" | null>;
+  suppressMutationSync: SuppressionFlag<boolean>;
+  suppressHistoryKeydown: SuppressionFlag<"undo" | "redo" | null>;
 };
-
-export function createTurnSuppressionFlag<T>(
-  initial: T,
-): TurnSuppressionFlag<T> {
-  let value = initial;
-  let token = 0;
-  return {
-    get: () => value,
-    set: (next: T) => {
-      value = next;
-    },
-    suppressForTurn: (next: T) => {
-      value = next;
-      token += 1;
-      const localToken = token;
-      setTimeout(() => {
-        if (token !== localToken) return;
-        value = initial;
-      }, 0);
-    },
-  };
-}
-
-function itemSelectorById(itemId: ItemId): string {
+export function itemSelectorById(itemId: ItemId): string {
   return `[data-id="${CSS.escape(itemId)}"]`;
 }
 
@@ -114,10 +84,10 @@ export function domPositionToModel(
     }
     const itemId = cur.dataset.id as ItemId | undefined;
     if (itemId) {
-      const valueEl = cur.querySelector<HTMLElement>(VALUE_SURFACE_SELECTOR);
+      const valueEl = cur.querySelector<HTMLElement>(VALUE_SELECTOR);
       if (!valueEl || !valueEl.contains(node)) return null;
-      const charOffset = domPointToTextOffset(valueEl, node, offset);
-      return charOffset == null ? null : { itemId, charOffset };
+      const textOffset = domPointToTextOffset(valueEl, node, offset);
+      return textOffset == null ? null : { itemId, offset: textOffset };
     }
     cur = cur.parentNode;
   }
@@ -127,18 +97,18 @@ export function domPositionToModel(
 export function modelPositionToDom(
   outlineRoot: HTMLElement,
   itemId: ItemId,
-  charOffset: number,
+  offset: number,
 ): { node: Node; offset: number } | null {
   const itemEl = outlineRoot.querySelector<HTMLElement>(
     itemSelectorById(itemId),
   );
   if (!itemEl) return null;
-  const valueEl = itemEl.querySelector<HTMLElement>(VALUE_SURFACE_SELECTOR);
+  const valueEl = itemEl.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (!valueEl) return null;
-  return textOffsetToDomPoint(valueEl, charOffset);
+  return textOffsetToDomPoint(valueEl, offset);
 }
 
-export function currentValueCaretOffset(
+export function valueCaretOffset(
   root: HTMLElement,
   itemId: ItemId,
   collapsed = false,
@@ -150,7 +120,7 @@ export function currentValueCaretOffset(
   if (collapsed && !mapped.isCollapsed) return null;
   if (mapped.anchor.itemId !== itemId || mapped.focus.itemId !== itemId)
     return null;
-  return mapped.anchor.charOffset;
+  return mapped.anchor.offset;
 }
 
 function getCollapsedCaretRect(
@@ -158,7 +128,7 @@ function getCollapsedCaretRect(
   itemId: ItemId,
 ): { rect: DOMRect; valueEl: HTMLElement } | null {
   const itemEl = root.querySelector<HTMLElement>(itemSelectorById(itemId));
-  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SURFACE_SELECTOR);
+  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (!valueEl) return null;
   const info = getCollapsedCaretRectInSurface(root, valueEl);
   if (!info) return null;
@@ -173,7 +143,7 @@ function getCaretBoundaryRect(
 ): DOMRect | null {
   const info = getCollapsedCaretRect(root, itemId);
   if (!info) return null;
-  const caretOffset = currentValueCaretOffset(root, itemId, true);
+  const caretOffset = valueCaretOffset(root, itemId, true);
   const snap = core.item(itemId);
   if (caretOffset != null && isPlainValueItem(snap)) {
     const text = valueToText(snap.content.value);
@@ -200,11 +170,11 @@ function getCaretBoundaryRect(
 }
 
 function adjacentOutlineValueItem(
-  editStops: readonly EditStop[],
+  navPoints: readonly NavPoint[],
   fromId: ItemId,
   dir: "up" | "down",
 ): ItemId | null {
-  const points = editStops.filter((p) => p.target === VALUE_TARGET);
+  const points = navPoints.filter((p) => p.target === VALUE_TARGET);
   const idx = points.findIndex((p) => p.focus.item === fromId);
   if (idx < 0) return null;
   const next = points[dir === "up" ? idx - 1 : idx + 1];
@@ -215,7 +185,7 @@ function moveVerticalAcrossOutlineValue(
   core: Core,
   root: HTMLElement,
   rootId: ItemId,
-  editStops: readonly EditStop[],
+  navPoints: readonly NavPoint[],
   state: InputState,
   applyEditingResult: ApplyEditingResult,
   dir: "up" | "down",
@@ -231,14 +201,14 @@ function moveVerticalAcrossOutlineValue(
   );
   if (!boundaryRect) return false;
   const targetId = adjacentOutlineValueItem(
-    editStops,
+    navPoints,
     modelSel.location.item,
     dir,
   );
   if (!targetId) return false;
   if (state.stickyCaretX == null) state.stickyCaretX = boundaryRect.left;
   const itemEl = root.querySelector<HTMLElement>(itemSelectorById(targetId));
-  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SURFACE_SELECTOR);
+  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (!valueEl) return false;
   const valueRect = valueEl.getBoundingClientRect();
   const y =
@@ -250,13 +220,13 @@ function moveVerticalAcrossOutlineValue(
     point && valueEl.contains(point.node)
       ? domPositionToModel(root, point.node, point.offset)
       : null;
-  const targetLoc = focusFor(core, rootId, targetId);
+  const targetLoc = locationFor(core, rootId, targetId);
   if (pos && pos.itemId === targetId) {
     applyEditingResult({
       location: targetLoc,
       target: VALUE_TARGET,
-      caret: pos.charOffset,
-      reveal: { offset: pos.charOffset, defer: false },
+      caret: pos.offset,
+      reveal: { offset: pos.offset, defer: false },
     });
     return true;
   }
@@ -277,7 +247,7 @@ function moveVerticalAcrossOutlineValue(
 export function handleArrowHorizontal(
   core: Core,
   root: HTMLElement,
-  editStops: readonly EditStop[],
+  navPoints: readonly NavPoint[],
   state: InputState,
   applyEditingResult: ApplyEditingResult,
   e: KeyboardEvent,
@@ -287,11 +257,7 @@ export function handleArrowHorizontal(
   const modelSel = core.selection();
   if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET)
     return false;
-  const caretOffset = currentValueCaretOffset(
-    root,
-    modelSel.location.item,
-    true,
-  );
+  const caretOffset = valueCaretOffset(root, modelSel.location.item, true);
   if (caretOffset == null) return false;
   const snap = core.item(modelSel.location.item);
   if (!isPlainValueItem(snap)) return false;
@@ -299,8 +265,8 @@ export function handleArrowHorizontal(
   const atBoundary =
     dir === "backward" ? caretOffset === 0 : caretOffset === textLen;
   if (!atBoundary) return false;
-  const moved = moveEditPoint(
-    editStops,
+  const moved = moveNavPoint(
+    navPoints,
     { focus: modelSel.location, target: VALUE_TARGET },
     dir,
   );
@@ -311,12 +277,12 @@ export function handleArrowHorizontal(
       ? undefined
       : moved.edge === "start"
         ? 0
-        : textLengthForTarget(core, moved.stop.focus.item, moved.stop.target);
+        : textLengthForTarget(core, moved.point.focus.item, moved.point.target);
   applyEditingResult({
-    location: moved.stop.focus,
-    target: moved.stop.target,
+    location: moved.point.focus,
+    target: moved.point.target,
     ...(caret !== undefined ? { caret } : {}),
-    ...(moved.stop.target === VALUE_TARGET
+    ...(moved.point.target === VALUE_TARGET
       ? { reveal: { offset: caret ?? 0 } }
       : {}),
   });
@@ -327,7 +293,7 @@ export function handleArrowVertical(
   core: Core,
   root: HTMLElement,
   rootId: ItemId,
-  editStops: readonly EditStop[],
+  navPoints: readonly NavPoint[],
   state: InputState,
   applyEditingResult: ApplyEditingResult,
   e: KeyboardEvent,
@@ -345,7 +311,7 @@ export function handleArrowVertical(
       core,
       root,
       rootId,
-      editStops,
+      navPoints,
       state,
       applyEditingResult,
       dir,
@@ -356,20 +322,20 @@ export function handleArrowVertical(
   return true;
 }
 
-export function deleteOutlineValueSelection(
+export function deleteSelection(
   ctx: EditCtx,
   start: ModelPosition,
   end: ModelPosition,
 ): boolean {
   return (
-    deleteSingleItemValueRange(
+    deleteSingleItemRange(
       ctx.core,
       ctx.rootId,
       start,
       end,
       ctx.setCursorAndReveal,
     ) ||
-    deleteMultiItemValueRange(
+    deleteMultiItemRange(
       ctx.core,
       ctx.rootId,
       start,
@@ -413,17 +379,118 @@ export function handleInsertLineBreakBeforeInput(
   if (!isPlainValueItem(snap)) return;
 
   const text = valueToText(snap.content.value);
-  const start = rangePos.start.charOffset;
-  const end = rangePos.end.charOffset;
+  const start = rangePos.start.offset;
+  const end = rangePos.end.offset;
   const nextText = text.slice(0, start) + "\n" + text.slice(end);
   const nextCaret = start + 1;
   ctx.core.commit((t) => t.setValue(rangePos.start.itemId, nextText));
   ctx.applyEditingResult({
-    location: focusFor(ctx.core, ctx.rootId, rangePos.start.itemId),
+    location: locationFor(ctx.core, ctx.rootId, rangePos.start.itemId),
     target: VALUE_TARGET,
     caret: nextCaret,
     reveal: { offset: nextCaret },
   });
+}
+
+export function handleInsertParagraphBeforeInput(
+  ctx: EditCtx,
+  e: InputEvent,
+  range: Range,
+): void {
+  e.preventDefault();
+  const rStart = domPositionToModel(
+    ctx.root,
+    range.startContainer,
+    range.startOffset,
+  );
+  const rEnd = domPositionToModel(
+    ctx.root,
+    range.endContainer,
+    range.endOffset,
+  );
+  const rangePos = rStart && rEnd ? { start: rStart, end: rEnd } : null;
+  if (!rangePos) return;
+  if (ctx.core.selection().type !== "editing") return;
+  ctx.core.undoBoundary();
+
+  const caretStart = rangePos.start.offset;
+  let caretEnd = caretStart;
+  const multiItem =
+    !range.collapsed && rangePos.start.itemId !== rangePos.end.itemId;
+  if (multiItem) {
+    ctx.suppressMutationSync.suppressForTurn(true);
+    if (
+      !deleteMultiItemRange(
+        ctx.core,
+        ctx.rootId,
+        rangePos.start,
+        rangePos.end,
+        ctx.setCursorAndReveal,
+      )
+    )
+      return;
+  } else if (!range.collapsed) {
+    caretEnd = rangePos.end.offset;
+  }
+
+  const splitLoc = locationFor(ctx.core, ctx.rootId, rangePos.start.itemId);
+  const newId = outlineCmd.splitAt(
+    ctx.core,
+    { location: splitLoc },
+    caretStart,
+    caretEnd,
+  );
+  if (!newId) return;
+  ctx.applyEditingResult({
+    location: locationFor(ctx.core, ctx.rootId, newId),
+    target: VALUE_TARGET,
+    caret: 0,
+    reveal: { offset: 0, defer: false },
+  });
+}
+
+export function handleDeleteBeforeInput(
+  ctx: EditCtx,
+  e: InputEvent,
+  targetRange: StaticRange,
+): boolean {
+  const startPos = domPositionToModel(
+    ctx.root,
+    targetRange.startContainer,
+    targetRange.startOffset,
+  );
+  const endPos = domPositionToModel(
+    ctx.root,
+    targetRange.endContainer,
+    targetRange.endOffset,
+  );
+  if (!startPos || !endPos) return false;
+  if (startPos.itemId !== endPos.itemId) return false;
+  if (startPos.offset === endPos.offset) return false;
+
+  e.preventDefault();
+  const snap = ctx.core.item(startPos.itemId);
+  if (!isPlainValueItem(snap)) return true;
+  const text = valueToText(snap.content.value);
+  const nextText = text.slice(0, startPos.offset) + text.slice(endPos.offset);
+
+  ctx.core.commit((t) => t.setValue(startPos.itemId, nextText));
+
+  const itemEl = ctx.root.querySelector<HTMLElement>(
+    itemSelectorById(startPos.itemId),
+  );
+  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
+  if (valueEl) {
+    ctx.drainObserver();
+    renderPlainTextToContentEditable(valueEl, nextText);
+  }
+  ctx.applyEditingResult({
+    location: locationFor(ctx.core, ctx.rootId, startPos.itemId),
+    target: VALUE_TARGET,
+    caret: startPos.offset,
+    reveal: { offset: startPos.offset, defer: false },
+  });
+  return true;
 }
 
 export function handleBoundaryDeleteBeforeInput(
@@ -443,21 +510,20 @@ export function handleBoundaryDeleteBeforeInput(
     const text =
       snap.content.type === "value" ? valueToText(snap.content.value) : "";
     const atBoundary =
-      dir === "backward"
-        ? pos.charOffset === 0
-        : pos.charOffset === text.length;
+      dir === "backward" ? pos.offset === 0 : pos.offset === text.length;
     if (!atBoundary) return;
     e.preventDefault();
     const modelSel = ctx.core.selection();
     if (modelSel.type !== "editing") return;
+    ctx.core.undoBoundary();
     if (
       modelSel.target === VALUE_TARGET &&
       snap.mode.type === "plain" &&
       snap.content.type === "value" &&
       text.length === 0
     ) {
-      const nextStop = moveEditPoint(
-        ctx.editStops.value,
+      const nextStop = moveNavPoint(
+        ctx.navPoints.value,
         { focus: modelSel.location, target: modelSel.target },
         dir,
       );
@@ -471,14 +537,14 @@ export function handleBoundaryDeleteBeforeInput(
             ? 0
             : textLengthForTarget(
                 ctx.core,
-                nextStop.stop.focus.item,
-                nextStop.stop.target,
+                nextStop.point.focus.item,
+                nextStop.point.target,
               );
       ctx.applyEditingResult({
-        location: nextStop.stop.focus,
-        target: nextStop.stop.target,
+        location: nextStop.point.focus,
+        target: nextStop.point.target,
         ...(caret !== undefined ? { caret } : {}),
-        ...(nextStop.stop.target === VALUE_TARGET
+        ...(nextStop.point.target === VALUE_TARGET
           ? { reveal: { offset: caret ?? 0 } }
           : {}),
       });
@@ -487,7 +553,7 @@ export function handleBoundaryDeleteBeforeInput(
     const joined = outlineCmd.joinBoundary(ctx.core, ctx.rootId, modelSel, dir);
     if (!joined) return;
     ctx.applyEditingResult({
-      location: focusFor(ctx.core, ctx.rootId, joined.id),
+      location: locationFor(ctx.core, ctx.rootId, joined.id),
       target: VALUE_TARGET,
       caret: joined.caret,
       reveal: { offset: joined.caret },
@@ -508,7 +574,7 @@ export function handleBoundaryDeleteBeforeInput(
   const rangePos = rStart && rEnd ? { start: rStart, end: rEnd } : null;
   if (!rangePos) return;
   if (
-    !deleteMultiItemValueRange(
+    !deleteMultiItemRange(
       ctx.core,
       ctx.rootId,
       rangePos.start,
@@ -520,7 +586,7 @@ export function handleBoundaryDeleteBeforeInput(
   e.preventDefault();
 }
 
-export function insertTextFromExternal(ctx: EditCtx, text: string): void {
+export function insertText(ctx: EditCtx, text: string): void {
   if (!text) return;
   const modelSel = ctx.core.selection();
   if (modelSel.type !== "editing") return;
@@ -529,7 +595,7 @@ export function insertTextFromExternal(ctx: EditCtx, text: string): void {
   const startValueEl = getSurfaceFromNodeInRoot(
     ctx.root,
     range.startContainer,
-    VALUE_SURFACE_SELECTOR,
+    VALUE_SELECTOR,
   );
   const startPos = domPositionToModel(
     ctx.root,
@@ -544,12 +610,12 @@ export function insertTextFromExternal(ctx: EditCtx, text: string): void {
       range.endOffset,
     );
     if (!endPos) return;
-    if (!deleteOutlineValueSelection(ctx, startPos, endPos)) return;
+    if (!deleteSelection(ctx, startPos, endPos)) return;
   }
   const snap = ctx.core.item(startPos.itemId);
   if (!isPlainValueItem(snap)) return;
   const current = valueToText(snap.content.value);
-  const caretStart = startPos.charOffset;
+  const caretStart = startPos.offset;
   const before = current.slice(0, caretStart);
   const after = current.slice(caretStart);
   const lines = text.split("\n");
@@ -587,7 +653,7 @@ export function insertTextFromExternal(ctx: EditCtx, text: string): void {
       ? before.length + (lines[0]?.length ?? 0)
       : (lines[lines.length - 1]?.length ?? 0);
   ctx.applyEditingResult({
-    location: focusFor(ctx.core, ctx.rootId, lastId),
+    location: locationFor(ctx.core, ctx.rootId, lastId),
     target: VALUE_TARGET,
     caret: lastOffset,
     reveal: { offset: lastOffset, defer: false },

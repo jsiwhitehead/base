@@ -46,15 +46,19 @@ Fires before DOM mutation; `e.preventDefault()` suppresses the browser's action.
 | `insertText`                                    | Allow through; guard: prevent if item is a non-empty group                                                                                    |
 | `insertParagraph`, `insertLineBreak`            | Prevent; split item at cursor                                                                                                                 |
 | `deleteContentBackward`, `deleteContentForward` | At boundary: prevent + join adjacent items. Within item: allow                                                                                |
-| `insertFromPaste`                               | Prevent; use `text/plain` from `dataTransfer`; split on `\n` for multiple items                                                               |
-| `insertFromDrop`                                | Prevent; handle identically to `insertFromPaste`                                                                                              |
+| `insertFromPaste`                               | Prevent (browser DOM mutation only; insertion is handled in the `paste` event)                                                                |
+| `insertFromDrop`                                | Prevent (browser DOM mutation only; insertion is handled in the `drop` event)                                                                 |
 | `insertCompositionText`                         | **Always allow through** — browser manages IME candidate display                                                                              |
 | `historyUndo`, `historyRedo`                    | Prevent; dispatch to `core.undo()` / `core.redo()` — Safari fires these via `beforeinput` before `keydown`, bypassing the `keydown` intercept |
 | Everything else                                 | Allow through                                                                                                                                 |
 
 **Paste** uses `text/plain`, not `text/html`. HTML from external sources carries formatting with no schema mapping; sanitising it reliably is complex. `text/plain` is the safe, consistent default. Structure-preserving internal paste is cleanest as a separate custom clipboard format.
 
-**Copy and cut** are intercepted via the `copy` and `cut` events: read the current selection, write to `clipboardEvent.dataTransfer` as `text/plain`, call `preventDefault()`. This ensures the clipboard contains clean model text, not whatever the browser would serialise from the contenteditable DOM.
+**Copy and cut** are intercepted via the `copy` and `cut` events: read the current selection, serialize to `text/plain` in `clipboardEvent.dataTransfer`, call `preventDefault()`. This ensures clean model text on the clipboard rather than a browser-serialized DOM fragment.
+
+**Drag.** `dragstart` is intercepted to serialize the current DOM selection as `text/plain` in `e.dataTransfer`; guard so that only events originating inside the value surface are serialized. `drop` is intercepted to read `text/plain` and apply the insertion as a model update.
+
+**Paste and drop pipeline.** The `paste` and `drop` event handlers own the model update and call `preventDefault()`. Their `beforeinput` counterparts (`insertFromPaste`, `insertFromDrop`) only call `preventDefault()` to block the browser's direct DOM write. Chrome fires `insertFromDrop` regardless of whether `drop` was already prevented; the `beforeinput` case is necessary to suppress this stale mutation.
 
 ### `keydown`
 
@@ -201,7 +205,7 @@ Plain-text value surfaces SHOULD always contain at least one caret-host node (fo
 
 A deterministic bridge between browser cursor positions and model positions is required:
 
-- **DOM position → `{ itemId, charOffset }`** — to determine which item and offset the cursor is at
+- **DOM position → `{ itemId, offset }`** — to determine which item and offset the cursor is at
 - **Model position → DOM node/offset** — to programmatically place the cursor
 
 **Cursor restoration after structural ops.** After any structural commit (split, join, paste-expand, item removal with join), the browser cursor is left pointing at DOM nodes that may no longer exist or have been repositioned by reconciliation. The cursor must be programmatically restored:

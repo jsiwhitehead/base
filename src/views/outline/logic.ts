@@ -9,14 +9,9 @@ import {
   type ValueOrBlank,
 } from "../../core";
 
-export type ModelPosition = { itemId: ItemId; charOffset: number };
-export type EditStop = { focus: Location; target: string };
-type EditStopMove = { stop: EditStop; edge: "start" | "end" | null };
-export type OutlineValueSelectionRange = {
-  range: Range;
-  start: ModelPosition;
-  end: ModelPosition;
-};
+export type ModelPosition = { itemId: ItemId; offset: number };
+export type NavPoint = { focus: Location; target: string };
+type NavMove = { point: NavPoint; edge: "start" | "end" | null };
 
 const DEFAULT_STOP = "default" as const;
 
@@ -45,7 +40,7 @@ export function parentOf(
   return loc ? loc.parentId : null;
 }
 
-export function focusFor(core: Core, rootId: ItemId, id: ItemId): Location {
+export function locationFor(core: Core, rootId: ItemId, id: ItemId): Location {
   const parentId = parentOf(core, rootId, id);
   return { container: parentId ?? rootId, item: id };
 }
@@ -102,7 +97,7 @@ export function focusKey(focus: Location): string {
 function collectVisibleRowFocuses(core: Core, rootId: ItemId): Location[] {
   const out: Location[] = [];
   const walk = (id: ItemId): void => {
-    out.push(focusFor(core, rootId, id));
+    out.push(locationFor(core, rootId, id));
     const snap = core.item(id);
     if (core.view(id) !== "outline" || snap.content.type !== "group") return;
     for (const childId of snap.content.children) walk(childId);
@@ -191,8 +186,8 @@ function editTargetsForItem(core: Core, id: ItemId): string[] {
   return [];
 }
 
-export function collectEditPoints(core: Core, rootId: ItemId): EditStop[] {
-  const out: EditStop[] = [];
+export function collectNavPoints(core: Core, rootId: ItemId): NavPoint[] {
+  const out: NavPoint[] = [];
   const walk = (id: ItemId): void => {
     const snap = core.item(id);
     if (core.view(id) === "outline" && snap.content.type === "group") {
@@ -200,7 +195,7 @@ export function collectEditPoints(core: Core, rootId: ItemId): EditStop[] {
       return;
     }
     if (!isEditLeaf(core, id)) return;
-    const focus = focusFor(core, rootId, id);
+    const focus = locationFor(core, rootId, id);
     for (const target of editTargetsForItem(core, id)) {
       out.push({ focus, target });
     }
@@ -215,11 +210,11 @@ export function collectEditPoints(core: Core, rootId: ItemId): EditStop[] {
   return out;
 }
 
-export function moveEditPoint(
-  points: readonly EditStop[],
-  current: EditStop,
+export function moveNavPoint(
+  points: readonly NavPoint[],
+  current: NavPoint,
   dir: "backward" | "forward",
-): EditStopMove | null {
+): NavMove | null {
   const idx = points.findIndex(
     (p) =>
       p.focus.item === current.focus.item &&
@@ -229,8 +224,8 @@ export function moveEditPoint(
   if (idx < 0) return null;
   const next = points[dir === "backward" ? idx - 1 : idx + 1];
   if (!next) return null;
-  if (next.target === DEFAULT_STOP) return { stop: next, edge: null };
-  return { stop: next, edge: dir === "backward" ? "end" : "start" };
+  if (next.target === DEFAULT_STOP) return { point: next, edge: null };
+  return { point: next, edge: dir === "backward" ? "end" : "start" };
 }
 
 export function textLengthForTarget(
@@ -424,13 +419,13 @@ export const outlineCmd = {
       }
     });
 
-    return focusFor(core, rootId, parentId);
+    return locationFor(core, rootId, parentId);
   },
 };
 
-export function readOutlineSelectionPlainText(
+export function readSelectionText(
   core: Core,
-  rangeSel: OutlineValueSelectionRange,
+  rangeSel: { range: Range; start: ModelPosition; end: ModelPosition },
 ): string | null {
   const { range, start, end } = rangeSel;
   if (range.collapsed) return "";
@@ -439,7 +434,7 @@ export function readOutlineSelectionPlainText(
     const snap = core.item(start.itemId);
     if (!isPlainValueItem(snap)) return null;
     const text = valueToText(snap.content.value);
-    return text.slice(start.charOffset, end.charOffset);
+    return text.slice(start.offset, end.offset);
   }
 
   const startLoc = core.locate(start.itemId);
@@ -454,7 +449,7 @@ export function readOutlineSelectionPlainText(
 
   const parts: string[] = [];
   const startText = valueToText(startSnap.content.value);
-  parts.push(startText.slice(start.charOffset));
+  parts.push(startText.slice(start.offset));
 
   for (let i = startLoc.index + 1; i < endLoc.index; i += 1) {
     const id = startLoc.siblings[i];
@@ -465,41 +460,41 @@ export function readOutlineSelectionPlainText(
   }
 
   const endText = valueToText(endSnap.content.value);
-  parts.push(endText.slice(0, end.charOffset));
+  parts.push(endText.slice(0, end.offset));
   return parts.join("\n");
 }
 
-export function deleteSingleItemValueRange(
+export function deleteSingleItemRange(
   core: Core,
   rootId: ItemId,
   start: ModelPosition,
   end: ModelPosition,
-  placeCursor: (itemId: ItemId, charOffset: number) => void,
+  placeCursor: (itemId: ItemId, offset: number) => void,
 ): boolean {
   if (start.itemId !== end.itemId) return false;
-  if (start.charOffset === end.charOffset) return false;
+  if (start.offset === end.offset) return false;
 
   const snap = core.item(start.itemId);
   if (!isPlainValueItem(snap)) return false;
 
   const text = valueToText(snap.content.value);
-  const nextText = text.slice(0, start.charOffset) + text.slice(end.charOffset);
+  const nextText = text.slice(0, start.offset) + text.slice(end.offset);
   core.commit((t) => t.setValue(start.itemId, nextText));
   core.focus({
     type: "editing",
-    location: focusFor(core, rootId, start.itemId),
+    location: locationFor(core, rootId, start.itemId),
     target: VALUE_TARGET,
   });
-  placeCursor(start.itemId, start.charOffset);
+  placeCursor(start.itemId, start.offset);
   return true;
 }
 
-export function deleteMultiItemValueRange(
+export function deleteMultiItemRange(
   core: Core,
   rootId: ItemId,
   start: ModelPosition,
   end: ModelPosition,
-  placeCursor: (itemId: ItemId, charOffset: number) => void,
+  placeCursor: (itemId: ItemId, offset: number) => void,
 ): boolean {
   if (start.itemId === end.itemId) return false;
 
@@ -513,11 +508,8 @@ export function deleteMultiItemValueRange(
   if (!isPlainValueItem(startSnap)) return false;
   if (!isPlainValueItem(endSnap)) return false;
 
-  const startText = valueToText(startSnap.content.value).slice(
-    0,
-    start.charOffset,
-  );
-  const endText = valueToText(endSnap.content.value).slice(end.charOffset);
+  const startText = valueToText(startSnap.content.value).slice(0, start.offset);
+  const endText = valueToText(endSnap.content.value).slice(end.offset);
   const toDelete = [
     ...startLoc.siblings.slice(startLoc.index + 1, endLoc.index + 1),
   ];
@@ -528,9 +520,9 @@ export function deleteMultiItemValueRange(
   });
   core.focus({
     type: "editing",
-    location: focusFor(core, rootId, start.itemId),
+    location: locationFor(core, rootId, start.itemId),
     target: VALUE_TARGET,
   });
-  placeCursor(start.itemId, start.charOffset);
+  placeCursor(start.itemId, start.offset);
   return true;
 }

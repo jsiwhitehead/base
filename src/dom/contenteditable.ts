@@ -15,6 +15,11 @@ type CollapsedCaretRectInSurface = {
   rect: DOMRect;
   surfaceEl: HTMLElement;
 };
+export type SuppressionFlag<T> = {
+  get: () => T;
+  set: (next: T) => void;
+  suppressForTurn: (next: T) => void;
+};
 
 const BLOCK_NEWLINE_TAGS = new Set([
   "BLOCKQUOTE",
@@ -37,6 +42,26 @@ const BLOCK_NEWLINE_TAGS = new Set([
 ]);
 const CE_SENTINEL_DATA_KEY = "ceSentinel";
 const CE_SENTINEL_VALUE = "1";
+
+export function createSuppressionFlag<T>(initial: T): SuppressionFlag<T> {
+  let value = initial;
+  let token = 0;
+  return {
+    get: () => value,
+    set: (next: T) => {
+      value = next;
+    },
+    suppressForTurn: (next: T) => {
+      value = next;
+      token += 1;
+      const localToken = token;
+      setTimeout(() => {
+        if (token !== localToken) return;
+        value = initial;
+      }, 0);
+    },
+  };
+}
 
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n?/g, "\n");

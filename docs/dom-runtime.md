@@ -37,6 +37,7 @@ Controls/editing helpers:
 
 Contenteditable helpers:
 
+- `createSuppressionFlag`, type `SuppressionFlag`
 - `renderPlainTextToContentEditable`, `readPlainTextFromContentEditable`
 - `domPointToTextOffset`, `textOffsetToDomPoint`
 - `setDomSelectionRange`, `setDomCaret`
@@ -402,6 +403,8 @@ Rules:
 - Render order matches `fieldsFromConn(conn)`.
 
 ## Drag system
+
+Uses `pointerdown/pointermove/pointerup` exclusively — no HTML5 Drag and Drop API (`dragstart`/`drop`). Structural drag (pointer events) and CE text drag (HTML5 DnD) operate on separate browser event channels and do not conflict.
 
 ### Types
 

@@ -11,6 +11,7 @@ import {
 import type { Component, UiCore } from "../../dom";
 import {
   buildItemHeader,
+  createSuppressionFlag,
   createComponent,
   defineView,
   el,
@@ -32,47 +33,43 @@ import {
   blockSelectionFocuses,
   blockSelectionItems,
   childrenOf,
-  collectEditPoints,
+  collectNavPoints,
   deleteBlockSelection,
-  deleteMultiItemValueRange,
   extendBlockSelectionByArrow,
   firstChild,
-  focusFor,
+  locationFor,
   focusKey,
   isPlainValueItem,
   nextSibling,
   outlineCmd as cmd,
   parentOf,
   prevSibling,
-  readOutlineSelectionPlainText,
+  readSelectionText,
   sameFocus,
   valueToText,
 } from "./logic";
 import {
-  createTurnSuppressionFlag,
-  currentValueCaretOffset,
-  deleteOutlineValueSelection,
+  valueCaretOffset,
+  deleteSelection,
   domPositionToModel,
   handleArrowHorizontal,
   handleArrowVertical,
   handleBoundaryDeleteBeforeInput,
+  handleDeleteBeforeInput,
   handleHistoryBeforeInput,
+  handleInsertParagraphBeforeInput,
   handleInsertLineBreakBeforeInput,
-  insertTextFromExternal,
+  insertText,
   ITEM_SELECTOR,
+  itemSelectorById,
   modelPositionToDom,
-  OUTLINE_VALUE_SELECTOR,
+  VALUE_SELECTOR,
   type EditCtx,
   type InputState,
-  type SavedOutlineSelection,
-  VALUE_SURFACE_SELECTOR,
+  type SelectionSnapshot,
 } from "./input";
 const OUTLINE_ROW_POINTERDOWN_IGNORE_SELECTOR =
   ".ui-outline-value, .ui-outline-gutter, .ui-header, .ui-body:not(.ui-outline)";
-
-function itemSelectorById(itemId: ItemId): string {
-  return `[data-id="${CSS.escape(itemId)}"]`;
-}
 
 function buildOutlineItem(
   core: UiCore,
@@ -85,7 +82,7 @@ function buildOutlineItem(
 ): Component {
   return createComponent(core, (ctx) => {
     const itemEl = el("div", "ui-frame ui-outline-child");
-    const rowFocus = focusFor(core, rootId, itemId);
+    const rowFocus = locationFor(core, rootId, itemId);
     itemEl.dataset.id = itemId;
     if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
@@ -196,7 +193,8 @@ function buildOutlineItem(
       const focusedHeaderTarget =
         sel.type === "editing" &&
         sel.location.item === itemId &&
-        sel.location.container === focusFor(core, rootId, itemId).container &&
+        sel.location.container ===
+          locationFor(core, rootId, itemId).container &&
         (sel.target === LABEL_TARGET || sel.target.startsWith("conn:"));
 
       const shouldShowHeader =
@@ -205,7 +203,7 @@ function buildOutlineItem(
         focusedHeaderTarget;
       if (!shouldShowHeader) return null;
 
-      const focus = focusFor(core, rootId, itemId);
+      const focus = locationFor(core, rootId, itemId);
       const canEditLabel = () => core.item(itemId).mode.type !== "readonly";
       const commitLabel = (text: string) => {
         if (!canEditLabel()) return;
@@ -230,7 +228,7 @@ function buildOutlineItem(
 
     ctx.slot(itemEl, () => {
       if (core.view(itemId) === "outline") return null;
-      const focus = focusFor(core, rootId, itemId);
+      const focus = locationFor(core, rootId, itemId);
       const mounted = core.mountView({
         id: itemId,
         containerId: focus.container,
@@ -294,7 +292,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       const snap = core.item(rootId);
       return snap.content.type === "group" ? snap.content.children : [];
     });
-    const editStops = computed(() => collectEditPoints(core, rootId));
+    const navPoints = computed(() => collectNavPoints(core, rootId));
 
     const selectedRowKeys = computed(() => {
       const sel = core.selection();
@@ -306,19 +304,18 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       );
     });
 
-    const suppressSelectionChangeFromGutter = createTurnSuppressionFlag(false);
-    const suppressMutationSync = createTurnSuppressionFlag(false);
-    const suppressHistoryKeydown = createTurnSuppressionFlag<
+    const suppressSelectionChangeFromGutter = createSuppressionFlag(false);
+    const suppressSelectionSync = createSuppressionFlag(false);
+    const suppressMutationSync = createSuppressionFlag(false);
+    const suppressHistoryKeydown = createSuppressionFlag<
       "undo" | "redo" | null
     >(null);
-    const suppressBeforeInputDrop = createTurnSuppressionFlag(false);
     const state: InputState = {
       isComposing: false,
       compositionEndedAt: 0,
       stickyCaretX: null,
-      savedSelectionOnEmbeddedBlur: null,
-      shouldRestoreSelectionOnFocus: false,
-      lastValueSelectionKey: null,
+      savedSelection: null,
+      restoreSelectionOnFocus: false,
     };
     const valueSelectionCollapsed = signal(true);
 
@@ -343,13 +340,9 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         const textNode = getTextNodeFromMutationRecord(mutation);
         const valueEl =
           (textNode
-            ? getSurfaceFromNodeInRoot(root, textNode, VALUE_SURFACE_SELECTOR)
+            ? getSurfaceFromNodeInRoot(root, textNode, VALUE_SELECTOR)
             : null) ??
-          getSurfaceFromNodeInRoot(
-            root,
-            mutation.target,
-            VALUE_SURFACE_SELECTOR,
-          );
+          getSurfaceFromNodeInRoot(root, mutation.target, VALUE_SELECTOR);
         if (!valueEl) continue;
         if (textNode && !valueEl.contains(textNode)) continue;
 
@@ -375,14 +368,16 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     const drainObserver = (): void => {
       mutObs.takeRecords();
     };
-    const setCursorAndReveal = (itemId: ItemId, charOffset: number): void => {
+    const setCursorAndReveal = (itemId: ItemId, offset: number): void => {
       drainObserver();
-      const pos = modelPositionToDom(root, itemId, charOffset);
-      if (pos) setDomCaret(pos);
+      const pos = modelPositionToDom(root, itemId, offset);
+      if (pos) {
+        suppressSelectionSync.suppressForTurn(true);
+        setDomCaret(pos);
+        valueSelectionCollapsed.value = true;
+      }
       const itemEl = root.querySelector<HTMLElement>(itemSelectorById(itemId));
-      const valueEl = itemEl?.querySelector<HTMLElement>(
-        VALUE_SURFACE_SELECTOR,
-      );
+      const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
       valueEl?.scrollIntoView({ block: "nearest" });
     };
     const applyEditingResult = (args: {
@@ -407,29 +402,28 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       state.stickyCaretX = null;
     };
 
-    const snapshotCurrentOutlineSelection =
-      (): SavedOutlineSelection | null => {
-        return getMappedSelectionSnapshotInRoot(root, (point) =>
-          domPositionToModel(root, point.node, point.offset),
-        );
-      };
-    const restoreSavedOutlineSelection = (): void => {
-      if (!state.shouldRestoreSelectionOnFocus) return;
-      state.shouldRestoreSelectionOnFocus = false;
-      const snap = state.savedSelectionOnEmbeddedBlur;
+    const snapshotSelection = (): SelectionSnapshot | null => {
+      return getMappedSelectionSnapshotInRoot(root, (point) =>
+        domPositionToModel(root, point.node, point.offset),
+      );
+    };
+    const restoreSelection = (): void => {
+      if (!state.restoreSelectionOnFocus) return;
+      state.restoreSelectionOnFocus = false;
+      const snap = state.savedSelection;
       if (!snap) return;
       const anchorDom = modelPositionToDom(
         root,
         snap.anchor.itemId,
-        snap.anchor.charOffset,
+        snap.anchor.offset,
       );
       const focusDom = modelPositionToDom(
         root,
         snap.focus.itemId,
-        snap.focus.charOffset,
+        snap.focus.offset,
       );
       if (!anchorDom || !focusDom) {
-        state.savedSelectionOnEmbeddedBlur = null;
+        state.savedSelection = null;
         return;
       }
       drainObserver();
@@ -438,9 +432,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     const isOutlineValueEditEvent = (target: EventTarget | null): boolean => {
       const targetEl = target instanceof HTMLElement ? target : null;
       return (
-        !targetEl ||
-        targetEl === root ||
-        !!targetEl.closest(OUTLINE_VALUE_SELECTOR)
+        !targetEl || targetEl === root || !!targetEl.closest(VALUE_SELECTOR)
       );
     };
     const gated =
@@ -454,7 +446,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       core,
       rootId,
       root,
-      editStops,
+      navPoints,
       applyEditingResult,
       setCursorAndReveal,
       drainObserver,
@@ -480,6 +472,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     const onSelectionChange = (): void => {
       if (state.isComposing) return;
       if (suppressSelectionChangeFromGutter.get()) return;
+      if (suppressSelectionSync.get()) return;
       const winSel = window.getSelection();
       if (!winSel?.rangeCount) return;
       const anchorNode = winSel.anchorNode;
@@ -493,18 +486,13 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         focusNode && root.contains(focusNode)
           ? domPositionToModel(root, focusNode, winSel.focusOffset)
           : null;
-      const selectionKey = `${pos.itemId}:${pos.charOffset}|${
-        focusPos ? `${focusPos.itemId}:${focusPos.charOffset}` : "?"
-      }|${winSel.isCollapsed ? "1" : "0"}`;
-      if (selectionKey === state.lastValueSelectionKey) return;
-      state.lastValueSelectionKey = selectionKey;
 
       const loc = core.locate(pos.itemId);
       if (!loc) return;
       const itemFocus: Location = { container: loc.parentId, item: pos.itemId };
       const caret: number | undefined =
         focusPos && focusPos.itemId === pos.itemId
-          ? focusPos.charOffset
+          ? focusPos.offset
           : undefined;
       core.focus(
         { type: "editing", location: itemFocus, target: VALUE_TARGET },
@@ -524,6 +512,8 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         }
 
         case "insertText": {
+          if (e.isComposing) break;
+          if (!e.data) break;
           const range = getDomRangeInRoot(root);
           if (!range) break;
           const pos = domPositionToModel(
@@ -538,60 +528,17 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
             snap.content.children.length > 0
           ) {
             e.preventDefault();
+            break;
           }
+          e.preventDefault();
+          insertText(editCtx, e.data);
           break;
         }
 
         case "insertParagraph": {
-          e.preventDefault();
           const range = getDomRangeInRoot(root);
           if (!range) break;
-          const rStart = domPositionToModel(
-            root,
-            range.startContainer,
-            range.startOffset,
-          );
-          const rEnd = domPositionToModel(
-            root,
-            range.endContainer,
-            range.endOffset,
-          );
-          const rangePos = rStart && rEnd ? { start: rStart, end: rEnd } : null;
-          if (!rangePos) break;
-          if (core.selection().type !== "editing") break;
-          const caretStart = rangePos.start.charOffset;
-          let caretEnd = caretStart;
-          if (
-            !range.collapsed &&
-            rangePos.start.itemId !== rangePos.end.itemId
-          ) {
-            if (
-              !deleteMultiItemValueRange(
-                core,
-                rootId,
-                rangePos.start,
-                rangePos.end,
-                setCursorAndReveal,
-              )
-            )
-              break;
-          } else if (!range.collapsed) {
-            caretEnd = rangePos.end.charOffset;
-          }
-          const splitLoc = focusFor(core, rootId, rangePos.start.itemId);
-          const newId = cmd.splitAt(
-            core,
-            { location: splitLoc },
-            caretStart,
-            caretEnd,
-          );
-          if (!newId) break;
-          applyEditingResult({
-            location: focusFor(core, rootId, newId),
-            target: VALUE_TARGET,
-            caret: 0,
-            reveal: { offset: 0, defer: false },
-          });
+          handleInsertParagraphBeforeInput(editCtx, e, range);
           break;
         }
         case "insertLineBreak": {
@@ -602,21 +549,16 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         }
 
         case "deleteContentBackward":
-        case "deleteContentForward": {
-          const dir =
-            e.inputType === "deleteContentBackward" ? "backward" : "forward";
-          const range = getDomRangeInRoot(root);
-          if (!range) break;
-          handleBoundaryDeleteBeforeInput(editCtx, e, dir, range);
-          break;
-        }
-
+        case "deleteContentForward":
         case "deleteWordBackward":
         case "deleteWordForward": {
-          const dir =
-            e.inputType === "deleteWordBackward" ? "backward" : "forward";
+          if (e.isComposing) break;
+          const dir = e.inputType.includes("Backward") ? "backward" : "forward";
+          const targetRange = e.getTargetRanges()[0];
+          if (targetRange && handleDeleteBeforeInput(editCtx, e, targetRange))
+            break;
           const range = getDomRangeInRoot(root);
-          if (!range?.collapsed) break;
+          if (!range) break;
           handleBoundaryDeleteBeforeInput(editCtx, e, dir, range);
           break;
         }
@@ -625,14 +567,9 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
           e.preventDefault();
           break;
 
-        case "insertFromDrop": {
+        case "insertFromDrop":
           e.preventDefault();
-          if (!suppressBeforeInputDrop.get()) {
-            const text = getPlainTextFromDataTransfer(e.dataTransfer);
-            insertTextFromExternal(editCtx, text);
-          }
           break;
-        }
       }
     });
 
@@ -641,24 +578,32 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         domPositionToModel(root, point.node, point.offset),
       );
       if (!rangeSel) return;
-      const text = readOutlineSelectionPlainText(core, rangeSel);
+      const text = readSelectionText(core, rangeSel);
       if (text == null) return;
       if (!writePlainTextClipboard(e, text)) return;
       e.preventDefault();
     };
+    const onDragStart = gated((e: DragEvent): void => {
+      const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
+        domPositionToModel(root, point.node, point.offset),
+      );
+      if (!rangeSel || !e.dataTransfer) return;
+      const text = readSelectionText(core, rangeSel);
+      if (text == null) return;
+      e.dataTransfer.setData("text/plain", text);
+    });
 
     const onPaste = gated((e: ClipboardEvent): void => {
       const text = getPlainTextFromDataTransfer(e.clipboardData);
       if (!text) return;
       e.preventDefault();
-      insertTextFromExternal(editCtx, text);
+      insertText(editCtx, text);
     });
     const onDrop = gated((e: DragEvent): void => {
       const text = getPlainTextFromDataTransfer(e.dataTransfer);
       if (!text) return;
       e.preventDefault();
-      suppressBeforeInputDrop.suppressForTurn(true);
-      insertTextFromExternal(editCtx, text);
+      insertText(editCtx, text);
     });
 
     const onCut = (e: ClipboardEvent): void => {
@@ -666,13 +611,13 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         domPositionToModel(root, point.node, point.offset),
       );
       if (!rangeSel) return;
-      const text = readOutlineSelectionPlainText(core, rangeSel);
+      const text = readSelectionText(core, rangeSel);
       if (text == null) return;
-      writePlainTextClipboard(e, text);
+      if (!writePlainTextClipboard(e, text)) return;
       e.preventDefault();
 
       if (rangeSel.range.collapsed) return;
-      void deleteOutlineValueSelection(editCtx, rangeSel.start, rangeSel.end);
+      void deleteSelection(editCtx, rangeSel.start, rangeSel.end);
     };
 
     const onKeyDown = gated((e: KeyboardEvent): void => {
@@ -751,7 +696,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
           handleArrowHorizontal(
             core,
             root,
-            editStops.value,
+            navPoints.value,
             state,
             applyEditingResult,
             e,
@@ -772,7 +717,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
             core,
             root,
             rootId,
-            editStops.value,
+            navPoints.value,
             state,
             applyEditingResult,
             e,
@@ -787,8 +732,8 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         e.stopPropagation();
         const modelSel = core.selection();
         if (modelSel.type !== "editing") return;
-        const caretOffset =
-          currentValueCaretOffset(root, modelSel.location.item) ?? 0;
+        core.undoBoundary();
+        const caretOffset = valueCaretOffset(root, modelSel.location.item) ?? 0;
         suppressMutationSync.suppressForTurn(true);
         const nextFocus = e.shiftKey
           ? cmd.outdentInPlace(core, rootId, modelSel)
@@ -818,6 +763,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     const onCompositionEnd = gated((_e: CompositionEvent): void => {
       state.isComposing = false;
       state.compositionEndedAt = Date.now();
+      core.undoBoundary();
     });
 
     const onFocusOut = (e: FocusEvent): void => {
@@ -829,16 +775,15 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     const onBlur = (e: FocusEvent): void => {
       const next = e.relatedTarget;
       if (!(next instanceof Node) || !root.contains(next)) {
-        state.shouldRestoreSelectionOnFocus = false;
+        state.restoreSelectionOnFocus = false;
         return;
       }
-      state.savedSelectionOnEmbeddedBlur = snapshotCurrentOutlineSelection();
-      state.shouldRestoreSelectionOnFocus =
-        state.savedSelectionOnEmbeddedBlur != null;
+      state.savedSelection = snapshotSelection();
+      state.restoreSelectionOnFocus = state.savedSelection != null;
     };
     const onFocus = (): void => {
       resetStickyCaretX();
-      restoreSavedOutlineSelection();
+      restoreSelection();
     };
     const onPointerDown = (): void => {
       resetStickyCaretX();
@@ -856,6 +801,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       root.addEventListener("cut", onCut);
       root.addEventListener("paste", onPaste);
       root.addEventListener("drop", onDrop);
+      root.addEventListener("dragstart", onDragStart);
       root.addEventListener("blur", onBlur);
       root.addEventListener("focus", onFocus);
       root.addEventListener("compositionstart", onCompositionStart);
@@ -871,6 +817,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         root.removeEventListener("cut", onCut);
         root.removeEventListener("paste", onPaste);
         root.removeEventListener("drop", onDrop);
+        root.removeEventListener("dragstart", onDragStart);
         root.removeEventListener("blur", onBlur);
         root.removeEventListener("focus", onFocus);
         root.removeEventListener("compositionstart", onCompositionStart);
@@ -905,7 +852,7 @@ function handleOutlineContainerTypeIntent(args: {
   core.focus(
     {
       type: "editing",
-      location: focusFor(core, rootId, id),
+      location: locationFor(core, rootId, id),
       target: applied.target,
     },
     { caret: applied.caret },
@@ -982,7 +929,7 @@ export const outlineView = defineView(({ core, id: rootId }) => {
         else if (dir === "up") nextId = prevSibling(core, fromId);
         else if (dir === "down") nextId = nextSibling(core, fromId);
         if (!nextId) return;
-        const nextFocus = focusFor(core, rootId, nextId);
+        const nextFocus = locationFor(core, rootId, nextId);
         core.focus({ type: "item", location: nextFocus });
         return;
       }
@@ -998,7 +945,7 @@ export const outlineView = defineView(({ core, id: rootId }) => {
         core.focus(
           {
             type: "editing",
-            location: focusFor(core, rootId, nextId),
+            location: locationFor(core, rootId, nextId),
             target: VALUE_TARGET,
           },
           { caret: 0 },

@@ -6,6 +6,7 @@ export {
   setBodyClasses,
 } from "./base";
 export {
+  createSuppressionFlag,
   getCollapsedCaretRectInSurface,
   domPointToTextOffset,
   getDomPointFromViewport,
@@ -25,6 +26,7 @@ export {
   textOffsetToDomPoint,
   writePlainTextClipboard,
 } from "./contenteditable";
+export type { SuppressionFlag } from "./contenteditable";
 
 export type { NavDir } from "./controls";
 export {

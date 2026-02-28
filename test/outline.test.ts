@@ -99,6 +99,22 @@ function dispatchBeforeInput(
     inputType,
     ...init,
   });
+  Object.defineProperty(ev, "getTargetRanges", {
+    configurable: true,
+    value: () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return [];
+      const range = sel.getRangeAt(0);
+      return [
+        {
+          startContainer: range.startContainer,
+          startOffset: range.startOffset,
+          endContainer: range.endContainer,
+          endOffset: range.endOffset,
+        } as StaticRange,
+      ];
+    },
+  });
   target.dispatchEvent(ev);
   return { defaultPrevented: ev.defaultPrevented };
 }
