@@ -290,7 +290,7 @@ Structural rules:
 
 - `.ui-frame.ui-table-row` and `.ui-frame.ui-table-cell` wrappers MUST stay stable for visible rows/cells.
 - Cell bodies MAY swap by view name.
-- `.ui-body.ui-table` SHOULD set `data-drag-start="block"` to prevent drag-start from table editing/body surfaces while allowing frame-level drag interactions.
+- Table editing/body surfaces (including `.ui-body.ui-table`) MUST participate in the `data-drag-start="block"` contract to prevent drag-start from edit surfaces while allowing frame-level drag interactions.
 - Slot-capable cell frames MUST set `data-drag-slot="true"` for shared drag slot resolution.
 
 Notes:

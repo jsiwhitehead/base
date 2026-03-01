@@ -64,6 +64,7 @@
 ## Pointers
 
 - `README.md`
+- `ROADMAP.md`
 - `CONTRIBUTING.md`
 - `docs/architecture.md`
 - `docs/core-api.md`

@@ -56,7 +56,7 @@ Fires before DOM mutation; `e.preventDefault()` suppresses the browser's action.
 
 **Copy and cut** are intercepted via the `copy` and `cut` events: read the current selection, serialize to `text/plain` in `clipboardEvent.dataTransfer`, call `preventDefault()`. This ensures clean model text on the clipboard rather than a browser-serialized DOM fragment.
 
-**Drag.** `dragstart` is intercepted to serialize the current DOM selection as `text/plain` in `e.dataTransfer`; guard so that only events originating inside the value surface are serialized. `drop` is intercepted to read `text/plain` and apply the insertion as a model update.
+**Drag.** `dragstart` is intercepted to serialize the current DOM selection as `text/plain` in `e.dataTransfer`; guard so that only events originating inside the value surface are serialized. Serialization MUST be skipped when selection origin is outside a value surface. `drop` is intercepted to read `text/plain` and apply the insertion as a model update.
 
 **Paste and drop pipeline.** The `paste` and `drop` event handlers own the model update and call `preventDefault()`. Their `beforeinput` counterparts (`insertFromPaste`, `insertFromDrop`) only call `preventDefault()` to block the browser's direct DOM write. Chrome fires `insertFromDrop` regardless of whether `drop` was already prevented; the `beforeinput` case is necessary to suppress this stale mutation.
 

@@ -49,6 +49,7 @@ Before requesting review:
 - No architecture violations against `docs/architecture.md`.
 - Conventions in this file are followed.
 - Relevant docs are updated if contracts/behavior changed.
+- `ROADMAP.md` is updated if long-term capability direction changed.
 - Diff is scoped to the task and easy to review.
 
 PR checklist:

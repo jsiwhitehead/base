@@ -23,17 +23,18 @@ bun run format
 
 ## Repo map (at a glance)
 
+- `src/main.ts`: browser bootstrap and demo/startup wiring.
+- `src/setup.ts`: shared composition and app assembly (`Core` + DOM runtime + views).
 - `src/core/`: core state, transactions, selection/focus, and intent routing.
 - `src/dom/`: shared DOM runtime and reusable controls.
 - `src/views/`: view implementations (`outline`, `table`, `slider`).
-- `src/setup.ts`: shared composition and app assembly (`Core` + DOM runtime + views).
-- `src/main.ts`: browser bootstrap and demo/startup wiring.
 
 ## Key docs
 
-- `docs/architecture.md`: canonical architecture and invariant contracts.
 - `CONTRIBUTING.md`: contributor workflow and review expectations.
 - `AGENTS.md`: coding-agent guardrails for safe, repo-consistent changes.
+- `ROADMAP.md`: capability-domain roadmap for how the system should mature.
+- `docs/architecture.md`: canonical architecture and invariant contracts.
 - `docs/core-api.md`: Core API and state/transaction semantics.
 - `docs/dom-runtime.md`: runtime lifecycle, mounting, and shared controls.
 - `docs/views-spec.md`: view behavior and interaction specifics.
@@ -42,9 +43,9 @@ bun run format
 
 ## Common tasks (links-first)
 
-- Add a view: `docs/views-spec.md`
-- Work with styling: `docs/style-system.md`
+- Understand system invariants: `docs/architecture.md`
+- Work with Core state/transactions: `docs/core-api.md`
 - Understand rendering/runtime: `docs/dom-runtime.md`
 - Work with contenteditable behavior: `docs/content-editable.md`
-- Work with Core state/transactions: `docs/core-api.md`
-- Understand system invariants: `docs/architecture.md`
+- Add a view: `docs/views-spec.md`
+- Work with styling: `docs/style-system.md`
