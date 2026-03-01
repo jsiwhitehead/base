@@ -1,12 +1,12 @@
 import type { ReadonlySignal } from "@preact/signals-core";
-import { batch, computed } from "@preact/signals-core";
+import { computed } from "@preact/signals-core";
 
 import { createCommitController } from "./commit";
 import type { Tx } from "./commit";
 import { createEvaluator } from "./eval";
 import { interpretExpr } from "./lang";
 import type { EntryId, SnapshotData, Transaction, ViewName } from "./model";
-import { createModel, createModelFromSnapshot, makeGroupEntry } from "./model";
+import { createModel, makeGroupEntry } from "./model";
 import type {
   Connected,
   Content,
@@ -303,7 +303,7 @@ export function createCore(opts: {
 }): { core: Core; rootId: ItemId } {
   const shapes = opts.shapes ?? {};
 
-  let model = createModel();
+  const model = createModel();
 
   const rootEntryId = model.createId();
   model.setRoot(rootEntryId);
@@ -311,14 +311,14 @@ export function createCore(opts: {
     model.ops.transaction([model.ops.create(makeGroupEntry(rootEntryId))]),
   );
 
-  let evaluator = createEvaluator({ model, interpret: interpretExpr });
+  const evaluator = createEvaluator({ model, interpret: interpretExpr });
 
   let core!: Core;
 
   const rootId = itemIdOf(rootEntryId);
   const rootFocus: Location = { container: rootId, item: rootId };
   const selectionController = createSelectionController({
-    getModel: () => model,
+    model,
     rootEntryId,
     rootFocus,
     ...(opts.platform?.onSelectionChange
@@ -337,8 +337,8 @@ export function createCore(opts: {
   } = selectionController;
 
   const read = createReadApi({
-    getEvaluator: () => evaluator,
-    getModel: () => model,
+    evaluator,
+    model,
   });
 
   const item = (id: ItemId): Item => read.item(id);
@@ -389,7 +389,7 @@ export function createCore(opts: {
     applyRemote,
     resetState: resetCommitState,
   } = createCommitController({
-    getModel: () => model,
+    model,
     shapes,
     rootEntryId,
     getSelection: () => peekSelection(),
@@ -407,22 +407,11 @@ export function createCore(opts: {
       throw new Error("snapshot.rootId must match core root id");
     }
 
-    const nextModel = createModelFromSnapshot(snapshot);
-    const nextEvaluator = createEvaluator({
-      model: nextModel,
-      interpret: interpretExpr,
-    });
-    const prevEvaluator = evaluator;
-
-    batch(() => {
-      model = nextModel;
-      evaluator = nextEvaluator;
-      viewSignalCache.clear();
-      resetCommitState();
-      resetToRoot();
-    });
-
-    prevEvaluator.dispose();
+    model.replaceState(snapshot);
+    evaluator.dispose();
+    viewSignalCache.clear();
+    resetCommitState();
+    resetToRoot();
   };
 
   const reader = <S extends ViewShape>(

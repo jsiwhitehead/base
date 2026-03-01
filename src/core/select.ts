@@ -39,7 +39,7 @@ export type SelectionController = {
 };
 
 type SelectionControllerOptions = {
-  getModel: () => Model;
+  model: Model;
   rootEntryId: EntryId;
   rootFocus: Location;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
@@ -55,7 +55,7 @@ export function createSelectionController(
   });
 
   const isValidFocus = (focus: Location): boolean => {
-    const model = opts.getModel();
+    const model = opts.model;
     const itemEid = entryIdFromItemId(focus.item);
     const containerEid = entryIdFromItemId(focus.container);
     if (itemEid == null || containerEid == null) return false;
@@ -109,7 +109,7 @@ export function createSelectionController(
   const peekSelection = (): Selection => selectionSignal.peek();
 
   const captureRepairAnchor = (): SelectionRepairAnchor | null => {
-    const model = opts.getModel();
+    const model = opts.model;
     const sel = selectionSignal.peek();
     const leafId =
       sel.type === "editing"
@@ -135,7 +135,7 @@ export function createSelectionController(
   const resolveRepairAnchor = (
     anchor: SelectionRepairAnchor,
   ): Location | null => {
-    const model = opts.getModel();
+    const model = opts.model;
 
     for (let i = anchor.steps.length - 1; i >= 0; i -= 1) {
       const { parentId, index } = anchor.steps[i]!;

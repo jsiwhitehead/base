@@ -47,6 +47,7 @@ export type SnapshotNode = {
 };
 
 export type SnapshotData = {
+  version: number;
   rootId: EntryId;
   nextId: EntryId;
   root: SnapshotNode;
@@ -128,6 +129,7 @@ export type Model = {
 
   snapshot(id: EntryId): SnapshotNode;
   exportSnapshot(): SnapshotData;
+  replaceState(data: SnapshotData): void;
 };
 
 type EntryRecord = {
@@ -744,10 +746,87 @@ export function createModel(): Model {
   };
 
   const exportSnapshot = (): SnapshotData => ({
+    version: 1,
     rootId: rootId(),
     nextId,
     root: snapshot(rootId()),
   });
+
+  const flattenParsedSnapshot = (
+    parsedRoot: ParsedSnapshotNode,
+  ): Map<EntryId, Entry> => {
+    const nextEntries = new Map<EntryId, Entry>();
+
+    const visit = (
+      node: ParsedSnapshotNode,
+      parentId: EntryId | null,
+    ): void => {
+      const content: EntryContent =
+        node.content.type === "group"
+          ? { type: "group", childIds: node.children.map((child) => child.id) }
+          : node.content;
+      nextEntries.set(node.id, {
+        id: node.id,
+        parentId,
+        label: node.label,
+        view: node.view,
+        content,
+      });
+      for (const child of node.children) visit(child, node.id);
+    };
+
+    visit(parsedRoot, null);
+    return nextEntries;
+  };
+
+  const replaceState = (data: SnapshotData): void => {
+    if (!isRecord(data)) throw new Error("snapshot must be an object");
+
+    const version = readInt(data.version, "snapshot.version");
+    if (version !== 1)
+      throw new Error(`Unsupported snapshot version: ${version}`);
+
+    const nextRootId = readInt(data.rootId, "snapshot.rootId") as EntryId;
+    const nextIdFromSnapshot = readInt(
+      data.nextId,
+      "snapshot.nextId",
+    ) as EntryId;
+    const seen = new Set<EntryId>();
+    const maxIdRef = { value: 0 };
+    const parsedRoot = parseSnapshotNode(
+      data.root,
+      "snapshot.root",
+      seen,
+      maxIdRef,
+    );
+
+    if (parsedRoot.id !== nextRootId)
+      throw new Error("snapshot.rootId must match snapshot.root.id");
+    if (nextIdFromSnapshot <= maxIdRef.value)
+      throw new Error("snapshot.nextId must be greater than all entry ids");
+
+    const nextEntries = flattenParsedSnapshot(parsedRoot);
+
+    batch(() => {
+      root = nextRootId;
+      nextId = nextIdFromSnapshot;
+
+      for (const id of [...entries.keys()]) {
+        if (!nextEntries.has(id)) entries.delete(id);
+      }
+
+      for (const [id, entry] of nextEntries) {
+        const existing = entries.get(id);
+        if (existing) {
+          existing.entrySignal.value = entry;
+        } else {
+          entries.set(id, { entrySignal: signal(entry) });
+        }
+      }
+
+      if (DEV) assertValidInternal();
+    });
+  };
 
   return {
     setRoot,
@@ -775,6 +854,7 @@ export function createModel(): Model {
 
     snapshot,
     exportSnapshot,
+    replaceState,
   };
 }
 
@@ -908,55 +988,4 @@ function parseSnapshotNode(
     default:
       throw new Error(`${path}.content.type is invalid`);
   }
-}
-
-export function createModelFromSnapshot(snapshot: SnapshotData): Model {
-  if (!isRecord(snapshot)) throw new Error("snapshot must be an object");
-
-  const rootId = readInt(snapshot.rootId, "snapshot.rootId") as EntryId;
-  const nextId = readInt(snapshot.nextId, "snapshot.nextId") as EntryId;
-  const seen = new Set<EntryId>();
-  const maxIdRef = { value: 0 };
-  const root = parseSnapshotNode(
-    snapshot.root,
-    "snapshot.root",
-    seen,
-    maxIdRef,
-  );
-
-  if (root.id !== rootId)
-    throw new Error("snapshot.rootId must match snapshot.root.id");
-  if (nextId <= maxIdRef.value)
-    throw new Error("snapshot.nextId must be greater than all entry ids");
-
-  const model = createModel();
-  model.setRoot(rootId);
-  model.setNextId(nextId);
-
-  const createOps: Op[] = [];
-  const moveOps: Op[] = [];
-
-  const queueNode = (node: ParsedSnapshotNode): void => {
-    createOps.push(
-      model.ops.create({
-        id: node.id,
-        parentId: null,
-        label: node.label,
-        view: node.view,
-        content: node.content,
-      }),
-    );
-
-    for (let i = 0; i < node.children.length; i += 1) {
-      const child = node.children[i]!;
-      queueNode(child);
-      moveOps.push(
-        model.ops.move({ childId: child.id, toParentId: node.id, toIndex: i }),
-      );
-    }
-  };
-
-  queueNode(root);
-  model.apply(model.ops.transaction([...createOps, ...moveOps]));
-  return model;
 }

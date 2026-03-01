@@ -119,13 +119,12 @@ Purpose: Ensure automation remains bounded, attributable, and deterministic with
 
 Purpose: Ensure structural continuity, responsiveness, and diagnosability under scale, time, and failure.
 
-- Add explicit version field to snapshot format
-- Define and implement validated snapshot migration across format versions
+- Define and implement snapshot migration across format versions
 - Define user-facing checkpoint and named version semantics
-- Define and implement autosave and session restore policies
 - Introduce backend-neutral storage abstraction
 - Guarantee atomic persistence with no partial state on failure
-- Explicitly surface save, parse, and restore failures
+- Explicitly surface save, parse, and restore failures to the user
+- Add debounced autosave behavior to reduce write churn during rapid edits
 - Establish performance budgets, representative scale benchmarks, and regression detection
 - Provide transaction inspection, replay, and trace tooling
 - Expose dependency graphs for computed outputs to support debugging and error attribution

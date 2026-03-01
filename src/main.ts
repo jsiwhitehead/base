@@ -1,7 +1,11 @@
-import type { ItemId, Value } from "./core";
+import { effect } from "@preact/signals-core";
+
+import type { ItemId, SnapshotData, Value } from "./core";
 import { DEV, devAssert, devWarn } from "./dev";
 import type { App } from "./setup";
 import { createApp } from "./setup";
+
+const STORAGE_KEY = "base:snapshot";
 
 function seedDemo(app: App): void {
   const { core, rootId } = app;
@@ -74,14 +78,39 @@ function autoMount(): void {
   devAssert(host, "Missing app root element (#root)");
 
   const app = createApp({ host, rootView: "outline" });
+  const { core } = app;
 
-  if (DEV) {
+  let restored = false;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      core.importSnapshot(JSON.parse(raw) as SnapshotData);
+      restored = true;
+    }
+  } catch (e) {
+    devWarn("Session restore failed, starting fresh:", e);
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  if (!restored && DEV) {
     try {
       seedDemo(app);
     } catch (e) {
       devWarn("seedDemo failed:", e);
     }
   }
+
+  let lastSaved = "";
+  effect(() => {
+    const serialized = JSON.stringify(core.exportSnapshot());
+    if (serialized === lastSaved) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized);
+      lastSaved = serialized;
+    } catch (e) {
+      devWarn("Autosave failed:", e);
+    }
+  });
 }
 
 autoMount();

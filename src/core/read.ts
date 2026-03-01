@@ -50,8 +50,8 @@ export type ReadEvaluator = { result(id: EntryId): Result };
 export type ReadApi = { item(id: ItemId): Item };
 
 type CreateReadApiOpts = {
-  getEvaluator: () => ReadEvaluator;
-  getModel: () => Model;
+  evaluator: ReadEvaluator;
+  model: Model;
 };
 
 type ResolvedItem = { result: Result; label?: string };
@@ -165,12 +165,10 @@ export const entryIdFromItemId = (id: ItemId): EntryId | null => {
 };
 
 export function createReadApi(opts: CreateReadApiOpts): ReadApi {
-  const { getEvaluator, getModel } = opts;
+  const { evaluator, model } = opts;
 
   return {
     item(id: ItemId): Item {
-      const model = getModel();
-      const evaluator = getEvaluator();
       const ref = refFromItemId(id);
       if (!model.hasEntry(ref.entryId))
         throw new CoreReadError("Unknown item id");

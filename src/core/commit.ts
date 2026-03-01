@@ -52,7 +52,7 @@ type UserCommitHistoryCtx = { selection: Selection; startedAt: number };
 type CapturedSubtree = { entry: Entry; children: CapturedSubtree[] };
 
 type CommitControllerOptions = {
-  getModel: () => Model;
+  model: Model;
   shapes: Partial<Record<ViewName, ViewShape>>;
   rootEntryId: EntryId;
   getSelection: () => Selection;
@@ -79,7 +79,7 @@ function storedFromValue(v: ValueOrBlank): EntryContent {
 export function createCommitController(
   opts: CommitControllerOptions,
 ): CommitController {
-  const getModel = opts.getModel;
+  const currentModel = opts.model;
 
   const history: { undo: UndoHistoryEntry[]; redo: UndoHistoryEntry[] } = {
     undo: [],
@@ -92,7 +92,7 @@ export function createCommitController(
   });
 
   const captureInverseForTxn = (txn: Transaction): Op[] => {
-    const model = getModel();
+    const model = currentModel;
     const inverses: Op[] = [];
 
     const captureSubtree = (rootEntryId: EntryId): CapturedSubtree => {
@@ -232,7 +232,7 @@ export function createCommitController(
     txn: Transaction,
   ): { delta: ApplyDelta; inverseOps: Op[] } => {
     const inverseOps = captureInverseForTxn(txn);
-    const delta = getModel().apply(txn);
+    const delta = currentModel.apply(txn);
     return { delta, inverseOps };
   };
 
@@ -242,7 +242,7 @@ export function createCommitController(
   ): ApplyDelta => {
     let merged = emptyApply;
 
-    const model = getModel();
+    const model = currentModel;
     enforceViewShapes(model, opts.shapes, touchedIds, (shapeOps) => {
       const txn = model.ops.transaction(shapeOps, { source: "rule" });
       const { delta, inverseOps } = applyTxnWithInverse(txn);
@@ -328,7 +328,7 @@ export function createCommitController(
   ): ApplyDelta => {
     let merged = emptyApply;
 
-    const modelDelta = getModel().apply(txn);
+    const modelDelta = currentModel.apply(txn);
     merged = mergeApply(merged, modelDelta);
 
     const shapeRuleDelta = applyShapeRuleOps(modelDelta.touched, inverseAcc);
@@ -358,7 +358,7 @@ export function createCommitController(
     opts.repairAfterLocalApply(anchor);
 
     if (isUser) {
-      const inverse = getModel().ops.transaction(inverseAcc.toReversed(), {
+      const inverse = currentModel.ops.transaction(inverseAcc.toReversed(), {
         source: "undo",
       });
       pushOrCoalesceUndoEntry({
@@ -421,7 +421,7 @@ export function createCommitController(
     txn: Transaction,
     userHistoryCtx: UserCommitHistoryCtx | null = null,
   ): void => {
-    const model = getModel();
+    const model = currentModel;
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
     applyPipeline(stamped, userHistoryCtx);
     sendLocalTxn(stamped);
@@ -437,7 +437,7 @@ export function createCommitController(
     }
 
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
-    const model = getModel();
+    const model = currentModel;
     applyPipeline(model.ops.transaction(txn.ops, meta));
   };
 
@@ -448,17 +448,19 @@ export function createCommitController(
   ): Tx => ({
     setLabel: (id, label) => {
       const eid = requireTxEntryId(id, "setLabel");
-      ops.push(getModel().ops.patch(eid, { label }));
+      ops.push(currentModel.ops.patch(eid, { label }));
     },
 
     setView: (id, view) => {
       const eid = requireTxEntryId(id, "setView");
-      ops.push(getModel().ops.patch(eid, { view }));
+      ops.push(currentModel.ops.patch(eid, { view }));
     },
 
     setValue: (id, value) => {
       const eid = requireTxEntryId(id, "setValue");
-      ops.push(getModel().ops.patch(eid, { content: storedFromValue(value) }));
+      ops.push(
+        currentModel.ops.patch(eid, { content: storedFromValue(value) }),
+      );
     },
 
     setConnected: (id, conn) => {
@@ -466,7 +468,7 @@ export function createCommitController(
 
       if (conn.type === "formula") {
         ops.push(
-          getModel().ops.patch(eid, {
+          currentModel.ops.patch(eid, {
             content: { type: "formula", expr: conn.expr },
           }),
         );
@@ -474,7 +476,7 @@ export function createCommitController(
       }
 
       ops.push(
-        getModel().ops.patch(eid, {
+        currentModel.ops.patch(eid, {
           content: {
             type: "query",
             from: conn.from,
@@ -488,14 +490,16 @@ export function createCommitController(
     setGroup: (id) => {
       const eid = requireTxEntryId(id, "setGroup");
       ops.push(
-        getModel().ops.patch(eid, { content: { type: "group", childIds: [] } }),
+        currentModel.ops.patch(eid, {
+          content: { type: "group", childIds: [] },
+        }),
       );
     },
 
     insertChild: (parentId, insertOpts) => {
       const parentEid = requireTxEntryId(parentId, "insertChild");
 
-      const model = getModel();
+      const model = currentModel;
       const id = model.createId();
       const entry: Entry = makeBlankEntry(id);
       pendingCreated.add(id);
@@ -517,7 +521,7 @@ export function createCommitController(
       const toParentEid = requireTxEntryId(toParentId, "move");
 
       ops.push(
-        getModel().ops.move({
+        currentModel.ops.move({
           childId: childEid,
           toParentId: toParentEid,
           ...(moveOpts?.at != null ? { toIndex: moveOpts.at } : {}),
@@ -527,7 +531,7 @@ export function createCommitController(
 
     remove: (id) => {
       const eid = requireTxEntryId(id, "remove");
-      ops.push(getModel().ops.remove(eid));
+      ops.push(currentModel.ops.remove(eid));
     },
   });
 
@@ -546,7 +550,7 @@ export function createCommitController(
       const { entryId, path } = ref;
       if (path.length !== 0)
         throw new Error(`${opName} does not accept readonly/derived item ids`);
-      const model = getModel();
+      const model = currentModel;
       if (!model.hasEntry(entryId) && !pendingCreated.has(entryId)) {
         throw new Error(`${opName} expects an existing item id`);
       }
@@ -559,7 +563,7 @@ export function createCommitController(
     run(t);
     if (!ops.length) return;
 
-    const txn = getModel().ops.transaction(ops, { source: "user" });
+    const txn = currentModel.ops.transaction(ops, { source: "user" });
     applyLocal(txn, userHistoryCtx);
   };
 
@@ -574,7 +578,7 @@ export function createCommitController(
     const last = history.redo.pop() ?? null;
     if (!last) return;
 
-    const replay = getModel().ops.transaction(last.user.ops, {
+    const replay = currentModel.ops.transaction(last.user.ops, {
       source: "redo",
     });
     applyLocal(replay);
