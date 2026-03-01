@@ -27,9 +27,9 @@ User input
     ▼
 beforeinput          ← intercept structural operations here
     │
-    ├─ structural?   → e.preventDefault() + model commit + DOM reconcile
+    ├─ structural?   -> e.preventDefault() + model commit + DOM reconcile
     │
-    └─ text only?    → let browser mutate DOM freely
+    └─ text only?    -> let browser mutate DOM freely
                             │
                             ▼
                      MutationObserver  ← sync text back to model
@@ -66,7 +66,7 @@ For operations that never produce `beforeinput`: Tab (nesting), Escape (NAV/out)
 
 ### IME and composition
 
-IME is a multi-step process: `compositionstart` → repeated `insertCompositionText` → `compositionend`. The in-progress candidate text is managed entirely by the browser.
+IME is a multi-step process: `compositionstart` -> repeated `insertCompositionText` -> `compositionend`. The in-progress candidate text is managed entirely by the browser.
 
 - **Never call `e.preventDefault()` on `insertCompositionText`** — doing so breaks CJK input for all users.
 - **Guard the MutationObserver** with an `isComposing` flag — do not commit model updates while composition is active. The committed text arrives via a final `characterData` mutation after `compositionend`.
@@ -76,8 +76,8 @@ IME is a multi-step process: `compositionstart` → repeated `insertCompositionT
 
 Native contenteditable undo (`Cmd+Z`) reverts DOM changes without touching the model — a silent data-corruption bug present in all naive implementations.
 
-- `Cmd/Ctrl+Z` → `e.preventDefault(); core.undo()`
-- `Cmd/Ctrl+Shift+Z` / `Ctrl+Y` → `e.preventDefault(); core.redo()`
+- `Cmd/Ctrl+Z` -> `e.preventDefault(); core.undo()`
+- `Cmd/Ctrl+Shift+Z` / `Ctrl+Y` -> `e.preventDefault(); core.redo()`
 
 `core.undo()` / `core.redo()` replay recorded transactions; signal effects reconcile the DOM. The browser's undo stack is never involved.
 
@@ -114,10 +114,10 @@ This is explicitly off-spec (W3C Input Events Level 2 requires all non-IME `befo
 
 ### Why the observer is necessary
 
-A pure model→DOM approach — preventing all `beforeinput` — would break:
+A pure model->DOM approach — preventing all `beforeinput` — would break:
 
 - **IME** (CJK, Arabic, Hindi) — manages candidate text natively across multiple events
-- **Dead keys** (e.g. `option+e` → `é` on Mac) — unfold across multiple events
+- **Dead keys** (e.g. `option+e` -> `é` on Mac) — unfold across multiple events
 - **OS autocorrect and spell-check** — corrections may arrive without a clean `beforeinput` signal
 - **Voice dictation** — inserts natively
 
@@ -157,7 +157,7 @@ This contract is shared across all views that implement plain-text `contentedita
 
 ### Timing, suppression, and idempotency
 
-The MutationObserver callback fires as a **microtask** — after all synchronous code in the current task. Signal effects run synchronously. This means: a structural op calls `core.commit()` → effects run → DOM updates → _then_ the observer microtask fires. By that point the DOM already reflects the model; an idempotency check silently discards the mutations. An explicit suppression window is belt-and-suspenders for complex reconciliation edge cases.
+The MutationObserver callback fires as a **microtask** — after all synchronous code in the current task. Signal effects run synchronously. This means: a structural op calls `core.commit()` -> effects run -> DOM updates -> _then_ the observer microtask fires. By that point the DOM already reflects the model; an idempotency check silently discards the mutations. An explicit suppression window is belt-and-suspenders for complex reconciliation edge cases.
 
 **`takeRecords()` before programmatic DOM writes.** Before any programmatic DOM write, call `observer.takeRecords()` to flush pending mutations synchronously. Without this, a stale pending mutation may arrive after the write and incorrectly overwrite the updated content.
 
@@ -205,8 +205,8 @@ Plain-text value surfaces SHOULD always contain at least one caret-host node (fo
 
 A deterministic bridge between browser cursor positions and model positions is required:
 
-- **DOM position → `{ itemId, offset }`** — to determine which item and offset the cursor is at
-- **Model position → DOM node/offset** — to programmatically place the cursor
+- **DOM position -> `{ itemId, offset }`** — to determine which item and offset the cursor is at
+- **Model position -> DOM node/offset** — to programmatically place the cursor
 
 **Cursor restoration after structural ops.** After any structural commit (split, join, paste-expand, item removal with join), the browser cursor is left pointing at DOM nodes that may no longer exist or have been repositioned by reconciliation. The cursor must be programmatically restored:
 
@@ -237,9 +237,9 @@ The browser gives correct natural caret movement within a single item — wrappe
 Detected deterministically in `keydown`, before the browser acts:
 
 ```
-ArrowLeft  + anchorOffset === 0                   → preventDefault + jump to end of previous item
-ArrowRight + anchorOffset === textContent.length  → preventDefault + jump to start of next item
-otherwise                                         → let browser handle
+ArrowLeft  + anchorOffset === 0                   -> preventDefault + jump to end of previous item
+ArrowRight + anchorOffset === textContent.length  -> preventDefault + jump to start of next item
+otherwise                                         -> let browser handle
 ```
 
 "Previous/next item" is pre-order tree traversal — leaf items in document order, skipping group items without a value surface.
@@ -255,9 +255,9 @@ surfaceRect = valueEl.getBoundingClientRect()
 isFirstLine = cursorRect.top < surfaceRect.top + threshold
 isLastLine  = cursorRect.bottom > surfaceRect.bottom - threshold
 
-ArrowUp   + isFirstLine → preventDefault + jump to previous item's last line
-ArrowDown + isLastLine  → preventDefault + jump to next item's first line
-otherwise               → let browser handle
+ArrowUp   + isFirstLine -> preventDefault + jump to previous item's last line
+ArrowDown + isLastLine  -> preventDefault + jump to next item's first line
+otherwise               -> let browser handle
 ```
 
 Single-line items: both flags are always true. The threshold must account for visual spacing between items.
@@ -289,9 +289,9 @@ Core tracks the active item/target (`location` + `VALUE_TARGET`); DOM `Selection
 for live range endpoints during the drag.
 
 ```
-mousedown   → editing(location=A, target=value), DOM range collapsed
-drag moves  → editing(location=A, target=value), DOM range extended
-settles     → editing(location=X, target=value), DOM range collapsed
+mousedown   -> editing(location=A, target=value), DOM range collapsed
+drag moves  -> editing(location=A, target=value), DOM range extended
+settles     -> editing(location=X, target=value), DOM range collapsed
 ```
 
 Operations triggered mid-range (type to replace, copy, cut) use the live DOM range directly — no awkward save-and-restore logic needed.

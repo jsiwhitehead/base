@@ -451,7 +451,7 @@ Rules:
 - Drags MUST NOT start when the event target is inside an element marked `data-drag-start="block"`.
 - Drags MUST NOT start on interactive elements (`input`, `textarea`, `select`, `button`) or readonly frames.
 - Drags MUST NOT start on explicit `contenteditable="true"` edit surfaces (defensive guard; marker-based blocking remains the primary contract).
-- `DragState` transitions: `idle` → `pending` → `active` → `idle`.
+- `DragState` transitions: `idle` -> `pending` -> `active` -> `idle`.
 - While pending/active, `document.documentElement.dataset.dragState` is `"pending"` or `"active"`.
 - The dragged frame receives `is-dragging` while active.
 - Escape cancels an active drag without committing.

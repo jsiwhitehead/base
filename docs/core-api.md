@@ -23,7 +23,7 @@ Rules:
 - `rootId` MUST reference the root item.
 - The root item MUST always exist.
 - Removing `rootId` MUST completely clear the root rather than deleting it.
-- Core MUST be the single source of truth for state.
+- Core MUST be the single source of truth for model state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
 - Collaboration transactions use the exported `Transaction` wire type (model/entry-level ops), while normal editing APIs remain item-based (`core.commit(...)` and `tx.*`).
 - `createCore` MAY receive a view-shape registry (`ViewShape` by `ViewName`) used by `core.view(...)` resolution and post-transaction shape enforcement.

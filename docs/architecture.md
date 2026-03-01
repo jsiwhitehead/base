@@ -1,6 +1,10 @@
 # Architecture
 
+This document defines the system architecture, invariants, and layer boundaries for the editor. It is the authoritative source for technical MUST and MUST NOT contracts referenced by contributor workflow docs.
+
 ## System concept
+
+This document is **normative**. The model, invariants, layering rules, and interaction semantics defined here are binding unless explicitly marked experimental.
 
 A tree-structured document editor. The data model is a recursive tree of **items**, each with a content type and a mode.
 
@@ -16,9 +20,9 @@ A tree-structured document editor. The data model is a recursive tree of **items
 - `readonly` — display only
 - `connected` — value is externally managed; display is read-only
 
-Items are identified by opaque `ItemId` strings. The tree has no fixed depth limit. The outline view renders a subtree rooted at a given `rootId`, recursively.
+Items are identified by opaque `ItemId` strings. `ItemId` values are opaque and stable for the lifetime of the item, including across undo/redo and serialization.
 
----
+The tree has no fixed depth limit. The outline view renders a subtree rooted at a given `rootId`, recursively.
 
 ## Layering model
 
@@ -32,16 +36,22 @@ Five layers with strict one-directional dependencies:
 | `setup.ts` | Composition of Core, dom runtime, and registered views; platform hook wiring         | core, dom, views |
 | `main.ts`  | Environment-specific bootstrap                                                       | setup            |
 
-**Outer view vs item view.** Each rendered item is composed of two layers of view responsibility:
+Dependencies MUST follow this direction. Cross-layer imports that violate this order are forbidden.
+
+### Outer view vs item view
+
+Each rendered item is composed of two layers of view responsibility:
 
 - _Outer view_ — renders the stable frame; renders shared header surfaces; mounts the item view body; attaches outer-view-owned targets.
 - _Item view_ — renders `.ui-body.<view>`; renders view-specific body structure and controls; attaches body-owned targets only.
 
 Intent-handling follows the same split: the outer view handles item-selection intents and yielded keys from edit targets; item views define body field behavior and yield navigation at boundaries.
 
-**Canonical container DOM:**
+Ownership boundaries MUST remain stable under extension.
 
-```
+### Canonical container DOM
+
+```text
 #root
   .ui-root
     .ui-main-scroll
@@ -51,15 +61,25 @@ Intent-handling follows the same split: the outer view handles item-selection in
 
 `.ui-main` is the root `.ui-frame` and the only tabbable element (`tabIndex=0`).
 
-**View resolution and routing.** The active view resolves to the nearest containing mounted view root. It must update on pointer interactions and on programmatic focus application. Core routes all non-global view intents to that active view handler.
+### View resolution and routing
 
-**Model state vs view state.** Model state — the item tree, selection, history — is persisted, syncable, and undoable. View state — scroll position, drag, transient UI — is local and ephemeral; it must not enter the model. The test: would this appear in a snapshot, a sync operation, or an undo entry? If not, it is view state. Collapsed/expanded state is the canonical edge case — where it lives is a deliberate design decision with significant implications for sync and undo.
+The active view resolves to the nearest containing mounted view root. It MUST update on pointer interactions and on programmatic focus application.
 
----
+Core routes all non-global view intents to that active view handler.
+
+Intent routing MUST be deterministic and MUST NOT depend on DOM traversal order.
+
+### Model state vs view state
+
+Model state — the item tree, selection, and history — is persisted, syncable, undoable, and deterministically reconstructible.
+
+Policy for non-model view state is defined in `Sources of truth`.
+
+Collapsed/expanded state is the canonical edge case — where it lives is a deliberate design decision with significant implications for sync and undo.
 
 ## Selection model
 
-```
+```text
 Selection =
   | { type: "idle" }
   | { type: "editing", location: Location, target: string }
@@ -70,6 +90,8 @@ Location = { container: ItemId, item: ItemId }
 
 `container` is the parent that logically owns the item in the view. `target` identifies which interaction mode is active.
 
+Selection is structural state and is persisted and replayable.
+
 **`idle`** — nothing focused.
 
 **`editing`** — text edit mode. The browser cursor is inside the focused text target (`value`, `label`, or `conn:*`). The global intent dispatcher is suppressed while editing.
@@ -78,7 +100,7 @@ Location = { container: ItemId, item: ItemId }
 
 **Anchor/head.** Any range selection is `{ anchor, head }` with both endpoints represented as `Location`. The anchor is fixed (where the selection started); the head moves as the user extends.
 
----
+After any transaction, selection MUST reference existing items. If invalidated, repair MUST be deterministic and local.
 
 ## Reactive rendering
 
@@ -88,13 +110,14 @@ Location = { container: ItemId, item: ItemId }
 - **`ctx.list(container, getIds, buildItem)`** — keyed list reconciliation. When the list changes, only the diff is applied — new items mounted, removed items disposed, reordered items moved. Stable keys (item IDs) ensure existing DOM nodes are reused across structural changes.
 - **`ctx.slot(container, getComponent)`** — conditionally renders a single child component. Returns null to empty the slot, or a component to mount.
 
-Signal flow: model signal changes → effect re-runs → targeted DOM update. Structural changes trigger computed children signals → `ctx.list` reconciles the minimum diff. Only DOM nodes directly affected by changed signals are touched.
+Signal flow: model signal changes -> effect re-runs -> targeted DOM update. Structural changes trigger computed children signals -> `ctx.list` reconciles the minimum diff.
 
----
+DOM reconciliation MUST be a pure function of model state. DOM state MUST NOT author canonical model state.
 
 ## Universal controls model
 
-The complete keyboard interaction contract shared across all views. Views define only their view-specific geometry, traversal scope, and edge behaviors — see `docs/views-spec.md`.
+This section defines the shared cross-view keyboard interaction contract.
+View-specific geometry, traversal scope, and edge behaviors are defined in `docs/views-spec.md`.
 
 ### Target classification
 
@@ -128,17 +151,17 @@ The **primary edit target** is the first in this list, or `null` if empty. Reado
 
 ### Behaviors from item selection
 
-| Intent    | Condition                  | Behavior                                                        |
-| --------- | -------------------------- | --------------------------------------------------------------- |
-| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                      |
-| CONFIRM   | No primary target          | No-op                                                           |
-| TYPE char | Primary target exists      | Enter edit, select all, insert char                             |
-| TYPE char | No primary target          | No-op                                                           |
-| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                  |
-| NAV       | Always                     | Move by view geometry; stay in item selection. Escape → NAV/out |
-| TAB       | Always                     | View-specific structural action                                 |
-| DELETE    | Supports remove            | Remove item; focus next sibling, then previous, then parent     |
-| DELETE    | Supports clear             | Clear to blank; stay on same item                               |
+| Intent    | Condition                  | Behavior                                                         |
+| --------- | -------------------------- | ---------------------------------------------------------------- |
+| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                       |
+| CONFIRM   | No primary target          | No-op                                                            |
+| TYPE char | Primary target exists      | Enter edit, select all, insert char                              |
+| TYPE char | No primary target          | No-op                                                            |
+| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                   |
+| NAV       | Always                     | Move by view geometry; stay in item selection. Escape -> NAV/out |
+| TAB       | Always                     | View-specific structural action                                  |
+| DELETE    | Supports remove            | Remove item; focus next sibling, then previous, then parent      |
+| DELETE    | Supports clear             | Clear to blank; stay on same item                                |
 
 ### Behaviors from traversable targets
 
@@ -146,7 +169,7 @@ Normal typing, cursor movement, and selection are handled natively. At a text bo
 
 **NAV at boundary** — collapses to backward (left/up) or forward (right/down). Multiline fields yield only on the first or last line.
 
-1. _Intra-item_: move to adjacent edit target in the list. Backward → caret at end; forward → caret at start.
+1. _Intra-item_: move to adjacent edit target in the list. Backward -> caret at end; forward -> caret at start.
 2. _Inter-item_: at the edge of the item's edit targets, behavior is view-specific.
 
 **Enter** — commit and advance one edit stop forward. Same two-step resolution as boundary NAV.
@@ -167,25 +190,46 @@ For shared input-based fields (`buildTextField`), the edit model is draft-only:
 
 Contenteditable value surfaces follow their own pipeline and apply edits model-side via their observer/event flow rather than `buildTextField`.
 
----
+Intent handling and traversal semantics MUST converge to a single canonical structural result regardless of input source (keyboard, drag, paste, automation).
 
 ## Model operations
 
-Structural edits are expressed as **Core commits** — atomic, synchronous transactions that update state and trigger reactive DOM reconciliation. The same operations are callable from any interaction path (contenteditable pipeline or intent pipeline) with no DOM side effects in the operations themselves.
+Structural edits are expressed as **Core commits** — atomic, synchronous transactions that update state and trigger reactive DOM reconciliation.
+The same operations are callable from any interaction path (contenteditable pipeline or intent pipeline) with no DOM side effects in the operations themselves.
 
-**Post-commit normalization.** After every transaction the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected — type coercion, `nonEmpty` enforcement, `alignChildren` sync — in the same undo unit. This is the only universal post-commit rule; all other cleanup is operation-specific.
+All structural mutations MUST occur inside a transaction. There are no partial structural writes.
+
+Transactions MUST:
+
+- Apply atomically.
+- Preserve invariants.
+- Be undoable.
+- Be replayable.
+- Produce deterministic results.
+
+For a given initial state and ordered sequence of committed transactions, the resulting Core state MUST be identical.
+
+### Post-commit normalization
+
+After every transaction the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected — type coercion, `nonEmpty` enforcement, `alignChildren` sync — in the same undo unit.
+
+Post-commit normalization MUST be deterministic and MUST NOT depend on runtime view state or DOM state.
+
+This is the only universal post-commit rule; all other cleanup is operation-specific.
 
 **View-local editing conventions.** Typed views only receive shape-conforming data — core falls back to outline when compatibility fails. Within that, a view renders all conforming state including state it would not normally produce, but may bundle additional cleanup into its own commits for UX conventions that don't rise to a model constraint. The distinction is _can render_ vs _wants to produce_. See `docs/views-spec.md`.
 
----
-
 ## Invariants
+
+The invariants defined in this section are stable contracts. Changes to these invariants constitute breaking changes and require explicit migration strategy.
 
 ### Sources of truth
 
-- Core is the single source of truth for state.
+- Core is the single source of truth for model state, and all model state is persistent.
+- Whether any non-model view state is permitted is currently undecided.
 - Selection is the single source of truth for focus.
 - DOM and CSS are never treated as authoritative state or focus sources.
+- DOM and runtime layers MUST NOT author canonical model state.
 
 ### Target-driven focus
 
@@ -212,7 +256,7 @@ Structural edits are expressed as **Core commits** — atomic, synchronous trans
 - Intent parsing uses `parseKeyIntent` — not ad-hoc key parsing in views or runtime.
 - Core handles global intents first; non-global view intents are routed to the active view handler.
 - DOM runtime calls `preventDefault()` before dispatching a parsed intent.
-- Native editors handle keydown locally and call `stopPropagation()`. Controls may yield keys by not calling `stopPropagation()`.
+- Native editors handle keydown locally and call `stopPropagation()`. Controls MAY yield keys by not calling `stopPropagation()`.
 
 ### Pointer and propagation
 
@@ -225,8 +269,6 @@ Structural edits are expressed as **Core commits** — atomic, synchronous trans
 - Platform-specific behavior needed by Core is provided through injected callbacks wired in `setup.ts`.
 - Manual reconciliation that bypasses runtime region ownership is forbidden.
 - DOM-driven focus that diverges from Core selection is forbidden.
-
----
 
 ## Extension points
 
@@ -254,7 +296,5 @@ Structural edits are expressed as **Core commits** — atomic, synchronous trans
 - Use stable layer entrypoints — avoid deep cross-layer imports.
 - Avoid cyclic dependencies.
 - Introduce a new abstraction when it clarifies ownership or creates a stable shared contract. Reuse existing abstractions when behavior fits. Promote to a layer entrypoint only when it is a stable contract used across a layer boundary.
-
----
 
 _See also: `docs/core-api.md`, `docs/dom-runtime.md`, `docs/views-spec.md`, `docs/style-system.md`, `docs/content-editable.md`_

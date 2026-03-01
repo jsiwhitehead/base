@@ -1,9 +1,8 @@
 # Roadmap
 
-This roadmap organizes development by capability domains rather than features or timelines.
+This roadmap organizes development by capability domains rather than features or timelines. `CONTRIBUTING.md` defines how to change the code, while this document defines how the system should mature. Engineering maturity is organized along two independent axes: how changes happen (change mechanics) and what the model can represent (semantic scope).
 
-`CONTRIBUTING.md` defines how to change the code.
-This section defines how the system should mature.
+The focus is a robust foundation across major desktop browsers. Work prioritizes standards compliance, cross-browser correctness, stable persistence, and predictable behavior in mainstream desktop environments. Platform-specific adaptations are deferred until the core foundation is mature.
 
 ## Principles
 
@@ -16,7 +15,7 @@ No feature may weaken these guarantees.
 
 Build new capability by reusing structural operations, history semantics, and selection rules.
 Avoid parallel mutation paths.
-All movement paths must converge to the same structural result.
+All mutation paths must converge to the same structural result.
 
 ### Separate structure from view
 
@@ -31,166 +30,175 @@ Persistence, performance, and failure visibility precede new expressiveness.
 
 ### Layer automation above integrity
 
-LLM and automation operate through transactions, are fully undoable, and never bypass invariants.
+LLM assistance operates through transactions, is fully undoable, and never bypasses invariants.
 
-## Platform scope
+## Axis A: how changes happen
 
-The focus is a robust foundation across major desktop browsers.
+This axis covers change mechanics: how edits are initiated (user, automation, collaborator), interpreted, applied, persisted, synchronized, replayed, and audited while preserving deterministic correctness.
 
-Work prioritizes standards compliance, cross-browser correctness, stable persistence, and predictable behavior in mainstream desktop environments.
-Platform-specific adaptations are deferred until the core foundation is mature.
+### Deterministic state
 
-## Capability map
-
-Each item below represents a coherent engineering capability that can be meaningfully implemented and validated.
-
-## Substrate integrity
-
-Purpose: Maintain a deterministic, reversible, invariant-safe core state model under all change.
+Purpose: Ensure a single person can revise structure indefinitely without corruption, identity loss, ambiguity, or invalid state.
 
 - Define explicit failure types and recovery contracts for invariant violations
-- Guarantee invariant preservation under remote transaction application
-- Define and implement a clear coalescing and undo-boundary policy for mixed edit flows
-- Eliminate history ambiguity across cross-surface structural operations
+- Define and enforce explicit undo-boundary and coalescing policies for sequences that interleave structural operations and text edits
 - Formalize removed-item and orphan-handling guarantees
-- Guarantee deterministic root normalization and post-mutation selection repair
+- Ensure equivalent operation sequences produce identical history and undo behavior
+- Guarantee convergence of keyboard, drag-and-drop, and paste intents
+- Provide deterministic structural hashing for state equivalence validation
 
-## Structural operation semantics
+### Deterministic interaction model
 
-Purpose: Define canonical structural operations that produce the same valid result regardless of entry path.
+Purpose: Ensure editing and navigation remain explicit, stable, and unambiguous under sustained use.
 
-- Complete and validate all primitive structural operations and edge cases
-- Formalize contracts for value/group/connected transitions
-- Guarantee predictable placeholder and boundary conversion behavior
-- Unify cleanup and prune semantics across all operation entry points
-- Enforce consistent prune stop conditions (root, readonly, non-group, first non-empty)
-- Guarantee convergence of keyboard, drag-and-drop, and paste for equivalent intents
-- Standardize post-operation focus, caret, and canonical target resolution
+- Guarantee stable editing, selection validity, and rendering continuity across view switches and mode transitions
+- Eliminate ambiguous focus outcomes during navigation at item boundaries and after structural changes
+- Standardize post-operation focus and caret placement after structural changes
+- Eliminate layout shifts caused by selection changes
+- Ensure consistent Intent-to-behavior mapping across base views for shared operations
+- Define command surface for structural operations, view management, and document control
 
-## Interaction model
+### Input resolution
 
-Purpose: Define a deterministic interaction grammar for selection, editing, and navigation across all views.
+Purpose: Ensure platform input is translated into unambiguous, deterministic structural intent.
 
-- Specify and validate all state machine transitions between idle, editing, and item selection states
-- Guarantee selection validity across delete, move, switch, and undo flows
-- Write and validate behavioral contracts for anchor/head selection in edge cases
-- Ensure item-selection and editing states remain explicit and non-ambiguous
-- Guarantee interaction stability across nested views and mixed-mode transitions
-- Eliminate ambiguous focus outcomes in edge-case navigation scenarios
-
-## Input & intent pipeline
-
-Purpose: Translate platform input events into unambiguous, deterministic core intents and operations.
-
-- Stabilize contenteditable reconciliation under complex editing flows
+- Harden contenteditable reconciliation for high-churn edits and operations at item boundaries
 - Harden cross-browser IME and input-event handling
-- Align textfield and contenteditable yielding and commit semantics
-- Standardize navigation and delete-boundary edge-case behavior
-- Enforce strict runtime/core/view ownership separation for intent handling
-- Eliminate duplicated or ambiguous intent interpretation paths
-- Maintain clearly isolated platform deferrals (Android path, EditContext future)
+- Align commit and cancel behavior between textfield and contenteditable editing surfaces
+- Standardize navigation and deletion behavior when crossing item boundaries
+- Provide replay harness and fuzz testing for editing flows
 
-## Views
+### Bounded automation
 
-Purpose: Render multiple views over one shared structure without altering core semantics or integrity.
+Purpose: Allow LLM assistance without displacing human authority or weakening structural guarantees.
 
-- Add `when` guards to view eligibility
-- Guarantee transaction safety and identity preservation across view switching
-- Harden view switching under nested selection and mixed-mode transitions
-- Preserve selection validity and rendering continuity across views
-- Refine outline traversal and range-edit behavior in deeply nested structures
-- Eliminate selection-driven layout instability and unnecessary remount churn
-- Add result groups with one output child and local scope sibling items
-- Harden table editing under row and column operations
-- Formalize extension contracts for advanced table semantics (totals, aggregation, derived rows)
-- Add further view types (tabs, rich text, and beyond) with appropriate contracts as the substrate and interaction model mature
-- Ensure visual coherence for items across views, expanding a consistent indicator family as needed
+- Provide read-only suggestion and analysis flows
+- Implement propose-and-approve mutation pathways
+- Support a staged human-LLM workflow with exact structural diffs presented at each stage
+- Define approval granularity relative to transaction boundaries
+- Restrict automation execution to the structural scope shown in the approval diff
+- Define the minimum read/write scope granted to each automation operation
+- Define the data format, grammar, and addressing model exposed to automation for reliable LLM use
+- Define the user-facing surface for automation proposals and staged diffs
 
-## Data interchange
+### Deterministic collaboration
 
-Purpose: Safely move data across clipboard, drag/drop, import/export, and external adapters without semantic loss.
+Purpose: Enable concurrent multi-user revision with guaranteed convergence and transparent conflict handling.
 
-- Harden drag-and-drop resolution, validation, and failure handling
-- Guarantee deterministic post-drop focus and selection outcomes
-- Define and implement a canonical internal structural clipboard format
-- Guarantee safe clone insertion with validated payloads and regenerated IDs
-- Define deterministic multi-line and multi-item paste semantics
-- Guarantee atomic import with no partial state on failure
-- Define CSV import/export contracts and isolate external adapters from model semantics
-
-## Durability & performance
-
-Purpose: Preserve correctness and responsiveness over time, scale, and high-frequency change.
-
-- Implement a robust autosave and restore policy
-- Introduce backend-neutral storage abstraction
-- Guarantee explicit surfacing of save, parse, and restore failures
-- Ensure boot-time restore precedes interactive rendering
-- Define snapshot versioning and validated migration strategy
-- Preserve rendering stability under high-churn structural edits
-- Establish performance budgets and regression detection for critical paths
-- Define representative scale benchmarks
-- Apply targeted optimization strategies (virtualization, indexing)
-
-## Observability & diagnostics
-
-Purpose: Make system behavior and failures explicit, inspectable, and actionable.
-
-- Eliminate silent failure paths across interaction and persistence flows
-- Define consistent issue surfacing for structural and runtime failures
-- Provide actionable failure states for edit, move, delete, paste, save, and restore workflows
-- Provide transaction inspection and runtime diagnostics tooling
-- Implement replay and trace support with equivalence validation
-- Detect and surface structural inconsistencies early in execution
-- Extend invariant monitoring to support production diagnostics where appropriate
-
-## Computation & derivation
-
-Purpose: Define deterministic derived computation and type-aware semantics beyond raw structure.
-
-- Guarantee safe, deterministic formula evaluation semantics
-- Use ID-backed connection references with reactive human-readable paths
-- Improve formula ergonomics and reduce repetitive expression patterns
-- Expand structured error surfacing through the issue system
-- Formalize query semantics for item traversal, filtering, sorting, and aggregation
-- Add deep query field-shape matching with per-field ancestor-chain value paths
-- Guarantee consistency of derived items across views
-- Implement dependency tracing for computed outputs
-- Strengthen numeric precision guarantees
-- Introduce date value semantics as a first additional scalar type
-- Define validation contracts and schema evolution strategy for typed data
-
-## LLM augmentation
-
-Purpose: Add LLM-assisted workflows through explicit, bounded, fully undoable transactions.
-
-- Provide read-only LLM suggestion flows
-- Implement propose-and-approve pathways for LLM-originated edits
-- Enforce one approved proposal per transaction boundary
-- Guarantee bounded LLM scope per approval
-- Preserve full undoability of LLM-applied changes
-- Define least-privilege automation execution boundaries
-- Prevent automation from bypassing invariants
-
-## Collaboration
-
-Purpose: Enable concurrent multi-user editing with deterministic convergence and transparent conflict handling.
-
-- Adopt a CRDT-based synchronization strategy and transport layer (evaluate established candidate libraries against the tree model before committing)
-- Implement end-to-end real-time sync: broadcast, receive, apply, and verify convergence of concurrent edits
-- Extend to shared presence and remote selection display
+- Adopt and validate a CRDT strategy appropriate to the tree model
+- Implement broadcast, receive, apply, and convergence verification
+- Guarantee invariant preservation under remote transaction application
 - Define undo and redo semantics under concurrent edits
 - Support offline editing with deterministic merge on reconnect
+- Preserve stable identity across replicas
+- Provide shared presence and remote selection display
 - Provide conflict explanation and reconciliation transparency
+- Guarantee consistency of derived computation across replicas
 
-## Accessibility & platform
+### Access control and audit
 
-Purpose: Ensure accessible, standards-aligned behavior across current platform targets and future expansion paths.
+Purpose: Ensure authority is explicitly scoped and all structural changes are attributable and inspectable.
 
-- Define target accessibility baseline and compliance scope
+- Define authentication and session contracts
+- Define authorization primitives for access control over subtrees and structural regions
+- Enforce permission checks at transaction entry points
+- Define consistent behavior for rejected and unauthorized transactions
+- Provide comprehensive audit logs with actor attribution
+
+### Automation under concurrency
+
+Purpose: Ensure automation remains bounded, attributable, and deterministic within collaborative contexts.
+
+- Define approval semantics when automation intersects concurrent edits
+- Guarantee deterministic merge of automation-originated transactions
+- Prevent automation from bypassing coordination rules
+- Preserve attribution of automation-applied changes
+- Validate convergence when automation operates across replicas
+
+### Durability and performance
+
+Purpose: Ensure structural continuity, responsiveness, and diagnosability under scale, time, and failure.
+
+- Add explicit version field to snapshot format
+- Define and implement validated snapshot migration across format versions
+- Define user-facing checkpoint and named version semantics
+- Define and implement autosave and session restore policies
+- Introduce backend-neutral storage abstraction
+- Guarantee atomic persistence with no partial state on failure
+- Explicitly surface save, parse, and restore failures
+- Establish performance budgets, representative scale benchmarks, and regression detection
+- Provide transaction inspection, replay, and trace tooling
+- Expose dependency graphs for computed outputs to support debugging and error attribution
+- Detect and surface structural inconsistencies at startup and during editing operations
+- Provide reproducible export bundles for debugging
+
+### Accessibility and platform
+
+Purpose: Ensure accessible, standards-aligned behavior across supported platforms without weakening core guarantees.
+
+- Define accessibility baseline and compliance scope
 - Establish semantic and ARIA contracts for interaction surfaces
 - Guarantee consistent keyboard and assistive-technology behavior across views
 - Introduce accessibility validation and regression workflows
-- Continue desktop-browser hardening within current scope
-- Define staged exploration path for Android/mobile editing
-- Evaluate future platform APIs without weakening core guarantees
+
+## Axis B: what the model can represent
+
+This axis covers representational scope: the structures, relationships, types, views, and interchange forms the model can express while preserving one coherent substrate.
+
+### Base views
+
+Purpose: Harden and extend the foundational views that allow structure to be inhabited and revised without altering the data model.
+
+- Harden outline traversal and range-edit behavior in deeply nested structures
+- Guarantee consistent conversion of outline placeholders to value items on edit
+- Unify prune semantics and stop conditions across outline operations
+- Harden shape enforcement under deep nesting, undo, and complex alignment scenarios
+- Harden Slider value coercion, snapping, and undo semantics
+- Provide deterministic column totals in table contexts
+- Harden row and column operations under deletion and undo
+
+### Structural relationships
+
+Purpose: Allow the data model to express explicit relationships beyond containment through formal connection types.
+
+- Introduce shorthand forms and reusable expression patterns to reduce formula verbosity
+- Provide structured error surfacing for invalid expressions
+- Provide formula and query authoring assistance with inline feedback and expression hints
+- Add field selection to queries, returning only items that match a specified field shape
+- Extend queries to traverse all descendants with ancestor-chain field values from root to each result
+- Guarantee stable identity and consistency of derived items across views
+- Define result groups as a structural primitive: items with a designated output child and local context children, with explicit visibility, addressing, undo, and export semantics
+- Introduce first-class link connections independent of derivation
+- Define referential integrity for link targets and surface broken references explicitly
+
+### Typed semantics
+
+Purpose: Allow regions of structure to become formally dependable where reliability is required.
+
+- Clarify numeric precision semantics and evaluate decimal support for financial values
+- Introduce date value semantics
+- Define type validation contracts
+- Define schema evolution strategy for typed items
+- Guarantee deterministic type coercion
+- Surface type mismatches explicitly
+
+### Advanced views
+
+Purpose: Extend how structure can be rendered and interacted with in the UI without redefining underlying semantics.
+
+- Define `when` predicate contract and view eligibility resolution rules
+- Implement `when` guards on view assignment
+- Define the interface a view type must implement to integrate with the view system
+- Define a shared indicator system that allows views to choose appropriate structural markers while maintaining visual consistency
+- Add column aggregate display to table view as a view-level feature independent of structural entries
+
+### Data interchange
+
+Purpose: Ensure structure and meaning survive crossing boundaries and external adapters without semantic loss.
+
+- Harden drag-and-drop including validation, failure handling, and deterministic post-drop focus outcomes
+- Define and implement a structural clipboard format for item subtrees
+- Define paste semantics for structural clipboard content, including identifier regeneration and multi-item ordering
+- Guarantee atomic import with no partial state on failure
+- Define CSV import and export contracts
+- Verify that export/import round-trips preserve structural equivalence

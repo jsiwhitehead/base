@@ -175,6 +175,7 @@ Canonical domain terms (do not invent synonyms):
 - Copy/pasting view logic and letting behavior drift across views (`docs/views-spec.md`, `docs/architecture.md`).
 - Adding targets without clear ownership mapping (`docs/architecture.md`).
 - Expanding public entrypoints casually and increasing surface-area churn (`docs/architecture.md`).
+- Implementing adapters (CSV, clipboard, paste, drag-and-drop) with direct access to internal model types instead of the public Core API (`docs/architecture.md`, `docs/core-api.md`).
 
 ## Appendix: Markdown formatting details
 
