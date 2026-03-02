@@ -6,7 +6,7 @@ import type { Tx } from "./commit";
 import { createEvaluator } from "./eval";
 import { interpretExpr } from "./lang";
 import type { EntryId, SnapshotData, Transaction, ViewName } from "./model";
-import { createModel, makeGroupEntry } from "./model";
+import { CoreApiError, createModel, makeGroupEntry } from "./model";
 import type {
   Connected,
   Content,
@@ -17,6 +17,7 @@ import type {
   ValueOrBlank,
 } from "./read";
 import {
+  CoreReadError,
   createReadApi,
   entryIdFromItemId,
   isCoreReadError,
@@ -352,7 +353,8 @@ export function createCore(opts: {
       return "outline";
     }
     const eid = ref.entryId;
-    if (!model.hasEntry(eid)) throw new Error("Unknown entry id");
+    if (!model.hasEntry(eid))
+      throw new CoreReadError("UNKNOWN_ITEM_ID", "Unknown entry id");
 
     let sig = viewSignalCache.get(eid);
     if (!sig) {
@@ -404,7 +406,10 @@ export function createCore(opts: {
 
   const importSnapshot = (snapshot: SnapshotData): void => {
     if (snapshot.rootId !== rootEntryId) {
-      throw new Error("snapshot.rootId must match core root id");
+      throw new CoreApiError(
+        "SNAPSHOT_ROOT_MISMATCH",
+        "snapshot.rootId must match core root id",
+      );
     }
 
     model.replaceState(snapshot);
@@ -648,4 +653,14 @@ export { LABEL_TARGET, VALUE_TARGET, connTarget, parseKeyIntent };
 export { ITEM_TARGET };
 
 export { isCoreReadError };
+export type { CoreReadErrorCode } from "./read";
+export { CoreReadError } from "./read";
+export type { CoreApiErrorCode, CoreOpErrorCode } from "./model";
+export {
+  CoreApiError,
+  CoreOpError,
+  isCoreApiError,
+  isCoreOpError,
+} from "./model";
+export { CoreInvariantError, isCoreInvariantError } from "../dev";
 export { defineShape };

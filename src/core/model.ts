@@ -1,7 +1,7 @@
 import type { ReadonlySignal, Signal } from "@preact/signals-core";
 import { batch, computed, signal } from "@preact/signals-core";
 
-import { DEV, devAssert } from "../dev";
+import { CoreInvariantError, DEV, devAssert } from "../dev";
 
 export type EntryId = number;
 export type Scalar = true | number | string;
@@ -52,6 +52,53 @@ export type SnapshotData = {
   nextId: EntryId;
   root: SnapshotNode;
 };
+
+export type CoreOpErrorCode =
+  | "ROOT_NOT_SET"
+  | "UNKNOWN_ENTRY"
+  | "DUPLICATE_ENTRY_ID"
+  | "DUPLICATE_CHILD_LABEL"
+  | "CANNOT_MOVE_ROOT"
+  | "CANNOT_MOVE_INTO_SELF"
+  | "CANNOT_MOVE_INTO_DESCENDANT"
+  | "PARENT_NOT_GROUP"
+  | "GROUP_MEMBERSHIP_VIA_MOVE"
+  | "CANNOT_CONVERT_NONEMPTY_GROUP";
+
+export class CoreOpError extends Error {
+  readonly code: CoreOpErrorCode;
+
+  constructor(code: CoreOpErrorCode, message: string) {
+    super(message);
+    this.name = "CoreOpError";
+    this.code = code;
+  }
+}
+
+export function isCoreOpError(err: unknown): err is CoreOpError {
+  return err instanceof CoreOpError;
+}
+
+export type CoreApiErrorCode =
+  | "INVALID_ITEM_ID"
+  | "DERIVED_ITEM_ID"
+  | "UNKNOWN_ITEM_ID"
+  | "SNAPSHOT_ROOT_MISMATCH"
+  | "SNAPSHOT_PARSE_ERROR";
+
+export class CoreApiError extends Error {
+  readonly code: CoreApiErrorCode;
+
+  constructor(code: CoreApiErrorCode, message: string) {
+    super(message);
+    this.name = "CoreApiError";
+    this.code = code;
+  }
+}
+
+export function isCoreApiError(err: unknown): err is CoreApiError {
+  return err instanceof CoreApiError;
+}
 
 type MoveSpec = { childId: EntryId; toParentId: EntryId; toIndex?: number };
 
@@ -166,7 +213,7 @@ function isGroupEntry(entry: Entry): entry is GroupEntry {
 }
 
 function assertNever(_exhaustive: never, message: string): never {
-  throw new Error(message);
+  throw new CoreInvariantError(message);
 }
 
 function clampIndex(i: number, len: number): number {
@@ -208,7 +255,7 @@ export function createModel(): Model {
   };
 
   const rootId = (): EntryId => {
-    if (root == null) throw new Error("Root not set");
+    if (root == null) throw new CoreOpError("ROOT_NOT_SET", "Root not set");
     return root;
   };
 
@@ -221,7 +268,8 @@ export function createModel(): Model {
 
   const entryRecord = (id: EntryId): EntryRecord => {
     const record = entries.get(id);
-    if (!record) throw new Error(`Unknown entry id: ${String(id)}`);
+    if (!record)
+      throw new CoreOpError("UNKNOWN_ENTRY", `Unknown entry id: ${String(id)}`);
     return record;
   };
 
@@ -233,7 +281,10 @@ export function createModel(): Model {
 
   const createEntryInternal = (initial: Entry): void => {
     if (entries.has(initial.id))
-      throw new Error(`Duplicate entry id: ${String(initial.id)}`);
+      throw new CoreOpError(
+        "DUPLICATE_ENTRY_ID",
+        `Duplicate entry id: ${String(initial.id)}`,
+      );
     entries.set(initial.id, { entrySignal: signal(initial) });
   };
 
@@ -279,7 +330,8 @@ export function createModel(): Model {
 
   function assertUniqueChildLabels(parentId: EntryId): void {
     const parent = entrySignal(parentId).peek();
-    if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
+    if (!isGroupEntry(parent))
+      throw new CoreInvariantError("Parent is not a group");
 
     const seen = new Set<string>();
     for (const childId of parent.content.childIds) {
@@ -289,7 +341,10 @@ export function createModel(): Model {
       if (!label) continue;
 
       if (seen.has(label))
-        throw new Error(`Duplicate label '${label}' in group`);
+        throw new CoreOpError(
+          "DUPLICATE_CHILD_LABEL",
+          `Duplicate label '${label}' in group`,
+        );
       seen.add(label);
     }
   }
@@ -310,7 +365,8 @@ export function createModel(): Model {
   ): { entrySignal: Signal<Entry>; parent: GroupEntry } => {
     const parentSignal = entryRecord(parentId).entrySignal;
     const parent = parentSignal.peek();
-    if (!isGroupEntry(parent)) throw new Error("Parent is not a group");
+    if (!isGroupEntry(parent))
+      throw new CoreOpError("PARENT_NOT_GROUP", "Parent is not a group");
     return { entrySignal: parentSignal, parent };
   };
 
@@ -323,14 +379,23 @@ export function createModel(): Model {
   function move(spec: MoveSpec): MoveResult {
     const { childId, toParentId } = spec;
 
-    if (!entries.has(childId)) throw new Error("Unknown child");
-    if (childId === rootId()) throw new Error("Cannot move root");
-    if (toParentId === childId) throw new Error("Cannot move item into itself");
+    if (!entries.has(childId))
+      throw new CoreOpError("UNKNOWN_ENTRY", "Unknown child");
+    if (childId === rootId())
+      throw new CoreOpError("CANNOT_MOVE_ROOT", "Cannot move root");
+    if (toParentId === childId)
+      throw new CoreOpError(
+        "CANNOT_MOVE_INTO_SELF",
+        "Cannot move item into itself",
+      );
     let cur: EntryId | null = toParentId;
     while (cur != null) {
       if (!entries.has(cur)) break;
       if (cur === childId)
-        throw new Error("Cannot move item into its descendant");
+        throw new CoreOpError(
+          "CANNOT_MOVE_INTO_DESCENDANT",
+          "Cannot move item into its descendant",
+        );
       cur = entryRecord(cur).entrySignal.peek().parentId;
     }
 
@@ -346,12 +411,14 @@ export function createModel(): Model {
     const toParent = getGroupEntry(toParentId);
 
     if (fromParentId != null) {
-      if (!fromParent) throw new Error("Parent is not a group");
+      if (!fromParent)
+        throw new CoreOpError("PARENT_NOT_GROUP", "Parent is not a group");
       const i = fromParent.content.childIds.indexOf(childId);
       fromIndex = i >= 0 ? i : null;
     }
 
-    if (!toParent) throw new Error("Parent is not a group");
+    if (!toParent)
+      throw new CoreOpError("PARENT_NOT_GROUP", "Parent is not a group");
 
     const baseline =
       toParentId === fromParentId && fromIndex != null
@@ -422,7 +489,10 @@ export function createModel(): Model {
 
       if (isGroupContent(requestedContent)) {
         if (requestedContent.childIds.length !== 0)
-          throw new Error("Group membership must be modified via move");
+          throw new CoreOpError(
+            "GROUP_MEMBERSHIP_VIA_MOVE",
+            "Group membership must be modified via move",
+          );
 
         if (isGroupContent(currentContent)) {
           nextContent = undefined;
@@ -432,7 +502,10 @@ export function createModel(): Model {
           isGroupContent(currentContent) &&
           currentContent.childIds.length !== 0
         )
-          throw new Error("Cannot convert non-empty group to non-group");
+          throw new CoreOpError(
+            "CANNOT_CONVERT_NONEMPTY_GROUP",
+            "Cannot convert non-empty group to non-group",
+          );
       }
     }
 
@@ -447,7 +520,8 @@ export function createModel(): Model {
   const remove = (
     id: EntryId,
   ): { removedIds: EntryId[]; parentTouched: EntryId | null } => {
-    if (!entries.has(id)) throw new Error("Unknown entry");
+    if (!entries.has(id))
+      throw new CoreOpError("UNKNOWN_ENTRY", "Unknown entry");
 
     const record = entryRecord(id);
     const currentEntry = record.entrySignal.peek();
@@ -780,11 +854,15 @@ export function createModel(): Model {
   };
 
   const replaceState = (data: SnapshotData): void => {
-    if (!isRecord(data)) throw new Error("snapshot must be an object");
+    if (!isRecord(data))
+      throw new CoreApiError("SNAPSHOT_PARSE_ERROR", "snapshot must be an object");
 
     const version = readInt(data.version, "snapshot.version");
     if (version !== 1)
-      throw new Error(`Unsupported snapshot version: ${version}`);
+      throw new CoreApiError(
+        "SNAPSHOT_PARSE_ERROR",
+        `Unsupported snapshot version: ${version}`,
+      );
 
     const nextRootId = readInt(data.rootId, "snapshot.rootId") as EntryId;
     const nextIdFromSnapshot = readInt(
@@ -801,9 +879,15 @@ export function createModel(): Model {
     );
 
     if (parsedRoot.id !== nextRootId)
-      throw new Error("snapshot.rootId must match snapshot.root.id");
+      throw new CoreApiError(
+        "SNAPSHOT_PARSE_ERROR",
+        "snapshot.rootId must match snapshot.root.id",
+      );
     if (nextIdFromSnapshot <= maxIdRef.value)
-      throw new Error("snapshot.nextId must be greater than all entry ids");
+      throw new CoreApiError(
+        "SNAPSHOT_PARSE_ERROR",
+        "snapshot.nextId must be greater than all entry ids",
+      );
 
     const nextEntries = flattenParsedSnapshot(parsedRoot);
 
@@ -868,12 +952,16 @@ function readInt(value: unknown, path: string): number {
     !Number.isInteger(value) ||
     !Number.isFinite(value)
   )
-    throw new Error(`${path} must be a finite integer`);
+    throw new CoreApiError(
+      "SNAPSHOT_PARSE_ERROR",
+      `${path} must be a finite integer`,
+    );
   return value;
 }
 
 function readString(value: unknown, path: string): string {
-  if (typeof value !== "string") throw new Error(`${path} must be a string`);
+  if (typeof value !== "string")
+    throw new CoreApiError("SNAPSHOT_PARSE_ERROR", `${path} must be a string`);
   return value;
 }
 
@@ -886,14 +974,20 @@ function readOptionalView(value: unknown, path: string): ViewName | undefined {
   if (value === undefined) return undefined;
   if (value === "outline" || value === "table" || value === "slider")
     return value;
-  throw new Error(`${path} must be a valid view name`);
+  throw new CoreApiError(
+    "SNAPSHOT_PARSE_ERROR",
+    `${path} must be a valid view name`,
+  );
 }
 
 function readScalar(value: unknown, path: string): Scalar {
   if (value === true) return value;
   if (typeof value === "string") return value;
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  throw new Error(`${path} must be true, a finite number, or a string`);
+  throw new CoreApiError(
+    "SNAPSHOT_PARSE_ERROR",
+    `${path} must be true, a finite number, or a string`,
+  );
 }
 
 type ParsedSnapshotNode = {
@@ -910,10 +1004,15 @@ function parseSnapshotNode(
   seen: Set<EntryId>,
   maxIdRef: { value: number },
 ): ParsedSnapshotNode {
-  if (!isRecord(input)) throw new Error(`${path} must be an object`);
+  if (!isRecord(input))
+    throw new CoreApiError("SNAPSHOT_PARSE_ERROR", `${path} must be an object`);
 
   const id = readInt(input.id, `${path}.id`) as EntryId;
-  if (seen.has(id)) throw new Error(`${path}.id duplicates entry id ${id}`);
+  if (seen.has(id))
+    throw new CoreApiError(
+      "SNAPSHOT_PARSE_ERROR",
+      `${path}.id duplicates entry id ${id}`,
+    );
   seen.add(id);
   if (id > maxIdRef.value) maxIdRef.value = id;
 
@@ -922,10 +1021,16 @@ function parseSnapshotNode(
 
   const contentInput = input.content;
   if (!isRecord(contentInput))
-    throw new Error(`${path}.content must be an object`);
+    throw new CoreApiError(
+      "SNAPSHOT_PARSE_ERROR",
+      `${path}.content must be an object`,
+    );
   const kind = contentInput.type;
   if (typeof kind !== "string")
-    throw new Error(`${path}.content.type must be a string`);
+    throw new CoreApiError(
+      "SNAPSHOT_PARSE_ERROR",
+      `${path}.content.type must be a string`,
+    );
 
   switch (kind) {
     case "blank":
@@ -968,7 +1073,10 @@ function parseSnapshotNode(
     case "group": {
       const childrenInput = contentInput.children;
       if (!Array.isArray(childrenInput))
-        throw new Error(`${path}.content.children must be an array`);
+        throw new CoreApiError(
+          "SNAPSHOT_PARSE_ERROR",
+          `${path}.content.children must be an array`,
+        );
       const children = childrenInput.map((child, i) =>
         parseSnapshotNode(
           child,
@@ -986,6 +1094,9 @@ function parseSnapshotNode(
       };
     }
     default:
-      throw new Error(`${path}.content.type is invalid`);
+      throw new CoreApiError(
+        "SNAPSHOT_PARSE_ERROR",
+        `${path}.content.type is invalid`,
+      );
   }
 }

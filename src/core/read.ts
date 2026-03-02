@@ -9,12 +9,20 @@ import {
 import type { EntryContent, EntryId, Model } from "./model";
 import { isFormulaContent, isQueryContent } from "./model";
 
-export class CoreReadError extends Error {
-  readonly code = "CORE_READ_ERROR" as const;
+export type CoreReadErrorCode =
+  | "INVALID_ITEM_ID"
+  | "UNKNOWN_ITEM_ID"
+  | "INVALID_ITEM_PATH"
+  | "CONTENT_MISMATCH"
+  | "SHAPE_CHILD_NOT_FOUND";
 
-  constructor(message: string) {
+export class CoreReadError extends Error {
+  readonly code: CoreReadErrorCode;
+
+  constructor(code: CoreReadErrorCode, message: string) {
     super(message);
     this.name = "CoreReadError";
+    this.code = code;
   }
 }
 
@@ -80,9 +88,10 @@ const resolve = (
 
   for (let i = 0; i < ref.path.length; i += 1) {
     const idx = ref.path[i]!;
-    if (!isResultGroupResult(cur)) throw new CoreReadError("Invalid item path");
+    if (!isResultGroupResult(cur))
+      throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
     const item = cur.items[idx];
-    if (!item) throw new CoreReadError("Invalid item path");
+    if (!item) throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
     label = item.label?.trim() || undefined;
     cur = item.result;
   }
@@ -155,7 +164,7 @@ export const parseItemId = (id: ItemId): ItemRef | null => {
 
 export const refFromItemId = (id: ItemId): ItemRef => {
   const ref = parseItemId(id);
-  if (!ref) throw new CoreReadError("Invalid item id");
+  if (!ref) throw new CoreReadError("INVALID_ITEM_ID", "Invalid item id");
   return ref;
 };
 
@@ -171,7 +180,7 @@ export function createReadApi(opts: CreateReadApiOpts): ReadApi {
     item(id: ItemId): Item {
       const ref = refFromItemId(id);
       if (!model.hasEntry(ref.entryId))
-        throw new CoreReadError("Unknown item id");
+        throw new CoreReadError("UNKNOWN_ITEM_ID", "Unknown item id");
       const resolved = resolve(model, evaluator, ref);
       const content = toContent(ref, resolved.result);
       const stored = model.readEntry(ref.entryId).content;

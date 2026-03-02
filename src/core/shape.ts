@@ -81,13 +81,19 @@ export function createShapeReader<S extends ViewShape>(
   const readValue = (itemId: ItemId): ReadShapeValue["value"] => {
     const item = read.item(itemId);
     if (item.content.type === "value") return item.content.value;
-    throw new Error("Shape reader expected value content");
+    throw new CoreReadError(
+      "CONTENT_MISMATCH",
+      "Shape reader expected value content",
+    );
   };
 
   const childIdsOfGroup = (itemId: ItemId): readonly ItemId[] => {
     const item = read.item(itemId);
     if (item.content.type !== "group")
-      throw new Error("Shape reader expected group content");
+      throw new CoreReadError(
+        "CONTENT_MISMATCH",
+        "Shape reader expected group content",
+      );
     return item.content.children;
   };
 
@@ -121,7 +127,10 @@ export function createShapeReader<S extends ViewShape>(
         >,
       child: (cid: ItemId) => {
         if (!childIdsOfGroup(itemId).includes(cid))
-          throw new CoreReadError("Shape reader child id not found");
+          throw new CoreReadError(
+            "SHAPE_CHILD_NOT_FOUND",
+            "Shape reader child id not found",
+          );
         return build(cid, childShape);
       },
     } as unknown as ReaderForShape<T>;

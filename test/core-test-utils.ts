@@ -87,6 +87,21 @@ export function expectSel(
   }
 }
 
+export function expectThrowsWithCode<Code extends string>(
+  ErrorClass: new (...args: never[]) => { readonly code: Code },
+  expectedCode: Code,
+  fn: () => unknown,
+): void {
+  let thrown: unknown;
+  try {
+    fn();
+  } catch (err) {
+    thrown = err;
+  }
+  expect(thrown).toBeInstanceOf(ErrorClass);
+  expect((thrown as { code: unknown }).code).toBe(expectedCode);
+}
+
 export function mkBlank(
   core: { commit: Core["commit"] },
   parentId: ItemId,

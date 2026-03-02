@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Core, ItemId, Transaction, ViewName } from "../src/core";
-import { createCore, VALUE_TARGET } from "../src/core";
+import {
+  CoreApiError,
+  CoreOpError,
+  CoreReadError,
+  createCore,
+  VALUE_TARGET,
+} from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
   assertCoreInvariants,
   childrenOf,
   cloneJson,
   expectSel,
+  expectThrowsWithCode,
   exportSnapshot,
   makePureCore,
   mkBlank,
@@ -125,10 +132,25 @@ function expectCommitThrowsNoChange(
   core: Core,
   rootId: ItemId,
   run: Parameters<Core["commit"]>[0],
-  opts: { viewIds?: readonly ItemId[] } = {},
+  opts: {
+    viewIds?: readonly ItemId[];
+    expected?:
+      | { cls: typeof CoreApiError; code: "INVALID_ITEM_ID" }
+      | { cls: typeof CoreApiError; code: "DERIVED_ITEM_ID" }
+      | { cls: typeof CoreApiError; code: "UNKNOWN_ITEM_ID" }
+      | { cls: typeof CoreOpError; code: "DUPLICATE_CHILD_LABEL" }
+      | { cls: typeof CoreOpError; code: "CANNOT_MOVE_INTO_SELF" }
+      | { cls: typeof CoreOpError; code: "CANNOT_MOVE_INTO_DESCENDANT" };
+  } = {},
 ): void {
   const before = snapshotState(core, rootId, opts);
-  expect(() => core.commit(run)).toThrow();
+  if (opts.expected) {
+    expectThrowsWithCode(opts.expected.cls, opts.expected.code, () =>
+      core.commit(run),
+    );
+  } else {
+    expect(() => core.commit(run)).toThrow();
+  }
   expect(snapshotState(core, rootId, opts)).toEqual(before);
 }
 
@@ -217,20 +239,28 @@ describe("core/basics", () => {
   test("item(invalid format) throws", () => {
     const { core } = makeCoreForTest();
 
-    expect(() => core.item("not-an-id")).toThrow();
+    expectThrowsWithCode(CoreReadError, "INVALID_ITEM_ID", () =>
+      core.item("not-an-id"),
+    );
   });
 
   test("item(valid format, missing item) throws", () => {
     const { core } = makeCoreForTest();
 
-    expect(() => core.item("999999:")).toThrow();
+    expectThrowsWithCode(CoreReadError, "UNKNOWN_ITEM_ID", () =>
+      core.item("999999:"),
+    );
   });
 
   test("view(invalid format) and view(missing item) throw", () => {
     const { core } = makeCoreForTest();
 
-    expect(() => core.view("not-an-id")).toThrow();
-    expect(() => core.view("999999:")).toThrow();
+    expectThrowsWithCode(CoreReadError, "INVALID_ITEM_ID", () =>
+      core.view("not-an-id"),
+    );
+    expectThrowsWithCode(CoreReadError, "UNKNOWN_ITEM_ID", () =>
+      core.view("999999:"),
+    );
   });
 
   test("view supports valid derived ids and returns outline", () => {
@@ -282,9 +312,46 @@ describe("core/commit (transactionality)", () => {
 
     expectCommitThrowsNoChange(core, rootId, (t) => {
       t.setLabel(b, "a");
+    }, {
+      expected: { cls: CoreOpError, code: "DUPLICATE_CHILD_LABEL" },
     });
 
     assertCoreInvariants(core, rootId);
+  });
+
+  test("commit throws INVALID_ITEM_ID for malformed item ids", () => {
+    const { core, rootId } = makeCoreForTest();
+    mkBlank(core, rootId, { label: "x", value: 1 });
+
+    expectCommitThrowsNoChange(
+      core,
+      rootId,
+      (t) => t.setLabel("not-an-id", "x2"),
+      { expected: { cls: CoreApiError, code: "INVALID_ITEM_ID" } },
+    );
+  });
+
+  test("commit throws DERIVED_ITEM_ID for readonly derived item ids", () => {
+    const { core, rootId } = makeCoreForTest();
+    const rows = mkGroup(core, rootId, { label: "rows" });
+    mkBlank(core, rows, { label: "r1", value: 1 });
+    const d = mkBlank(core, rootId, { label: "d" });
+    setFormula(core, d, "rows");
+    const derived = expectGroupContent(core.item(d).content).children[0];
+    if (!derived) throw new Error("Expected derived child");
+
+    expectCommitThrowsNoChange(core, rootId, (t) => t.setLabel(derived, "x"), {
+      expected: { cls: CoreApiError, code: "DERIVED_ITEM_ID" },
+    });
+  });
+
+  test("commit throws UNKNOWN_ITEM_ID for missing item ids", () => {
+    const { core, rootId } = makeCoreForTest();
+    mkBlank(core, rootId, { label: "x", value: 1 });
+
+    expectCommitThrowsNoChange(core, rootId, (t) => t.setLabel("999999:", "x"), {
+      expected: { cls: CoreApiError, code: "UNKNOWN_ITEM_ID" },
+    });
   });
 });
 
@@ -293,7 +360,9 @@ describe("core/tree editing", () => {
     const { core, rootId } = makeCoreForTest();
     const g = mkGroup(core, rootId, { label: "g" });
 
-    expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, g));
+    expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, g), {
+      expected: { cls: CoreOpError, code: "CANNOT_MOVE_INTO_SELF" },
+    });
     assertCoreInvariants(core, rootId);
   });
 
@@ -302,7 +371,9 @@ describe("core/tree editing", () => {
     const g = mkGroup(core, rootId, { label: "g" });
     const c = mkGroup(core, g, { label: "c" });
 
-    expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, c));
+    expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, c), {
+      expected: { cls: CoreOpError, code: "CANNOT_MOVE_INTO_DESCENDANT" },
+    });
     assertCoreInvariants(core, rootId);
   });
 
@@ -1000,7 +1071,9 @@ describe("core/snapshot", () => {
     const invalid = cloneJson(beforeSnap);
     invalid.nextId = invalid.rootId;
 
-    expect(() => core.importSnapshot(invalid)).toThrow();
+    expectThrowsWithCode(CoreApiError, "SNAPSHOT_PARSE_ERROR", () =>
+      core.importSnapshot(invalid),
+    );
     expect(core.exportSnapshot()).toEqual(beforeSnap);
     expect(snapshotState(core, rootId, { viewIds: [rootId, g] })).toEqual(
       beforeState,
@@ -1032,7 +1105,9 @@ describe("core/snapshot", () => {
     const invalid = cloneJson(snap);
     invalid.rootId += 1;
 
-    expect(() => core.importSnapshot(invalid)).toThrow();
+    expectThrowsWithCode(CoreApiError, "SNAPSHOT_ROOT_MISMATCH", () =>
+      core.importSnapshot(invalid),
+    );
   });
 });
 

@@ -36,12 +36,6 @@ LLM assistance operates through transactions, is fully undoable, and never bypas
 
 This axis covers change mechanics: how edits are initiated (user, automation, collaborator), interpreted, applied, persisted, synchronized, replayed, and audited while preserving deterministic correctness.
 
-### Deterministic state
-
-Purpose: Ensure a single person can revise structure indefinitely without corruption, identity loss, ambiguity, or invalid state.
-
-- Define explicit failure types and recovery contracts for invariant violations
-
 ### Deterministic interaction model
 
 Purpose: Ensure editing and navigation remain explicit, stable, and unambiguous under sustained use.

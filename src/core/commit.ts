@@ -1,5 +1,6 @@
 import { batch } from "@preact/signals-core";
 
+import { CoreInvariantError } from "../dev";
 import { makeBlankEntry } from "./model";
 import type {
   ApplyDelta,
@@ -12,6 +13,7 @@ import type {
   TransactionMeta,
   ViewName,
 } from "./model";
+import { CoreApiError } from "./model";
 import type { Connected, ItemId, ValueOrBlank } from "./read";
 import { entryIdFromItemId, itemIdOf, parseItemId } from "./read";
 import type { Selection, SelectionRepairAnchor } from "./select";
@@ -69,7 +71,7 @@ const VALUE_TARGET = "value";
 const emptyApply: ApplyDelta = { removed: [], touched: [] };
 
 function assertNever(_exhaustive: never, message: string): never {
-  throw new Error(message);
+  throw new CoreInvariantError(message);
 }
 
 function storedFromValue(v: ValueOrBlank): EntryContent {
@@ -161,7 +163,9 @@ export function createCommitController(
         const child = model.peekEntry(childId);
         const parentId = child.parentId;
         if (parentId == null)
-          throw new Error("Move inverse expects child to have a parent");
+          throw new CoreInvariantError(
+            "Move inverse expects child to have a parent",
+          );
         const loc = model.locateInParent(childId);
         inverses.push(
           model.ops.move({
@@ -204,7 +208,7 @@ export function createCommitController(
 
         const parentId = cur.parentId;
         if (parentId == null)
-          throw new Error(
+          throw new CoreInvariantError(
             "Remove inverse expects non-root item to have a parent",
           );
         const loc = model.locateInParent(id0);
@@ -545,14 +549,24 @@ export function createCommitController(
 
     const requireTxEntryId = (id: ItemId, opName: string): EntryId => {
       const ref = parseItemId(id);
-      if (!ref) throw new Error(`${opName} expects a valid item id`);
+      if (!ref)
+        throw new CoreApiError(
+          "INVALID_ITEM_ID",
+          `${opName} expects a valid item id`,
+        );
 
       const { entryId, path } = ref;
       if (path.length !== 0)
-        throw new Error(`${opName} does not accept readonly/derived item ids`);
+        throw new CoreApiError(
+          "DERIVED_ITEM_ID",
+          `${opName} does not accept readonly/derived item ids`,
+        );
       const model = currentModel;
       if (!model.hasEntry(entryId) && !pendingCreated.has(entryId)) {
-        throw new Error(`${opName} expects an existing item id`);
+        throw new CoreApiError(
+          "UNKNOWN_ITEM_ID",
+          `${opName} expects an existing item id`,
+        );
       }
 
       return entryId;

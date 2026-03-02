@@ -64,6 +64,34 @@ Rules:
 - Undo/redo MUST preserve IDs for items that continue to exist.
 - Outside Core internals, callers SHOULD treat `ItemId` as opaque and MUST rely on Core APIs rather than parsing item IDs.
 
+## Error taxonomy
+
+Core throws typed errors with stable `code` discriminants. Callers SHOULD branch on error class + `code`, not message text. Messages are diagnostic and are not part of the public contract.
+
+| Class                | Code                            | When thrown                                                      | Recovery contract                 |
+| -------------------- | ------------------------------- | ---------------------------------------------------------------- | --------------------------------- |
+| `CoreInvariantError` | `INVARIANT_VIOLATION`           | Internal invariant violation                                     | Unrecoverable; treat as bug.      |
+| `CoreOpError`        | `ROOT_NOT_SET`                  | Root access before root is configured                            | Mutation failed; state unchanged. |
+| `CoreOpError`        | `UNKNOWN_ENTRY`                 | Op references missing entry id                                   | Mutation failed; state unchanged. |
+| `CoreOpError`        | `DUPLICATE_ENTRY_ID`            | Create op reuses an existing entry id                            | Mutation failed; state unchanged. |
+| `CoreOpError`        | `DUPLICATE_CHILD_LABEL`         | Sibling label uniqueness violated                                | Mutation failed; state unchanged. |
+| `CoreOpError`        | `CANNOT_MOVE_ROOT`              | Move attempts to move root                                       | Mutation failed; state unchanged. |
+| `CoreOpError`        | `CANNOT_MOVE_INTO_SELF`         | Move attempts parent = child                                     | Mutation failed; state unchanged. |
+| `CoreOpError`        | `CANNOT_MOVE_INTO_DESCENDANT`   | Move introduces parent cycle                                     | Mutation failed; state unchanged. |
+| `CoreOpError`        | `PARENT_NOT_GROUP`              | Op requires group parent but parent is non-group                 | Mutation failed; state unchanged. |
+| `CoreOpError`        | `GROUP_MEMBERSHIP_VIA_MOVE`     | Patch tries to set group children directly                       | Mutation failed; state unchanged. |
+| `CoreOpError`        | `CANNOT_CONVERT_NONEMPTY_GROUP` | Patch converts non-empty group to non-group                      | Mutation failed; state unchanged. |
+| `CoreApiError`       | `INVALID_ITEM_ID`               | Mutation API receives malformed `ItemId`                         | Mutation failed; state unchanged. |
+| `CoreApiError`       | `DERIVED_ITEM_ID`               | Mutation API receives readonly/derived `ItemId`                  | Mutation failed; state unchanged. |
+| `CoreApiError`       | `UNKNOWN_ITEM_ID`               | Mutation API receives missing item `ItemId`                      | Mutation failed; state unchanged. |
+| `CoreApiError`       | `SNAPSHOT_ROOT_MISMATCH`        | `core.importSnapshot(...)` root id differs from instance root id | Mutation failed; state unchanged. |
+| `CoreApiError`       | `SNAPSHOT_PARSE_ERROR`          | Snapshot structure/content fails validation                      | Mutation failed; state unchanged. |
+| `CoreReadError`      | `INVALID_ITEM_ID`               | Read API receives malformed `ItemId`                             | Read failed; state unchanged.     |
+| `CoreReadError`      | `UNKNOWN_ITEM_ID`               | Read API references missing entry                                | Read failed; state unchanged.     |
+| `CoreReadError`      | `INVALID_ITEM_PATH`             | Derived path cannot be resolved                                  | Read failed; state unchanged.     |
+| `CoreReadError`      | `CONTENT_MISMATCH`              | Shape reader expected different content type                     | Read failed; state unchanged.     |
+| `CoreReadError`      | `SHAPE_CHILD_NOT_FOUND`         | Shape reader child lookup misses in group                        | Read failed; state unchanged.     |
+
 ## Items
 
 ```ts
