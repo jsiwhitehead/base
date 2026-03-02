@@ -145,7 +145,7 @@ export function createSelectionController(
       const siblings = model.childIdsOf(parentId);
       if (!siblings.length) continue;
 
-      const childId = siblings[index] ?? siblings[index - 1] ?? null;
+      const childId = siblings[index] ?? siblings[siblings.length - 1] ?? null;
       if (childId == null || !model.hasEntry(childId)) continue;
 
       return { container: itemIdOf(parentId), item: itemIdOf(childId) };

@@ -10,10 +10,10 @@ import {
 } from "../../core";
 
 export type ModelPosition = { itemId: ItemId; offset: number };
-export type NavPoint = { focus: Location; target: string };
+export type NavPoint =
+  | { kind: "editing"; focus: Location; target: string }
+  | { kind: "item"; focus: Location };
 type NavMove = { point: NavPoint; edge: "start" | "end" | null };
-
-const DEFAULT_STOP = "default" as const;
 
 export function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
@@ -174,7 +174,6 @@ function isEditLeaf(core: Core, id: ItemId): boolean {
 function editTargetsForItem(core: Core, id: ItemId): string[] {
   const snap = core.item(id);
   if (snap.mode.type === "readonly") return [];
-  if (core.view(id) !== "outline") return [DEFAULT_STOP];
   if (snap.mode.type === "connected") {
     return snap.mode.conn.type === "formula"
       ? ["conn:expr"]
@@ -196,8 +195,12 @@ export function collectNavPoints(core: Core, rootId: ItemId): NavPoint[] {
     }
     if (!isEditLeaf(core, id)) return;
     const focus = locationFor(core, rootId, id);
+    if (core.view(id) !== "outline") {
+      out.push({ kind: "item", focus });
+      return;
+    }
     for (const target of editTargetsForItem(core, id)) {
-      out.push({ focus, target });
+      out.push({ kind: "editing", focus, target });
     }
   };
 
@@ -217,14 +220,17 @@ export function moveNavPoint(
 ): NavMove | null {
   const idx = points.findIndex(
     (p) =>
+      p.kind === current.kind &&
       p.focus.item === current.focus.item &&
       p.focus.container === current.focus.container &&
-      p.target === current.target,
+      (p.kind === "editing" && current.kind === "editing"
+        ? p.target === current.target
+        : true),
   );
   if (idx < 0) return null;
   const next = points[dir === "backward" ? idx - 1 : idx + 1];
   if (!next) return null;
-  if (next.target === DEFAULT_STOP) return { point: next, edge: null };
+  if (next.kind === "item") return { point: next, edge: null };
   return { point: next, edge: dir === "backward" ? "end" : "start" };
 }
 

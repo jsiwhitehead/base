@@ -174,7 +174,10 @@ function adjacentOutlineValueItem(
   fromId: ItemId,
   dir: "up" | "down",
 ): ItemId | null {
-  const points = navPoints.filter((p) => p.target === VALUE_TARGET);
+  const points = navPoints.filter(
+    (p): p is Extract<NavPoint, { kind: "editing" }> =>
+      p.kind === "editing" && p.target === VALUE_TARGET,
+  );
   const idx = points.findIndex((p) => p.focus.item === fromId);
   if (idx < 0) return null;
   const next = points[dir === "up" ? idx - 1 : idx + 1];
@@ -253,24 +256,46 @@ export function handleArrowHorizontal(
   e: KeyboardEvent,
   dir: "backward" | "forward",
 ): boolean {
+  const resolveMovedPoint = (): ReturnType<typeof moveNavPoint> => {
+    const modelSel = core.selection();
+    if (modelSel.type === "editing" && modelSel.target === VALUE_TARGET) {
+      const caretOffset = valueCaretOffset(root, modelSel.location.item, true);
+      if (caretOffset == null) return null;
+      const snap = core.item(modelSel.location.item);
+      if (!isPlainValueItem(snap)) return null;
+      const textLen = valueToText(snap.content.value).length;
+      const atBoundary =
+        dir === "backward" ? caretOffset === 0 : caretOffset === textLen;
+      if (!atBoundary) return null;
+      return moveNavPoint(
+        navPoints,
+        { kind: "editing", focus: modelSel.location, target: VALUE_TARGET },
+        dir,
+      );
+    }
+    if (modelSel.type === "item") {
+      if (
+        modelSel.anchor.container !== modelSel.head.container ||
+        modelSel.anchor.item !== modelSel.head.item
+      )
+        return null;
+      return moveNavPoint(
+        navPoints,
+        { kind: "item", focus: modelSel.head },
+        dir,
+      );
+    }
+    return null;
+  };
+
   state.stickyCaretX = null;
-  const modelSel = core.selection();
-  if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET)
-    return false;
-  const caretOffset = valueCaretOffset(root, modelSel.location.item, true);
-  if (caretOffset == null) return false;
-  const snap = core.item(modelSel.location.item);
-  if (!isPlainValueItem(snap)) return false;
-  const textLen = valueToText(snap.content.value).length;
-  const atBoundary =
-    dir === "backward" ? caretOffset === 0 : caretOffset === textLen;
-  if (!atBoundary) return false;
-  const moved = moveNavPoint(
-    navPoints,
-    { focus: modelSel.location, target: VALUE_TARGET },
-    dir,
-  );
+  const moved = resolveMovedPoint();
   if (!moved) return false;
+  if (moved.point.kind === "item") {
+    e.preventDefault();
+    core.focus({ type: "item", location: moved.point.focus });
+    return true;
+  }
   e.preventDefault();
   const caret =
     moved.edge == null
@@ -522,12 +547,16 @@ export function handleBoundaryDeleteBeforeInput(
     ) {
       const nextStop = moveNavPoint(
         ctx.navPoints.value,
-        { focus: modelSel.location, target: modelSel.target },
+        { kind: "editing", focus: modelSel.location, target: modelSel.target },
         dir,
       );
       ctx.suppressMutationSync.suppressForTurn(true);
       outlineCmd.removeAndPruneAncestors(ctx.core, ctx.rootId, pos.itemId);
       if (!nextStop) return;
+      if (nextStop.point.kind === "item") {
+        ctx.core.focus({ type: "item", location: nextStop.point.focus });
+        return;
+      }
       const caret =
         nextStop.edge == null
           ? undefined

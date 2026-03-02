@@ -860,6 +860,24 @@ function handleOutlineContainerTypeIntent(args: {
   return true;
 }
 
+function resolveFocusAfterRemove(
+  core: UiCore,
+  rootId: ItemId,
+  id: ItemId,
+  prefer: "next" | "previous",
+): Location | null {
+  const primary =
+    prefer === "next" ? nextSibling(core, id) : prevSibling(core, id);
+  if (primary) return locationFor(core, rootId, primary);
+
+  const fallback =
+    prefer === "next" ? prevSibling(core, id) : nextSibling(core, id);
+  if (fallback) return locationFor(core, rootId, fallback);
+
+  const parentId = parentOf(core, rootId, id);
+  return parentId ? locationFor(core, rootId, parentId) : null;
+}
+
 export const outlineView = defineView(({ core, id: rootId }) => {
   const onIntent = (intent: Intent): void => {
     const selection = core.selection();
@@ -871,12 +889,17 @@ export const outlineView = defineView(({ core, id: rootId }) => {
 
     if (intent.type === "DELETE") {
       if (selectedItems.length > 1) {
+        const lastId = selectedItems[selectedItems.length - 1]!;
+        const nextFocus = resolveFocusAfterRemove(core, rootId, lastId, "next");
         deleteBlockSelection(core, rootId, sel);
+        if (nextFocus) core.focus({ type: "item", location: nextFocus });
         return;
       }
       const id = sel.head.item;
       if (core.item(id).mode.type === "readonly") return;
+      const nextFocus = resolveFocusAfterRemove(core, rootId, id, "next");
       cmd.removeAndPruneAncestors(core, rootId, id);
+      if (nextFocus) core.focus({ type: "item", location: nextFocus });
       return;
     }
 

@@ -1160,6 +1160,32 @@ describe("core/selection validity & repair", () => {
     assertFocusedSelectionStructurallyValid(core, rootId);
   });
 
+  test("repair anchor falls back to last surviving sibling when multiple trailing siblings are removed", () => {
+    const { core, rootId } = makeCoreForTest();
+    const a = mkBlank(core, rootId, { label: "a", value: 1 });
+    const b = mkBlank(core, rootId, { label: "b", value: 2 });
+    const c = mkBlank(core, rootId, { label: "c", value: 3 });
+    const d = mkBlank(core, rootId, { label: "d", value: 4 });
+    const e = mkBlank(core, rootId, { label: "e", value: 5 });
+    void a;
+    void c;
+    void e;
+
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: d },
+      head: { container: rootId, item: d },
+    });
+
+    core.commit((t) => {
+      t.remove(c);
+      t.remove(d);
+      t.remove(e);
+    });
+
+    expectSel(core, { container: rootId, item: b });
+  });
+
   test("moving selected item to another parent repairs invalid container pairing", () => {
     const { core, rootId } = makeCoreForTest();
     const g1 = mkGroup(core, rootId, { label: "g1" });

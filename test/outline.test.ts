@@ -467,6 +467,131 @@ describe("outline/container-intents", () => {
     unmount();
   });
 
+  test("DELETE on a non-last item lands on the next sibling", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    const b = mkBlank(core, rootId, { label: "b", value: "b" });
+    const c = mkBlank(core, rootId, { label: "c", value: "c" });
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: b },
+      head: { container: rootId, item: b },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([a, c]);
+    expectSel(core, { container: rootId, item: c });
+
+    unmount();
+  });
+
+  test("DELETE on the last item lands on the previous sibling", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    const b = mkBlank(core, rootId, { label: "b", value: "b" });
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: b },
+      head: { container: rootId, item: b },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([a]);
+    expectSel(core, { container: rootId, item: a });
+
+    unmount();
+  });
+
+  test("DELETE on a block selection lands on the item after the block", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    mkBlank(core, rootId, { label: "a", value: "a" });
+    const b = mkBlank(core, rootId, { label: "b", value: "b" });
+    const c = mkBlank(core, rootId, { label: "c", value: "c" });
+    const d = mkBlank(core, rootId, { label: "d", value: "d" });
+    core.focus({
+      type: "item",
+      anchor: { container: rootId, item: b },
+      head: { container: rootId, item: c },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expectSel(core, { container: rootId, item: d });
+
+    unmount();
+  });
+
+  test("ArrowRight from outline value enters embedded view as item selection, ArrowLeft returns to VALUE", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "ab" });
+    const slider = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, slider, "slider");
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: a },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const outlineRoot = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 2);
+
+    dispatchKey(outlineRoot, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { container: rootId, item: slider });
+
+    dispatchKey(outlineRoot, "ArrowLeft");
+    await flushDomEffects();
+    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("ArrowRight/ArrowLeft boundary traversal uses item stop for embedded table rows", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "ab" });
+    const tableId = mkGroup(core, rootId, { label: "t" });
+    setView(core, tableId, "table");
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    mkBlank(core, r1, { label: "c1", value: 1 });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: a },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const outlineRoot = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 2);
+
+    dispatchKey(outlineRoot, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { container: rootId, item: tableId });
+
+    dispatchKey(outlineRoot, "ArrowLeft");
+    await flushDomEffects();
+    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+
+    unmount();
+  });
+
   test("keydown Tab/Shift+Tab use in-place body transforms", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });

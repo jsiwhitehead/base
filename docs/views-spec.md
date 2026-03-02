@@ -146,7 +146,7 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 
 Pointer hit routing inside `.ui-outline-child`:
 
-- Gutter/rail region (left of `--outline-indent`) keeps frame container behavior (`ITEM_TARGET`). `span.ui-outline-gutter` MUST call `e.preventDefault()` on `pointerdown` (structural chrome requirement for `contenteditable` views; see `docs/content-editable.md`).
+- Gutter/rail region (left of `--outline-indent`) keeps frame `ITEM_TARGET` behavior. `span.ui-outline-gutter` MUST call `e.preventDefault()` on `pointerdown` (structural chrome requirement for `contenteditable` views; see `docs/content-editable.md`).
 - For the non-gutter content area, the value textarea SHOULD span under the header area while its text starts below the header via padding.
 - For clicks in the value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
 - Header interactive controls retain native behavior and MUST win hit-testing over body text-editing surfaces.
@@ -195,6 +195,8 @@ For contenteditable-based implementations, this section specifies the required *
 
 Continue to the adjacent leaf's edit target in the unified traversal. Backward moves to the previous leaf's last target with caret at end. Forward moves to the next leaf's first target with caret at start. At the very first or last edit stop in the entire traversal, no-op.
 
+When the adjacent leaf is a non-outline embedded child view, traversal lands on that row's `ITEM_TARGET` (item selection). From that embedded item stop, boundary NAV back into an outline edit target keeps the standard caret rule: backward -> end, forward -> start.
+
 Enter from a plain value `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain value items, never to `conn:*` fields.
 Shift+Enter from a plain value `value` target inserts a newline in place within the same item and keeps edit focus on that item.
 
@@ -211,9 +213,9 @@ When the contenteditable selection spans multiple plain value items within the s
 
 All outline items use remove.
 
-Container delete removes the subtree and does not explicitly resolve focus in the view; Outline relies on Core anchor-based healing.
+`ITEM_TARGET` delete removes the subtree and Outline resolves focus explicitly in-view: next sibling, then previous sibling, then parent.
 
-Structural deletes (container delete, empty-`value` delete, and join removal of the absorbed neighbor) must prune newly-empty ancestor groups in the same commit, stopping at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
+Structural deletes (`ITEM_TARGET` delete, empty-`value` delete, and join removal of the absorbed neighbor) must prune newly-empty ancestor groups in the same commit, stopping at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
 
 ### Commands and state transitions
 
@@ -347,16 +349,16 @@ Rules:
 
 Grid over rows and cells. Row headers occupy column 0. Column headers occupy row 0. At the edges of the grid (first row, last row, first cell, last cell), NAV is a no-op.
 
-| NAV   | From row container | From cell container                             |
-| ----- | ------------------ | ----------------------------------------------- |
-| Up    | Previous row       | Same column, previous row                       |
-| Down  | Next row           | Same column, next row                           |
-| Left  | Exit to table item | Previous cell (column 0 exits to row container) |
-| Right | First cell         | Next cell                                       |
+| NAV   | From row `ITEM_TARGET` | From cell `ITEM_TARGET`                             |
+| ----- | ---------------------- | --------------------------------------------------- |
+| Up    | Previous row           | Same column, previous row                           |
+| Down  | Next row               | Same column, next row                               |
+| Left  | Exit to table item     | Previous cell (column 0 exits to row `ITEM_TARGET`) |
+| Right | First cell             | Next cell                                           |
 
 #### Tab action
 
-Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows. From row container, Tab enters the first cell and Shift+Tab is a no-op. Tab from edit focus commits and performs the same cell-to-cell movement, landing at item selection on the destination.
+Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows. From row `ITEM_TARGET`, Tab enters the first cell and Shift+Tab is a no-op. Tab from edit focus commits and performs the same cell-to-cell movement, landing at item selection on the destination.
 
 #### Edit traversal scope
 
@@ -372,7 +374,7 @@ All table operations that cross items — NAV, Tab, and Enter — land at item s
 
 Rows use remove with a last-row special case:
 
-- If the table has more than one row, remove the row. After removing a row, focus the next row at row container, then previous row, then table container.
+- If the table has more than one row, remove the row. After removing a row, focus the next row at row `ITEM_TARGET`, then previous row `ITEM_TARGET`, then table `ITEM_TARGET`.
 - If the row is the last remaining row, remove the whole table item.
 
 Cells use clear — reset the cell to blank and stay on the same cell at item selection.

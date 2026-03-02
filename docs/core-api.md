@@ -328,16 +328,18 @@ core.focus({ type: "idle" })
 Rules:
 
 - Selection MUST be the single source of truth for focus state.
-- An editing selection MUST reference existing items.
-- Self-item selection (`location.container === location.item`) MUST be valid only for the root item.
 - `core.focus` is the canonical selection write API.
 - For editing selection, `core.focus` requires an explicit `target` (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`).
-- `opts.caret` is valid only with editing selection, is forwarded as an ephemeral side-channel to `onSelectionChange`, and MUST NOT be stored in `Selection`.
+- `opts.caret` is valid only with editing selection. It is forwarded as an ephemeral side-channel to `onSelectionChange` and MUST NOT be stored in `Selection`.
+- An editing selection MUST reference existing items.
+- Self-item selection (`location.container === location.item`) MUST be valid only for the root item.
 - Item selection supports both `core.focus({ type: "item", anchor, head })` and the collapsed shorthand `core.focus({ type: "item", location })` (equivalent to `anchor=head=location`).
 - Item selection MUST remain valid as long as both endpoint locations are valid.
 - `core.focus(...)` validates selection by item existence and root self-selection constraints; it MUST NOT auto-normalize non-root container/item parent-child mismatches.
 - After any apply, if selection is invalid, Core MUST repair it.
-- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor, choosing the original sibling slot index at the nearest surviving anchored parent level, otherwise the previous sibling. If an item selection is invalid after apply, Core MUST repair to an item selection using the same ancestor-anchor strategy.
+- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor.
+- Local structural repair chooses the original sibling slot index at the nearest surviving anchored parent level; if that slot no longer exists, it chooses the last surviving sibling at that anchored parent level.
+- If an item selection is invalid after local apply, Core MUST repair it to an item selection using the same ancestor-anchor strategy.
 - If local structural repair cannot produce a valid focus, Core MUST fall back to a valid Core-owned selection (root item selection or `idle`).
 - For remote apply, invalid selection MUST become `idle`.
 

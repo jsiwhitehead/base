@@ -40,8 +40,6 @@ This axis covers change mechanics: how edits are initiated (user, automation, co
 
 Purpose: Ensure editing and navigation remain explicit, stable, and unambiguous under sustained use.
 
-- Eliminate ambiguous focus outcomes during navigation at item boundaries and after structural changes
-- Standardize post-operation focus and caret placement after structural changes
 - Eliminate layout shifts caused by selection changes
 - Ensure consistent Intent-to-behavior mapping across base views for shared operations
 - Define command surface for structural operations, view management, and document control
@@ -142,8 +140,9 @@ Purpose: Harden and extend the foundational views that allow structure to be inh
 - Harden outline traversal and range-edit behavior in deeply nested structures
 - Guarantee consistent conversion of outline placeholders to value items on edit
 - Unify prune semantics and stop conditions across outline operations
+- Define and implement table and slider delete-focus landing rules consistent with item-boundary navigation contracts
 - Harden shape enforcement under deep nesting, undo, and complex alignment scenarios
-- Harden Slider value coercion, snapping, and undo semantics
+- Harden slider value coercion, snapping, and undo semantics
 - Provide deterministic column totals in table contexts
 - Harden row and column operations under deletion and undo
 
