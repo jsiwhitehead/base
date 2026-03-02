@@ -91,7 +91,8 @@ const resolve = (
     if (!isResultGroupResult(cur))
       throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
     const item = cur.items[idx];
-    if (!item) throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
+    if (!item)
+      throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
     label = item.label?.trim() || undefined;
     cur = item.result;
   }

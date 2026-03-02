@@ -333,6 +333,7 @@ export function createCore(opts: {
     peekSelection,
     captureRepairAnchor,
     repairAfterLocalApply,
+    coerceEditingToItem,
     coerceAfterRemoteApply,
     resetToRoot,
   } = selectionController;
@@ -397,6 +398,7 @@ export function createCore(opts: {
     getSelection: () => peekSelection(),
     captureRepairAnchor,
     repairAfterLocalApply,
+    coerceEditingToItem,
     coerceAfterRemoteApply,
     clearCachesForRemovedEntries,
     ...(opts.collab ? { collab: opts.collab } : {}),

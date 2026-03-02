@@ -211,7 +211,9 @@ For a given initial state and ordered sequence of committed transactions, the re
 
 ### Post-commit normalization
 
-After every transaction the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected — type coercion, `nonEmpty` enforcement, `alignChildren` sync — in the same undo unit.
+After every transaction, the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected in the same undo unit (type coercion, `nonEmpty` enforcement, `alignChildren` sync).
+
+If a transaction patches `view` on the item currently in editing selection, selection is snapped to item selection at the same location before structural repair runs.
 
 Post-commit normalization MUST be deterministic and MUST NOT depend on runtime view state or DOM state.
 

@@ -855,7 +855,10 @@ export function createModel(): Model {
 
   const replaceState = (data: SnapshotData): void => {
     if (!isRecord(data))
-      throw new CoreApiError("SNAPSHOT_PARSE_ERROR", "snapshot must be an object");
+      throw new CoreApiError(
+        "SNAPSHOT_PARSE_ERROR",
+        "snapshot must be an object",
+      );
 
     const version = readInt(data.version, "snapshot.version");
     if (version !== 1)

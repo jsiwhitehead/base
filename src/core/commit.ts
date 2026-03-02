@@ -60,6 +60,7 @@ type CommitControllerOptions = {
   getSelection: () => Selection;
   captureRepairAnchor: () => SelectionRepairAnchor | null;
   repairAfterLocalApply: (anchor: SelectionRepairAnchor | null) => void;
+  coerceEditingToItem: () => void;
   coerceAfterRemoteApply: () => void;
   clearCachesForRemovedEntries: (removedIds: readonly EntryId[]) => void;
   collab?: { origin: string; send(txn: Transaction): void };
@@ -257,6 +258,35 @@ export function createCommitController(
     return merged;
   };
 
+  const coerceEditingIfViewChanged = (txn: Transaction): void => {
+    const sel = opts.getSelection();
+    if (sel.type !== "editing") return;
+    const eid = entryIdFromItemId(sel.location.item);
+    if (eid == null) return;
+    if (
+      txn.ops.some(
+        (op) =>
+          op.type === "patch" && op.id === eid && op.next.view !== undefined,
+      )
+    ) {
+      opts.coerceEditingToItem();
+    }
+  };
+
+  const normalizeSelectionAfterApply = (
+    txn: Transaction,
+    opts0:
+      | { phase: "local"; anchor: SelectionRepairAnchor | null }
+      | { phase: "remote" },
+  ): void => {
+    coerceEditingIfViewChanged(txn);
+    if (opts0.phase === "local") {
+      opts.repairAfterLocalApply(opts0.anchor);
+      return;
+    }
+    opts.coerceAfterRemoteApply();
+  };
+
   const classifyTextHistoryGroup = (
     txn: Transaction,
     sel: Selection,
@@ -338,7 +368,7 @@ export function createCommitController(
     const shapeRuleDelta = applyShapeRuleOps(modelDelta.touched, inverseAcc);
     merged = mergeApply(merged, shapeRuleDelta);
 
-    opts.coerceAfterRemoteApply();
+    normalizeSelectionAfterApply(txn, { phase: "remote" });
 
     return merged;
   };
@@ -359,7 +389,7 @@ export function createCommitController(
     const shapeRuleDelta = applyShapeRuleOps(userDelta.touched, inverseAcc);
     merged = mergeApply(merged, shapeRuleDelta);
 
-    opts.repairAfterLocalApply(anchor);
+    normalizeSelectionAfterApply(txn, { phase: "local", anchor });
 
     if (isUser) {
       const inverse = currentModel.ops.transaction(inverseAcc.toReversed(), {

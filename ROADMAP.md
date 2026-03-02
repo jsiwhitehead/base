@@ -40,7 +40,6 @@ This axis covers change mechanics: how edits are initiated (user, automation, co
 
 Purpose: Ensure editing and navigation remain explicit, stable, and unambiguous under sustained use.
 
-- Guarantee stable editing, selection validity, and rendering continuity across view switches and mode transitions
 - Eliminate ambiguous focus outcomes during navigation at item boundaries and after structural changes
 - Standardize post-operation focus and caret placement after structural changes
 - Eliminate layout shifts caused by selection changes

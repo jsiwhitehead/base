@@ -34,6 +34,7 @@ export type SelectionController = {
   focus(next: NonEditingFocusSelection, focusOpts?: never): void;
   captureRepairAnchor(): SelectionRepairAnchor | null;
   repairAfterLocalApply(anchor: SelectionRepairAnchor | null): void;
+  coerceEditingToItem(): void;
   coerceAfterRemoteApply(): void;
   resetToRoot(): void;
 };
@@ -181,6 +182,16 @@ export function createSelectionController(
     });
   };
 
+  const coerceEditingToItem = (): void => {
+    const selNow = selectionSignal.peek();
+    if (selNow.type !== "editing") return;
+    setSelection({
+      type: "item",
+      anchor: selNow.location,
+      head: selNow.location,
+    });
+  };
+
   const coerceAfterRemoteApply = (): void => {
     const selNow = selectionSignal.peek();
     if (!isValidSelection(selNow)) setSelection({ type: "idle" });
@@ -202,6 +213,7 @@ export function createSelectionController(
     focus,
     captureRepairAnchor,
     repairAfterLocalApply,
+    coerceEditingToItem,
     coerceAfterRemoteApply,
     resetToRoot,
   };

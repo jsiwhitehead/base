@@ -310,11 +310,16 @@ describe("core/commit (transactionality)", () => {
     mkBlank(core, g, { label: "a", value: 1 });
     const b = mkBlank(core, g, { label: "b", value: 2 });
 
-    expectCommitThrowsNoChange(core, rootId, (t) => {
-      t.setLabel(b, "a");
-    }, {
-      expected: { cls: CoreOpError, code: "DUPLICATE_CHILD_LABEL" },
-    });
+    expectCommitThrowsNoChange(
+      core,
+      rootId,
+      (t) => {
+        t.setLabel(b, "a");
+      },
+      {
+        expected: { cls: CoreOpError, code: "DUPLICATE_CHILD_LABEL" },
+      },
+    );
 
     assertCoreInvariants(core, rootId);
   });
@@ -349,9 +354,14 @@ describe("core/commit (transactionality)", () => {
     const { core, rootId } = makeCoreForTest();
     mkBlank(core, rootId, { label: "x", value: 1 });
 
-    expectCommitThrowsNoChange(core, rootId, (t) => t.setLabel("999999:", "x"), {
-      expected: { cls: CoreApiError, code: "UNKNOWN_ITEM_ID" },
-    });
+    expectCommitThrowsNoChange(
+      core,
+      rootId,
+      (t) => t.setLabel("999999:", "x"),
+      {
+        expected: { cls: CoreApiError, code: "UNKNOWN_ITEM_ID" },
+      },
+    );
   });
 });
 
@@ -1166,6 +1176,72 @@ describe("core/selection validity & repair", () => {
     assertFocusedSelectionStructurallyValid(core, rootId);
   });
 
+  test("user setView on editing item snaps selection to item at same location", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+
+    setView(core, x, "slider");
+
+    expect(core.selection()).toEqual({
+      type: "item",
+      anchor: { container: rootId, item: x },
+      head: { container: rootId, item: x },
+    });
+  });
+
+  test("undo view patch (including null view) snaps editing selection to item", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+    setView(core, x, "slider");
+    expectSel(core, { container: rootId, item: x });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+    setView(core, x, null);
+    expectSel(core, { container: rootId, item: x });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+    core.undo();
+
+    expect(core.selection()).toEqual({
+      type: "item",
+      anchor: { container: rootId, item: x },
+      head: { container: rootId, item: x },
+    });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+    core.undo();
+
+    expect(core.selection()).toEqual({
+      type: "item",
+      anchor: { container: rootId, item: x },
+      head: { container: rootId, item: x },
+    });
+  });
+
   test("remote apply that invalidates selected item sets selection to idle", () => {
     const { core, rootId, deliver } = makeCollabHarness();
 
@@ -1195,6 +1271,72 @@ describe("core/selection validity & repair", () => {
 
     expect(core.selection().type).toBe("idle");
     core.dispose();
+  });
+
+  test("remote setView on editing item snaps selection to item", () => {
+    const { core, rootId, deliver } = makeCollabHarness();
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+    const y = mkBlank(core, rootId, { label: "y", value: 2 });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+
+    deliver({
+      ops: [
+        {
+          type: "patch" as const,
+          id: Number(y.slice(0, y.indexOf(":"))),
+          next: { view: "slider" as const },
+        },
+      ],
+      meta: { origin: "remote-peer", seq: 1 },
+    });
+
+    expect(core.selection()).toEqual({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+
+    deliver({
+      ops: [
+        {
+          type: "patch" as const,
+          id: Number(x.slice(0, x.indexOf(":"))),
+          next: { view: "slider" as const },
+        },
+      ],
+      meta: { origin: "remote-peer", seq: 2 },
+    });
+
+    expect(core.selection()).toEqual({
+      type: "item",
+      anchor: { container: rootId, item: x },
+      head: { container: rootId, item: x },
+    });
+    core.dispose();
+  });
+
+  test("setView on different item keeps editing selection unchanged", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+    const y = mkBlank(core, rootId, { label: "y", value: 2 });
+
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+    setView(core, y, "slider");
+
+    expect(core.selection()).toEqual({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
   });
 });
 
