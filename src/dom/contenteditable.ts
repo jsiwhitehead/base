@@ -334,6 +334,13 @@ export function setDomCaret(point: DomPoint): boolean {
   return setDomSelectionRange(point, point);
 }
 
+export function setContentEditableCaret(
+  surfaceEl: HTMLElement,
+  offset: number,
+): boolean {
+  return setDomCaret(textOffsetToDomPoint(surfaceEl, offset));
+}
+
 export function getDomSelectionPointsInRoot(
   rootEl: HTMLElement,
 ): DomSelectionPoints | null {

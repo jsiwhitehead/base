@@ -290,6 +290,7 @@ type CollabWire = {
 
 type CorePlatformHooks = {
   onSelectionChange?: (selection: Selection, caret?: number) => void;
+  readCurrentCaret?: () => number | undefined;
   resolveIntentHandler?: (
     selection: Selection,
   ) => ((intent: Intent) => void) | null;
@@ -322,6 +323,9 @@ export function createCore(opts: {
     model,
     rootEntryId,
     rootFocus,
+    ...(opts.platform?.readCurrentCaret
+      ? { readCurrentCaret: opts.platform.readCurrentCaret }
+      : {}),
     ...(opts.platform?.onSelectionChange
       ? { onSelectionChange: opts.platform.onSelectionChange }
       : {}),

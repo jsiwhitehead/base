@@ -20,7 +20,10 @@ export type NonEditingFocusSelection =
   | ItemFocusSelectionInput;
 
 type RepairAnchorStep = { parentId: EntryId; index: number };
-export type SelectionRepairAnchor = { steps: readonly RepairAnchorStep[] };
+export type SelectionRepairAnchor = {
+  steps: readonly RepairAnchorStep[];
+  caret?: number;
+};
 
 export type SelectionController = {
   selection(): Selection;
@@ -43,6 +46,7 @@ type SelectionControllerOptions = {
   model: Model;
   rootEntryId: EntryId;
   rootFocus: Location;
+  readCurrentCaret?: () => number | undefined;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
 };
 
@@ -130,7 +134,11 @@ export function createSelectionController(
       cur = loc.parentId;
     }
 
-    return { steps };
+    const caret = opts.readCurrentCaret?.();
+    return {
+      steps,
+      ...(caret !== undefined ? { caret } : {}),
+    };
   };
 
   const resolveRepairAnchor = (
@@ -159,7 +167,7 @@ export function createSelectionController(
   ): void => {
     const selNow = selectionSignal.peek();
     if (isValidSelection(selNow)) {
-      setSelection(selNow);
+      setSelection(selNow, anchor?.caret);
       return;
     }
 

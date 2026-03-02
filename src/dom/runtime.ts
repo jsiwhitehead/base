@@ -10,6 +10,8 @@ import type {
 } from "../core";
 import { ITEM_TARGET, parseKeyIntent } from "../core";
 
+import { setContentEditableCaret } from "./contenteditable";
+
 type Anchor = "top" | "bottom";
 
 type RuntimeEffect =
@@ -104,7 +106,8 @@ export function defineShapedView<S extends ViewShape>(
 
 type TargetBinding = {
   getEl: () => HTMLElement | null;
-  caret?: { set(pos: number): void; getLength(): number };
+  setCaret?: { set(pos: number): void; getLength(): number };
+  getCaret?: () => number | undefined;
 };
 
 type TargetBindingRecord = { binding: TargetBinding; token: number };
@@ -113,7 +116,8 @@ type AttachTargetOpts = {
   focus: Location;
   target: string;
   getEl: () => HTMLElement | null;
-  caret?: { set(pos: number): void; getLength(): number };
+  setCaret?: { set(pos: number): void; getLength(): number };
+  getCaret?: () => number | undefined;
 };
 
 type MountViewOpts = { id: ItemId; containerId: ItemId };
@@ -188,6 +192,7 @@ function computeAnchoredPos(
 
 export type DomRuntime = {
   syncSelection(next: Selection, caret?: number): void;
+  readCurrentCaret(): number | undefined;
 
   attachTarget(opts: AttachTargetOpts): () => void;
 
@@ -291,12 +296,17 @@ export function createRuntime(opts: {
     if (!wasFocused) targetEl.focus({ preventScroll: true });
 
     const caret = focusEff.caret;
-    const canCaret = caret !== undefined && !!binding.caret;
-    const shouldUpdateCaret = canCaret && (!wasFocused || !!focusEff.anchor);
+    const canCaret = caret !== undefined && !!binding.setCaret;
+    const shouldUpdateCaret = canCaret;
 
     if (shouldUpdateCaret) {
-      const len = binding.caret!.getLength();
-      binding.caret!.set(clamp(caret!, 0, len));
+      const len = binding.setCaret!.getLength();
+      binding.setCaret!.set(clamp(caret!, 0, len));
+      return;
+    }
+
+    if (caret !== undefined && targetEl.isContentEditable) {
+      setContentEditableCaret(targetEl, caret);
       return;
     }
 
@@ -360,6 +370,13 @@ export function createRuntime(opts: {
     enqueueDomEffects(next, [], caret);
   };
 
+  const readCurrentCaret = (): number | undefined => {
+    const sel = opts.getSelection();
+    if (sel.type !== "editing") return undefined;
+
+    return resolveBinding(sel.location, sel.target)?.getCaret?.();
+  };
+
   const registerViewRoot = (view: {
     id: ItemId;
     root: HTMLElement;
@@ -387,7 +404,8 @@ export function createRuntime(opts: {
     targetBindings.set(target.target, {
       binding: {
         getEl: target.getEl,
-        ...(target.caret ? { caret: target.caret } : {}),
+        ...(target.setCaret ? { setCaret: target.setCaret } : {}),
+        ...(target.getCaret ? { getCaret: target.getCaret } : {}),
       },
       token: nextToken,
     });
@@ -511,6 +529,7 @@ export function createRuntime(opts: {
 
   return {
     syncSelection,
+    readCurrentCaret,
     attachTarget,
     mountView,
     installGlobalListeners,

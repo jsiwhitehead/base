@@ -112,6 +112,19 @@ function buildOutlineItem(
     const valueAnchor = document.createComment("outline:value");
     itemEl.append(valueAnchor);
 
+    ctx.target(
+      rowFocus,
+      VALUE_TARGET,
+      () => (valueEl.isConnected ? valueEl : null),
+      {
+        getCaret: () => {
+          const outlineRoot = valueEl.closest("[contenteditable='true']");
+          if (!(outlineRoot instanceof HTMLElement)) return undefined;
+          return valueCaretOffset(outlineRoot, itemId) ?? undefined;
+        },
+      },
+    );
+
     ctx.effect(() => {
       const snap = core.item(itemId);
       const newText =

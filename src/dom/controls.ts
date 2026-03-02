@@ -297,7 +297,7 @@ export function buildTextField(
     });
 
     ctx.target(opts.focus, opts.target, () => inp, {
-      caret: {
+      setCaret: {
         set(pos: number): void {
           const p = Math.max(0, Math.min(pos, inp.value.length));
           inp.setSelectionRange(p, p);

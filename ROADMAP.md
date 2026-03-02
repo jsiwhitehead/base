@@ -52,7 +52,7 @@ Purpose: Ensure platform input is translated into unambiguous, deterministic str
 - Harden cross-browser IME and input-event handling
 - Guarantee convergence of keyboard, drag-and-drop, and paste intents
 - Ensure equivalent operation sequences produce identical history and undo behavior
-- Align commit and cancel behavior between textfield and contenteditable editing surfaces
+- Define draft textfield behavior for core-driven changes, including an "underlying value changed" indicator and consistent draft/caret outcomes
 - Standardize navigation and deletion behavior when crossing item boundaries
 - Provide replay harness and fuzz testing for editing flows
 

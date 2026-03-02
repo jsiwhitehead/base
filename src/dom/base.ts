@@ -29,7 +29,10 @@ type Ctx = {
     focus: Location,
     target: string,
     getEl: () => HTMLElement | null,
-    opts?: { caret?: { set(pos: number): void; getLength(): number } },
+    opts?: {
+      setCaret?: { set(pos: number): void; getLength(): number };
+      getCaret?: () => number | undefined;
+    },
   ): void;
 };
 
@@ -284,7 +287,8 @@ export function createComponent(
           focus,
           target,
           getEl,
-          ...(opts?.caret !== undefined ? { caret: opts.caret } : {}),
+          ...(opts?.setCaret !== undefined ? { setCaret: opts.setCaret } : {}),
+          ...(opts?.getCaret !== undefined ? { getCaret: opts.getCaret } : {}),
         }),
       );
     },

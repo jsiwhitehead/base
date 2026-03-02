@@ -28,6 +28,9 @@ export function createUiCoreRuntime(args?: {
     onSelectionChange(selection, caret) {
       runtime?.syncSelection(selection, caret);
     },
+    readCurrentCaret() {
+      return runtime?.readCurrentCaret();
+    },
     resolveIntentHandler(selection) {
       return runtime?.resolveIntentHandler(selection) ?? null;
     },

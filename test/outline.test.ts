@@ -88,6 +88,17 @@ function setContentEditableSelection(
   sel.addRange(range);
 }
 
+function readContentEditableCaret(valueEl: HTMLElement): number | null {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  if (!valueEl.contains(range.startContainer)) return null;
+  const prefix = document.createRange();
+  prefix.selectNodeContents(valueEl);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  return prefix.toString().length;
+}
+
 function dispatchBeforeInput(
   target: Element,
   inputType: string,
@@ -1246,6 +1257,75 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+
+    unmount();
+  });
+
+  test("core.focus updates CE caret even when target is already focused", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: a },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, a)),
+    ).toBe(1);
+
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: a },
+        target: VALUE_TARGET,
+      },
+      { caret: 4 },
+    );
+    await flushDomEffects();
+
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, a)),
+    ).toBe(4);
+
+    unmount();
+  });
+
+  test("undo/redo text edit restores CE caret to pre-apply position", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: a },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const valueEl = requireOutlineValueEl(document.body, a);
+
+    setContentEditableSelection(valueEl, 3);
+    valueEl.textContent = "helXlo";
+    setContentEditableSelection(valueEl, 4);
+    await flushDomEffects();
+
+    core.undo();
+    await flushDomEffects();
+    expect(valueOfId(core, a)).toBe("hello");
+    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expect(readContentEditableCaret(valueEl)).toBe(4);
+
+    core.redo();
+    await flushDomEffects();
+    expect(valueOfId(core, a)).toBe("helXlo");
+    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expect(readContentEditableCaret(valueEl)).toBe(4);
 
     unmount();
   });

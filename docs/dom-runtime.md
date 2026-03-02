@@ -181,7 +181,8 @@ Rules:
 
 - The target registration lifetime is bound to component disposal.
 - `getEl()` resolves the element Core should focus.
-- If `opts.caret` is provided, it is used for caret/selection restore behavior.
+- `opts.setCaret`, when provided, is used for caret/selection restore behavior.
+- `opts.getCaret`, when provided, MAY be called by runtime to capture caret during local repair-anchor capture. This is mainly for live `contenteditable` surfaces.
 
 ## Regions (`ctx.slot`, `ctx.list`)
 
@@ -326,7 +327,10 @@ Read-only semantics:
 Sync rules:
 
 - When not focused on this target, input value syncs from committed state.
-- When focused, local draft is preserved except when committed state changes while draft is clean.
+- When focused, local draft is preserved.
+- If committed state changes while draft is clean, the field syncs to committed state.
+- If draft is dirty, the visible field value remains local draft; external model updates are not pushed into the field mid-session.
+- If the focused editing target is no longer valid (for example item/target removed or focus repaired away), the draft session ends and subsequent renders reflect committed state.
 
 Mirror rules:
 

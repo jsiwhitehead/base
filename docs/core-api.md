@@ -350,6 +350,7 @@ Rules:
 ```ts
 type CorePlatformHooks = {
   onSelectionChange?: (selection: Selection, caret?: number) => void;
+  readCurrentCaret?: () => number | undefined;
   resolveIntentHandler?: (
     selection: Selection,
   ) => ((intent: Intent) => void) | null;
@@ -360,7 +361,8 @@ Rules:
 
 - Core MUST remain headless and MUST NOT depend on DOM APIs directly.
 - Platform callbacks MUST be optional so Core can run headless in tests/non-DOM contexts.
-- `onSelectionChange` is a notification hook used to synchronize platform focus state from Core selection. When called from `core.focus(...)` with editing selection, a numeric caret offset is forwarded as the second argument if provided via `opts.caret`. For non-editing `core.focus(...)`, no caret is forwarded.
+- `onSelectionChange` synchronizes platform focus from Core selection. For `core.focus(...)` with editing selection, it receives `opts.caret` as the second argument when provided. For non-editing selection, no caret is forwarded.
+- `readCurrentCaret` allows runtime-owned surfaces to provide the current caret offset during local repair-anchor capture (`commit`, `undo`, `redo`, and in-pipeline local apply). This is mainly for live surfaces such as `contenteditable`. The value is optional and MUST NOT be stored in `Selection`.
 - `resolveIntentHandler` allows Core to delegate non-global intents to runtime-resolved mounted views.
 - Selection validity in Core MUST remain model-only and MUST NOT depend on runtime view/binding state.
 
