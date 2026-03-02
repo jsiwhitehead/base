@@ -597,13 +597,17 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       const text = getPlainTextFromDataTransfer(e.clipboardData);
       if (!text) return;
       e.preventDefault();
+      core.undoBoundary();
       insertText(editCtx, text);
+      core.undoBoundary();
     });
     const onDrop = gated((e: DragEvent): void => {
       const text = getPlainTextFromDataTransfer(e.dataTransfer);
       if (!text) return;
       e.preventDefault();
+      core.undoBoundary();
       insertText(editCtx, text);
+      core.undoBoundary();
     });
 
     const onCut = (e: ClipboardEvent): void => {
@@ -732,7 +736,6 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         e.stopPropagation();
         const modelSel = core.selection();
         if (modelSel.type !== "editing") return;
-        core.undoBoundary();
         const caretOffset = valueCaretOffset(root, modelSel.location.item) ?? 0;
         suppressMutationSync.suppressForTurn(true);
         const nextFocus = e.shiftKey
@@ -766,11 +769,8 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       core.undoBoundary();
     });
 
-    const onFocusOut = (e: FocusEvent): void => {
+    const onFocusOut = (): void => {
       resetStickyCaretX();
-      const next = e.relatedTarget;
-      if (next instanceof Node && root.contains(next)) return;
-      core.undoBoundary();
     };
     const onBlur = (e: FocusEvent): void => {
       const next = e.relatedTarget;

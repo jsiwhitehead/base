@@ -411,7 +411,6 @@ export function handleInsertParagraphBeforeInput(
   const rangePos = rStart && rEnd ? { start: rStart, end: rEnd } : null;
   if (!rangePos) return;
   if (ctx.core.selection().type !== "editing") return;
-  ctx.core.undoBoundary();
 
   const caretStart = rangePos.start.offset;
   let caretEnd = caretStart;
@@ -515,7 +514,6 @@ export function handleBoundaryDeleteBeforeInput(
     e.preventDefault();
     const modelSel = ctx.core.selection();
     if (modelSel.type !== "editing") return;
-    ctx.core.undoBoundary();
     if (
       modelSel.target === VALUE_TARGET &&
       snap.mode.type === "plain" &&

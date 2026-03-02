@@ -41,7 +41,6 @@ This axis covers change mechanics: how edits are initiated (user, automation, co
 Purpose: Ensure a single person can revise structure indefinitely without corruption, identity loss, ambiguity, or invalid state.
 
 - Define explicit failure types and recovery contracts for invariant violations
-- Define and enforce explicit undo-boundary and coalescing policies for sequences that interleave structural operations and text edits
 - Formalize removed-item and orphan-handling guarantees
 - Ensure equivalent operation sequences produce identical history and undo behavior
 - Guarantee convergence of keyboard, drag-and-drop, and paste intents

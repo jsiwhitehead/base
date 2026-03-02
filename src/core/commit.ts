@@ -63,7 +63,7 @@ type CommitControllerOptions = {
   collab?: { origin: string; send(txn: Transaction): void };
 };
 
-const TEXT_HISTORY_COALESCE_MS = 1000;
+const TEXT_HISTORY_COALESCE_MS = 500;
 const VALUE_TARGET = "value";
 
 const emptyApply: ApplyDelta = { removed: [], touched: [] };

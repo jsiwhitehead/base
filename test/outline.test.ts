@@ -504,6 +504,42 @@ describe("outline/container-intents", () => {
     unmount();
   });
 
+  test("Tab structural transform stays isolated from surrounding text undo", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "a" });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: x },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const outlineRoot = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, x);
+
+    setContentEditableSelection(valueEl, 1);
+    valueEl.textContent = "ab";
+    await flushDomEffects();
+    expect(valueOfId(core, x)).toBe("ab");
+
+    const tab = dispatchKey(outlineRoot, "Tab");
+    await flushDomEffects();
+    expect(tab.defaultPrevented).toBe(true);
+    expect(core.item(x).content.type).toBe("group");
+
+    core.undo();
+    expect(core.item(x).content.type).toBe("value");
+    expect(valueOfId(core, x)).toBe("ab");
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe("a");
+
+    unmount();
+  });
+
   test("Escape from VALUE_TARGET exits to same-item block", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
@@ -834,6 +870,59 @@ describe("outline/clipboard-drop", () => {
 
     unmount();
   });
+
+  test("paste/drop are isolated undo steps from surrounding typing", async () => {
+    const runCase = async (kind: "paste" | "drop"): Promise<void> => {
+      const { core, rootId } = makeCoreRuntime();
+      const a = mkBlank(core, rootId, { label: "a", value: "ab" });
+      core.focus(
+        {
+          type: "editing",
+          location: { container: rootId, item: a },
+          target: VALUE_TARGET,
+        },
+        { caret: 1 },
+      );
+
+      const { unmount } = await mountOutline(core, rootId);
+      const root = requireOutlineRoot(document.body);
+      const valueEl = requireOutlineValueEl(document.body, a);
+
+      setContentEditableSelection(valueEl, 1);
+      valueEl.textContent = "a0b";
+      await flushDomEffects();
+      expect(valueOfId(core, a)).toBe("a0b");
+
+      setContentEditableSelection(valueEl, 2);
+      if (kind === "paste")
+        expect(
+          dispatchClipboardEvent(root, "paste", { textPlain: "X" })
+            .defaultPrevented,
+        ).toBe(true);
+      else expect(dispatchDropText(root, "X").defaultPrevented).toBe(true);
+      await flushDomEffects();
+      expect(valueOfId(core, a)).toBe("a0Xb");
+
+      setContentEditableSelection(valueEl, 3);
+      valueEl.textContent = "a0X1b";
+      await flushDomEffects();
+      expect(valueOfId(core, a)).toBe("a0X1b");
+
+      core.undo();
+      expect(valueOfId(core, a)).toBe("a0Xb");
+
+      core.undo();
+      expect(valueOfId(core, a)).toBe("a0b");
+
+      core.undo();
+      expect(valueOfId(core, a)).toBe("ab");
+
+      unmount();
+    };
+
+    await runCase("paste");
+    await runCase("drop");
+  });
 });
 
 describe("outline/ime-mutation", () => {
@@ -939,6 +1028,46 @@ describe("outline/ime-mutation", () => {
     valueEl.textContent = "abc";
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("abc");
+
+    unmount();
+  });
+
+  test("composition boundaries isolate prior typing from composition edits", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    core.focus(
+      {
+        type: "editing",
+        location: { container: rootId, item: a },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+
+    setContentEditableSelection(valueEl, 1);
+    valueEl.textContent = "ab";
+    await flushDomEffects();
+    expect(valueOfId(core, a)).toBe("ab");
+
+    dispatchComposition(root, "compositionstart");
+    valueEl.textContent = "abx";
+    await flushDomEffects();
+    expect(valueOfId(core, a)).toBe("ab");
+
+    dispatchComposition(root, "compositionend");
+    valueEl.textContent = "abx";
+    await flushDomEffects();
+    expect(valueOfId(core, a)).toBe("abx");
+
+    core.undo();
+    expect(valueOfId(core, a)).toBe("ab");
+
+    core.undo();
+    expect(valueOfId(core, a)).toBe("a");
 
     unmount();
   });

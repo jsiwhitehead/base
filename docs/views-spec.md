@@ -158,6 +158,14 @@ When a group is empty and item selection is on that group (`ITEM_TARGET`):
 - `TYPE` with any other character MUST convert the group to `value` with `""`, focus `value`, and type that character (replace behavior).
 - `CONFIRM` MUST convert the group to `value` with `""` and focus `value`.
 
+#### Undo boundary policy
+
+Outline MUST call `core.undoBoundary()` at semantic breaks:
+
+- `compositionstart` and `compositionend` (IME session boundaries).
+- before and after `onPaste` (paste is its own undo step).
+- before and after `onDrop` (drop is its own undo step).
+
 #### Navigation geometry
 
 Item selection uses sibling-only vertical navigation. At boundaries (no parent, no child, no previous/next sibling), NAV is a no-op.

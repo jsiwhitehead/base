@@ -636,6 +636,37 @@ describe("core/history", () => {
     expect(valueOfId(core, x)).toBe(3);
   });
 
+  test("text coalescing is inclusive at 500ms and splits after 500ms", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 0 });
+    core.focus({
+      type: "editing",
+      location: { container: rootId, item: x },
+      target: VALUE_TARGET,
+    });
+
+    const realNow = Date.now;
+    let now = 10_000;
+    Date.now = () => now;
+    try {
+      core.commit((t) => t.setValue(x, 1));
+      now = 10_500;
+      core.commit((t) => t.setValue(x, 2));
+      now = 11_001;
+      core.commit((t) => t.setValue(x, 3));
+    } finally {
+      Date.now = realNow;
+    }
+
+    expect(valueOfId(core, x)).toBe(3);
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe(2);
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe(0);
+  });
+
   test("setValue edits on different items do not coalesce", () => {
     const { core, rootId } = makeCoreForTest();
     const a = mkBlank(core, rootId, { label: "a", value: 1 });
