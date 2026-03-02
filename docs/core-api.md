@@ -26,6 +26,7 @@ Rules:
 - Core MUST be the single source of truth for model state.
 - `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
 - Collaboration transactions use the exported `Transaction` wire type (model/entry-level ops), while normal editing APIs remain item-based (`core.commit(...)` and `tx.*`).
+- Malformed remote transactions MUST be rejected atomically and MUST NOT mutate Core state.
 - `createCore` MAY receive a view-shape registry (`ViewShape` by `ViewName`) used by `core.view(...)` resolution and post-transaction shape enforcement.
 - `createCore` MAY receive platform callbacks (`CorePlatformHooks`) for DOM/runtime-owned behavior while preserving Core semantics.
 - A Core instance owns all state and MUST be explicitly disposed.
@@ -244,6 +245,8 @@ All transaction operations:
 
 - Removes the item from the tree.
 - If removed item content is `group`, `remove` MUST delete the full subtree rooted at that item.
+- After removal, a surviving item's `parentId` or group `children` MUST NOT reference the removed ID or any removed descendant ID.
+- Connected items whose expressions reference a removed item MUST yield `issue` content on next evaluation and recover automatically if the name is restored.
 
 ## Location and structure
 

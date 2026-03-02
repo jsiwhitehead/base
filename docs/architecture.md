@@ -243,6 +243,14 @@ The invariants defined in this section are stable contracts. Changes to these in
 - Body MUST NOT own `label` or `conn:*`. Header MUST NOT own `value`.
 - A target MUST NOT have multiple owners.
 
+### Tree integrity
+
+- Every non-root item MUST have a `parentId` that references an existing item.
+- Every group item's `children` MUST contain each child exactly once.
+- `parentId` and `children` MUST remain mutually consistent.
+- Cycles MUST NOT exist in any `parentId` chain.
+- Non-blank labels MUST be unique within each parent group.
+
 ### Structural stability under selection
 
 - Each rendered item maps to exactly one stable `.ui-frame`.

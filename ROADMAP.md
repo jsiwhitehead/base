@@ -41,10 +41,6 @@ This axis covers change mechanics: how edits are initiated (user, automation, co
 Purpose: Ensure a single person can revise structure indefinitely without corruption, identity loss, ambiguity, or invalid state.
 
 - Define explicit failure types and recovery contracts for invariant violations
-- Formalize removed-item and orphan-handling guarantees
-- Ensure equivalent operation sequences produce identical history and undo behavior
-- Guarantee convergence of keyboard, drag-and-drop, and paste intents
-- Provide deterministic structural hashing for state equivalence validation
 
 ### Deterministic interaction model
 
@@ -63,6 +59,8 @@ Purpose: Ensure platform input is translated into unambiguous, deterministic str
 
 - Harden contenteditable reconciliation for high-churn edits and operations at item boundaries
 - Harden cross-browser IME and input-event handling
+- Guarantee convergence of keyboard, drag-and-drop, and paste intents
+- Ensure equivalent operation sequences produce identical history and undo behavior
 - Align commit and cancel behavior between textfield and contenteditable editing surfaces
 - Standardize navigation and deletion behavior when crossing item boundaries
 - Provide replay harness and fuzz testing for editing flows
@@ -125,6 +123,7 @@ Purpose: Ensure structural continuity, responsiveness, and diagnosability under 
 - Explicitly surface save, parse, and restore failures to the user
 - Add debounced autosave behavior to reduce write churn during rapid edits
 - Establish performance budgets, representative scale benchmarks, and regression detection
+- Provide deterministic structural hashing for state equivalence validation
 - Provide transaction inspection, replay, and trace tooling
 - Expose dependency graphs for computed outputs to support debugging and error attribution
 - Detect and surface structural inconsistencies at startup and during editing operations

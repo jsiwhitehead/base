@@ -32,6 +32,14 @@ function makeCoreForTest(): { core: Core; rootId: ItemId } {
   return ctx;
 }
 
+function entryIdOf(id: ItemId): number {
+  return Number(id.slice(0, id.indexOf(":")));
+}
+
+function nextEntryId(core: Pick<Core, "exportSnapshot">): number {
+  return core.exportSnapshot().nextId;
+}
+
 type TreeShape =
   | {
       label: string;
@@ -146,6 +154,58 @@ function assertFocusedSelectionStructurallyValid(
   }
 }
 
+type ItemContent = ReturnType<Core["item"]>["content"];
+
+function expectGroupContent(
+  content: ItemContent,
+): Extract<ItemContent, { type: "group" }> {
+  expect(content.type).toBe("group");
+  if (content.type !== "group") throw new Error("Expected group content");
+  return content;
+}
+
+function makeCollabHarness(): {
+  core: Core;
+  rootId: ItemId;
+  deliver: (txn: Transaction) => void;
+} {
+  let onRemote: ((txn: Transaction) => void) | undefined;
+  const collab = {
+    origin: "local",
+    send(_txn: Transaction) {},
+    subscribe(fn: (txn: Transaction) => void) {
+      onRemote = fn;
+      return () => {
+        onRemote = undefined;
+      };
+    },
+  };
+
+  const { shapes } = splitViewRegistrations(viewRegistrations);
+  const { core, rootId } = createCore({ shapes, collab });
+  const deliver = (txn: Transaction) => {
+    if (!onRemote) throw new Error("No collab subscriber");
+    onRemote(txn);
+  };
+  return { core, rootId, deliver };
+}
+
+function expectRemoteRejectedNoMutation(
+  core: Pick<Core, "exportSnapshot">,
+  run: () => void,
+  opts?: { expectThrow?: true },
+): void {
+  const before = core.exportSnapshot();
+  let threw = false;
+  try {
+    run();
+  } catch {
+    threw = true;
+  }
+  if (opts?.expectThrow) expect(threw).toBe(true);
+  expect(core.exportSnapshot()).toEqual(before);
+}
+
 describe("core/basics", () => {
   test("boot: root exists, is group; selection is focused on root", () => {
     const { core, rootId } = makeCoreForTest();
@@ -180,12 +240,9 @@ describe("core/basics", () => {
     const d = mkBlank(core, rootId, { label: "d" });
     setFormula(core, d, "rows");
 
-    const snap = core.item(d);
-    expect(snap.content.type).toBe("group");
-    if (snap.content.type !== "group")
-      throw new Error("Expected group content");
+    const snapGroup = expectGroupContent(core.item(d).content);
 
-    const derived = snap.content.children[0];
+    const derived = snapGroup.children[0];
     if (!derived) throw new Error("Expected derived child");
     expect(core.view(derived)).toBe("outline");
   });
@@ -233,31 +290,28 @@ describe("core/commit (transactionality)", () => {
 
 describe("core/tree editing", () => {
   test("move into self throws and leaves state unchanged", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g = mkGroup(core, rootId, { label: "g" });
 
     expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, g));
     assertCoreInvariants(core, rootId);
-    core.dispose();
   });
 
   test("move into descendant throws and leaves state unchanged", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g = mkGroup(core, rootId, { label: "g" });
     const c = mkGroup(core, g, { label: "c" });
 
     expectCommitThrowsNoChange(core, rootId, (t) => t.move(g, c));
     assertCoreInvariants(core, rootId);
-    core.dispose();
   });
 
   test("move root throws and leaves state unchanged", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g = mkGroup(core, rootId, { label: "g" });
 
     expectCommitThrowsNoChange(core, rootId, (t) => t.move(rootId, g));
     assertCoreInvariants(core, rootId);
-    core.dispose();
   });
 
   test("insertChild appends by default", () => {
@@ -387,12 +441,9 @@ describe("core/locate", () => {
     const d = mkBlank(core, rootId, { label: "d" });
     setFormula(core, d, "rows");
 
-    const snap = core.item(d);
-    expect(snap.content.type).toBe("group");
-    if (snap.content.type !== "group")
-      throw new Error("Expected group content");
+    const snapGroup = expectGroupContent(core.item(d).content);
 
-    const child0 = snap.content.children[0]!;
+    const child0 = snapGroup.children[0]!;
     expect(core.item(child0).mode.type).toBe("readonly");
     expect(core.locate(child0)).toBe(null);
   });
@@ -455,17 +506,74 @@ describe("core/formula", () => {
     const d = mkBlank(core, rootId, { label: "d" });
     setFormula(core, d, "rows");
 
-    const snap = core.item(d);
-    expect(snap.content.type).toBe("group");
-    if (snap.content.type !== "group")
-      throw new Error("Expected group content");
+    const snapGroup = expectGroupContent(core.item(d).content);
 
-    expect(snap.content.children.length).toBe(2);
+    expect(snapGroup.children.length).toBe(2);
 
-    for (const cid of snap.content.children) {
+    for (const cid of snapGroup.children) {
       expect(core.item(cid).mode.type).toBe("readonly");
       expect(core.locate(cid)).toBe(null);
     }
+  });
+
+  test("formula referencing a removed sibling yields an issue", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const a = mkBlank(core, rootId, { label: "a", value: 10 });
+    const b = mkBlank(core, rootId, { label: "b" });
+    setFormula(core, b, "a");
+
+    expect(valueOfId(core, b)).toBe(10);
+
+    core.commit((t) => t.remove(a));
+    expect(core.item(b).content.type).toBe("issue");
+  });
+
+  test("formula dependency chain recovers when a removed name is restored", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const a = mkBlank(core, rootId, { label: "a", value: 10 });
+    const b = mkBlank(core, rootId, { label: "b" });
+    const c = mkBlank(core, rootId, { label: "c" });
+    setFormula(core, b, "a + 1");
+    setFormula(core, c, "b + 1");
+
+    expect(valueOfId(core, b)).toBe(11);
+    expect(valueOfId(core, c)).toBe(12);
+
+    core.commit((t) => t.remove(a));
+    expect(core.item(b).content.type).toBe("issue");
+    expect(core.item(c).content.type).toBe("issue");
+
+    mkBlank(core, rootId, { label: "a", value: 10 });
+    expect(valueOfId(core, b)).toBe(11);
+    expect(valueOfId(core, c)).toBe(12);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("formula dependency chain toggles between issue and value across undo/redo", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const a = mkBlank(core, rootId, { label: "a", value: 10 });
+    const b = mkBlank(core, rootId, { label: "b" });
+    const c = mkBlank(core, rootId, { label: "c" });
+    setFormula(core, b, "a + 1");
+    setFormula(core, c, "b + 1");
+
+    core.commit((t) => t.remove(a));
+    expect(core.item(b).content.type).toBe("issue");
+    expect(core.item(c).content.type).toBe("issue");
+
+    core.undo();
+    expect(valueOfId(core, b)).toBe(11);
+    expect(valueOfId(core, c)).toBe(12);
+
+    core.redo();
+    expect(core.item(b).content.type).toBe("issue");
+    expect(core.item(c).content.type).toBe("issue");
+
+    assertCoreInvariants(core, rootId);
   });
 });
 
@@ -496,12 +604,8 @@ describe("core/query", () => {
     expect(groupLabels(core, listId)).toEqual(["a", "c"]);
 
     {
-      const snap = core.item(listId);
-      expect(snap.content.type).toBe("group");
-      if (snap.content.type !== "group")
-        throw new Error("Expected group content");
-
-      for (const cid of snap.content.children) {
+      const group = expectGroupContent(core.item(listId).content);
+      for (const cid of group.children) {
         expect(core.item(cid).mode.type).not.toBe("readonly");
         expect(core.locate(cid)).not.toBeNull();
       }
@@ -560,6 +664,58 @@ describe("core/query", () => {
       "b1",
       "e1",
     ]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("query result shrinks when a source item is removed", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const rows = mkGroup(core, rootId, { label: "rows" });
+    mkBlank(core, rows, { label: "r1", value: 1 });
+    const r2 = mkBlank(core, rows, { label: "r2", value: 2 });
+    mkBlank(core, rows, { label: "r3", value: 3 });
+
+    const listId = mkBlank(core, rootId, { label: "L" });
+    setQuery(core, listId, { from: "rows" });
+
+    const beforeGroup = expectGroupContent(core.item(listId).content);
+    expect(beforeGroup.children.length).toBe(3);
+
+    core.commit((t) => t.remove(r2));
+
+    const afterGroup = expectGroupContent(core.item(listId).content);
+    expect(afterGroup.children.length).toBe(2);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("query result remove/undo/redo stays consistent", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const rows = mkGroup(core, rootId, { label: "rows" });
+    mkBlank(core, rows, { label: "r1", value: 1 });
+    const r2 = mkBlank(core, rows, { label: "r2", value: 2 });
+    mkBlank(core, rows, { label: "r3", value: 3 });
+
+    const listId = mkBlank(core, rootId, { label: "L" });
+    setQuery(core, listId, { from: "rows" });
+
+    const beforeGroup = expectGroupContent(core.item(listId).content);
+    expect(beforeGroup.children.length).toBe(3);
+
+    core.commit((t) => t.remove(r2));
+
+    const afterRemoveGroup = expectGroupContent(core.item(listId).content);
+    expect(afterRemoveGroup.children.length).toBe(2);
+
+    core.undo();
+    const afterUndoGroup = expectGroupContent(core.item(listId).content);
+    expect(afterUndoGroup.children.length).toBe(3);
+
+    core.redo();
+    const afterRedoGroup = expectGroupContent(core.item(listId).content);
+    expect(afterRedoGroup.children.length).toBe(2);
 
     assertCoreInvariants(core, rootId);
   });
@@ -882,7 +1038,7 @@ describe("core/snapshot", () => {
 
 describe("core/selection validity & repair", () => {
   test("focus keeps existing editing selection even when container/item pair is mismatched", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g1 = mkGroup(core, rootId, { label: "g1" });
     const g2 = mkGroup(core, rootId, { label: "g2" });
     const x = mkBlank(core, g2, { label: "x", value: 1 });
@@ -898,11 +1054,10 @@ describe("core/selection validity & repair", () => {
       location: { container: g1, item: x },
       target: VALUE_TARGET,
     });
-    core.dispose();
   });
 
   test("removing selected item repairs selection to a valid position", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: 1 });
     const b = mkBlank(core, g, { label: "b", value: 2 });
@@ -918,11 +1073,10 @@ describe("core/selection validity & repair", () => {
     core.commit((t) => t.remove(b));
 
     assertFocusedSelectionStructurallyValid(core, rootId);
-    core.dispose();
   });
 
   test("moving selected item to another parent repairs invalid container pairing", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g1 = mkGroup(core, rootId, { label: "g1" });
     const g2 = mkGroup(core, rootId, { label: "g2" });
     const x = mkBlank(core, g1, { label: "x", value: 1 });
@@ -935,24 +1089,10 @@ describe("core/selection validity & repair", () => {
     core.commit((t) => t.move(x, g2));
 
     assertFocusedSelectionStructurallyValid(core, rootId);
-    core.dispose();
   });
 
   test("remote apply that invalidates selected item sets selection to idle", () => {
-    let onRemote: ((txn: Transaction) => void) | undefined;
-    const collab = {
-      origin: "local",
-      send(_txn: Transaction) {},
-      subscribe(fn: (txn: Transaction) => void) {
-        onRemote = fn;
-        return () => {
-          onRemote = undefined;
-        };
-      },
-    };
-
-    const { shapes } = splitViewRegistrations(viewRegistrations);
-    const { core, rootId } = createCore({ shapes, collab });
+    const { core, rootId, deliver } = makeCollabHarness();
 
     let g = "";
     let x = "";
@@ -971,14 +1111,12 @@ describe("core/selection validity & repair", () => {
       head: { container: g, item: x },
     });
 
-    const createTxn = {
+    deliver({
       ops: [
         { type: "remove" as const, id: Number(x.slice(0, x.indexOf(":"))) },
       ],
       meta: { origin: "remote-peer", seq: 1 },
-    };
-    if (!onRemote) throw new Error("No collab subscriber");
-    onRemote(createTxn);
+    });
 
     expect(core.selection().type).toBe("idle");
     core.dispose();
@@ -987,7 +1125,7 @@ describe("core/selection validity & repair", () => {
 
 describe("core/id stability", () => {
   test("move/reorder and undo/redo preserve item ids", () => {
-    const { core, rootId } = makePureCore();
+    const { core, rootId } = makeCoreForTest();
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: 1 });
     const b = mkBlank(core, g, { label: "b", value: 2 });
@@ -1007,7 +1145,6 @@ describe("core/id stability", () => {
     expect(childrenOf(core, g)).toEqual([c, a, b]);
 
     assertCoreInvariants(core, rootId);
-    core.dispose();
   });
 });
 
@@ -1121,6 +1258,178 @@ describe("core/collab (wire contract)", () => {
     core.undo();
     expect(valueOfId(core, x)).toBe(1);
 
+    core.dispose();
+  });
+
+  test("remote structural edits preserve invariants", () => {
+    const { core, rootId, deliver } = makeCollabHarness();
+
+    const g1 = mkGroup(core, rootId, { label: "g1" });
+    const g2 = mkGroup(core, rootId, { label: "g2" });
+    const x = mkBlank(core, g1, { label: "x", value: 1 });
+    const y = mkBlank(core, g1, { label: "y", value: 2 });
+
+    deliver({
+      ops: [
+        {
+          type: "move",
+          spec: {
+            childId: entryIdOf(y),
+            toParentId: entryIdOf(g2),
+          },
+        },
+      ],
+      meta: { origin: "remote-peer", seq: 1 },
+    });
+    expect(childrenOf(core, g2)).toContain(y);
+    assertCoreInvariants(core, rootId);
+
+    deliver({
+      ops: [{ type: "remove", id: entryIdOf(x) }],
+      meta: { origin: "remote-peer", seq: 2 },
+    });
+    expect(() => core.item(x)).toThrow();
+    assertCoreInvariants(core, rootId);
+
+    const zEntryId = nextEntryId(core);
+    deliver({
+      ops: [
+        {
+          type: "create",
+          entry: {
+            id: zEntryId,
+            parentId: null,
+            label: "",
+            view: null,
+            content: { type: "blank" },
+          },
+        },
+        {
+          type: "patch",
+          id: zEntryId,
+          next: { label: "z", content: { type: "scalar", value: 3 } },
+        },
+        {
+          type: "move",
+          spec: { childId: zEntryId, toParentId: entryIdOf(g1) },
+        },
+      ],
+      meta: { origin: "remote-peer", seq: 3 },
+    });
+    expect(childrenOf(core, g1).some((id) => core.item(id).label === "z")).toBe(
+      true,
+    );
+    assertCoreInvariants(core, rootId);
+
+    core.dispose();
+  });
+
+  test("remote remove and restore recompute formula dependencies", () => {
+    const { core, rootId, deliver } = makeCollabHarness();
+
+    const a = mkBlank(core, rootId, { label: "a", value: 10 });
+    const b = mkBlank(core, rootId, { label: "b" });
+    const c = mkBlank(core, rootId, { label: "c" });
+    setFormula(core, b, "a + 1");
+    setFormula(core, c, "b + 1");
+    expect(valueOfId(core, c)).toBe(12);
+
+    deliver({
+      ops: [{ type: "remove", id: entryIdOf(a) }],
+      meta: { origin: "remote-peer", seq: 1 },
+    });
+    expect(core.item(b).content.type).toBe("issue");
+    expect(core.item(c).content.type).toBe("issue");
+
+    const restoredA = nextEntryId(core);
+    deliver({
+      ops: [
+        {
+          type: "create",
+          entry: {
+            id: restoredA,
+            parentId: null,
+            label: "",
+            view: null,
+            content: { type: "blank" },
+          },
+        },
+        {
+          type: "patch",
+          id: restoredA,
+          next: { label: "a", content: { type: "scalar", value: 10 } },
+        },
+        {
+          type: "move",
+          spec: { childId: restoredA, toParentId: entryIdOf(rootId) },
+        },
+      ],
+      meta: { origin: "remote-peer", seq: 2 },
+    });
+    expect(valueOfId(core, b)).toBe(11);
+    expect(valueOfId(core, c)).toBe(12);
+    assertCoreInvariants(core, rootId);
+
+    core.dispose();
+  });
+
+  test("malformed remote move is rejected atomically with no state change", () => {
+    const { core, rootId, deliver } = makeCollabHarness();
+
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: 1 });
+
+    expectRemoteRejectedNoMutation(
+      core,
+      () =>
+        deliver({
+          ops: [
+            {
+              type: "move",
+              spec: { childId: entryIdOf(x), toParentId: 999_999 },
+            },
+          ],
+          meta: { origin: "remote-peer", seq: 1 },
+        }),
+      { expectThrow: true },
+    );
+    assertCoreInvariants(core, rootId);
+    core.dispose();
+  });
+
+  test("malformed remote remove is rejected atomically with no state change", () => {
+    const { core, rootId, deliver } = makeCollabHarness();
+
+    mkBlank(core, rootId, { label: "x", value: 1 });
+    expectRemoteRejectedNoMutation(core, () =>
+      deliver({
+        ops: [{ type: "remove", id: 999_999 }],
+        meta: { origin: "remote-peer", seq: 1 },
+      }),
+    );
+    assertCoreInvariants(core, rootId);
+    core.dispose();
+  });
+
+  test("malformed remote multi-op transaction rolls back earlier ops", () => {
+    const { core, rootId, deliver } = makeCollabHarness();
+
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+    expectRemoteRejectedNoMutation(core, () =>
+      deliver({
+        ops: [
+          {
+            type: "patch",
+            id: entryIdOf(x),
+            next: { content: { type: "scalar", value: 42 } },
+          },
+          { type: "remove", id: 999_999 },
+        ],
+        meta: { origin: "remote-peer", seq: 1 },
+      }),
+    );
+    expect(valueOfId(core, x)).toBe(1);
+    assertCoreInvariants(core, rootId);
     core.dispose();
   });
 });

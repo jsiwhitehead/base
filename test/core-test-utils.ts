@@ -158,6 +158,16 @@ export function setView(
 export function assertCoreInvariants(core: Core, rootId: ItemId): void {
   const seen = new Set<ItemId>();
   const stack: ItemId[] = [rootId];
+  const assertAcyclicParentChain = (start: ItemId): void => {
+    const parentChain = new Set<ItemId>();
+    let cur: ItemId | null = start;
+    while (cur != null) {
+      expect(parentChain.has(cur)).toBe(false);
+      parentChain.add(cur);
+      const loc = core.locate(cur);
+      cur = loc ? loc.parentId : null;
+    }
+  };
 
   while (stack.length) {
     const id = stack.pop()!;
@@ -168,20 +178,38 @@ export function assertCoreInvariants(core: Core, rootId: ItemId): void {
     const isQuery =
       item.mode.type === "connected" && item.mode.conn.type === "query";
 
+    const loc = core.locate(id);
+    if (id === rootId) {
+      expect(loc).toBeNull();
+    } else if (loc) {
+      const parent = core.item(loc.parentId);
+      expect(parent.content.type).toBe("group");
+      assertAcyclicParentChain(id);
+    }
+
     if (item.content.type !== "group") continue;
+
+    const seenLabels = new Set<string>();
     for (const childId of item.content.children) {
-      const loc = core.locate(childId);
-      if (!loc) {
+      const childLoc = core.locate(childId);
+      if (!childLoc) {
         expect(core.item(childId).mode.type).toBe("readonly");
         stack.push(childId);
         continue;
       }
 
-      if (!isQuery) expect(loc.parentId).toBe(id);
-      expect(loc.index).toBeGreaterThanOrEqual(0);
-      expect(loc.index).toBeLessThan(loc.siblings.length);
-      expect(loc.siblings[loc.index]).toBe(childId);
-      expect(loc.siblings.filter((x) => x === childId).length).toBe(1);
+      if (!isQuery) expect(childLoc.parentId).toBe(id);
+      expect(childLoc.index).toBeGreaterThanOrEqual(0);
+      expect(childLoc.index).toBeLessThan(childLoc.siblings.length);
+      expect(childLoc.siblings[childLoc.index]).toBe(childId);
+      expect(childLoc.siblings.filter((x) => x === childId).length).toBe(1);
+      if (!isQuery) {
+        const label = (core.item(childId).label ?? "").trim();
+        if (label) {
+          expect(seenLabels.has(label)).toBe(false);
+          seenLabels.add(label);
+        }
+      }
 
       stack.push(childId);
     }
