@@ -71,33 +71,6 @@ export function el(
   return element;
 }
 
-export function observeHeight(
-  element: HTMLElement,
-  onHeight: (px: number) => void,
-): () => void {
-  const readHeight = (): number =>
-    Math.max(0, element.getBoundingClientRect().height);
-
-  onHeight(readHeight());
-
-  const observer = new ResizeObserver((entries) => {
-    const entry = entries[0];
-    if (!entry) return;
-
-    const borderBox = Array.isArray(entry.borderBoxSize)
-      ? entry.borderBoxSize[0]
-      : entry.borderBoxSize;
-
-    onHeight(Math.max(0, borderBox?.blockSize ?? readHeight()));
-  });
-
-  observer.observe(element, { box: "border-box" });
-
-  return () => {
-    observer.disconnect();
-  };
-}
-
 function createRegion(host: HTMLElement): Region {
   const start = document.createComment("region:start");
   const end = document.createComment("region:end");

@@ -2,7 +2,6 @@ export {
   bindItemFrame,
   createComponent,
   el,
-  observeHeight,
   setBodyClasses,
 } from "./base";
 export {

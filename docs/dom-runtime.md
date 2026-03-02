@@ -24,7 +24,6 @@ Base helpers:
 
 - `createComponent`: lifecycle-safe component factory.
 - `el`: small DOM element constructor helper.
-- `observeHeight`: reactive element height observer.
 - `bindItemFrame`: canonical `.ui-frame` binding helper.
 - `setBodyClasses`: canonical body-root class helper.
 
@@ -203,20 +202,6 @@ Rules:
 - Creates `document.createElement(tag)`.
 - If `className` is provided, sets `element.className = className`.
 - If `text` is provided (including empty string), sets `element.textContent = text`.
-
-### `observeHeight(element, onHeight)`
-
-```ts
-observeHeight(element: HTMLElement, onHeight: (px: number) => void): () => void
-```
-
-Observes the border-box height of an element via `ResizeObserver`.
-
-Rules:
-
-- Calls `onHeight` synchronously once with the current height.
-- Calls `onHeight` on every subsequent resize.
-- Returns a cleanup function that disconnects the observer.
 
 ## Frame binding (`bindItemFrame`)
 

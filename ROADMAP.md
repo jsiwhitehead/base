@@ -36,25 +36,18 @@ LLM assistance operates through transactions, is fully undoable, and never bypas
 
 This axis covers change mechanics: how edits are initiated (user, automation, collaborator), interpreted, applied, persisted, synchronized, replayed, and audited while preserving deterministic correctness.
 
-### Deterministic interaction model
-
-Purpose: Ensure editing and navigation remain explicit, stable, and unambiguous under sustained use.
-
-- Eliminate layout shifts caused by selection changes
-- Ensure consistent Intent-to-behavior mapping across base views for shared operations
-- Define command surface for structural operations, view management, and document control
-
 ### Input resolution
 
-Purpose: Ensure platform input is translated into unambiguous, deterministic structural intent.
+Purpose: Ensure all user input resolves to deterministic structural operations with consistent behavior across input contexts and platforms.
 
 - Harden contenteditable reconciliation for high-churn edits and operations at item boundaries
 - Harden cross-browser IME and input-event handling
-- Guarantee convergence of keyboard, drag-and-drop, and paste intents
-- Ensure equivalent operation sequences produce identical history and undo behavior
+- Validate shared outline operations across all `contenteditable` input paths (keyboard, IME, paste, drop)
+- Guarantee convergence across keyboard, drag-and-drop, and paste
+- Ensure equivalent operation sequences yield identical history and undo outcomes
 - Define draft textfield behavior for core-driven changes, including an "underlying value changed" indicator and consistent draft/caret outcomes
-- Standardize navigation and deletion behavior when crossing item boundaries
-- Provide replay harness and fuzz testing for editing flows
+- Standardize navigation and deletion behavior across item boundaries
+- Provide replay and fuzz testing for editing flows
 
 ### Bounded automation
 
@@ -109,6 +102,7 @@ Purpose: Ensure structural continuity, responsiveness, and diagnosability under 
 
 - Define and implement snapshot migration across format versions
 - Define user-facing checkpoint and named version semantics
+- Define user-facing document control affordances for save, restore, and version selection flows
 - Introduce backend-neutral storage abstraction
 - Guarantee atomic persistence with no partial state on failure
 - Explicitly surface save, parse, and restore failures to the user
@@ -177,6 +171,8 @@ Purpose: Extend how structure can be rendered and interacted with in the UI with
 
 - Define `when` predicate contract and view eligibility resolution rules
 - Implement `when` guards on view assignment
+- Define user-facing view management flows for assigning and switching eligible views
+- Define collapse and expand interaction contracts for hierarchical views
 - Define the interface a view type must implement to integrate with the view system
 - Define a shared indicator system that allows views to choose appropriate structural markers while maintaining visual consistency
 - Add column aggregate display to table view as a view-level feature independent of structural entries
