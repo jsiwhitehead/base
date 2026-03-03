@@ -844,6 +844,22 @@ describe("outline/ce-beforeinput", () => {
     expect(valueOfId(core, b)).toBe("llo");
     expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
 
+    core.undo();
+    await flushDomEffects();
+    expect(childrenOf(core, rootId)).toEqual([a]);
+    expect(valueOfId(core, a)).toBe("hello");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, a)),
+    ).toBe(0);
+
+    core.redo();
+    await flushDomEffects();
+    expect(childrenOf(core, rootId)).toEqual([a, b]);
+    expect(valueOfId(core, a)).toBe("he");
+    expect(valueOfId(core, b)).toBe("llo");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
     unmount();
   });
 
@@ -960,6 +976,13 @@ describe("outline/ce-beforeinput", () => {
     expect(valueOfId(core, a)).toBe("aabb");
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
+    core.undo();
+    await flushDomEffects();
+    expect(childrenOf(core, g)).toEqual([a, b]);
+    expect(valueOfId(core, a)).toBe("aa");
+    expect(valueOfId(core, b)).toBe("bb");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
     unmount();
   });
 
@@ -988,11 +1011,11 @@ describe("outline/ce-beforeinput", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expect(valueOfId(core, nestedRoot)).toBeNull();
-    expectSel(core, { item: nestedRoot, portals: [] });
-
-    dispatchKey(outlineRoot, "Tab");
-    await flushDomEffects();
-    expectSel(core, { item: nestedRoot, portals: [] });
+    expectSel(core, {
+      item: nestedRoot,
+      target: VALUE_TARGET,
+      portals: [],
+    });
 
     unmount();
   });

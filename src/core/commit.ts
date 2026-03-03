@@ -16,6 +16,7 @@ import type {
 import { CoreApiError } from "./model";
 import type { Connected, ItemId, ValueOrBlank } from "./read";
 import { entryIdFromItemId, itemIdOf, parseItemId } from "./read";
+import { VALUE_TARGET } from "./select";
 import type { Selection, SelectionRepairAnchor } from "./select";
 import { enforceViewShapes } from "./shape";
 import type { ViewShape } from "./shape";
@@ -67,7 +68,6 @@ type CommitControllerOptions = {
 };
 
 const TEXT_HISTORY_COALESCE_MS = 500;
-const VALUE_TARGET = "value";
 
 const emptyApply: ApplyDelta = { removed: [], touched: [] };
 

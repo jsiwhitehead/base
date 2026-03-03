@@ -45,6 +45,7 @@ Purpose: Ensure all user input resolves to deterministic structural operations w
 - Validate shared outline operations across all `contenteditable` input paths (keyboard, IME, paste, drop)
 - Guarantee convergence across keyboard, drag-and-drop, and paste
 - Ensure equivalent operation sequences yield identical history and undo outcomes
+- Persist per-entry selection intent (including caret) so structural undo/redo (for example split/join) restores focus mode and target predictably
 - Provide replay and fuzz testing for editing flows
 
 ### Bounded automation

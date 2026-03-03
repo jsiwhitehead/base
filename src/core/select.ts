@@ -4,6 +4,11 @@ import type { EntryId, Model } from "./model";
 import type { ItemId } from "./read";
 import { entryIdFromItemId, itemIdOf } from "./read";
 
+export const LABEL_TARGET = "label" as const;
+export const ITEM_TARGET = "item" as const;
+export const VALUE_TARGET = "value" as const;
+export const connTarget: (key: string) => string = (key) => `conn:${key}`;
+
 export type Location = { item: ItemId; portals: readonly ItemId[] };
 
 export type Selection =
@@ -175,11 +180,18 @@ export function createSelectionController(
     if (anchor) {
       const focusLocation = resolveRepairAnchor(anchor);
       if (focusLocation) {
-        setSelection({
-          type: "item",
-          anchor: focusLocation,
-          head: focusLocation,
-        });
+        if (anchor.caret !== undefined) {
+          setSelection(
+            { type: "editing", location: focusLocation, target: VALUE_TARGET },
+            anchor.caret,
+          );
+        } else {
+          setSelection({
+            type: "item",
+            anchor: focusLocation,
+            head: focusLocation,
+          });
+        }
         return;
       }
     }

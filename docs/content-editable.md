@@ -83,10 +83,7 @@ Native contenteditable undo (`Cmd+Z`) reverts DOM changes without touching the m
 
 **History coalescing.** Consecutive character edits on the same item merge into a single undo entry rather than one per keystroke. The grouping key is item ID + target; merging stops when a non-character operation occurs or after a time window.
 
-**Flushing.** The active coalescing group MUST be flushed at two points:
-
-- `compositionstart` — via `core.undoBoundary()` (see IME section above).
-- Editing root blur — call `core.undoBoundary()` when the editing root loses focus, so that a user who returns to the same item within the coalescing window starts a new undo entry rather than merging with the prior typing run.
+**Flushing.** The active coalescing group MUST be flushed at `compositionstart` via `core.undoBoundary()` (see IME section above).
 
 ### Ownership boundary
 

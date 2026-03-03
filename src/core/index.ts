@@ -25,7 +25,13 @@ import {
   parseItemId,
   refFromItemId,
 } from "./read";
-import { createSelectionController } from "./select";
+import {
+  connTarget,
+  createSelectionController,
+  ITEM_TARGET,
+  LABEL_TARGET,
+  VALUE_TARGET,
+} from "./select";
 import type {
   FocusOpts,
   Location,
@@ -58,11 +64,6 @@ type KeyIntentInput = {
   altKey: boolean;
   shiftKey: boolean;
 };
-
-const LABEL_TARGET = "label" as const;
-const ITEM_TARGET = "item" as const;
-const VALUE_TARGET = "value" as const;
-const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
 function parseKeyIntent(input: KeyIntentInput): Intent | null {
   if (input.key === "Escape") {

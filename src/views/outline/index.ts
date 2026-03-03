@@ -502,14 +502,21 @@ function buildOutlineBody(
       const pos = domPositionToModel(root, anchorNode, winSel.anchorOffset);
       if (!pos) return;
       valueSelectionCollapsed.value = winSel.isCollapsed;
+      const itemFocus: Location = { item: pos.itemId, portals };
+      const selNow = core.selection();
+      if (
+        selNow.type === "editing" &&
+        selNow.target === VALUE_TARGET &&
+        sameFocus(selNow.location, itemFocus)
+      ) {
+        return;
+      }
 
       const focusNode = winSel.focusNode;
       const focusPos =
         focusNode && root.contains(focusNode)
           ? domPositionToModel(root, focusNode, winSel.focusOffset)
           : null;
-
-      const itemFocus: Location = { item: pos.itemId, portals };
       const caret: number | undefined =
         focusPos && focusPos.itemId === pos.itemId
           ? focusPos.offset
