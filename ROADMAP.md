@@ -46,7 +46,6 @@ Purpose: Ensure all user input resolves to deterministic structural operations w
 - Guarantee convergence across keyboard, drag-and-drop, and paste
 - Ensure equivalent operation sequences yield identical history and undo outcomes
 - Define draft textfield behavior for core-driven changes, including an "underlying value changed" indicator and consistent draft/caret outcomes
-- Standardize navigation and deletion behavior across item boundaries
 - Provide replay and fuzz testing for editing flows
 
 ### Bounded automation
@@ -133,7 +132,6 @@ Purpose: Harden and extend the foundational views that allow structure to be inh
 
 - Harden outline traversal and range-edit behavior in deeply nested structures
 - Guarantee consistent conversion of outline placeholders to value items on edit
-- Unify prune semantics and stop conditions across outline operations
 - Define and implement table and slider delete-focus landing rules consistent with item-boundary navigation contracts
 - Harden shape enforcement under deep nesting, undo, and complex alignment scenarios
 - Harden slider value coercion, snapping, and undo semantics

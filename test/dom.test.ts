@@ -89,7 +89,7 @@ function makeMockTransfer(seed?: Record<string, string>): MockTransfer {
   };
 }
 
-describe("dom runtime: createComponent + Ctx primitives", () => {
+describe("dom runtime: createComponent and Ctx primitives", () => {
   test("ctx.on registers and disposes listeners", async () => {
     const { core } = makeCoreRuntime();
     const hit = spy();
@@ -561,7 +561,7 @@ describe("buildTextField contract", () => {
     unmount();
   });
 
-  test("autosize mirror exists + syncs (including trailing newline)", async () => {
+  test("autosize mirror exists and syncs (including trailing newline)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     const focus: Location = { item: id, portals: [] };
@@ -841,7 +841,7 @@ describe("buildTextField contract", () => {
     unmount();
   });
 
-  test("traversable: Backspace at start yields; Delete at end yields", async () => {
+  test("traversable: Backspace at start yields; DELETE at end yields", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     const focus: Location = { item: id, portals: [] };

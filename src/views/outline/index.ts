@@ -33,6 +33,7 @@ import {
   blockSelectionFocuses,
   blockSelectionItems,
   childrenOf,
+  computePruneAncestorsForRemoval,
   collectNavPoints,
   deleteBlockSelection,
   extendBlockSelectionByArrow,
@@ -42,6 +43,7 @@ import {
   nextSibling,
   outlineCmd as cmd,
   parentOf,
+  planBlockRemoval,
   prevSibling,
   readSelectionText,
   sameFocus,
@@ -885,17 +887,34 @@ function resolveFocusAfterRemove(
   id: ItemId,
   prefer: "next" | "previous",
   portals: readonly ItemId[],
+  removedIds: ReadonlySet<ItemId>,
 ): Location | null {
-  const primary =
-    prefer === "next" ? nextSibling(core, id) : prevSibling(core, id);
+  const loc = core.locate(id);
+  const findSibling = (dir: "next" | "previous"): ItemId | null => {
+    if (!loc) return null;
+    if (dir === "next") {
+      for (let i = loc.index + 1; i < loc.siblings.length; i += 1) {
+        const siblingId = loc.siblings[i]!;
+        if (!removedIds.has(siblingId)) return siblingId;
+      }
+      return null;
+    }
+    for (let i = loc.index - 1; i >= 0; i -= 1) {
+      const siblingId = loc.siblings[i]!;
+      if (!removedIds.has(siblingId)) return siblingId;
+    }
+    return null;
+  };
+
+  const primary = findSibling(prefer === "next" ? "next" : "previous");
   if (primary) return { item: primary, portals };
 
-  const fallback =
-    prefer === "next" ? prevSibling(core, id) : nextSibling(core, id);
+  const fallback = findSibling(prefer === "next" ? "previous" : "next");
   if (fallback) return { item: fallback, portals };
 
   const parentId = parentOf(core, rootId, id);
-  return parentId ? { item: parentId, portals } : null;
+  if (!parentId || removedIds.has(parentId)) return null;
+  return { item: parentId, portals };
 }
 
 export const outlineView = defineView(({ core, id: rootId, focus }) => {
@@ -911,25 +930,32 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
     if (intent.type === "DELETE") {
       if (selectedItems.length > 1) {
         const lastId = selectedItems[selectedItems.length - 1]!;
+        const blockPlan = planBlockRemoval(core, rootId, selectedItems);
         const nextFocus = resolveFocusAfterRemove(
           core,
           rootId,
           lastId,
           "next",
           rootPortals,
+          blockPlan.removedIds,
         );
-        deleteBlockSelection(core, rootId, sel, rootPortals);
+        deleteBlockSelection(core, rootId, sel, rootPortals, blockPlan);
         if (nextFocus) core.focus({ type: "item", location: nextFocus });
         return;
       }
       const id = sel.head.item;
       if (core.item(id).mode.type === "readonly") return;
+      const removedIds = new Set<ItemId>([
+        id,
+        ...computePruneAncestorsForRemoval(core, rootId, id),
+      ]);
       const nextFocus = resolveFocusAfterRemove(
         core,
         rootId,
         id,
         "next",
         rootPortals,
+        removedIds,
       );
       cmd.removeAndPruneAncestors(core, rootId, id);
       if (nextFocus) core.focus({ type: "item", location: nextFocus });

@@ -521,6 +521,96 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
+  test("DELETE on sole child of non-root group lands on sibling of pruned group", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: "x" });
+    const z = mkBlank(core, rootId, { label: "z", value: "z" });
+    core.focus({
+      type: "item",
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([a, z]);
+    expectSel(core, { item: z, portals: [] });
+
+    unmount();
+  });
+
+  test("DELETE on sole child of nested sole-child groups lands on sibling of outer pruned group", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    const outer = mkGroup(core, rootId, { label: "outer" });
+    const inner = mkGroup(core, outer, { label: "inner" });
+    const x = mkBlank(core, inner, { label: "x", value: "x" });
+    const z = mkBlank(core, rootId, { label: "z", value: "z" });
+    core.focus({
+      type: "item",
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([a, z]);
+    expectSel(core, { item: z, portals: [] });
+
+    unmount();
+  });
+
+  test("DELETE on final remaining item keeps selection valid", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    core.focus({
+      type: "item",
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(valueOfId(core, rootId)).toBeNull();
+    expectSel(core, { item: rootId, portals: [] });
+
+    unmount();
+  });
+
+  test("DELETE in a multi-child group still lands on next sibling", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: "x" });
+    const y = mkBlank(core, g, { label: "y", value: "y" });
+    const z = mkBlank(core, g, { label: "z", value: "z" });
+    core.focus({
+      type: "item",
+      anchor: { item: y, portals: [] },
+      head: { item: y, portals: [] },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(childrenOf(core, g)).toEqual([x, z]);
+    expectSel(core, { item: z, portals: [] });
+
+    unmount();
+  });
+
   test("DELETE on a block selection lands on the item after the block", async () => {
     const { core, rootId } = makeCoreRuntime();
     mkBlank(core, rootId, { label: "a", value: "a" });
@@ -539,6 +629,28 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
 
     expectSel(core, { item: d, portals: [] });
+
+    unmount();
+  });
+
+  test("DELETE on a trailing block selection lands on previous surviving sibling", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    const b = mkBlank(core, rootId, { label: "b", value: "b" });
+    const c = mkBlank(core, rootId, { label: "c", value: "c" });
+    core.focus({
+      type: "item",
+      anchor: { item: b, portals: [] },
+      head: { item: c, portals: [] },
+    });
+
+    const { domView, unmount } = await mountOutline(core, rootId);
+
+    fireViewKey(domView, "Delete");
+    await flushDomEffects();
+
+    expect(childrenOf(core, rootId)).toEqual([a]);
+    expectSel(core, { item: a, portals: [] });
 
     unmount();
   });
@@ -603,7 +715,7 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
-  test("keydown Tab/Shift+Tab use in-place body transforms", async () => {
+  test("Tab/Shift+Tab keydown uses in-place body transforms", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     const x = mkBlank(core, g, { label: "x", value: "v" });
@@ -789,6 +901,64 @@ describe("outline/ce-beforeinput", () => {
     dispatchKey(outlineRoot, "Tab");
     await flushDomEffects();
     expectSel(core, { item: rootId, portals: [] });
+
+    unmount();
+  });
+
+  test("deleteContentBackward on empty sole-child prunes ancestor and lands on previous edit stop", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "aa" });
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: "" });
+    const z = mkBlank(core, rootId, { label: "z", value: "zz" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: x, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const outlineRoot = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, x), 0);
+    const ev = dispatchBeforeInput(outlineRoot, "deleteContentBackward");
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(childrenOf(core, rootId)).toEqual([a, z]);
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("deleteContentBackward at boundary joins siblings and keeps focus on survivor", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "aa" });
+    const b = mkBlank(core, g, { label: "b", value: "bb" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: b, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const outlineRoot = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, b), 0);
+    const ev = dispatchBeforeInput(outlineRoot, "deleteContentBackward");
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(childrenOf(core, g)).toEqual([a]);
+    expect(valueOfId(core, a)).toBe("aabb");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -1492,7 +1662,7 @@ describe("outline/block-selection", () => {
     unmount();
   });
 
-  test("Delete removes selected block range", async () => {
+  test("DELETE removes selected block range", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     const b = mkBlank(core, rootId, { label: "b", value: "y" });
@@ -1516,6 +1686,36 @@ describe("outline/block-selection", () => {
     expect(ev.defaultPrevented).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([c]);
+
+    unmount();
+  });
+
+  test("DELETE on block selection prunes newly empty ancestor groups", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "a" });
+    const g = mkGroup(core, rootId, { label: "g" });
+    const x = mkBlank(core, g, { label: "x", value: "x" });
+    const y = mkBlank(core, g, { label: "y", value: "y" });
+    const z = mkBlank(core, rootId, { label: "z", value: "z" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    dispatchPointerEvent(
+      requireOutlineGutterEl(document.body, x),
+      "pointerdown",
+    );
+    dispatchPointerEvent(
+      requireOutlineGutterEl(document.body, y),
+      "pointerdown",
+      { shiftKey: true },
+    );
+    await flushDomEffects();
+
+    const ev = dispatchKey(requireOutlineRoot(document.body), "Delete");
+    await flushDomEffects();
+    expect(ev.defaultPrevented).toBe(true);
+
+    expect(childrenOf(core, rootId)).toEqual([a, z]);
 
     unmount();
   });

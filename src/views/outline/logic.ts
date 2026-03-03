@@ -14,6 +14,12 @@ export type NavPoint =
   | { kind: "editing"; focus: Location; target: string }
   | { kind: "item"; focus: Location };
 type NavMove = { point: NavPoint; edge: "start" | "end" | null };
+export type BlockRemovalPlan = {
+  removeRoots: ItemId[];
+  pruneIds: ItemId[];
+  removedIds: Set<ItemId>;
+  shouldBlankRoot: boolean;
+};
 
 export function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
@@ -40,7 +46,7 @@ export function parentOf(
   return loc ? loc.parentId : null;
 }
 
-function computePruneAncestorsForRemoval(
+export function computePruneAncestorsForRemoval(
   core: Core,
   rootId: ItemId,
   removedId: ItemId,
@@ -65,6 +71,110 @@ function computePruneAncestorsForRemoval(
   }
 
   return out;
+}
+
+function itemDepth(core: Core, id: ItemId): number {
+  let depth = 0;
+  let cur: ItemId | null = id;
+  while (cur) {
+    const loc = core.locate(cur);
+    if (!loc) break;
+    depth += 1;
+    cur = loc.parentId;
+  }
+  return depth;
+}
+
+function shouldBlankRootAfterRemovals(
+  core: Core,
+  rootId: ItemId,
+  removedIds: ReadonlySet<ItemId>,
+): boolean {
+  if (removedIds.size === 0) return false;
+  const rootSnap = core.item(rootId);
+  return (
+    rootSnap.content.type === "group" &&
+    rootSnap.content.children.every((cid) => removedIds.has(cid))
+  );
+}
+
+function normalizeRemovalRoots(
+  core: Core,
+  itemIds: readonly ItemId[],
+): ItemId[] {
+  const candidate = new Set<ItemId>(itemIds);
+  const out: ItemId[] = [];
+  const seen = new Set<ItemId>();
+  for (const id of itemIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    let curLoc = core.locate(id);
+    let hasSelectedAncestor = false;
+    while (curLoc) {
+      const parentId = curLoc.parentId;
+      if (candidate.has(parentId)) {
+        hasSelectedAncestor = true;
+        break;
+      }
+      curLoc = core.locate(parentId);
+    }
+    if (!hasSelectedAncestor) out.push(id);
+  }
+  return out;
+}
+
+function computePruneAncestorsForRemovals(
+  core: Core,
+  rootId: ItemId,
+  removedIds: readonly ItemId[],
+): ItemId[] {
+  const removed = new Set<ItemId>(removedIds);
+  const pruneIds: ItemId[] = [];
+  while (true) {
+    const candidates = new Set<ItemId>();
+    for (const removedId of removed) {
+      let cur = removedId;
+      while (true) {
+        const parentId = parentOf(core, rootId, cur);
+        if (!parentId || parentId === rootId) break;
+        candidates.add(parentId);
+        cur = parentId;
+      }
+    }
+
+    let changed = false;
+    for (const parentId of candidates) {
+      if (removed.has(parentId)) continue;
+      const parent = core.item(parentId);
+      if (parent.mode.type === "readonly") continue;
+      if (parent.content.type !== "group") continue;
+      if (!parent.content.children.every((childId) => removed.has(childId))) {
+        continue;
+      }
+      removed.add(parentId);
+      pruneIds.push(parentId);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+
+  return pruneIds.sort((a, b) => itemDepth(core, b) - itemDepth(core, a));
+}
+
+export function planBlockRemoval(
+  core: Core,
+  rootId: ItemId,
+  itemIds: readonly ItemId[],
+): BlockRemovalPlan {
+  const removeRoots = normalizeRemovalRoots(core, itemIds);
+  const pruneIds = computePruneAncestorsForRemovals(core, rootId, removeRoots);
+  const removedIds = new Set<ItemId>([...removeRoots, ...pruneIds]);
+  const shouldBlankRoot = shouldBlankRootAfterRemovals(
+    core,
+    rootId,
+    removedIds,
+  );
+  return { removeRoots, pruneIds, removedIds, shouldBlankRoot };
 }
 
 export function firstChild(core: Core, id: ItemId): ItemId | null {
@@ -163,11 +273,20 @@ export function deleteBlockSelection(
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
   portals: readonly ItemId[],
+  plan?: BlockRemovalPlan,
 ): void {
-  const itemIds = blockSelectionItems(core, rootId, sel, portals);
-  if (itemIds.length === 0) return;
+  const nextPlan =
+    plan ??
+    planBlockRemoval(
+      core,
+      rootId,
+      blockSelectionItems(core, rootId, sel, portals),
+    );
+  if (nextPlan.removeRoots.length === 0) return;
   core.commit((t) => {
-    for (const id of itemIds) t.remove(id);
+    for (const id of nextPlan.removeRoots) t.remove(id);
+    for (const pruneId of nextPlan.pruneIds) t.remove(pruneId);
+    if (nextPlan.shouldBlankRoot) t.setValue(rootId, null);
   });
 }
 
@@ -267,11 +386,12 @@ export function textLengthForTarget(
 export const outlineCmd = {
   removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, id);
-    const rootSnap = core.item(rootId);
     const removedIds = new Set<ItemId>([id, ...pruneIds]);
-    const shouldBlankRoot =
-      rootSnap.content.type === "group" &&
-      rootSnap.content.children.every((cid) => removedIds.has(cid));
+    const shouldBlankRoot = shouldBlankRootAfterRemovals(
+      core,
+      rootId,
+      removedIds,
+    );
 
     core.commit((t) => {
       t.remove(id);

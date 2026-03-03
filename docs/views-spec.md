@@ -211,11 +211,13 @@ When the contenteditable selection spans multiple plain value items within the s
 
 #### DELETE policy
 
-All outline items use remove.
-
-`ITEM_TARGET` delete removes the subtree and Outline resolves focus explicitly in-view: next sibling, then previous sibling, then parent.
-
-Structural deletes (`ITEM_TARGET` delete, empty-`value` delete, and join removal of the absorbed neighbor) must prune newly-empty ancestor groups in the same commit, stopping at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
+- Outline uses remove semantics for delete (not clear-in-place).
+- `ITEM_TARGET` delete MUST remove the selected subtree.
+- After remove, focus lands on: next sibling, then previous sibling, then parent.
+- Parent fallback is valid only if that parent survives the same commit.
+- If no live destination exists, Core repair MUST apply.
+- Structural deletes (`ITEM_TARGET` delete, block delete, empty-`value` delete, and join removal of the absorbed neighbor) MUST prune newly-empty ancestor groups in the same commit.
+- Pruning stops at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
 
 ### Commands and state transitions
 

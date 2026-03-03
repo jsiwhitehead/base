@@ -261,10 +261,12 @@ Behavior:
 
 Behavior:
 
-- Chooses item-selection landing after remove in this order: preferred sibling, opposite sibling, then parent.
-- Returns a location with the same `portals` passed in.
+- Landing order after remove: preferred sibling, opposite sibling, then parent.
+- Parent fallback is valid only if that parent survives the same remove/prune commit.
+- Returns `null` when no live destination exists (caller/Core repair handles fallback).
+- Returned location keeps the same `portals`.
 - Local remove/navigation handlers SHOULD pass the current selection portals.
-- Use `portals: []` only for explicit Core root/repair fallback, not local view landing.
+- Use `portals: []` only for explicit Core root/repair fallback, not normal view landing.
 
 ## `buildTextField` contract
 
