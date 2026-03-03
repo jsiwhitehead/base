@@ -12,14 +12,11 @@ import { ITEM_TARGET, parseKeyIntent } from "../core";
 
 import { setContentEditableCaret } from "./contenteditable";
 
-type Anchor = "top" | "bottom";
-
 type RuntimeEffect =
   | {
       type: "FOCUS";
       focus: Location;
       target: string;
-      anchor?: Anchor;
       caret?: number;
     }
   | { type: "CLEAR_FOCUS" };
@@ -179,17 +176,6 @@ function viewAtTarget(
   return null;
 }
 
-function computeAnchoredPos(
-  text: string,
-  column: number,
-  anchor: Anchor,
-): number {
-  const nl = anchor === "top" ? text.indexOf("\n") : text.lastIndexOf("\n");
-  if (nl === -1) return clamp(column, 0, text.length);
-  const lineStart = anchor === "top" ? 0 : nl + 1;
-  return lineStart + clamp(column, 0, text.length - lineStart);
-}
-
 export type DomRuntime = {
   syncSelection(next: Selection, caret?: number): void;
   readCurrentCaret(): number | undefined;
@@ -314,15 +300,7 @@ export function createRuntime(opts: {
 
     if (!isTextInput(targetEl) || wasFocused) return;
 
-    const pos = focusEff.anchor
-      ? computeAnchoredPos(
-          targetEl.value,
-          targetEl.value.length,
-          focusEff.anchor,
-        )
-      : targetEl.value.length;
-
-    targetEl.setSelectionRange(pos, pos);
+    targetEl.setSelectionRange(targetEl.value.length, targetEl.value.length);
   };
 
   const applyDomEffects = (sel: Selection, effects: RuntimeEffect[]): void => {

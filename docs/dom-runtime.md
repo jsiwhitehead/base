@@ -123,6 +123,7 @@ Registers a DOM listener and guarantees cleanup on disposal.
 
 Rules:
 
+- `target` MAY be an `HTMLElement`, `Document`, or `Window`.
 - Listener MUST be removed when the parent component is disposed.
 - Handler receives the typed DOM event for the registered event name.
 

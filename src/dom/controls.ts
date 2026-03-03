@@ -58,16 +58,6 @@ function syncValue(inp: TextInputElement, next: string): void {
   inp.setSelectionRange(Math.min(start, len), Math.min(end, len));
 }
 
-function isFirstLine(inp: HTMLTextAreaElement): boolean {
-  const pos = inp.selectionStart ?? 0;
-  return inp.value.lastIndexOf("\n", Math.max(0, pos - 1)) < 0;
-}
-
-function isLastLine(inp: HTMLTextAreaElement): boolean {
-  const pos = inp.selectionEnd ?? inp.selectionStart ?? 0;
-  return inp.value.indexOf("\n", pos) < 0;
-}
-
 type TextFieldState = { text: string; readOnly: boolean };
 
 type TextFieldOpts = {
@@ -231,11 +221,7 @@ export function buildTextField(
       if (dir) {
         const shouldYield =
           (dir === "left" && !hasSel && start === 0) ||
-          (dir === "right" && !hasSel && end === len) ||
-          (dir === "up" &&
-            (inp instanceof HTMLTextAreaElement ? isFirstLine(inp) : true)) ||
-          (dir === "down" &&
-            (inp instanceof HTMLTextAreaElement ? isLastLine(inp) : true));
+          (dir === "right" && !hasSel && end === len);
 
         if (shouldYield) {
           yieldCommit(e);

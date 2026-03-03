@@ -6,10 +6,22 @@ import { DEV, devAssert } from "../dev";
 import type { Component, UiCore } from "./runtime";
 
 type Ctx = {
-  on<T extends HTMLElement, K extends keyof HTMLElementEventMap>(
-    target: T,
+  on<K extends keyof HTMLElementEventMap>(
+    target: HTMLElement,
     type: K,
     handler: (e: HTMLElementEventMap[K]) => void,
+    opts?: AddEventListenerOptions,
+  ): void;
+  on<K extends keyof DocumentEventMap>(
+    target: Document,
+    type: K,
+    handler: (e: DocumentEventMap[K]) => void,
+    opts?: AddEventListenerOptions,
+  ): void;
+  on<K extends keyof WindowEventMap>(
+    target: Window,
+    type: K,
+    handler: (e: WindowEventMap[K]) => void,
     opts?: AddEventListenerOptions,
   ): void;
 
@@ -194,12 +206,15 @@ export function createComponent(
   };
 
   const ctx: Ctx = {
-    on(target, type, handler, opts) {
-      const listener = (event: Event) =>
-        handler.call(target, event as HTMLElementEventMap[typeof type]);
-      target.addEventListener(type, listener as EventListener, opts);
+    on(
+      target: HTMLElement | Document | Window,
+      type: string,
+      handler: (e: Event) => void,
+      opts?: AddEventListenerOptions,
+    ) {
+      target.addEventListener(type, handler as EventListener, opts);
       bag.add(() =>
-        target.removeEventListener(type, listener as EventListener, opts),
+        target.removeEventListener(type, handler as EventListener, opts),
       );
     },
 

@@ -1186,7 +1186,7 @@ describe("buildTextField contract", () => {
     unmount();
   });
 
-  test("traversable textarea: Up/Down yield only on first/last line", async () => {
+  test("traversable textarea: Up/Down stay native and do not yield", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     const focus: Location = { item: id, portals: [] };
@@ -1227,15 +1227,15 @@ describe("buildTextField contract", () => {
     inp.setSelectionRange(0, 0);
     {
       const r = dispatchKey(inp, "ArrowUp");
-      expect(r.defaultPrevented).toBe(true);
-      expect(r.bubbled).toBe(1);
+      expect(r.defaultPrevented).toBe(false);
+      expect(r.bubbled).toBe(0);
     }
 
     inp.setSelectionRange(inp.value.length, inp.value.length);
     {
       const r = dispatchKey(inp, "ArrowDown");
-      expect(r.defaultPrevented).toBe(true);
-      expect(r.bubbled).toBe(1);
+      expect(r.defaultPrevented).toBe(false);
+      expect(r.bubbled).toBe(0);
     }
 
     unmount();

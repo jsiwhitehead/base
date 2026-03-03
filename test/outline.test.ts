@@ -890,9 +890,9 @@ describe("outline/ce-beforeinput", () => {
     expect(valueOfId(core, a)).toBe("h");
     expect(valueOfId(core, b)).toBe("o");
     expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, b))).toBe(
-      0,
-    );
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, b)),
+    ).toBe(0);
 
     unmount();
   });
@@ -994,9 +994,9 @@ describe("outline/ce-beforeinput", () => {
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
-      2,
-    );
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, a)),
+    ).toBe(2);
 
     unmount();
   });
@@ -1327,7 +1327,9 @@ describe("outline/clipboard-drop", () => {
     const valueEl = requireOutlineValueEl(document.body, a);
     setContentEditableSelection(valueEl, 2);
 
-    const paste = dispatchClipboardEvent(root, "paste", { textPlain: "foo\nbar" });
+    const paste = dispatchClipboardEvent(root, "paste", {
+      textPlain: "foo\nbar",
+    });
     await flushDomEffects();
     expect(paste.defaultPrevented).toBe(true);
 
@@ -1338,9 +1340,9 @@ describe("outline/clipboard-drop", () => {
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, b)).toBe("barllo");
     expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, b))).toBe(
-      3,
-    );
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, b)),
+    ).toBe(3);
 
     unmount();
   });
@@ -1373,9 +1375,9 @@ describe("outline/clipboard-drop", () => {
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, b)).toBe("barllo");
     expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, b))).toBe(
-      3,
-    );
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, b)),
+    ).toBe(3);
 
     unmount();
   });
@@ -1397,7 +1399,9 @@ describe("outline/clipboard-drop", () => {
     const valueEl = requireOutlineValueEl(document.body, a);
     setContentEditableSelection(valueEl, 2);
 
-    const paste = dispatchClipboardEvent(root, "paste", { textPlain: "foo\nbar" });
+    const paste = dispatchClipboardEvent(root, "paste", {
+      textPlain: "foo\nbar",
+    });
     await flushDomEffects();
     expect(paste.defaultPrevented).toBe(true);
 
@@ -1413,9 +1417,9 @@ describe("outline/clipboard-drop", () => {
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("hello");
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
-      2,
-    );
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, a)),
+    ).toBe(2);
 
     core.redo();
     await flushDomEffects();
@@ -1425,9 +1429,9 @@ describe("outline/clipboard-drop", () => {
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, redoneB)).toBe("barllo");
     expectSel(core, { item: redoneB, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, redoneB))).toBe(
-      3,
-    );
+    expect(
+      readContentEditableCaret(requireOutlineValueEl(document.body, redoneB)),
+    ).toBe(3);
 
     unmount();
   });

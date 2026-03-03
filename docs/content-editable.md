@@ -118,7 +118,7 @@ A pure model->DOM approach — preventing all `beforeinput` — would break:
 - **OS autocorrect and spell-check** — corrections may arrive without a clean `beforeinput` signal
 - **Voice dictation** — inserts natively
 
-Regular character insertion and within-item deletion are also intentionally allowed through, to preserve native typing feel and OS text services. The browser has its own text editing state machine that cannot be safely replicated.
+`insertText` events from regular typing are intercepted via `beforeinput`, prevented, and applied directly to the model. The MutationObserver is necessary for the cases above, which either bypass `beforeinput` entirely or cannot have it cancelled.
 
 ### What to watch
 
@@ -162,6 +162,8 @@ The MutationObserver callback fires as a **microtask** — after all synchronous
 Renderer idempotency MUST consider sentinel presence, not only parsed text equality.
 
 **Signal safety guard.** Before overwriting `valueEl.textContent` from a model signal, check whether the browser cursor is currently inside that element. If so, skip the update — the browser is mid-edit and the observer is already syncing live. Once the cursor leaves, the effect reconciles if needed.
+
+**Direct DOM writes in `beforeinput` handlers.** If a `beforeinput` handler commits a model change and must place the caret immediately (for example after delete or insert), it writes the new content directly to the value element first. This is intentional: while the caret is inside the element, the signal safety guard blocks effect-driven writes. The MutationObserver then ignores the later microtask mutation because the DOM already matches the model.
 
 ---
 

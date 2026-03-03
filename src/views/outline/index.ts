@@ -32,7 +32,6 @@ import {
 import {
   blockSelectionFocuses,
   blockSelectionItems,
-  childrenOf,
   computePruneAncestorsForRemoval,
   collectNavPoints,
   deleteBlockSelection,
@@ -653,7 +652,7 @@ function buildOutlineBody(
 
     const onKeyDown = gated((e: KeyboardEvent): void => {
       if (e.isComposing) return;
-      if (e.key === "Enter" && Date.now() - state.compositionEndedAt < 500) {
+      if (e.key === "Enter" && Date.now() - state.compositionEndedAt < 100) {
         e.preventDefault();
         return;
       }
@@ -817,42 +816,29 @@ function buildOutlineBody(
       resetStickyCaretX();
     };
 
+    ctx.on(root, "beforeinput", onBeforeInput);
+    ctx.on(root, "copy", onCopy);
+    ctx.on(root, "cut", onCut);
+    ctx.on(root, "paste", onPaste);
+    ctx.on(root, "drop", onDrop);
+    ctx.on(root, "dragstart", onDragStart);
+    ctx.on(root, "blur", onBlur);
+    ctx.on(root, "focus", onFocus);
+    ctx.on(root, "compositionstart", onCompositionStart);
+    ctx.on(root, "compositionend", onCompositionEnd);
+    ctx.on(root, "focusout", onFocusOut);
+    ctx.on(root, "keydown", onKeyDown);
+    ctx.on(root, "pointerdown", onPointerDown);
+    ctx.on(document, "selectionchange", onSelectionChange);
+
     ctx.effect(() => {
       mutObs.observe(root, {
         characterData: true,
         childList: true,
         subtree: true,
       });
-      document.addEventListener("selectionchange", onSelectionChange);
-      root.addEventListener("beforeinput", onBeforeInput);
-      root.addEventListener("copy", onCopy);
-      root.addEventListener("cut", onCut);
-      root.addEventListener("paste", onPaste);
-      root.addEventListener("drop", onDrop);
-      root.addEventListener("dragstart", onDragStart);
-      root.addEventListener("blur", onBlur);
-      root.addEventListener("focus", onFocus);
-      root.addEventListener("compositionstart", onCompositionStart);
-      root.addEventListener("compositionend", onCompositionEnd);
-      root.addEventListener("focusout", onFocusOut);
-      root.addEventListener("keydown", onKeyDown);
-      root.addEventListener("pointerdown", onPointerDown);
       return () => {
         mutObs.disconnect();
-        document.removeEventListener("selectionchange", onSelectionChange);
-        root.removeEventListener("beforeinput", onBeforeInput);
-        root.removeEventListener("copy", onCopy);
-        root.removeEventListener("cut", onCut);
-        root.removeEventListener("paste", onPaste);
-        root.removeEventListener("drop", onDrop);
-        root.removeEventListener("dragstart", onDragStart);
-        root.removeEventListener("blur", onBlur);
-        root.removeEventListener("focus", onFocus);
-        root.removeEventListener("compositionstart", onCompositionStart);
-        root.removeEventListener("compositionend", onCompositionEnd);
-        root.removeEventListener("focusout", onFocusOut);
-        root.removeEventListener("keydown", onKeyDown);
-        root.removeEventListener("pointerdown", onPointerDown);
       };
     });
 
@@ -888,7 +874,7 @@ function handleOutlineItemTypeIntent(args: {
   return true;
 }
 
-function resolveFocusAfterRemove(
+function resolveFocusAfterOutlineRemove(
   core: UiCore,
   rootId: ItemId,
   id: ItemId,
@@ -938,7 +924,7 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
       if (selectedItems.length > 1) {
         const lastId = selectedItems[selectedItems.length - 1]!;
         const blockPlan = planBlockRemoval(core, rootId, selectedItems);
-        const nextFocus = resolveFocusAfterRemove(
+        const nextFocus = resolveFocusAfterOutlineRemove(
           core,
           rootId,
           lastId,
@@ -956,7 +942,7 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
         id,
         ...computePruneAncestorsForRemoval(core, rootId, id),
       ]);
-      const nextFocus = resolveFocusAfterRemove(
+      const nextFocus = resolveFocusAfterOutlineRemove(
         core,
         rootId,
         id,
@@ -966,36 +952,6 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
       );
       cmd.removeAndPruneAncestors(core, rootId, id);
       if (nextFocus) core.focus({ type: "item", location: nextFocus });
-      return;
-    }
-
-    if (
-      intent.type === "TYPE" &&
-      intent.char === "=" &&
-      handleItemIntent({ core, sel, intent })
-    )
-      return;
-
-    if (
-      (intent.type === "TYPE" || intent.type === "CONFIRM") &&
-      core.item(sel.head.item).content.type === "group" &&
-      childrenOf(core, sel.head.item).length === 0
-    ) {
-      const groupId = sel.head.item;
-      if (core.item(groupId).mode.type === "readonly") return;
-      if (intent.type === "TYPE") {
-        core.commit((t) => t.setValue(groupId, intent.char));
-        core.focus(
-          { type: "editing", location: focus, target: VALUE_TARGET },
-          { caret: intent.char.length },
-        );
-        return;
-      }
-      core.commit((t) => t.setValue(groupId, ""));
-      core.focus(
-        { type: "editing", location: focus, target: VALUE_TARGET },
-        { caret: 0 },
-      );
       return;
     }
 
@@ -1022,7 +978,23 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
         core.focus({ type: "item", location: nextFocus });
         return;
       }
-      case "TYPE":
+      case "TYPE": {
+        const id = sel.head.item;
+        const item = core.item(id);
+        if (item.mode.type === "readonly") return;
+        if (intent.char === "=" && handleItemIntent({ core, sel, intent }))
+          return;
+        if (
+          item.content.type === "group" &&
+          item.content.children.length === 0
+        ) {
+          core.commit((t) => t.setValue(id, intent.char));
+          core.focus(
+            { type: "editing", location: focus, target: VALUE_TARGET },
+            { caret: intent.char.length },
+          );
+          return;
+        }
         if (
           handleOutlineItemTypeIntent({
             core,
@@ -1034,7 +1006,22 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
           return;
         handleItemIntent({ core, sel, intent });
         return;
+      }
       case "CONFIRM": {
+        const id = sel.head.item;
+        const item = core.item(id);
+        if (
+          item.content.type === "group" &&
+          item.content.children.length === 0 &&
+          item.mode.type !== "readonly"
+        ) {
+          core.commit((t) => t.setValue(id, ""));
+          core.focus(
+            { type: "editing", location: focus, target: VALUE_TARGET },
+            { caret: 0 },
+          );
+          return;
+        }
         if (handleItemIntent({ core, sel, intent })) return;
         const nextId = cmd.insertSibling(core, focus, "after");
         if (!nextId) return;

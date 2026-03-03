@@ -65,7 +65,9 @@ type CapturedSubtree = { entry: Entry; children: CapturedSubtree[] };
 type LocalPipelineCtx =
   | { type: "user"; userHistoryCtx: UserCommitHistoryCtx }
   | { type: "non-user" };
-type ApplyPipelineCtx = { type: "remote" } | { type: "local"; local: LocalPipelineCtx };
+type ApplyPipelineCtx =
+  | { type: "remote" }
+  | { type: "local"; local: LocalPipelineCtx };
 
 type CommitControllerOptions = {
   model: Model;
@@ -525,7 +527,9 @@ export function createCommitController(
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
     applyPipeline(stamped, {
       type: "local",
-      local: userHistoryCtx ? { type: "user", userHistoryCtx } : { type: "non-user" },
+      local: userHistoryCtx
+        ? { type: "user", userHistoryCtx }
+        : { type: "non-user" },
     });
     sendLocalTxn(stamped);
   };
@@ -690,7 +694,10 @@ export function createCommitController(
     const selBeforeUndo = opts.getSelection();
     const caretBeforeUndo =
       selBeforeUndo.type === "editing" ? opts.readCurrentCaret?.() : undefined;
-    const redoSnapshot = captureSelectionSnapshot(selBeforeUndo, caretBeforeUndo);
+    const redoSnapshot = captureSelectionSnapshot(
+      selBeforeUndo,
+      caretBeforeUndo,
+    );
     applyLocal(last.inverse);
     if (!patchesViewOnSelection(last.inverse, last.before)) {
       opts.restoreSelectionIfValid(last.before);
