@@ -61,12 +61,12 @@ type SelectionSnapshot =
   | { type: "idle" }
   | {
       type: "item";
-      anchor: { container: ItemId; item: ItemId };
-      head: { container: ItemId; item: ItemId };
+      anchor: { item: ItemId; portals: readonly ItemId[] };
+      head: { item: ItemId; portals: readonly ItemId[] };
     }
   | {
       type: "editing";
-      location: { container: ItemId; item: ItemId };
+      location: { item: ItemId; portals: readonly ItemId[] };
       target: string;
     };
 
@@ -161,13 +161,13 @@ function assertFocusedSelectionStructurallyValid(
   const selection = core.selection();
   if (selection.type === "editing") {
     const item = core.item(selection.location.item);
-    const container = core.item(selection.location.container);
     expect(item.content.type).not.toBe("issue");
-    expect(container.content.type).not.toBe("issue");
-    if (selection.location.item === selection.location.container) return;
+    for (const portalId of selection.location.portals) {
+      const portal = core.item(portalId);
+      expect(portal.mode.type).toBe("connected");
+    }
     const loc = core.locate(selection.location.item);
-    expect(loc).not.toBeNull();
-    expect(loc!.parentId).toBe(selection.location.container);
+    if (selection.location.item !== rootId) expect(loc).not.toBeNull();
     assertCoreInvariants(core, rootId);
   } else if (selection.type === "item") {
     const anchor = core.item(selection.anchor.item);
@@ -233,7 +233,7 @@ describe("core/basics", () => {
     const { core, rootId } = makeCoreForTest();
 
     expect(core.item(rootId).content.type).toBe("group");
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
   });
 
   test("item(invalid format) throws", () => {
@@ -857,7 +857,7 @@ describe("core/history", () => {
     const x = mkBlank(core, rootId, { label: "x", value: 0 });
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
@@ -878,7 +878,7 @@ describe("core/history", () => {
     const x = mkBlank(core, rootId, { label: "x", value: 0 });
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
@@ -950,8 +950,8 @@ describe("core/history", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: g, item: a },
-      head: { container: g, item: a },
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     const before = tree(core, rootId);
@@ -1053,7 +1053,7 @@ describe("core/snapshot", () => {
     setQuery(core, q, { from: "table", where: "", orderBy: "label" });
     core.focus({
       type: "editing",
-      location: { container: row, item: a },
+      location: { item: a, portals: [] },
       target: VALUE_TARGET,
     });
 
@@ -1068,7 +1068,7 @@ describe("core/snapshot", () => {
     expect(
       snapshotState(core, rootId, { viewIds: [rootId, table, row, a, q] }).tree,
     ).toEqual(beforeTree.tree);
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
   });
 
   test("importSnapshot invalid input throws and leaves state unchanged", () => {
@@ -1096,14 +1096,14 @@ describe("core/snapshot", () => {
     core.commit((t) => t.setValue(x, 2));
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
     const snap = core.exportSnapshot();
     core.importSnapshot(snap);
 
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
 
     core.undo();
     expect(valueOfId(core, x)).toBe(2);
@@ -1122,21 +1122,21 @@ describe("core/snapshot", () => {
 });
 
 describe("core/selection validity & repair", () => {
-  test("focus keeps existing editing selection even when container/item pair is mismatched", () => {
+  test("focus keeps existing editing selection even when item/portal location is non-canonical", () => {
     const { core, rootId } = makeCoreForTest();
-    const g1 = mkGroup(core, rootId, { label: "g1" });
+    mkGroup(core, rootId, { label: "g1" });
     const g2 = mkGroup(core, rootId, { label: "g2" });
     const x = mkBlank(core, g2, { label: "x", value: 1 });
 
     core.focus({
       type: "editing",
-      location: { container: g1, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
     expect(core.selection()).toEqual({
       type: "editing",
-      location: { container: g1, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
   });
@@ -1152,8 +1152,8 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: g, item: b },
-      head: { container: g, item: b },
+      anchor: { item: b, portals: [] },
+      head: { item: b, portals: [] },
     });
     core.commit((t) => t.remove(b));
 
@@ -1173,8 +1173,8 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: d },
-      head: { container: rootId, item: d },
+      anchor: { item: d, portals: [] },
+      head: { item: d, portals: [] },
     });
 
     core.commit((t) => {
@@ -1183,10 +1183,10 @@ describe("core/selection validity & repair", () => {
       t.remove(e);
     });
 
-    expectSel(core, { container: rootId, item: b });
+    expectSel(core, { item: b, portals: [] });
   });
 
-  test("moving selected item to another parent repairs invalid container pairing", () => {
+  test("moving selected item to another parent repairs invalid item focus location", () => {
     const { core, rootId } = makeCoreForTest();
     const g1 = mkGroup(core, rootId, { label: "g1" });
     const g2 = mkGroup(core, rootId, { label: "g2" });
@@ -1194,12 +1194,36 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: g1, item: x },
-      head: { container: g1, item: x },
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
     });
     core.commit((t) => t.move(x, g2));
 
     assertFocusedSelectionStructurallyValid(core, rootId);
+  });
+
+  test("NAV out for item range is head-driven (item and portals)", () => {
+    const { core, rootId } = makeCoreForTest();
+    const g1 = mkGroup(core, rootId, { label: "g1" });
+    const g2 = mkGroup(core, rootId, { label: "g2" });
+    const a = mkBlank(core, g1, { label: "a", value: 1 });
+    const b = mkBlank(core, g2, { label: "b", value: 2 });
+    const q = mkBlank(core, rootId, { label: "q", value: null });
+    setFormula(core, q, "1");
+
+    core.focus({
+      type: "item",
+      anchor: { item: a, portals: [q] },
+      head: { item: b, portals: [] },
+    });
+
+    core.dispatch({ type: "NAV", dir: "out", mode: "step" });
+
+    expect(core.selection()).toEqual({
+      type: "item",
+      anchor: { item: g2, portals: [] },
+      head: { item: g2, portals: [] },
+    });
   });
 
   test("user setView on editing item snaps selection to item at same location", () => {
@@ -1208,7 +1232,7 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
@@ -1216,8 +1240,8 @@ describe("core/selection validity & repair", () => {
 
     expect(core.selection()).toEqual({
       type: "item",
-      anchor: { container: rootId, item: x },
-      head: { container: rootId, item: x },
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
     });
   });
 
@@ -1227,44 +1251,44 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
     setView(core, x, "slider");
-    expectSel(core, { container: rootId, item: x });
+    expectSel(core, { item: x, portals: [] });
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
     setView(core, x, null);
-    expectSel(core, { container: rootId, item: x });
+    expectSel(core, { item: x, portals: [] });
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
     core.undo();
 
     expect(core.selection()).toEqual({
       type: "item",
-      anchor: { container: rootId, item: x },
-      head: { container: rootId, item: x },
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
     });
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
     core.undo();
 
     expect(core.selection()).toEqual({
       type: "item",
-      anchor: { container: rootId, item: x },
-      head: { container: rootId, item: x },
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
     });
   });
 
@@ -1284,8 +1308,8 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: g, item: x },
-      head: { container: g, item: x },
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
     });
 
     deliver({
@@ -1306,7 +1330,7 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
@@ -1323,7 +1347,7 @@ describe("core/selection validity & repair", () => {
 
     expect(core.selection()).toEqual({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
 
@@ -1340,8 +1364,8 @@ describe("core/selection validity & repair", () => {
 
     expect(core.selection()).toEqual({
       type: "item",
-      anchor: { container: rootId, item: x },
-      head: { container: rootId, item: x },
+      anchor: { item: x, portals: [] },
+      head: { item: x, portals: [] },
     });
     core.dispose();
   });
@@ -1353,14 +1377,14 @@ describe("core/selection validity & repair", () => {
 
     core.focus({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
     setView(core, y, "slider");
 
     expect(core.selection()).toEqual({
       type: "editing",
-      location: { container: rootId, item: x },
+      location: { item: x, portals: [] },
       target: VALUE_TARGET,
     });
   });
@@ -1416,7 +1440,7 @@ describe("core/determinism", () => {
       });
       core.focus({
         type: "editing",
-        location: { container: g, item: b },
+        location: { item: b, portals: [] },
         target: VALUE_TARGET,
       });
       core.undo();

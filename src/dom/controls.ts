@@ -78,7 +78,7 @@ type TextFieldOpts = {
   className?: string;
   inputClassName?: string;
   kind?: TextFieldKind;
-  onExitToContainer?: () => void;
+  onExitToItem?: () => void;
   commit: (text: string) => void;
   getState: () => TextFieldState;
 };
@@ -120,7 +120,10 @@ export function buildTextField(
       return (
         selection.type === "editing" &&
         selection.location.item === opts.focus.item &&
-        selection.location.container === opts.focus.container &&
+        selection.location.portals.length === opts.focus.portals.length &&
+        selection.location.portals.every(
+          (portal, i) => portal === opts.focus.portals[i],
+        ) &&
         selection.target === opts.target
       );
     };
@@ -180,7 +183,7 @@ export function buildTextField(
         if (e.key === "Enter" || e.key === "Tab") {
           commitDraft();
           prevent(e);
-          opts.onExitToContainer?.();
+          opts.onExitToItem?.();
         }
         e.stopPropagation();
         return;
@@ -370,7 +373,8 @@ export function resolveFocusAfterRemove(
   core: UiCore,
   removedId: ItemId,
   prefer: "prev" | "next",
-): { focus: Location } | null {
+  portals: readonly ItemId[],
+): Location | null {
   const loc = core.locate(removedId);
   if (!loc) return null;
 
@@ -379,14 +383,10 @@ export function resolveFocusAfterRemove(
   const sibling =
     prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
   if (sibling) {
-    return { focus: { container: loc.parentId, item: sibling } };
+    return { item: sibling, portals };
   }
 
-  const parentLoc = core.locate(loc.parentId);
-  if (!parentLoc) {
-    return { focus: { container: loc.parentId, item: loc.parentId } };
-  }
-  return { focus: { container: parentLoc.parentId, item: loc.parentId } };
+  return { item: loc.parentId, portals };
 }
 
 export function handleItemIntent(args: {
@@ -471,7 +471,7 @@ export function buildItemHeader(
         multiline: false,
         autosize: true,
         kind: "isolated",
-        onExitToContainer: () => {
+        onExitToItem: () => {
           core.focus({ type: "item", location: args.focus });
         },
         commit: args.commitLabel,

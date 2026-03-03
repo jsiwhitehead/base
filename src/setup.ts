@@ -72,7 +72,7 @@ export function createApp(opts: CreateAppOpts): App {
     t.setView(rootId, rootView);
   });
 
-  const focus = { container: rootId, item: rootId };
+  const focus = { item: rootId, portals: [] };
 
   const appRoot = createComponent(core, (ctx) => {
     const rootFrame = el("div");
@@ -82,7 +82,7 @@ export function createApp(opts: CreateAppOpts): App {
     bindItemFrame(ctx, { core, focus }, rootFrame);
 
     ctx.slot(rootFrame, () => {
-      return core.mountView({ id: rootId, containerId: rootId });
+      return core.mountView({ id: rootId, portals: [] });
     });
 
     return rootFrame;

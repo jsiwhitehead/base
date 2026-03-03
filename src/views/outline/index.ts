@@ -37,7 +37,6 @@ import {
   deleteBlockSelection,
   extendBlockSelectionByArrow,
   firstChild,
-  locationFor,
   focusKey,
   isPlainValueItem,
   nextSibling,
@@ -73,16 +72,20 @@ const OUTLINE_ROW_POINTERDOWN_IGNORE_SELECTOR =
 
 function buildOutlineItem(
   core: UiCore,
-  rootId: ItemId,
   itemId: ItemId,
-  onGutterPointerDown: (itemId: ItemId, shiftKey: boolean) => void,
+  portals: readonly ItemId[],
+  onGutterPointerDown: (
+    itemId: ItemId,
+    portals: readonly ItemId[],
+    shiftKey: boolean,
+  ) => void,
   selectedRowKeys: Signal<Set<string>>,
   valueSelectionCollapsed: Signal<boolean>,
   beforeProgrammaticDomWrite: () => void,
 ): Component {
   return createComponent(core, (ctx) => {
     const itemEl = el("div", "ui-frame ui-outline-child");
-    const rowFocus = locationFor(core, rootId, itemId);
+    const rowFocus: Location = { item: itemId, portals };
     itemEl.dataset.id = itemId;
     if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
@@ -102,7 +105,7 @@ function buildOutlineItem(
     gutterEl.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      onGutterPointerDown(itemId, e.shiftKey);
+      onGutterPointerDown(itemId, portals, e.shiftKey);
     });
     itemEl.append(gutterEl);
 
@@ -137,8 +140,7 @@ function buildOutlineItem(
       const isEditingThisValue =
         modelSel.type === "editing" &&
         modelSel.target === VALUE_TARGET &&
-        modelSel.location.item === rowFocus.item &&
-        modelSel.location.container === rowFocus.container;
+        sameFocus(modelSel.location, rowFocus);
       const sel = window.getSelection();
       if (
         isEditingThisValue &&
@@ -176,9 +178,7 @@ function buildOutlineItem(
     ctx.effect(() => {
       const sel = core.selection();
       const isRowFocusedTarget =
-        sel.type === "editing" &&
-        sel.location.item === rowFocus.item &&
-        sel.location.container === rowFocus.container;
+        sel.type === "editing" && sameFocus(sel.location, rowFocus);
       const isFocusedTextCaret =
         isRowFocusedTarget &&
         sel.target === VALUE_TARGET &&
@@ -205,9 +205,7 @@ function buildOutlineItem(
       const sel = core.selection();
       const focusedHeaderTarget =
         sel.type === "editing" &&
-        sel.location.item === itemId &&
-        sel.location.container ===
-          locationFor(core, rootId, itemId).container &&
+        sameFocus(sel.location, rowFocus) &&
         (sel.target === LABEL_TARGET || sel.target.startsWith("conn:"));
 
       const shouldShowHeader =
@@ -216,7 +214,7 @@ function buildOutlineItem(
         focusedHeaderTarget;
       if (!shouldShowHeader) return null;
 
-      const focus = locationFor(core, rootId, itemId);
+      const focus: Location = { item: itemId, portals };
       const canEditLabel = () => core.item(itemId).mode.type !== "readonly";
       const commitLabel = (text: string) => {
         if (!canEditLabel()) return;
@@ -241,10 +239,12 @@ function buildOutlineItem(
 
     ctx.slot(itemEl, () => {
       if (core.view(itemId) === "outline") return null;
-      const focus = locationFor(core, rootId, itemId);
+      const snap = core.item(itemId);
+      const childPortals =
+        snap.mode.type === "connected" ? [...portals, itemId] : portals;
       const mounted = core.mountView({
         id: itemId,
-        containerId: focus.container,
+        portals: childPortals,
       });
       mounted.el.contentEditable = "false";
       return mounted;
@@ -279,8 +279,8 @@ function buildOutlineItem(
       (childId) =>
         buildOutlineItem(
           core,
-          rootId,
           childId,
+          portals,
           onGutterPointerDown,
           selectedRowKeys,
           valueSelectionCollapsed,
@@ -292,7 +292,11 @@ function buildOutlineItem(
   });
 }
 
-function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
+function buildOutlineBody(
+  core: UiCore,
+  rootId: ItemId,
+  portals: readonly ItemId[],
+): Component {
   return createComponent(core, (ctx) => {
     const root = el("div");
     setBodyClasses(root, "outline");
@@ -305,13 +309,13 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       const snap = core.item(rootId);
       return snap.content.type === "group" ? snap.content.children : [];
     });
-    const navPoints = computed(() => collectNavPoints(core, rootId));
+    const navPoints = computed(() => collectNavPoints(core, rootId, portals));
 
     const selectedRowKeys = computed(() => {
       const sel = core.selection();
       if (sel.type !== "item") return new Set<string>();
       return new Set(
-        blockSelectionFocuses(core, rootId, sel).map((focus) =>
+        blockSelectionFocuses(core, rootId, sel, portals).map((focus) =>
           focusKey(focus),
         ),
       );
@@ -332,12 +336,14 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     };
     const valueSelectionCollapsed = signal(true);
 
-    const onGutterPointerDown = (itemId: ItemId, shiftKey: boolean): void => {
+    const onGutterPointerDown = (
+      itemId: ItemId,
+      portals: readonly ItemId[],
+      shiftKey: boolean,
+    ): void => {
       suppressSelectionChangeFromGutter.suppressForTurn(true);
 
-      const loc = core.locate(itemId);
-      if (!loc) return;
-      const nextFocus: Location = { container: loc.parentId, item: itemId };
+      const nextFocus: Location = { item: itemId, portals };
       if (shiftKey) {
         const sel = core.selection();
         if (sel.type === "item") {
@@ -458,6 +464,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
     const editCtx: EditCtx = {
       core,
       rootId,
+      portals,
       root,
       navPoints,
       applyEditingResult,
@@ -473,8 +480,8 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
       (childId) =>
         buildOutlineItem(
           core,
-          rootId,
           childId,
+          portals,
           onGutterPointerDown,
           selectedRowKeys,
           valueSelectionCollapsed,
@@ -500,9 +507,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
           ? domPositionToModel(root, focusNode, winSel.focusOffset)
           : null;
 
-      const loc = core.locate(pos.itemId);
-      if (!loc) return;
-      const itemFocus: Location = { container: loc.parentId, item: pos.itemId };
+      const itemFocus: Location = { item: pos.itemId, portals };
       const caret: number | undefined =
         focusPos && focusPos.itemId === pos.itemId
           ? focusPos.offset
@@ -657,6 +662,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
             rootId,
             sel,
             e.key === "ArrowUp" ? "up" : "down",
+            portals,
           );
           if (!next) return;
           e.preventDefault();
@@ -671,7 +677,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
           (e.key === "Backspace" || e.key === "Delete")
         ) {
           e.preventDefault();
-          deleteBlockSelection(core, rootId, sel);
+          deleteBlockSelection(core, rootId, sel, portals);
           return;
         }
       }
@@ -733,7 +739,7 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
           handleArrowVertical(
             core,
             root,
-            rootId,
+            portals,
             navPoints.value,
             state,
             applyEditingResult,
@@ -752,8 +758,8 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
         const caretOffset = valueCaretOffset(root, modelSel.location.item) ?? 0;
         suppressMutationSync.suppressForTurn(true);
         const nextFocus = e.shiftKey
-          ? cmd.outdentInPlace(core, rootId, modelSel)
-          : cmd.indentInPlace(core, modelSel);
+          ? cmd.outdentInPlace(core, modelSel.location)
+          : cmd.indentInPlace(core, modelSel.location);
         if (nextFocus) {
           applyEditingResult({
             location: nextFocus,
@@ -845,13 +851,13 @@ function buildOutlineBody(core: UiCore, rootId: ItemId): Component {
   });
 }
 
-function handleOutlineContainerTypeIntent(args: {
+function handleOutlineItemTypeIntent(args: {
   core: UiCore;
-  rootId: ItemId;
+  portals: readonly ItemId[];
   sel: Extract<Selection, { type: "item" }>;
   intent: Extract<Intent, { type: "TYPE" }>;
 }): boolean {
-  const { core, rootId, sel, intent } = args;
+  const { core, portals, sel, intent } = args;
 
   const id = sel.head.item;
   if (core.view(id) !== "outline") return false;
@@ -865,7 +871,7 @@ function handleOutlineContainerTypeIntent(args: {
   core.focus(
     {
       type: "editing",
-      location: locationFor(core, rootId, id),
+      location: { item: id, portals },
       target: applied.target,
     },
     { caret: applied.caret },
@@ -878,39 +884,53 @@ function resolveFocusAfterRemove(
   rootId: ItemId,
   id: ItemId,
   prefer: "next" | "previous",
+  portals: readonly ItemId[],
 ): Location | null {
   const primary =
     prefer === "next" ? nextSibling(core, id) : prevSibling(core, id);
-  if (primary) return locationFor(core, rootId, primary);
+  if (primary) return { item: primary, portals };
 
   const fallback =
     prefer === "next" ? prevSibling(core, id) : nextSibling(core, id);
-  if (fallback) return locationFor(core, rootId, fallback);
+  if (fallback) return { item: fallback, portals };
 
   const parentId = parentOf(core, rootId, id);
-  return parentId ? locationFor(core, rootId, parentId) : null;
+  return parentId ? { item: parentId, portals } : null;
 }
 
-export const outlineView = defineView(({ core, id: rootId }) => {
+export const outlineView = defineView(({ core, id: rootId, focus }) => {
+  const rootPortals = focus.portals;
   const onIntent = (intent: Intent): void => {
     const selection = core.selection();
     if (selection.type !== "item") return;
     const sel = selection;
 
     const focus: Location = sel.head;
-    const selectedItems = blockSelectionItems(core, rootId, sel);
+    const selectedItems = blockSelectionItems(core, rootId, sel, rootPortals);
 
     if (intent.type === "DELETE") {
       if (selectedItems.length > 1) {
         const lastId = selectedItems[selectedItems.length - 1]!;
-        const nextFocus = resolveFocusAfterRemove(core, rootId, lastId, "next");
-        deleteBlockSelection(core, rootId, sel);
+        const nextFocus = resolveFocusAfterRemove(
+          core,
+          rootId,
+          lastId,
+          "next",
+          rootPortals,
+        );
+        deleteBlockSelection(core, rootId, sel, rootPortals);
         if (nextFocus) core.focus({ type: "item", location: nextFocus });
         return;
       }
       const id = sel.head.item;
       if (core.item(id).mode.type === "readonly") return;
-      const nextFocus = resolveFocusAfterRemove(core, rootId, id, "next");
+      const nextFocus = resolveFocusAfterRemove(
+        core,
+        rootId,
+        id,
+        "next",
+        rootPortals,
+      );
       cmd.removeAndPruneAncestors(core, rootId, id);
       if (nextFocus) core.focus({ type: "item", location: nextFocus });
       return;
@@ -949,8 +969,8 @@ export const outlineView = defineView(({ core, id: rootId }) => {
     switch (intent.type) {
       case "TAB": {
         const nextFocus = intent.shift
-          ? cmd.outdentInPlace(core, rootId, { location: focus })
-          : cmd.indentInPlace(core, { location: focus });
+          ? cmd.outdentInPlace(core, focus)
+          : cmd.indentInPlace(core, focus);
         if (!nextFocus) return;
         core.focus({ type: "item", location: nextFocus });
         return;
@@ -965,23 +985,30 @@ export const outlineView = defineView(({ core, id: rootId }) => {
         else if (dir === "up") nextId = prevSibling(core, fromId);
         else if (dir === "down") nextId = nextSibling(core, fromId);
         if (!nextId) return;
-        const nextFocus = locationFor(core, rootId, nextId);
+        const nextFocus = { item: nextId, portals: rootPortals };
         core.focus({ type: "item", location: nextFocus });
         return;
       }
       case "TYPE":
-        if (handleOutlineContainerTypeIntent({ core, rootId, sel, intent }))
+        if (
+          handleOutlineItemTypeIntent({
+            core,
+            portals: rootPortals,
+            sel,
+            intent,
+          })
+        )
           return;
         handleItemIntent({ core, sel, intent });
         return;
       case "CONFIRM": {
         if (handleItemIntent({ core, sel, intent })) return;
-        const nextId = cmd.insertSibling(core, { location: focus }, "after");
+        const nextId = cmd.insertSibling(core, focus, "after");
         if (!nextId) return;
         core.focus(
           {
             type: "editing",
-            location: locationFor(core, rootId, nextId),
+            location: { item: nextId, portals: rootPortals },
             target: VALUE_TARGET,
           },
           { caret: 0 },
@@ -991,7 +1018,7 @@ export const outlineView = defineView(({ core, id: rootId }) => {
     }
   };
 
-  const body = buildOutlineBody(core, rootId);
+  const body = buildOutlineBody(core, rootId, rootPortals);
 
   return { onIntent, body };
 });

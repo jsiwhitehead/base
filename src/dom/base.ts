@@ -288,14 +288,16 @@ export function bindItemFrame(
   if (!frameEl.hasAttribute("tabindex")) frameEl.tabIndex = -1;
 
   const sameFocus = (a: Location, b: Location): boolean =>
-    a.container === b.container && a.item === b.item;
+    a.item === b.item &&
+    a.portals.length === b.portals.length &&
+    a.portals.every((portal, i) => portal === b.portals[i]);
 
   const isFocused = computed(() => {
     const sel = spec.core.selection();
     if (sel.type === "editing") {
       return (
         sel.location.item === spec.focus.item &&
-        sel.location.container === spec.focus.container
+        sameFocus(sel.location, spec.focus)
       );
     }
     if (sel.type === "item") {

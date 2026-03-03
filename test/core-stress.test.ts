@@ -14,13 +14,11 @@ function assertSelectionValid(core: Core): void {
   const selection = core.selection();
   if (selection.type === "editing") {
     expect(core.item(selection.location.item).content.type).not.toBe("issue");
-    expect(core.item(selection.location.container).content.type).not.toBe(
-      "issue",
-    );
-    if (selection.location.item === selection.location.container) return;
+    for (const portalId of selection.location.portals) {
+      expect(core.item(portalId).mode.type).toBe("connected");
+    }
     const loc = core.locate(selection.location.item);
     expect(loc).not.toBeNull();
-    expect(loc!.parentId).toBe(selection.location.container);
   } else if (selection.type === "item") {
     expect(core.item(selection.head.item).content.type).not.toBe("issue");
   }
@@ -90,8 +88,8 @@ describe("core stress/deep nesting", () => {
     const leaf = mkBlank(core, parent, { label: "leaf", value: 1 });
     core.focus({
       type: "item",
-      anchor: { container: parent, item: leaf },
-      head: { container: parent, item: leaf },
+      anchor: { item: leaf, portals: [] },
+      head: { item: leaf, portals: [] },
     });
 
     for (let i = 0; i < 30; i += 1) {
@@ -150,8 +148,8 @@ describe("core stress/rapid structural edits", () => {
     }
     core.focus({
       type: "item",
-      anchor: { container: g1, item: pool[0] ?? g1 },
-      head: { container: g1, item: pool[0] ?? g1 },
+      anchor: { item: pool[0] ?? g1, portals: [] },
+      head: { item: pool[0] ?? g1, portals: [] },
     });
 
     for (let i = 0; i < 240; i += 1) {

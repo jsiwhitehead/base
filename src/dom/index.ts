@@ -1,9 +1,4 @@
-export {
-  bindItemFrame,
-  createComponent,
-  el,
-  setBodyClasses,
-} from "./base";
+export { bindItemFrame, createComponent, el, setBodyClasses } from "./base";
 export {
   createSuppressionFlag,
   getCollapsedCaretRectInSurface,

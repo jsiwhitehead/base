@@ -127,19 +127,19 @@ function safeJson(x: unknown): string {
 
 function selectionText(selection: Selection): string {
   if (selection.type === "idle") return "idle";
-  const formatLocation = (container: ItemId, item: ItemId): string =>
-    `container=${container} item=${item}`;
+  const formatLocation = (item: ItemId, portals: readonly ItemId[]): string =>
+    `item=${item} portals=[${portals.join("|")}]`;
   if (selection.type === "item") {
     return [
       "item",
-      `anchor:    ${formatLocation(selection.anchor.container, selection.anchor.item)}`,
-      `head:      ${formatLocation(selection.head.container, selection.head.item)}`,
+      `anchor:    ${formatLocation(selection.anchor.item, selection.anchor.portals)}`,
+      `head:      ${formatLocation(selection.head.item, selection.head.portals)}`,
     ].join("\n");
   }
   return [
     "editing",
-    `container: ${selection.location.container}`,
     `item:      ${selection.location.item}`,
+    `portals:   [${selection.location.portals.join("|")}]`,
     `target:    ${selection.target}`,
   ].join("\n");
 }
@@ -151,11 +151,11 @@ function recentLinesText(lines: readonly string[]): string {
 
 function recentSelectionSummary(selection: Selection): string {
   if (selection.type === "idle") return "selection=idle";
-  const formatLocation = (container: ItemId, item: ItemId): string =>
-    `container=${container} item=${item}`;
+  const formatLocation = (item: ItemId, portals: readonly ItemId[]): string =>
+    `item=${item} portals=[${portals.join("|")}]`;
   if (selection.type === "item")
-    return `selection=item anchor(${formatLocation(selection.anchor.container, selection.anchor.item)}) head(${formatLocation(selection.head.container, selection.head.item)})`;
-  return `editing item=${selection.location.item} container=${selection.location.container} target=${selection.target}`;
+    return `selection=item anchor(${formatLocation(selection.anchor.item, selection.anchor.portals)}) head(${formatLocation(selection.head.item, selection.head.portals)})`;
+  return `editing item=${selection.location.item} portals=[${selection.location.portals.join("|")}] target=${selection.target}`;
 }
 
 function lastText(last: DebugLast | null): string {

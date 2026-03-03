@@ -11,7 +11,7 @@ A tree-structured document editor. The data model is a recursive tree of **items
 **Content types:**
 
 - `value` — leaf node; holds a text string
-- `group` — container node; holds an ordered array of child `ItemId`s
+- `group` — branch item; holds an ordered array of child `ItemId`s
 - `issue` — diagnostic node; holds a message string
 
 **Modes:**
@@ -49,7 +49,7 @@ Intent-handling follows the same split: the outer view handles item-selection in
 
 Ownership boundaries MUST remain stable under extension.
 
-### Canonical container DOM
+### Canonical Root DOM
 
 ```text
 #root
@@ -85,10 +85,10 @@ Selection =
   | { type: "editing", location: Location, target: string }
   | { type: "item", anchor: Location, head: Location }
 
-Location = { container: ItemId, item: ItemId }
+Location = { item: ItemId, portals: readonly ItemId[] }
 ```
 
-`container` is the parent that logically owns the item in the view. `target` identifies which interaction mode is active.
+`item` is the focused item id. `portals` is the render-context portal path that produced this focus. `target` identifies which interaction mode is active.
 
 Selection is structural state and is persisted and replayable.
 
@@ -123,11 +123,11 @@ View-specific geometry, traversal scope, and edge behaviors are defined in `docs
 
 | Kind        | Targets           | `yieldNav` | In edit traversal | Behavior                                      |
 | ----------- | ----------------- | ---------- | ----------------- | --------------------------------------------- |
-| Container   | `ITEM_TARGET`     | n/a        | No                | Structural: navigate, enter edit, delete, tab |
+| Item target | `ITEM_TARGET`     | n/a        | No                | Structural: navigate, enter edit, delete, tab |
 | Isolated    | `label`           | `false`    | No                | Self-contained text editing                   |
 | Traversable | `conn:*`, `value` | `true`     | Yes               | Text editing with boundary yielding           |
 
-Container is the outer shell for structural interaction. Traversable targets edit content in flow — they yield at text boundaries so the outer view handles traversal and structural actions. Isolated targets consume all input locally; exceptions: Escape bubbles to Core, Enter commits and exits.
+Item target is the outer shell for structural interaction. Traversable targets edit content in flow — they yield at text boundaries so the outer view handles traversal and structural actions. Isolated targets consume all input locally; exceptions: Escape bubbles to Core, Enter commits and exits.
 
 ### Edit target list
 

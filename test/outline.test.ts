@@ -210,9 +210,9 @@ function dispatchComposition(
 async function mountOutline(
   core: UiCore,
   rootId: ItemId,
-  focus: { container: ItemId; item: ItemId } = {
-    container: rootId,
+  focus: { item: ItemId; portals: readonly ItemId[] } = {
     item: rootId,
+    portals: [],
   },
 ): Promise<{
   domView: Awaited<ReturnType<typeof mountView>>["domView"];
@@ -231,8 +231,8 @@ async function mountOutline(
 function expectItemRangeSel(
   core: { selection(): ReturnType<UiCore["selection"]> },
   want: {
-    anchor: { container: ItemId; item: ItemId };
-    head: { container: ItemId; item: ItemId };
+    anchor: { item: ItemId; portals: readonly ItemId[] };
+    head: { item: ItemId; portals: readonly ItemId[] };
   },
 ): void {
   const sel = core.selection();
@@ -250,8 +250,8 @@ describe("outline/rendering", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: rootId },
-      head: { container: rootId, item: rootId },
+      anchor: { item: rootId, portals: [] },
+      head: { item: rootId, portals: [] },
     });
 
     const { unmount, root } = await mountOutline(core, rootId);
@@ -350,14 +350,14 @@ describe("outline/rendering", () => {
   });
 });
 
-describe("outline/container-intents", () => {
+describe("outline/item-intents", () => {
   test("Enter on empty group converts to value and enters VALUE", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: g },
-      head: { container: rootId, item: g },
+      anchor: { item: g, portals: [] },
+      head: { item: g, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
@@ -366,7 +366,7 @@ describe("outline/container-intents", () => {
     await flushDomEffects();
 
     expect(childrenOf(core, g)).toEqual([]);
-    expectSel(core, { container: rootId, item: g, target: VALUE_TARGET });
+    expectSel(core, { item: g, target: VALUE_TARGET, portals: [] });
     expect(valueOfId(core, g)).toBe("");
 
     unmount();
@@ -377,8 +377,8 @@ describe("outline/container-intents", () => {
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: a },
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
@@ -386,7 +386,7 @@ describe("outline/container-intents", () => {
     fireViewKey(domView, "x");
     await flushDomEffects();
 
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
     expect(valueOfId(core, a)).toBe("x");
 
     unmount();
@@ -397,8 +397,8 @@ describe("outline/container-intents", () => {
     const a = mkBlank(core, rootId, { label: "a", value: "" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: a },
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
@@ -417,7 +417,7 @@ describe("outline/container-intents", () => {
     unmount();
   });
 
-  test("NAV from container focus uses sibling geometry with right fallthrough", async () => {
+  test("NAV from item focus uses sibling geometry with right fallthrough", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "aa" });
@@ -425,27 +425,27 @@ describe("outline/container-intents", () => {
     mkBlank(core, rootId, { label: "c", value: "cc" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: g },
-      head: { container: rootId, item: g },
+      anchor: { item: g, portals: [] },
+      head: { item: g, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: g, item: a });
+    expectSel(core, { item: a, portals: [] });
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: g, item: b });
+    expectSel(core, { item: b, portals: [] });
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: g, item: b });
+    expectSel(core, { item: b, portals: [] });
 
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: g });
+    expectSel(core, { item: g, portals: [] });
 
     unmount();
   });
@@ -455,25 +455,25 @@ describe("outline/container-intents", () => {
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: a },
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: a });
+    expectSel(core, { item: a, portals: [] });
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: rootId },
-      head: { container: rootId, item: rootId },
+      anchor: { item: rootId, portals: [] },
+      head: { item: rootId, portals: [] },
     });
     await flushDomEffects();
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
 
     unmount();
   });
@@ -485,8 +485,8 @@ describe("outline/container-intents", () => {
     const c = mkBlank(core, rootId, { label: "c", value: "c" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: b },
-      head: { container: rootId, item: b },
+      anchor: { item: b, portals: [] },
+      head: { item: b, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
@@ -495,7 +495,7 @@ describe("outline/container-intents", () => {
     await flushDomEffects();
 
     expect(childrenOf(core, rootId)).toEqual([a, c]);
-    expectSel(core, { container: rootId, item: c });
+    expectSel(core, { item: c, portals: [] });
 
     unmount();
   });
@@ -506,8 +506,8 @@ describe("outline/container-intents", () => {
     const b = mkBlank(core, rootId, { label: "b", value: "b" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: b },
-      head: { container: rootId, item: b },
+      anchor: { item: b, portals: [] },
+      head: { item: b, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
@@ -516,7 +516,7 @@ describe("outline/container-intents", () => {
     await flushDomEffects();
 
     expect(childrenOf(core, rootId)).toEqual([a]);
-    expectSel(core, { container: rootId, item: a });
+    expectSel(core, { item: a, portals: [] });
 
     unmount();
   });
@@ -529,8 +529,8 @@ describe("outline/container-intents", () => {
     const d = mkBlank(core, rootId, { label: "d", value: "d" });
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: b },
-      head: { container: rootId, item: c },
+      anchor: { item: b, portals: [] },
+      head: { item: c, portals: [] },
     });
 
     const { domView, unmount } = await mountOutline(core, rootId);
@@ -538,7 +538,7 @@ describe("outline/container-intents", () => {
     fireViewKey(domView, "Delete");
     await flushDomEffects();
 
-    expectSel(core, { container: rootId, item: d });
+    expectSel(core, { item: d, portals: [] });
 
     unmount();
   });
@@ -551,7 +551,7 @@ describe("outline/container-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 2 },
@@ -563,11 +563,11 @@ describe("outline/container-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: slider });
+    expectSel(core, { item: slider, portals: [] });
 
     dispatchKey(outlineRoot, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -582,7 +582,7 @@ describe("outline/container-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 2 },
@@ -594,11 +594,11 @@ describe("outline/container-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: tableId });
+    expectSel(core, { item: tableId, portals: [] });
 
     dispatchKey(outlineRoot, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -610,7 +610,7 @@ describe("outline/container-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: g, item: x },
+        location: { item: x, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -628,14 +628,14 @@ describe("outline/container-intents", () => {
     expect(nestedKids.length).toBe(1);
     const child = nestedKids[0]!;
     expect(valueOfId(core, child)).toBe("v");
-    expectSel(core, { container: x, item: child, target: VALUE_TARGET });
+    expectSel(core, { item: child, target: VALUE_TARGET, portals: [] });
 
     const secondTab = dispatchKey(outlineRoot, "Tab", { shiftKey: true });
     await flushDomEffects();
     expect(secondTab.defaultPrevented).toBe(true);
     expect(core.item(x).content.type).toBe("value");
     expect(valueOfId(core, x)).toBe("v");
-    expectSel(core, { container: g, item: x, target: VALUE_TARGET });
+    expectSel(core, { item: x, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -646,7 +646,7 @@ describe("outline/container-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: x },
+        location: { item: x, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -683,7 +683,7 @@ describe("outline/container-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: g, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 2 },
@@ -697,7 +697,7 @@ describe("outline/container-intents", () => {
     await flushDomEffects();
 
     expect(ev.defaultPrevented).toBe(true);
-    expectSel(core, { container: g, item: a });
+    expectSel(core, { item: a, portals: [] });
 
     unmount();
   });
@@ -710,7 +710,7 @@ describe("outline/ce-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 2 },
@@ -730,7 +730,7 @@ describe("outline/ce-beforeinput", () => {
     const b = kids[aIdx + 1]!;
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { container: rootId, item: b, target: VALUE_TARGET });
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -741,7 +741,7 @@ describe("outline/ce-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 2 },
@@ -758,7 +758,7 @@ describe("outline/ce-beforeinput", () => {
 
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("he\nllo");
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -769,7 +769,7 @@ describe("outline/ce-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -784,11 +784,11 @@ describe("outline/ce-beforeinput", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expect(valueOfId(core, rootId)).toBeNull();
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
 
     dispatchKey(outlineRoot, "Tab");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
 
     unmount();
   });
@@ -800,15 +800,15 @@ describe("outline/ce-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: nestedRoot, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
     );
 
     const { unmount } = await mountOutline(core, nestedRoot, {
-      container: rootId,
       item: nestedRoot,
+      portals: [],
     });
 
     const outlineRoot = requireOutlineRoot(document.body);
@@ -818,11 +818,11 @@ describe("outline/ce-beforeinput", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expect(valueOfId(core, nestedRoot)).toBeNull();
-    expectSel(core, { container: rootId, item: nestedRoot });
+    expectSel(core, { item: nestedRoot, portals: [] });
 
     dispatchKey(outlineRoot, "Tab");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: nestedRoot });
+    expectSel(core, { item: nestedRoot, portals: [] });
 
     unmount();
   });
@@ -884,7 +884,7 @@ describe("outline/ce-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -912,7 +912,7 @@ describe("outline/clipboard-drop", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -933,7 +933,7 @@ describe("outline/clipboard-drop", () => {
     expect(cut.defaultPrevented).toBe(true);
     expect(cut.textPlain).toBe("ell");
     expect(valueOfId(core, a)).toBe("ho");
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -980,7 +980,7 @@ describe("outline/clipboard-drop", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -1014,7 +1014,7 @@ describe("outline/clipboard-drop", () => {
       core.focus(
         {
           type: "editing",
-          location: { container: rootId, item: a },
+          location: { item: a, portals: [] },
           target: VALUE_TARGET,
         },
         { caret: 1 },
@@ -1068,7 +1068,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -1101,7 +1101,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -1124,7 +1124,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -1174,7 +1174,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -1217,7 +1217,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -1233,7 +1233,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: b },
+        location: { item: b, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -1256,7 +1256,7 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -1267,7 +1267,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -1281,7 +1281,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 4 },
@@ -1301,7 +1301,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 2 },
@@ -1318,13 +1318,13 @@ describe("outline/selection-cursor", () => {
     core.undo();
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(4);
 
     core.redo();
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("helXlo");
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(4);
 
     unmount();
@@ -1342,8 +1342,8 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: a },
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     unmount();
@@ -1363,7 +1363,7 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
     expect(cut.defaultPrevented).toBe(true);
 
-    expectSel(core, { container: rootId, item: a, target: VALUE_TARGET });
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
     const sel = window.getSelection();
     expect(sel).toBeTruthy();
     expect(sel?.anchorNode).toBeTruthy();
@@ -1390,14 +1390,14 @@ describe("outline/block-selection", () => {
     await flushDomEffects();
 
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: a },
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     unmount();
   });
 
-  test("shift+click gutter extends contiguous same-container block range", async () => {
+  test("shift+click gutter extends contiguous same-parent block range", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     mkBlank(core, rootId, { label: "b", value: "y" });
@@ -1417,8 +1417,8 @@ describe("outline/block-selection", () => {
     await flushDomEffects();
 
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: c },
+      anchor: { item: a, portals: [] },
+      head: { item: c, portals: [] },
     });
 
     unmount();
@@ -1442,22 +1442,22 @@ describe("outline/block-selection", () => {
     dispatchKey(root, "ArrowDown", { shiftKey: true });
     await flushDomEffects();
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: b },
-      head: { container: rootId, item: c },
+      anchor: { item: b, portals: [] },
+      head: { item: c, portals: [] },
     });
 
     dispatchKey(root, "ArrowUp", { shiftKey: true });
     await flushDomEffects();
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: b },
-      head: { container: rootId, item: b },
+      anchor: { item: b, portals: [] },
+      head: { item: b, portals: [] },
     });
 
     dispatchKey(root, "ArrowUp", { shiftKey: true });
     await flushDomEffects();
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: b },
-      head: { container: rootId, item: a },
+      anchor: { item: b, portals: [] },
+      head: { item: a, portals: [] },
     });
 
     unmount();
@@ -1528,7 +1528,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: a },
+        location: { item: a, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -1574,8 +1574,8 @@ describe("outline/vertical-navigation", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expectItemRangeSel(core, {
-      anchor: { container: rootId, item: a },
-      head: { container: rootId, item: b },
+      anchor: { item: a, portals: [] },
+      head: { item: b, portals: [] },
     });
 
     unmount();
@@ -1707,7 +1707,7 @@ describe("outline/header-embedded", () => {
     const c11Frame = requireFrameEl(tableItemEl, c11);
     pointerDown(c11Frame);
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c11 });
+    expectSel(core, { item: c11, portals: [] });
 
     unmount();
   });

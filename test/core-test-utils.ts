@@ -69,21 +69,22 @@ export function cloneJson<T>(value: T): T {
 
 export function expectSel(
   core: { selection(): Selection },
-  want: { container: ItemId; item: ItemId; target?: string },
+  want: { item: ItemId; portals?: readonly ItemId[]; target?: string },
 ): void {
+  const portals = want.portals ?? [];
   const selection = core.selection();
   if (want.target !== undefined) {
     expect(selection.type).toBe("editing");
     if (selection.type !== "editing")
       throw new Error("Expected editing selection");
-    expect(selection.location.container).toBe(want.container);
     expect(selection.location.item).toBe(want.item);
+    expect(selection.location.portals).toEqual(portals);
     expect(selection.target).toBe(want.target);
   } else {
     expect(selection.type).toBe("item");
     if (selection.type !== "item") throw new Error("Expected item selection");
-    expect(selection.head.container).toBe(want.container);
     expect(selection.head.item).toBe(want.item);
+    expect(selection.head.portals).toEqual(portals);
   }
 }
 

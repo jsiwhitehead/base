@@ -22,7 +22,6 @@ import type { SuppressionFlag } from "../../dom";
 import {
   deleteMultiItemRange,
   deleteSingleItemRange,
-  locationFor,
   isPlainValueItem,
   moveNavPoint,
   outlineCmd,
@@ -58,6 +57,7 @@ export type ApplyEditingResult = (args: {
 export type EditCtx = {
   core: Core;
   rootId: ItemId;
+  portals: readonly ItemId[];
   root: HTMLElement;
   navPoints: Signal<readonly NavPoint[]>;
   applyEditingResult: ApplyEditingResult;
@@ -187,7 +187,7 @@ function adjacentOutlineValueItem(
 function moveVerticalAcrossOutlineValue(
   core: Core,
   root: HTMLElement,
-  rootId: ItemId,
+  portals: readonly ItemId[],
   navPoints: readonly NavPoint[],
   state: InputState,
   applyEditingResult: ApplyEditingResult,
@@ -223,7 +223,7 @@ function moveVerticalAcrossOutlineValue(
     point && valueEl.contains(point.node)
       ? domPositionToModel(root, point.node, point.offset)
       : null;
-  const targetLoc = locationFor(core, rootId, targetId);
+  const targetLoc = { item: targetId, portals };
   if (pos && pos.itemId === targetId) {
     applyEditingResult({
       location: targetLoc,
@@ -275,7 +275,10 @@ export function handleArrowHorizontal(
     }
     if (modelSel.type === "item") {
       if (
-        modelSel.anchor.container !== modelSel.head.container ||
+        modelSel.anchor.portals.length !== modelSel.head.portals.length ||
+        modelSel.anchor.portals.some(
+          (portal, i) => portal !== modelSel.head.portals[i],
+        ) ||
         modelSel.anchor.item !== modelSel.head.item
       )
         return null;
@@ -317,7 +320,7 @@ export function handleArrowHorizontal(
 export function handleArrowVertical(
   core: Core,
   root: HTMLElement,
-  rootId: ItemId,
+  portals: readonly ItemId[],
   navPoints: readonly NavPoint[],
   state: InputState,
   applyEditingResult: ApplyEditingResult,
@@ -335,7 +338,7 @@ export function handleArrowVertical(
     !moveVerticalAcrossOutlineValue(
       core,
       root,
-      rootId,
+      portals,
       navPoints,
       state,
       applyEditingResult,
@@ -355,14 +358,14 @@ export function deleteSelection(
   return (
     deleteSingleItemRange(
       ctx.core,
-      ctx.rootId,
+      ctx.portals,
       start,
       end,
       ctx.setCursorAndReveal,
     ) ||
     deleteMultiItemRange(
       ctx.core,
-      ctx.rootId,
+      ctx.portals,
       start,
       end,
       ctx.setCursorAndReveal,
@@ -410,7 +413,7 @@ export function handleInsertLineBreakBeforeInput(
   const nextCaret = start + 1;
   ctx.core.commit((t) => t.setValue(rangePos.start.itemId, nextText));
   ctx.applyEditingResult({
-    location: locationFor(ctx.core, ctx.rootId, rangePos.start.itemId),
+    location: { item: rangePos.start.itemId, portals: ctx.portals },
     target: VALUE_TARGET,
     caret: nextCaret,
     reveal: { offset: nextCaret },
@@ -446,7 +449,7 @@ export function handleInsertParagraphBeforeInput(
     if (
       !deleteMultiItemRange(
         ctx.core,
-        ctx.rootId,
+        ctx.portals,
         rangePos.start,
         rangePos.end,
         ctx.setCursorAndReveal,
@@ -457,16 +460,11 @@ export function handleInsertParagraphBeforeInput(
     caretEnd = rangePos.end.offset;
   }
 
-  const splitLoc = locationFor(ctx.core, ctx.rootId, rangePos.start.itemId);
-  const newId = outlineCmd.splitAt(
-    ctx.core,
-    { location: splitLoc },
-    caretStart,
-    caretEnd,
-  );
+  const splitLoc = { item: rangePos.start.itemId, portals: ctx.portals };
+  const newId = outlineCmd.splitAt(ctx.core, splitLoc, caretStart, caretEnd);
   if (!newId) return;
   ctx.applyEditingResult({
-    location: locationFor(ctx.core, ctx.rootId, newId),
+    location: { item: newId, portals: ctx.portals },
     target: VALUE_TARGET,
     caret: 0,
     reveal: { offset: 0, defer: false },
@@ -509,7 +507,7 @@ export function handleDeleteBeforeInput(
     renderPlainTextToContentEditable(valueEl, nextText);
   }
   ctx.applyEditingResult({
-    location: locationFor(ctx.core, ctx.rootId, startPos.itemId),
+    location: { item: startPos.itemId, portals: ctx.portals },
     target: VALUE_TARGET,
     caret: startPos.offset,
     reveal: { offset: startPos.offset, defer: false },
@@ -577,10 +575,15 @@ export function handleBoundaryDeleteBeforeInput(
       });
       return;
     }
-    const joined = outlineCmd.joinBoundary(ctx.core, ctx.rootId, modelSel, dir);
+    const joined = outlineCmd.joinBoundary(
+      ctx.core,
+      ctx.rootId,
+      modelSel.location,
+      dir,
+    );
     if (!joined) return;
     ctx.applyEditingResult({
-      location: locationFor(ctx.core, ctx.rootId, joined.id),
+      location: { item: joined.id, portals: ctx.portals },
       target: VALUE_TARGET,
       caret: joined.caret,
       reveal: { offset: joined.caret },
@@ -603,7 +606,7 @@ export function handleBoundaryDeleteBeforeInput(
   if (
     !deleteMultiItemRange(
       ctx.core,
-      ctx.rootId,
+      ctx.portals,
       rangePos.start,
       rangePos.end,
       ctx.setCursorAndReveal,
@@ -680,7 +683,7 @@ export function insertText(ctx: EditCtx, text: string): void {
       ? before.length + (lines[0]?.length ?? 0)
       : (lines[lines.length - 1]?.length ?? 0);
   ctx.applyEditingResult({
-    location: locationFor(ctx.core, ctx.rootId, lastId),
+    location: { item: lastId, portals: ctx.portals },
     target: VALUE_TARGET,
     caret: lastOffset,
     reveal: { offset: lastOffset, defer: false },

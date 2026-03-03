@@ -318,10 +318,9 @@ export function createCore(opts: {
   let core!: Core;
 
   const rootId = itemIdOf(rootEntryId);
-  const rootFocus: Location = { container: rootId, item: rootId };
+  const rootFocus: Location = { item: rootId, portals: [] };
   const selectionController = createSelectionController({
     model,
-    rootEntryId,
     rootFocus,
     ...(opts.platform?.readCurrentCaret
       ? { readCurrentCaret: opts.platform.readCurrentCaret }
@@ -457,9 +456,9 @@ export function createCore(opts: {
     if (
       sel.type !== "item" ||
       sel.anchor.item !== rootId ||
-      sel.anchor.container !== rootId ||
+      sel.anchor.portals.length !== 0 ||
       sel.head.item !== rootId ||
-      sel.head.container !== rootId
+      sel.head.portals.length !== 0
     ) {
       return false;
     }
@@ -472,7 +471,7 @@ export function createCore(opts: {
         if (rootItem.content.type !== "group") return false;
         const firstChildId = rootItem.content.children[0] ?? null;
         if (!firstChildId) return false;
-        const firstChild: Location = { container: rootId, item: firstChildId };
+        const firstChild: Location = { item: firstChildId, portals: [] };
 
         setSelection({ type: "item", anchor: firstChild, head: firstChild });
         return true;
@@ -485,8 +484,8 @@ export function createCore(opts: {
         if (wrappedId) {
           setSelection({
             type: "item",
-            anchor: { container: rootId, item: wrappedId },
-            head: { container: rootId, item: wrappedId },
+            anchor: { item: wrappedId, portals: [] },
+            head: { item: wrappedId, portals: [] },
           });
         }
         return true;
@@ -522,8 +521,8 @@ export function createCore(opts: {
               const firstChildId = rootItem.content.children[0] ?? null;
               if (!firstChildId) return false;
               const firstChild: Location = {
-                container: rootId,
                 item: firstChildId,
+                portals: [],
               };
 
               setSelection({
@@ -567,22 +566,21 @@ export function createCore(opts: {
     }
 
     if (sel.type === "item") {
-      const containerEid = entryIdFromItemId(sel.anchor.container);
-      if (containerEid == null) {
+      const itemEid = entryIdFromItemId(sel.head.item);
+      if (itemEid == null) {
         setSelection({ type: "idle" });
         return true;
       }
-      const parentLoc = model.locateInParent(containerEid);
+      const parentLoc = model.locateInParent(itemEid);
       if (!parentLoc) {
         setSelection({ type: "idle" });
         return true;
       }
-      const grandparentId = itemIdOf(parentLoc.parentId);
-      const parentId = itemIdOf(containerEid);
+      const parentId = itemIdOf(parentLoc.parentId);
       setSelection({
         type: "item",
-        anchor: { container: grandparentId, item: parentId },
-        head: { container: grandparentId, item: parentId },
+        anchor: { item: parentId, portals: sel.head.portals },
+        head: { item: parentId, portals: sel.head.portals },
       });
       return true;
     }

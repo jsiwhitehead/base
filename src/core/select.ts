@@ -4,7 +4,7 @@ import type { EntryId, Model } from "./model";
 import type { ItemId } from "./read";
 import { entryIdFromItemId, itemIdOf } from "./read";
 
-export type Location = { container: ItemId; item: ItemId };
+export type Location = { item: ItemId; portals: readonly ItemId[] };
 
 export type Selection =
   | { type: "idle" }
@@ -44,7 +44,6 @@ export type SelectionController = {
 
 type SelectionControllerOptions = {
   model: Model;
-  rootEntryId: EntryId;
   rootFocus: Location;
   readCurrentCaret?: () => number | undefined;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
@@ -62,10 +61,14 @@ export function createSelectionController(
   const isValidFocus = (focus: Location): boolean => {
     const model = opts.model;
     const itemEid = entryIdFromItemId(focus.item);
-    const containerEid = entryIdFromItemId(focus.container);
-    if (itemEid == null || containerEid == null) return false;
-    if (!model.hasEntry(itemEid) || !model.hasEntry(containerEid)) return false;
-    if (itemEid === containerEid) return itemEid === opts.rootEntryId;
+    if (itemEid == null) return false;
+    if (!model.hasEntry(itemEid)) return false;
+    for (const portalItemId of focus.portals) {
+      const portalEid = entryIdFromItemId(portalItemId);
+      if (portalEid == null || !model.hasEntry(portalEid)) return false;
+      const contentType = model.contentTypeOf(portalEid);
+      if (contentType !== "formula" && contentType !== "query") return false;
+    }
     return true;
   };
 
@@ -118,11 +121,9 @@ export function createSelectionController(
     const sel = selectionSignal.peek();
     const leafId =
       sel.type === "editing"
-        ? (entryIdFromItemId(sel.location.item) ??
-          entryIdFromItemId(sel.location.container))
+        ? entryIdFromItemId(sel.location.item)
         : sel.type === "item"
-          ? (entryIdFromItemId(sel.anchor.item) ??
-            entryIdFromItemId(sel.anchor.container))
+          ? entryIdFromItemId(sel.anchor.item)
           : null;
     if (leafId == null) return null;
 
@@ -156,7 +157,7 @@ export function createSelectionController(
       const childId = siblings[index] ?? siblings[siblings.length - 1] ?? null;
       if (childId == null || !model.hasEntry(childId)) continue;
 
-      return { container: itemIdOf(parentId), item: itemIdOf(childId) };
+      return { item: itemIdOf(childId), portals: [] };
     }
 
     return null;

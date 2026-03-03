@@ -176,7 +176,7 @@ A view built on `contenteditable` has a single editing root with recursively ren
 - **Value surface** — the text editing surface; uniquely identifiable; the only zone without editing suppression
 - **Header zone** — optional; `contenteditable="false"`
 - **Embedded view zone** — optional; `contenteditable="false"`
-- **Child container** — optional; holds nested item rows for group items
+- **Child item list** — optional; holds nested item rows for group items
 
 **`contenteditable="false"` on all non-text zones** is mandatory. Without it the browser treats gutter and header content as editable, producing corrupt mutations and broken selection behaviour.
 

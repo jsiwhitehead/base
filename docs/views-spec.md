@@ -53,7 +53,7 @@ Outline is the primary hierarchical editor view.
 Rules:
 
 - Outline is a lines-of-text editor: value items are lines, and groups define indentation levels.
-- Items are either `group` containers or value leaves (plain `value` or connected `conn:*`).
+- Items are either `group` items or value leaves (plain `value` or connected `conn:*`).
 - Empty groups are valid Core state, but Outline should not normally show indentation with no lines.
 - Outline uses a placeholder for empty groups.
 - Navigation is hierarchical and depth-first over visible items.

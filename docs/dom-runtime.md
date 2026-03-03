@@ -248,6 +248,24 @@ Behavior:
 - Returns `true` when handled, else `false`.
 - **contenteditable value surfaces do not use this helper for `TYPE`.** Views with a contenteditable `value` target handle `TYPE` model-side: commit the character directly (`t.setValue(id, char)`) and focus `VALUE_TARGET` at the new caret. This is the same pattern the empty-group case already uses.
 
+### `moveWithinItemEditTargets(core, id, fromTarget, dir)`
+
+Behavior:
+
+- Moves to the previous/next edit target within the same item.
+- Returns `null` if `fromTarget` is not in the item target list or if there is no target in `dir`.
+- On forward move, returns `{ target, caret: 0 }`.
+- On backward move, returns `{ target, caret: endOfTargetText }`.
+
+### `resolveFocusAfterRemove(core, removedId, prefer, portals)`
+
+Behavior:
+
+- Chooses item-selection landing after remove in this order: preferred sibling, opposite sibling, then parent.
+- Returns a location with the same `portals` passed in.
+- Local remove/navigation handlers SHOULD pass the current selection portals.
+- Use `portals: []` only for explicit Core root/repair fallback, not local view landing.
+
 ## `buildTextField` contract
 
 Canonical shared text-editing component.
@@ -263,7 +281,7 @@ buildTextField(core, {
   className?,
   inputClassName?,
   kind?, // "isolated" | "traversable"
-  onExitToContainer?,
+  onExitToItem?,
   commit(text),
   getState(), // { text: string; readOnly: boolean }
 }): Component & { focusEl: HTMLInputElement | HTMLTextAreaElement };
@@ -326,7 +344,7 @@ Mirror rules:
 
 - `kind="isolated"` means the field consumes all keydowns locally (does not bubble), except Escape.
 - `kind="traversable"` means the field yields arrow and delete-boundary keys at boundaries so the active view can handle navigation and structural edits.
-- `onExitToContainer` MAY be provided for isolated fields. When Enter or Tab is pressed, the field commits, prevents default, and calls this callback.
+- `onExitToItem` MAY be provided for isolated fields. When Enter or Tab is pressed, the field commits, prevents default, and calls this callback.
 
 Propagation-gating rules:
 

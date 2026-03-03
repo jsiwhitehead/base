@@ -40,11 +40,6 @@ export function parentOf(
   return loc ? loc.parentId : null;
 }
 
-export function locationFor(core: Core, rootId: ItemId, id: ItemId): Location {
-  const parentId = parentOf(core, rootId, id);
-  return { container: parentId ?? rootId, item: id };
-}
-
 function computePruneAncestorsForRemoval(
   core: Core,
   rootId: ItemId,
@@ -88,16 +83,22 @@ export function nextSibling(core: Core, id: ItemId): ItemId | null {
 }
 
 export const sameFocus = (a: Location, b: Location): boolean =>
-  a.container === b.container && a.item === b.item;
+  a.item === b.item &&
+  a.portals.length === b.portals.length &&
+  a.portals.every((portal, i) => portal === b.portals[i]);
 
 export function focusKey(focus: Location): string {
-  return `${focus.container}:${focus.item}`;
+  return `${focus.portals.join("|")}::${focus.item}`;
 }
 
-function collectVisibleRowFocuses(core: Core, rootId: ItemId): Location[] {
+function collectVisibleRowFocuses(
+  core: Core,
+  rootId: ItemId,
+  portals: readonly ItemId[],
+): Location[] {
   const out: Location[] = [];
   const walk = (id: ItemId): void => {
-    out.push(locationFor(core, rootId, id));
+    out.push({ item: id, portals });
     const snap = core.item(id);
     if (core.view(id) !== "outline" || snap.content.type !== "group") return;
     for (const childId of snap.content.children) walk(childId);
@@ -115,8 +116,9 @@ export function blockSelectionFocuses(
   core: Core,
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
+  portals: readonly ItemId[],
 ): Location[] {
-  const focuses = collectVisibleRowFocuses(core, rootId);
+  const focuses = collectVisibleRowFocuses(core, rootId, portals);
   const anchorIdx = focuses.findIndex((focus) => sameFocus(focus, sel.anchor));
   const headIdx = focuses.findIndex((focus) => sameFocus(focus, sel.head));
   if (anchorIdx < 0 || headIdx < 0) return [];
@@ -129,10 +131,11 @@ export function blockSelectionItems(
   core: Core,
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
+  portals: readonly ItemId[],
 ): ItemId[] {
   const out: ItemId[] = [];
   const seen = new Set<ItemId>();
-  for (const focus of blockSelectionFocuses(core, rootId, sel)) {
+  for (const focus of blockSelectionFocuses(core, rootId, sel, portals)) {
     if (seen.has(focus.item)) continue;
     seen.add(focus.item);
     out.push(focus.item);
@@ -145,8 +148,9 @@ export function extendBlockSelectionByArrow(
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
   dir: "up" | "down",
+  portals: readonly ItemId[],
 ): Location | null {
-  const focuses = collectVisibleRowFocuses(core, rootId);
+  const focuses = collectVisibleRowFocuses(core, rootId, portals);
   const headIdx = focuses.findIndex((focus) => sameFocus(focus, sel.head));
   if (headIdx < 0) return null;
   return dir === "up"
@@ -158,8 +162,9 @@ export function deleteBlockSelection(
   core: Core,
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
+  portals: readonly ItemId[],
 ): void {
-  const itemIds = blockSelectionItems(core, rootId, sel);
+  const itemIds = blockSelectionItems(core, rootId, sel, portals);
   if (itemIds.length === 0) return;
   core.commit((t) => {
     for (const id of itemIds) t.remove(id);
@@ -185,7 +190,11 @@ function editTargetsForItem(core: Core, id: ItemId): string[] {
   return [];
 }
 
-export function collectNavPoints(core: Core, rootId: ItemId): NavPoint[] {
+export function collectNavPoints(
+  core: Core,
+  rootId: ItemId,
+  portals: readonly ItemId[],
+): NavPoint[] {
   const out: NavPoint[] = [];
   const walk = (id: ItemId): void => {
     const snap = core.item(id);
@@ -194,7 +203,7 @@ export function collectNavPoints(core: Core, rootId: ItemId): NavPoint[] {
       return;
     }
     if (!isEditLeaf(core, id)) return;
-    const focus = locationFor(core, rootId, id);
+    const focus = { item: id, portals };
     if (core.view(id) !== "outline") {
       out.push({ kind: "item", focus });
       return;
@@ -221,8 +230,7 @@ export function moveNavPoint(
   const idx = points.findIndex(
     (p) =>
       p.kind === current.kind &&
-      p.focus.item === current.focus.item &&
-      p.focus.container === current.focus.container &&
+      sameFocus(p.focus, current.focus) &&
       (p.kind === "editing" && current.kind === "editing"
         ? p.target === current.target
         : true),
@@ -274,10 +282,10 @@ export const outlineCmd = {
 
   insertSibling(
     core: Core,
-    sel: { location: Location },
+    location: Location,
     side: "before" | "after",
   ): ItemId | null {
-    const loc = core.locate(sel.location.item);
+    const loc = core.locate(location.item);
     if (!loc) return null;
 
     const { parentId, index: idx } = loc;
@@ -293,11 +301,11 @@ export const outlineCmd = {
 
   splitAt(
     core: Core,
-    sel: { location: Location },
+    location: Location,
     caretStart: number,
     caretEnd = caretStart,
   ): ItemId | null {
-    const id = sel.location.item;
+    const id = location.item;
     const snap = core.item(id);
 
     const loc = core.locate(id);
@@ -306,7 +314,7 @@ export const outlineCmd = {
     const { parentId, index: idx } = loc;
 
     if (!(snap.mode.type === "plain" && snap.content.type === "value")) {
-      return outlineCmd.insertSibling(core, sel, "after");
+      return outlineCmd.insertSibling(core, location, "after");
     }
 
     const curText = valueToText(snap.content.value);
@@ -332,10 +340,10 @@ export const outlineCmd = {
   joinBoundary(
     core: Core,
     rootId: ItemId,
-    sel: { location: Location },
+    location: Location,
     dir: "backward" | "forward",
   ): { id: ItemId; caret: number } | null {
-    const loc = core.locate(sel.location.item);
+    const loc = core.locate(location.item);
     if (!loc) return null;
 
     const { index: idx, siblings } = loc;
@@ -346,8 +354,8 @@ export const outlineCmd = {
         : (siblings[idx + 1] ?? null);
     if (!neighbor) return null;
 
-    const leftId = dir === "backward" ? neighbor : sel.location.item;
-    const rightId = dir === "backward" ? sel.location.item : neighbor;
+    const leftId = dir === "backward" ? neighbor : location.item;
+    const rightId = dir === "backward" ? location.item : neighbor;
 
     const leftItem = core.item(leftId);
     const rightItem = core.item(rightId);
@@ -372,19 +380,15 @@ export const outlineCmd = {
     return { id: leftId, caret: leftText.length };
   },
 
-  indentInPlace(core: Core, sel: { location: Location }): Location | null {
-    const id = sel.location.item;
+  indentInPlace(core: Core, location: Location): Location | null {
+    const id = location.item;
     const childId = indentItemInPlace(core, id);
     if (!childId) return null;
-    return { container: id, item: childId };
+    return { item: childId, portals: location.portals };
   },
 
-  outdentInPlace(
-    core: Core,
-    rootId: ItemId,
-    sel: { location: Location },
-  ): Location | null {
-    const childId = sel.location.item;
+  outdentInPlace(core: Core, location: Location): Location | null {
+    const childId = location.item;
     const loc = core.locate(childId);
     if (!loc) return null;
     const parentId = loc.parentId;
@@ -425,7 +429,7 @@ export const outlineCmd = {
       }
     });
 
-    return locationFor(core, rootId, parentId);
+    return { item: parentId, portals: location.portals };
   },
 };
 
@@ -472,7 +476,7 @@ export function readSelectionText(
 
 export function deleteSingleItemRange(
   core: Core,
-  rootId: ItemId,
+  portals: readonly ItemId[],
   start: ModelPosition,
   end: ModelPosition,
   placeCursor: (itemId: ItemId, offset: number) => void,
@@ -488,7 +492,7 @@ export function deleteSingleItemRange(
   core.commit((t) => t.setValue(start.itemId, nextText));
   core.focus({
     type: "editing",
-    location: locationFor(core, rootId, start.itemId),
+    location: { item: start.itemId, portals },
     target: VALUE_TARGET,
   });
   placeCursor(start.itemId, start.offset);
@@ -497,7 +501,7 @@ export function deleteSingleItemRange(
 
 export function deleteMultiItemRange(
   core: Core,
-  rootId: ItemId,
+  portals: readonly ItemId[],
   start: ModelPosition,
   end: ModelPosition,
   placeCursor: (itemId: ItemId, offset: number) => void,
@@ -526,7 +530,7 @@ export function deleteMultiItemRange(
   });
   core.focus({
     type: "editing",
-    location: locationFor(core, rootId, start.itemId),
+    location: { item: start.itemId, portals },
     target: VALUE_TARGET,
   });
   placeCursor(start.itemId, start.offset);

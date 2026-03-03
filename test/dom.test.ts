@@ -433,7 +433,7 @@ describe("bindItemFrame contract", () => {
   test("sets baseline frame attributes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
@@ -455,7 +455,7 @@ describe("bindItemFrame contract", () => {
   test("pointerdown focuses core and stops propagation", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const parentSaw = spy();
 
@@ -481,7 +481,7 @@ describe("bindItemFrame contract", () => {
     const selection = core.selection();
     expect(selection.type).toBe("item");
     if (selection.type !== "item") throw new Error("Expected item selection");
-    expect(selection.head.container).toBe(focus.container);
+    expect(selection.head.portals).toEqual(focus.portals);
     expect(selection.head.item).toBe(focus.item);
     expect(parentSaw.count()).toBe(0);
 
@@ -492,7 +492,7 @@ describe("bindItemFrame contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
@@ -507,16 +507,16 @@ describe("bindItemFrame contract", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: other },
-      head: { container: rootId, item: other },
+      anchor: { item: other, portals: [] },
+      head: { item: other, portals: [] },
     });
     await flushDomEffects();
     expect(frame.classList.contains("is-focused")).toBe(false);
 
     core.focus({
       type: "item",
-      anchor: { container: focus.container, item: focus.item },
-      head: { container: focus.container, item: focus.item },
+      anchor: { item: focus.item, portals: [] },
+      head: { item: focus.item, portals: [] },
     });
     await flushDomEffects();
     expect(frame.classList.contains("is-focused")).toBe(true);
@@ -533,7 +533,7 @@ describe("buildTextField contract", () => {
   test("renders wrapper/input with required attributes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const text = signal("hello");
 
@@ -564,7 +564,7 @@ describe("buildTextField contract", () => {
   test("autosize mirror exists + syncs (including trailing newline)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const text = signal("");
 
@@ -606,7 +606,7 @@ describe("buildTextField contract", () => {
   test("default draft model does not commit on input until blur", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -647,7 +647,7 @@ describe("buildTextField contract", () => {
   test("focus + blur without edits does not commit", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -684,7 +684,7 @@ describe("buildTextField contract", () => {
   test("Escape cancels draft (reverts to baseline) without committing", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const text = signal("base");
@@ -725,7 +725,7 @@ describe("buildTextField contract", () => {
   test("traversable draft: Tab yields commit and bubbles; Enter yields commit and bubbles", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -780,7 +780,7 @@ describe("buildTextField contract", () => {
   test("isolated: stops propagation for most keys; Enter/Tab commit + exit", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const exit = spy();
@@ -792,7 +792,7 @@ describe("buildTextField contract", () => {
       multiline: false,
       autosize: false,
       kind: "isolated",
-      onExitToContainer: () => exit.fn(),
+      onExitToItem: () => exit.fn(),
       commit: (t) => {
         commit.fn(t);
         text.value = t;
@@ -844,7 +844,7 @@ describe("buildTextField contract", () => {
   test("traversable: Backspace at start yields; Delete at end yields", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -901,7 +901,7 @@ describe("buildTextField contract", () => {
   test("traversable textarea: Up/Down yield only on first/last line", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const commit = spy<[string]>();
     const text = signal("");
@@ -958,7 +958,7 @@ describe("buildItemHeader contract", () => {
   test("always renders label field (LABEL_TARGET)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = buildItemHeader(core, {
       focus,
@@ -980,7 +980,7 @@ describe("buildItemHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setFormula(core, id, "");
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = buildItemHeader(core, {
       focus,
@@ -1006,7 +1006,7 @@ describe("buildItemHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = buildItemHeader(core, {
       focus,
@@ -1036,7 +1036,7 @@ describe("buildItemHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = buildItemHeader(core, {
       focus,
@@ -1064,11 +1064,11 @@ describe("buildItemHeader contract", () => {
   });
 });
 
-describe("smoke: container TYPE intent model-apply path", () => {
+describe("smoke: item TYPE intent model-apply path", () => {
   test("TYPE moves to primary edit target and types a character", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const focus: Location = { container: rootId, item: id };
+    const focus: Location = { item: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const host = el("div");
@@ -1104,8 +1104,8 @@ describe("smoke: container TYPE intent model-apply path", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: focus.container, item: focus.item },
-      head: { container: focus.container, item: focus.item },
+      anchor: { item: focus.item, portals: [] },
+      head: { item: focus.item, portals: [] },
     });
     await flushDomEffects();
 
@@ -1139,7 +1139,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("edit with exact target binding focuses correct element", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
-    const focus = { container: rootId, item: x };
+    const focus = { item: x, portals: [] };
 
     const valueEl = document.createElement("input");
     document.body.append(valueEl);
@@ -1160,7 +1160,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("new binding for same (focus, target) replaces previous binding", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
-    const focus = { container: rootId, item: x };
+    const focus = { item: x, portals: [] };
 
     const first = document.createElement("button");
     const second = document.createElement("button");
@@ -1194,13 +1194,13 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     expect(() =>
       core.mountView({
         id: "not-an-id" as ItemId,
-        containerId: "not-an-id" as ItemId,
+        portals: [],
       }),
     ).toThrow();
     expect(() =>
       core.mountView({
         id: "999999:" as ItemId,
-        containerId: "999999:" as ItemId,
+        portals: [],
       }),
     ).toThrow();
   });
@@ -1211,7 +1211,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 1 });
     setView(core, s, "slider");
 
-    const mounted = core.mountView({ id: s, containerId: rootId });
+    const mounted = core.mountView({ id: s, portals: [] });
 
     expect(mounted.el.classList.contains("ui-body")).toBe(true);
     expect(mounted.el.classList.contains("ui-outline")).toBe(true);
@@ -1222,6 +1222,6 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("mountView throws when requested view and outline fallback are both missing", () => {
     const { core, rootId } = makeCoreRuntime({ views: {} });
 
-    expect(() => core.mountView({ id: rootId, containerId: rootId })).toThrow();
+    expect(() => core.mountView({ id: rootId, portals: [] })).toThrow();
   });
 });

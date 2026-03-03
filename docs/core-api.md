@@ -301,7 +301,7 @@ type Selection =
   | { type: "editing"; location: Location; target: string }
   | { type: "item"; anchor: Location; head: Location };
 
-type Location = { container: ItemId; item: ItemId };
+type Location = { item: ItemId; portals: readonly ItemId[] };
 ```
 
 Variants:
@@ -329,18 +329,20 @@ Rules:
 
 - Selection MUST be the single source of truth for focus state.
 - `core.focus` is the canonical selection write API.
-- For editing selection, `core.focus` requires an explicit `target` (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`).
-- `opts.caret` is valid only with editing selection. It is forwarded as an ephemeral side-channel to `onSelectionChange` and MUST NOT be stored in `Selection`.
-- An editing selection MUST reference existing items.
-- Self-item selection (`location.container === location.item`) MUST be valid only for the root item.
-- Item selection supports both `core.focus({ type: "item", anchor, head })` and the collapsed shorthand `core.focus({ type: "item", location })` (equivalent to `anchor=head=location`).
-- Item selection MUST remain valid as long as both endpoint locations are valid.
-- `core.focus(...)` validates selection by item existence and root self-selection constraints; it MUST NOT auto-normalize non-root container/item parent-child mismatches.
-- After any apply, if selection is invalid, Core MUST repair it.
-- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair using a pre-apply ancestor anchor.
-- Local structural repair chooses the original sibling slot index at the nearest surviving anchored parent level; if that slot no longer exists, it chooses the last surviving sibling at that anchored parent level.
-- If an item selection is invalid after local apply, Core MUST repair it to an item selection using the same ancestor-anchor strategy.
-- If local structural repair cannot produce a valid focus, Core MUST fall back to a valid Core-owned selection (root item selection or `idle`).
+- Editing focus requires an explicit `target` (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`).
+- `opts.caret` is valid only with editing focus, is forwarded ephemerally to `onSelectionChange`, and MUST NOT be stored in `Selection`.
+- Location validity is model-only: `location.item` MUST exist, and every `location.portals` entry MUST exist and be connected.
+- Item focus supports both explicit ranges (`anchor` + `head`) and collapsed shorthand (`location`, equivalent to `anchor=head=location`).
+- Item ranges remain valid while both endpoints are valid.
+- For item ranges, `anchor` is fixed origin and `head` is active endpoint.
+- Shift-extend behavior (for example Shift+arrow and Shift+click in view adapters) MUST keep `anchor` fixed and move `head`.
+- Item-range navigation is head-driven, including `NAV out`; non-Shift directional navigation first collapses to `head`, then moves.
+- `core.focus(...)` validates only item existence and portal validity; it MUST NOT normalize to any tree-derived parent shape.
+- After any apply, invalid selection MUST be repaired.
+- For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair from a pre-apply ancestor anchor.
+- Local structural repair chooses the original sibling slot at the nearest surviving anchored parent; if missing, it chooses the last surviving sibling at that level.
+- If item selection is still invalid after local repair, Core MUST repair to an item selection using the same ancestor-anchor strategy.
+- If local structural repair cannot produce valid focus, Core MUST fall back to a Core-owned valid selection (`root` item selection or `idle`).
 - For remote apply, invalid selection MUST become `idle`.
 
 ## Core/platform boundary (`CorePlatformHooks`)

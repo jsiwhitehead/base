@@ -31,15 +31,15 @@ describe("views/table", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: tableId, item: tableId },
-      head: { container: tableId, item: tableId },
+      anchor: { item: tableId, portals: [] },
+      head: { item: tableId, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     const header = document.body.querySelector(
@@ -55,7 +55,7 @@ describe("views/table", () => {
     unmount();
   });
 
-  test("NAV in row container moves rows; right enters first cell", async () => {
+  test("NAV in row item moves rows; right enters first cell", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -69,33 +69,33 @@ describe("views/table", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: tableId, item: r1 },
-      head: { container: tableId, item: r1 },
+      anchor: { item: r1, portals: [] },
+      head: { item: r1, portals: [] },
     });
 
     const { domView, unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r2 });
+    expectSel(core, { item: r2, portals: [] });
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r1 });
+    expectSel(core, { item: r1, portals: [] });
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c11 });
+    expectSel(core, { item: c11, portals: [] });
 
     unmount();
   });
 
-  test("NAV in cells moves in grid; left from first cell exits to row container", async () => {
+  test("NAV in cells moves in grid; left from first cell exits to row item", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -112,32 +112,32 @@ describe("views/table", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: r1, item: c11 },
-      head: { container: r1, item: c11 },
+      anchor: { item: c11, portals: [] },
+      head: { item: c11, portals: [] },
     });
 
     const { domView, unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c12 });
+    expectSel(core, { item: c12, portals: [] });
 
     fireViewKey(domView, "ArrowDown");
     await flushDomEffects();
-    expectSel(core, { container: r2, item: c22 });
+    expectSel(core, { item: c22, portals: [] });
 
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: r2, item: c21 });
+    expectSel(core, { item: c21, portals: [] });
 
     fireViewKey(domView, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: r2 });
+    expectSel(core, { item: r2, portals: [] });
 
     unmount();
   });
@@ -158,29 +158,29 @@ describe("views/table", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: r1, item: c11 },
-      head: { container: r1, item: c11 },
+      anchor: { item: c11, portals: [] },
+      head: { item: c11, portals: [] },
     });
 
     const { domView, unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "Tab");
     await flushDomEffects();
-    expectSel(core, { container: r1, item: c12 });
+    expectSel(core, { item: c12, portals: [] });
 
     fireViewKey(domView, "Tab");
     await flushDomEffects();
-    expectSel(core, { container: r2, item: c21 });
+    expectSel(core, { item: c21, portals: [] });
 
     unmount();
   });
 
-  test("Enter from cell VALUE moves to same column next row container", async () => {
+  test("Enter from cell VALUE moves to same column next row item", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -197,7 +197,7 @@ describe("views/table", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: r1, item: c11 },
+        location: { item: c11, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 1 },
@@ -207,18 +207,18 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
 
-    expectSel(core, { container: r2, item: c21 });
+    expectSel(core, { item: c21, portals: [] });
 
     unmount();
   });
 
-  test("DELETE: row container removes row; cell container clears value", async () => {
+  test("DELETE: row item removes row; cell item clears value", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -234,13 +234,13 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     core.focus({
       type: "item",
-      anchor: { container: r1, item: c11 },
-      head: { container: r1, item: c11 },
+      anchor: { item: c11, portals: [] },
+      head: { item: c11, portals: [] },
     });
     await flushDomEffects();
 
@@ -250,8 +250,8 @@ describe("views/table", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: tableId, item: r2 },
-      head: { container: tableId, item: r2 },
+      anchor: { item: r2, portals: [] },
+      head: { item: r2, portals: [] },
     });
     await flushDomEffects();
 
@@ -276,32 +276,32 @@ describe("views/table", () => {
     const firstRow = childrenOf(core, tableId)[0]!;
     core.focus({
       type: "item",
-      anchor: { container: tableId, item: firstRow },
-      head: { container: tableId, item: firstRow },
+      anchor: { item: firstRow, portals: [] },
+      head: { item: firstRow, portals: [] },
     });
 
     const { domView, unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
-      focus: { container: tableId, item: tableId },
+      focus: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: tableId, item: firstRow });
+    expectSel(core, { item: firstRow, portals: [] });
 
     const firstCell = childrenOf(core, firstRow)[0]!;
     core.focus({
       type: "item",
-      anchor: { container: firstRow, item: firstCell },
-      head: { container: firstRow, item: firstCell },
+      anchor: { item: firstCell, portals: [] },
+      head: { item: firstCell, portals: [] },
     });
     await flushDomEffects();
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { container: firstRow, item: firstCell });
+    expectSel(core, { item: firstCell, portals: [] });
 
     unmount();
   });
@@ -316,15 +316,15 @@ describe("views/slider", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: s },
-      head: { container: rootId, item: s },
+      anchor: { item: s, portals: [] },
+      head: { item: s, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
-      focus: { container: rootId, item: s },
+      focus: { item: s, portals: [] },
     });
 
     requireFrameEl(document.body, s);
@@ -350,15 +350,15 @@ describe("views/slider", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: s },
-      head: { container: rootId, item: s },
+      anchor: { item: s, portals: [] },
+      head: { item: s, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
-      focus: { container: rootId, item: s },
+      focus: { item: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -369,7 +369,7 @@ describe("views/slider", () => {
     pointerDown(input);
     await flushDomEffects();
 
-    expectSel(core, { container: rootId, item: s, target: VALUE_TARGET });
+    expectSel(core, { item: s, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -382,15 +382,15 @@ describe("views/slider", () => {
 
     core.focus({
       type: "item",
-      anchor: { container: rootId, item: s },
-      head: { container: rootId, item: s },
+      anchor: { item: s, portals: [] },
+      head: { item: s, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
-      focus: { container: rootId, item: s },
+      focus: { item: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -416,7 +416,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { container: rootId, item: s },
+      focus: { item: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -444,7 +444,7 @@ describe("views/slider", () => {
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: s },
+        location: { item: s, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -454,17 +454,17 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { container: rootId, item: s },
+      focus: { item: s, portals: [] },
     });
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: s });
+    expectSel(core, { item: s, portals: [] });
 
     core.focus(
       {
         type: "editing",
-        location: { container: rootId, item: other },
+        location: { item: other, portals: [] },
         target: VALUE_TARGET,
       },
       { caret: 0 },
@@ -473,7 +473,7 @@ describe("views/slider", () => {
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
-    expectSel(core, { container: rootId, item: other, target: VALUE_TARGET });
+    expectSel(core, { item: other, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });

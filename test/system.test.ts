@@ -21,7 +21,7 @@ import {
 } from "./dom-test-utils";
 
 function mountAppShell(core: UiCore, rootId: ItemId): () => void {
-  const focus = { container: rootId, item: rootId };
+  const focus = { item: rootId, portals: [] };
 
   const appRoot = createComponent(core, (ctx) => {
     const rootFrame = el("div");
@@ -31,7 +31,7 @@ function mountAppShell(core: UiCore, rootId: ItemId): () => void {
     bindItemFrame(ctx, { core, focus }, rootFrame);
 
     ctx.slot(rootFrame, () => {
-      return core.mountView({ id: rootId, containerId: focus.container });
+      return core.mountView({ id: rootId, portals: [] });
     });
 
     return rootFrame;
@@ -56,7 +56,7 @@ describe("system/bootstrap & lifecycle", () => {
     const main = document.body.querySelector(".ui-main") as HTMLElement | null;
     expect(main).toBeTruthy();
     expect(document.activeElement).not.toBe(main);
-    expectSel(core, { container: rootId, item: rootId });
+    expectSel(core, { item: rootId, portals: [] });
 
     unmount();
     expect(document.body.querySelector(".ui-main")).toBeNull();
@@ -83,12 +83,12 @@ describe("system/keyboard routing & focus ownership", () => {
     pointerDown(c11Frame);
     await flushDomEffects();
 
-    expectSel(core, { container: r1, item: c11 });
+    expectSel(core, { item: c11, portals: [] });
 
     dispatchKey(c11Frame, "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { container: r2, item: c21 });
+    expectSel(core, { item: c21, portals: [] });
 
     unmount();
   });

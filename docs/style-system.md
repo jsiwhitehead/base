@@ -10,7 +10,7 @@ This document defines:
 - CSS layering responsibilities.
 - Shared primitives (`frame`, `body`, `header`, `rail`, `wash`).
 - Universal state styling (`.is-focused`, `.is-issue`, and derived variables).
-- Location language (item vs target, container vs edit, control vs editor).
+- Location language (item vs target, item-target vs edit-target, control vs editor).
 - Issue language and issue/focus interaction.
 
 ## Deep feel and visual language
@@ -146,13 +146,13 @@ Rules:
 - Views MUST NOT redefine `.is-focused`, `.is-issue`, or frame-derived variables.
 - Views MUST NOT alter rail segmentation/geometry language.
 - Views MUST NOT replace the shared header language with a view-specific header system.
-- Views MUST NOT add container-level focus rings; item-level focus belongs to rail and optional wash.
+- Views MUST NOT add item-level focus rings; item-level focus belongs to rail and optional wash.
 
 ## Shared primitives
 
 ### Frame
 
-The frame is the root visual container for an item.
+The frame is the root visual shell for an item.
 
 Rules:
 
@@ -168,7 +168,7 @@ Rules:
 
 - The body MUST remain visually neutral relative to frame-level state language.
 - The body MUST NOT restyle rail or header primitives.
-- The body MUST NOT add container-level wash/ring language.
+- The body MUST NOT add item-level wash/ring language.
 - The body MAY host active targets, but local affordance styling SHOULD come from shared base primitives.
 
 ### Header
@@ -224,7 +224,7 @@ Notes:
 
 ### Wash
 
-The wash is a subtle background tint for container-level focus.
+The wash is a subtle background tint for item-level focus.
 
 Rules:
 
@@ -268,7 +268,7 @@ Rules:
 
 - Item focus MUST be driven by `.is-focused`, not DOM `:focus`/`:focus-within`.
 - Rail/header/wash MUST use frame-derived variables.
-- DOM focus MAY be used only for container vs edit mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
+- DOM focus MAY be used only for item-target vs edit-target mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
 
 ## Location language
 
@@ -281,7 +281,7 @@ Rules:
 - Item focus MUST be communicated by rail tint and optional wash.
 - Item focus MUST NOT encode which field is active.
 - Target focus MUST be communicated locally at the active control/editor.
-- Target focus MUST NOT be expressed as a container-level ring.
+- Target focus MUST NOT be expressed as an item-level ring.
 
 ### Item selection vs edit focus
 
@@ -299,7 +299,7 @@ DOM focus is a modifier for the focused item. It MUST NOT determine item focus.
 Signals:
 
 - `.ui-frame.is-focused`: authoritative item focus.
-- `.ui-frame:focus`: container itself has DOM focus.
+- `.ui-frame:focus`: item frame itself has DOM focus.
 - `.ui-frame:focus-within`: DOM focus is inside the item (including item selection).
 - `input/textarea/select/button:focus`: the active control/editor.
 
@@ -446,7 +446,7 @@ Frame-derived variables:
 
 - `--rail-tint`: rail segment tint.
 - `--header-fill`: header fill.
-- `--frame-wash`: container wash.
+- `--frame-wash`: item wash.
 - `--value-ink`: value text ink.
 - Default neutral bases: `--ui-color-rail` for rail tint, `--ui-color-header` for header fill; `--ui-color-surface` remains the generic panel/surface neutral.
 

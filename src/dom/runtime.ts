@@ -120,11 +120,11 @@ type AttachTargetOpts = {
   getCaret?: () => number | undefined;
 };
 
-type MountViewOpts = { id: ItemId; containerId: ItemId };
+type MountViewOpts = { id: ItemId; portals: readonly ItemId[] };
 
 const itemKey = (id: ItemId): string => id;
 const keyOf = (f: Location): string =>
-  `${itemKey(f.container)}::${itemKey(f.item)}`;
+  `${f.portals.map(itemKey).join("|")}::${itemKey(f.item)}`;
 
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
@@ -218,7 +218,7 @@ export function createRuntime(opts: {
   const bindings = new Map<string, Map<string, TargetBindingRecord>>();
 
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
-  const mountedViewsByItem = new Map<ItemId, ViewHandle>();
+  const mountedViewsByFocus = new Map<string, ViewHandle>();
 
   let pending: { selection: Selection; effects: RuntimeEffect[] } | null = null;
   let flushScheduled = false;
@@ -261,7 +261,9 @@ export function createRuntime(opts: {
       const core = opts.getCore();
       let cur: ItemId | null = itemId;
       while (cur) {
-        const mounted = mountedViewsByItem.get(cur);
+        const mounted = mountedViewsByFocus.get(
+          keyOf({ item: cur, portals: focus.portals }),
+        );
         if (mounted) return mounted;
         const loc = core.locate(cur);
         cur = loc?.parentId ?? null;
@@ -378,7 +380,7 @@ export function createRuntime(opts: {
   };
 
   const registerViewRoot = (view: {
-    id: ItemId;
+    focus: Location;
     root: HTMLElement;
     onIntent?: (intent: Intent) => void;
   }): (() => void) => {
@@ -388,11 +390,11 @@ export function createRuntime(opts: {
     };
 
     viewRoots.set(handle.root, handle);
-    mountedViewsByItem.set(view.id, handle);
+    mountedViewsByFocus.set(keyOf(view.focus), handle);
 
     return () => {
       viewRoots.delete(handle.root);
-      mountedViewsByItem.delete(view.id);
+      mountedViewsByFocus.delete(keyOf(view.focus));
     };
   };
 
@@ -482,7 +484,7 @@ export function createRuntime(opts: {
 
   const mountView = (mountOpts: MountViewOpts): Component => {
     const id = mountOpts.id;
-    const focus: Location = { container: mountOpts.containerId, item: id };
+    const focus: Location = { item: id, portals: mountOpts.portals };
     const core = opts.getCore();
     const resolvedView = core.view(id);
     const factory = views[resolvedView] ?? views.outline;
@@ -495,7 +497,7 @@ export function createRuntime(opts: {
     const view = factory({ core, id, focus });
 
     const unreg = registerViewRoot({
-      id,
+      focus,
       root: view.root,
       ...(view.onIntent ? { onIntent: view.onIntent } : {}),
     });
@@ -516,13 +518,13 @@ export function createRuntime(opts: {
     const view =
       selection.type === "editing"
         ? resolveViewForFocusTarget(selection.location, selection.target)
-        : resolveViewForFocusTarget(selection.anchor, ITEM_TARGET);
+        : resolveViewForFocusTarget(selection.head, ITEM_TARGET);
     return view?.onIntent ?? null;
   };
 
   const dispose = (): void => {
     bindings.clear();
-    mountedViewsByItem.clear();
+    mountedViewsByFocus.clear();
     pending = null;
     flushScheduled = false;
   };
