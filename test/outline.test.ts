@@ -863,6 +863,84 @@ describe("outline/ce-beforeinput", () => {
     unmount();
   });
 
+  test("beforeinput insertParagraph with non-collapsed single-item selection splits using range end", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const outlineRoot = requireOutlineRoot(document.body);
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(aValueEl, 1, 4);
+    const ev = dispatchBeforeInput(outlineRoot, "insertParagraph");
+    await flushDomEffects();
+    expect(ev.defaultPrevented).toBe(true);
+
+    const kids = childrenOf(core, rootId);
+    const aIdx = kids.indexOf(a);
+    const b = kids[aIdx + 1]!;
+    expect(valueOfId(core, a)).toBe("h");
+    expect(valueOfId(core, b)).toBe("o");
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, b))).toBe(
+      0,
+    );
+
+    unmount();
+  });
+
+  test("beforeinput insertParagraph with non-collapsed multi-item selection deletes range then splits", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    const b = mkBlank(core, rootId, { label: "b", value: "world" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    const bValueEl = requireOutlineValueEl(document.body, b);
+    const bText = bValueEl.firstChild as Text | null;
+    const sel = window.getSelection();
+    expect(sel).toBeTruthy();
+    expect(bText).toBeTruthy();
+    const range = document.createRange();
+    range.setStart(aValueEl.firstChild ?? aValueEl, 2);
+    range.setEnd(bText ?? bValueEl, 3);
+    sel!.removeAllRanges();
+    sel!.addRange(range);
+
+    const outlineRoot = requireOutlineRoot(document.body);
+    const ev = dispatchBeforeInput(outlineRoot, "insertParagraph");
+    await flushDomEffects();
+    expect(ev.defaultPrevented).toBe(true);
+
+    const kids = childrenOf(core, rootId);
+    expect(kids.length).toBe(2);
+    expect(kids[0]).toBe(a);
+    const c = kids[1]!;
+    expect(c).not.toBe(b);
+    expect(valueOfId(core, a)).toBe("he");
+    expect(valueOfId(core, c)).toBe("ld");
+    expectSel(core, { item: c, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
   test("beforeinput insertLineBreak inserts newline in-place", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
@@ -887,6 +965,38 @@ describe("outline/ce-beforeinput", () => {
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("he\nllo");
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("deleteContentForward at boundary joins with next sibling", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "aa" });
+    mkBlank(core, rootId, { label: "b", value: "bb" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const outlineRoot = requireOutlineRoot(document.body);
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(aValueEl, 2);
+    const ev = dispatchBeforeInput(outlineRoot, "deleteContentForward");
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(childrenOf(core, rootId)).toEqual([a]);
+    expect(valueOfId(core, a)).toBe("aabb");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
+      2,
+    );
 
     unmount();
   });
@@ -1200,6 +1310,180 @@ describe("outline/clipboard-drop", () => {
     unmount();
   });
 
+  test("multi-line paste creates sibling items", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 2);
+
+    const paste = dispatchClipboardEvent(root, "paste", { textPlain: "foo\nbar" });
+    await flushDomEffects();
+    expect(paste.defaultPrevented).toBe(true);
+
+    const kids = childrenOf(core, rootId);
+    const aIdx = kids.indexOf(a);
+    const b = kids[aIdx + 1]!;
+
+    expect(valueOfId(core, a)).toBe("hefoo");
+    expect(valueOfId(core, b)).toBe("barllo");
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, b))).toBe(
+      3,
+    );
+
+    unmount();
+  });
+
+  test("multi-line drop creates sibling items", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 2);
+
+    const drop = dispatchDropText(root, "foo\nbar");
+    await flushDomEffects();
+    expect(drop.defaultPrevented).toBe(true);
+
+    const kids = childrenOf(core, rootId);
+    const aIdx = kids.indexOf(a);
+    const b = kids[aIdx + 1]!;
+
+    expect(valueOfId(core, a)).toBe("hefoo");
+    expect(valueOfId(core, b)).toBe("barllo");
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, b))).toBe(
+      3,
+    );
+
+    unmount();
+  });
+
+  test("multi-line paste undo/redo is atomic", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 2);
+
+    const paste = dispatchClipboardEvent(root, "paste", { textPlain: "foo\nbar" });
+    await flushDomEffects();
+    expect(paste.defaultPrevented).toBe(true);
+
+    const kids = childrenOf(core, rootId);
+    const aIdx = kids.indexOf(a);
+    const b = kids[aIdx + 1]!;
+
+    expect(valueOfId(core, a)).toBe("hefoo");
+    expect(valueOfId(core, b)).toBe("barllo");
+
+    core.undo();
+    await flushDomEffects();
+    expect(childrenOf(core, rootId)).toEqual([a]);
+    expect(valueOfId(core, a)).toBe("hello");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
+      3,
+    );
+
+    core.redo();
+    await flushDomEffects();
+    const redoneKids = childrenOf(core, rootId);
+    const redoneAIdx = redoneKids.indexOf(a);
+    const redoneB = redoneKids[redoneAIdx + 1]!;
+    expect(valueOfId(core, a)).toBe("hefoo");
+    expect(valueOfId(core, redoneB)).toBe("barllo");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
+      3,
+    );
+
+    unmount();
+  });
+
+  test("paste into non-collapsed single-item selection replaces range", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 1, 4);
+
+    const paste = dispatchClipboardEvent(root, "paste", { textPlain: "X" });
+    await flushDomEffects();
+    expect(paste.defaultPrevented).toBe(true);
+    expect(valueOfId(core, a)).toBe("hXo");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("drop into non-collapsed single-item selection replaces range", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 1, 4);
+
+    const drop = dispatchDropText(root, "X");
+    await flushDomEffects();
+    expect(drop.defaultPrevented).toBe(true);
+    expect(valueOfId(core, a)).toBe("hXo");
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
   test("paste/drop are isolated undo steps from surrounding typing", async () => {
     const runCase = async (kind: "paste" | "drop"): Promise<void> => {
       const { core, rootId } = makeCoreRuntime();
@@ -1284,6 +1568,35 @@ describe("outline/ime-mutation", () => {
 
     expect(ev.defaultPrevented).toBe(false);
     expect(core.item(a).content.type).toBe("value");
+
+    unmount();
+  });
+
+  test("Enter immediately after compositionend is suppressed", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 2);
+    dispatchComposition(root, "compositionend");
+
+    const ev = dispatchKey(root, "Enter");
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(childrenOf(core, rootId)).toEqual([a]);
+    expect(valueOfId(core, a)).toBe("hello");
 
     unmount();
   });

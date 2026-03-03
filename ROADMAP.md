@@ -40,13 +40,7 @@ This axis covers change mechanics: how edits are initiated (user, automation, co
 
 Purpose: Ensure all user input resolves to deterministic structural operations with consistent behavior across input contexts and platforms.
 
-- Harden contenteditable reconciliation for high-churn edits and operations at item boundaries
-- Harden cross-browser IME and input-event handling
-- Validate shared outline operations across all `contenteditable` input paths (keyboard, IME, paste, drop)
-- Guarantee convergence across keyboard, drag-and-drop, and paste
-- Ensure equivalent operation sequences yield identical history and undo outcomes
 - Persist per-entry selection intent (including caret) so structural undo/redo (for example split/join) restores focus mode and target predictably
-- Provide replay and fuzz testing for editing flows
 
 ### Bounded automation
 
@@ -109,6 +103,7 @@ Purpose: Ensure structural continuity, responsiveness, and diagnosability under 
 - Establish performance budgets, representative scale benchmarks, and regression detection
 - Provide deterministic structural hashing for state equivalence validation
 - Provide transaction inspection, replay, and trace tooling
+- Define an edit script format and implement fuzz testing to surface structural invariant violations under arbitrary operation sequences
 - Expose dependency graphs for computed outputs to support debugging and error attribution
 - Detect and surface structural inconsistencies at startup and during editing operations
 - Provide reproducible export bundles for debugging
