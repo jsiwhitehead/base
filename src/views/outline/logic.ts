@@ -11,8 +11,8 @@ import {
 
 export type ModelPosition = { itemId: ItemId; offset: number };
 export type NavPoint =
-  | { kind: "editing"; focus: Location; target: string }
-  | { kind: "item"; focus: Location };
+  | { type: "editing"; focus: Location; target: string }
+  | { type: "item"; focus: Location };
 type NavMove = { point: NavPoint; edge: "start" | "end" | null };
 export type BlockRemovalPlan = {
   removeRoots: ItemId[];
@@ -324,11 +324,11 @@ export function collectNavPoints(
     if (!isEditLeaf(core, id)) return;
     const focus = { item: id, portals };
     if (core.view(id) !== "outline") {
-      out.push({ kind: "item", focus });
+      out.push({ type: "item", focus });
       return;
     }
     for (const target of editTargetsForItem(core, id)) {
-      out.push({ kind: "editing", focus, target });
+      out.push({ type: "editing", focus, target });
     }
   };
 
@@ -348,16 +348,16 @@ export function moveNavPoint(
 ): NavMove | null {
   const idx = points.findIndex(
     (p) =>
-      p.kind === current.kind &&
+      p.type === current.type &&
       sameFocus(p.focus, current.focus) &&
-      (p.kind === "editing" && current.kind === "editing"
+      (p.type === "editing" && current.type === "editing"
         ? p.target === current.target
         : true),
   );
   if (idx < 0) return null;
   const next = points[dir === "backward" ? idx - 1 : idx + 1];
   if (!next) return null;
-  if (next.kind === "item") return { point: next, edge: null };
+  if (next.type === "item") return { point: next, edge: null };
   return { point: next, edge: dir === "backward" ? "end" : "start" };
 }
 

@@ -400,6 +400,16 @@ export function createCore(opts: {
     shapes,
     rootEntryId,
     getSelection: () => peekSelection(),
+    ...(opts.platform?.readCurrentCaret
+      ? { readCurrentCaret: opts.platform.readCurrentCaret }
+      : {}),
+    restoreSelectionIfValid: (snapshot) => {
+      if (snapshot.selection.type === "editing") {
+        setSelection(snapshot.selection, snapshot.caret);
+        return;
+      }
+      setSelection(snapshot.selection);
+    },
     captureRepairAnchor,
     repairAfterLocalApply,
     coerceEditingToItem,

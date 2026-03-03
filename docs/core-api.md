@@ -460,12 +460,12 @@ Rules:
 
 - Undo/redo MUST restore item content and structure.
 - Selection MUST be repaired to valid state.
-- Selection MUST NOT be historically restored.
+- Undo MUST restore the pre-commit selection/caret when that snapshot remains valid after apply; otherwise keep repaired selection.
+- Redo MUST restore the selection/caret snapshot captured at undo-time when that snapshot remains valid after apply; otherwise keep repaired selection.
+- If undo/redo applies a `view` patch on the restored editing item, Core MUST preserve view-change coercion (snap to item selection) instead of restoring editing selection.
 - Undo history MUST be linear.
 - Core MUST coalesce text edits only for consecutive single-op text commits on the same item and target within 500ms.
-- Core MUST NOT coalesce structural commits (any create, move, or remove op).
-- Core MUST NOT coalesce multi-op transactions.
-- Core MUST NOT coalesce commits made outside editing selection mode.
+- Core MUST NOT coalesce structural commits (create, move, or remove), multi-op transactions, or commits made outside editing selection mode.
 - A new edit MUST clear the redo stack.
 - `core.undoBoundary()` closes the active coalescing group and MUST be a no-op if no group is active.
 - Views MUST call `core.undoBoundary()` at semantic breaks that Core cannot observe.

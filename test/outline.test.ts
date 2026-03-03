@@ -851,14 +851,14 @@ describe("outline/ce-beforeinput", () => {
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
-    ).toBe(0);
+    ).toBe(2);
 
     core.redo();
     await flushDomEffects();
     expect(childrenOf(core, rootId)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -1091,7 +1091,7 @@ describe("outline/ce-beforeinput", () => {
     expect(childrenOf(core, g)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("aa");
     expect(valueOfId(core, b)).toBe("bb");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });
@@ -1414,7 +1414,7 @@ describe("outline/clipboard-drop", () => {
     expect(valueOfId(core, a)).toBe("hello");
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
     expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
-      3,
+      2,
     );
 
     core.redo();
@@ -1424,8 +1424,8 @@ describe("outline/clipboard-drop", () => {
     const redoneB = redoneKids[redoneAIdx + 1]!;
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, redoneB)).toBe("barllo");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
-    expect(readContentEditableCaret(requireOutlineValueEl(document.body, a))).toBe(
+    expectSel(core, { item: redoneB, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(requireOutlineValueEl(document.body, redoneB))).toBe(
       3,
     );
 

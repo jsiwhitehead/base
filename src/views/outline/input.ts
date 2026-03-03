@@ -175,8 +175,8 @@ function adjacentOutlineValueItem(
   dir: "up" | "down",
 ): ItemId | null {
   const points = navPoints.filter(
-    (p): p is Extract<NavPoint, { kind: "editing" }> =>
-      p.kind === "editing" && p.target === VALUE_TARGET,
+    (p): p is Extract<NavPoint, { type: "editing" }> =>
+      p.type === "editing" && p.target === VALUE_TARGET,
   );
   const idx = points.findIndex((p) => p.focus.item === fromId);
   if (idx < 0) return null;
@@ -269,7 +269,7 @@ export function handleArrowHorizontal(
       if (!atBoundary) return null;
       return moveNavPoint(
         navPoints,
-        { kind: "editing", focus: modelSel.location, target: VALUE_TARGET },
+        { type: "editing", focus: modelSel.location, target: VALUE_TARGET },
         dir,
       );
     }
@@ -284,7 +284,7 @@ export function handleArrowHorizontal(
         return null;
       return moveNavPoint(
         navPoints,
-        { kind: "item", focus: modelSel.head },
+        { type: "item", focus: modelSel.head },
         dir,
       );
     }
@@ -294,7 +294,7 @@ export function handleArrowHorizontal(
   state.stickyCaretX = null;
   const moved = resolveMovedPoint();
   if (!moved) return false;
-  if (moved.point.kind === "item") {
+  if (moved.point.type === "item") {
     e.preventDefault();
     core.focus({ type: "item", location: moved.point.focus });
     return true;
@@ -545,13 +545,13 @@ export function handleBoundaryDeleteBeforeInput(
     ) {
       const nextStop = moveNavPoint(
         ctx.navPoints.value,
-        { kind: "editing", focus: modelSel.location, target: modelSel.target },
+        { type: "editing", focus: modelSel.location, target: modelSel.target },
         dir,
       );
       ctx.suppressMutationSync.suppressForTurn(true);
       outlineCmd.removeAndPruneAncestors(ctx.core, ctx.rootId, pos.itemId);
       if (!nextStop) return;
-      if (nextStop.point.kind === "item") {
+      if (nextStop.point.type === "item") {
         ctx.core.focus({ type: "item", location: nextStop.point.focus });
         return;
       }

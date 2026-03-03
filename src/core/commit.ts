@@ -44,21 +44,36 @@ export type CommitController = {
   resetState(): void;
 };
 
-type TextHistoryGroupKey = { kind: "text"; itemId: ItemId; target: string };
+type TextHistoryGroupKey = { type: "text"; itemId: ItemId; target: string };
+type HistorySelectionSnapshot = { selection: Selection; caret?: number };
 type UndoHistoryEntry = {
   user: Transaction;
   inverse: Transaction;
+  before: HistorySelectionSnapshot;
   groupedAt: number;
   groupKey: TextHistoryGroupKey | null;
 };
-type UserCommitHistoryCtx = { selection: Selection; startedAt: number };
+type RedoHistoryEntry = UndoHistoryEntry & {
+  redoSnapshot: HistorySelectionSnapshot;
+};
+type UserCommitHistoryCtx = {
+  selection: Selection;
+  caret?: number;
+  startedAt: number;
+};
 type CapturedSubtree = { entry: Entry; children: CapturedSubtree[] };
+type LocalPipelineCtx =
+  | { type: "user"; userHistoryCtx: UserCommitHistoryCtx }
+  | { type: "non-user" };
+type ApplyPipelineCtx = { type: "remote" } | { type: "local"; local: LocalPipelineCtx };
 
 type CommitControllerOptions = {
   model: Model;
   shapes: Partial<Record<ViewName, ViewShape>>;
   rootEntryId: EntryId;
   getSelection: () => Selection;
+  readCurrentCaret?: () => number | undefined;
+  restoreSelectionIfValid: (snapshot: HistorySelectionSnapshot) => void;
   captureRepairAnchor: () => SelectionRepairAnchor | null;
   repairAfterLocalApply: (anchor: SelectionRepairAnchor | null) => void;
   coerceEditingToItem: () => void;
@@ -79,12 +94,61 @@ function storedFromValue(v: ValueOrBlank): EntryContent {
   return v === null ? { type: "blank" } : { type: "scalar", value: v };
 }
 
+function cloneSelection(selection: Selection): Selection {
+  if (selection.type === "idle") return { type: "idle" };
+  if (selection.type === "editing")
+    return {
+      type: "editing",
+      location: {
+        item: selection.location.item,
+        portals: [...selection.location.portals],
+      },
+      target: selection.target,
+    };
+  return {
+    type: "item",
+    anchor: {
+      item: selection.anchor.item,
+      portals: [...selection.anchor.portals],
+    },
+    head: {
+      item: selection.head.item,
+      portals: [...selection.head.portals],
+    },
+  };
+}
+
+function captureSelectionSnapshot(
+  selection: Selection,
+  caret?: number,
+): HistorySelectionSnapshot {
+  if (selection.type !== "editing") {
+    return { selection: cloneSelection(selection) };
+  }
+  return {
+    selection: cloneSelection(selection),
+    ...(caret !== undefined ? { caret } : {}),
+  };
+}
+
+function patchesViewOnSelection(
+  txn: Transaction,
+  snapshot: HistorySelectionSnapshot,
+): boolean {
+  if (snapshot.selection.type !== "editing") return false;
+  const eid = entryIdFromItemId(snapshot.selection.location.item);
+  if (eid == null) return false;
+  return txn.ops.some(
+    (op) => op.type === "patch" && op.id === eid && op.next.view !== undefined,
+  );
+}
+
 export function createCommitController(
   opts: CommitControllerOptions,
 ): CommitController {
   const currentModel = opts.model;
 
-  const history: { undo: UndoHistoryEntry[]; redo: UndoHistoryEntry[] } = {
+  const history: { undo: UndoHistoryEntry[]; redo: RedoHistoryEntry[] } = {
     undo: [],
     redo: [],
   };
@@ -276,11 +340,11 @@ export function createCommitController(
   const normalizeSelectionAfterApply = (
     txn: Transaction,
     opts0:
-      | { phase: "local"; anchor: SelectionRepairAnchor | null }
-      | { phase: "remote" },
+      | { type: "local"; anchor: SelectionRepairAnchor | null }
+      | { type: "remote" },
   ): void => {
     coerceEditingIfViewChanged(txn);
-    if (opts0.phase === "local") {
+    if (opts0.type === "local") {
       opts.repairAfterLocalApply(opts0.anchor);
       return;
     }
@@ -313,7 +377,7 @@ export function createCommitController(
     const focusedEntryId = entryIdFromItemId(sel.location.item);
     if (focusedEntryId == null || focusedEntryId !== op.id) return null;
 
-    return { kind: "text", itemId: sel.location.item, target: sel.target };
+    return { type: "text", itemId: sel.location.item, target: sel.target };
   };
 
   const canCoalesceUndoEntries = (
@@ -343,6 +407,7 @@ export function createCommitController(
       ops: [...next.inverse.ops, ...prev.inverse.ops],
       ...(next.inverse.meta ? { meta: next.inverse.meta } : {}),
     },
+    before: prev.before,
     groupedAt: next.groupedAt,
     groupKey: next.groupKey,
   });
@@ -368,19 +433,18 @@ export function createCommitController(
     const shapeRuleDelta = applyShapeRuleOps(modelDelta.touched, inverseAcc);
     merged = mergeApply(merged, shapeRuleDelta);
 
-    normalizeSelectionAfterApply(txn, { phase: "remote" });
+    normalizeSelectionAfterApply(txn, { type: "remote" });
 
     return merged;
   };
 
-  const applyUserPipeline = (
+  const applyLocalPipeline = (
     txn: Transaction,
     inverseAcc: Op[],
-    userHistoryCtx: UserCommitHistoryCtx | null = null,
+    localCtx: LocalPipelineCtx,
   ): ApplyDelta => {
     let merged = emptyApply;
     const anchor = opts.captureRepairAnchor();
-    const isUser = txn.meta?.source === "user";
 
     const { delta: userDelta, inverseOps } = applyTxnWithInverse(txn);
     inverseAcc.push(...inverseOps);
@@ -389,19 +453,22 @@ export function createCommitController(
     const shapeRuleDelta = applyShapeRuleOps(userDelta.touched, inverseAcc);
     merged = mergeApply(merged, shapeRuleDelta);
 
-    normalizeSelectionAfterApply(txn, { phase: "local", anchor });
+    normalizeSelectionAfterApply(txn, { type: "local", anchor });
 
-    if (isUser) {
+    if (localCtx.type === "user") {
+      const { userHistoryCtx } = localCtx;
       const inverse = currentModel.ops.transaction(inverseAcc.toReversed(), {
         source: "undo",
       });
       pushOrCoalesceUndoEntry({
         user: txn,
         inverse,
-        groupedAt: userHistoryCtx?.startedAt ?? Date.now(),
-        groupKey: userHistoryCtx
-          ? classifyTextHistoryGroup(txn, userHistoryCtx.selection)
-          : null,
+        before: captureSelectionSnapshot(
+          userHistoryCtx.selection,
+          userHistoryCtx.caret,
+        ),
+        groupedAt: userHistoryCtx.startedAt,
+        groupKey: classifyTextHistoryGroup(txn, userHistoryCtx.selection),
       });
       history.redo = [];
     }
@@ -411,19 +478,18 @@ export function createCommitController(
 
   const applyPipeline = (
     txn: Transaction,
-    userHistoryCtx: UserCommitHistoryCtx | null = null,
+    pipelineCtx: ApplyPipelineCtx,
   ): void => {
     let final = emptyApply;
     const inverseAcc: Op[] = [];
-    const source = txn.meta?.source;
 
     batch(() => {
-      if (source === "remote") {
+      if (pipelineCtx.type === "remote") {
         final = mergeApply(final, applyRemotePipeline(txn, inverseAcc));
       } else {
         final = mergeApply(
           final,
-          applyUserPipeline(txn, inverseAcc, userHistoryCtx),
+          applyLocalPipeline(txn, inverseAcc, pipelineCtx.local),
         );
       }
 
@@ -453,11 +519,14 @@ export function createCommitController(
 
   const applyLocal = (
     txn: Transaction,
-    userHistoryCtx: UserCommitHistoryCtx | null = null,
+    userHistoryCtx?: UserCommitHistoryCtx,
   ): void => {
     const model = currentModel;
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
-    applyPipeline(stamped, userHistoryCtx);
+    applyPipeline(stamped, {
+      type: "local",
+      local: userHistoryCtx ? { type: "user", userHistoryCtx } : { type: "non-user" },
+    });
     sendLocalTxn(stamped);
   };
 
@@ -472,7 +541,7 @@ export function createCommitController(
 
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
     const model = currentModel;
-    applyPipeline(model.ops.transaction(txn.ops, meta));
+    applyPipeline(model.ops.transaction(txn.ops, meta), { type: "remote" });
   };
 
   const buildTx = (
@@ -570,8 +639,12 @@ export function createCommitController(
   });
 
   const commit = (run: (t: Tx) => void): void => {
+    const selBefore = opts.getSelection();
+    const caretBefore =
+      selBefore.type === "editing" ? opts.readCurrentCaret?.() : undefined;
     const userHistoryCtx: UserCommitHistoryCtx = {
-      selection: opts.getSelection(),
+      selection: cloneSelection(selBefore),
+      ...(caretBefore !== undefined ? { caret: caretBefore } : {}),
       startedAt: Date.now(),
     };
     const ops: Op[] = [];
@@ -614,19 +687,35 @@ export function createCommitController(
   const undo = (): void => {
     const last = history.undo.pop() ?? null;
     if (!last) return;
+    const selBeforeUndo = opts.getSelection();
+    const caretBeforeUndo =
+      selBeforeUndo.type === "editing" ? opts.readCurrentCaret?.() : undefined;
+    const redoSnapshot = captureSelectionSnapshot(selBeforeUndo, caretBeforeUndo);
     applyLocal(last.inverse);
-    history.redo.push(last);
+    if (!patchesViewOnSelection(last.inverse, last.before)) {
+      opts.restoreSelectionIfValid(last.before);
+    }
+    history.redo.push({ ...last, redoSnapshot });
   };
 
   const redo = (): void => {
-    const last = history.redo.pop() ?? null;
-    if (!last) return;
+    const redone = history.redo.pop() ?? null;
+    if (!redone) return;
 
-    const replay = currentModel.ops.transaction(last.user.ops, {
+    const replay = currentModel.ops.transaction(redone.user.ops, {
       source: "redo",
     });
     applyLocal(replay);
-    history.undo.push(last);
+    if (!patchesViewOnSelection(replay, redone.redoSnapshot)) {
+      opts.restoreSelectionIfValid(redone.redoSnapshot);
+    }
+    history.undo.push({
+      user: redone.user,
+      inverse: redone.inverse,
+      before: redone.before,
+      groupedAt: redone.groupedAt,
+      groupKey: redone.groupKey,
+    });
   };
 
   const undoBoundary = (): void => {

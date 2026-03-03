@@ -36,12 +36,6 @@ LLM assistance operates through transactions, is fully undoable, and never bypas
 
 This axis covers change mechanics: how edits are initiated (user, automation, collaborator), interpreted, applied, persisted, synchronized, replayed, and audited while preserving deterministic correctness.
 
-### Input resolution
-
-Purpose: Ensure all user input resolves to deterministic structural operations with consistent behavior across input contexts and platforms.
-
-- Persist per-entry selection intent (including caret) so structural undo/redo (for example split/join) restores focus mode and target predictably
-
 ### Bounded automation
 
 Purpose: Allow LLM assistance without displacing human authority or weakening structural guarantees.
