@@ -201,7 +201,8 @@ Textfields are shared primitives used in headers and bodies.
 Rules:
 
 - Autosize textfields MAY be implemented using a hidden mirror element.
-- Styling MAY use `:has(.ui-textfield-mirror)` to detect autosize mode if no explicit class is provided.
+- `:has(.ui-textfield-mirror)` MAY be used to detect autosize mode when no explicit class is present.
+- `.ui-textfield.is-stale` marks draft-vs-committed divergence and SHOULD include non-color cues when styled.
 
 ### Rail
 

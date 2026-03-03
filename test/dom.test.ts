@@ -713,10 +713,298 @@ describe("buildTextField contract", () => {
     await flushDomEffects();
     expect(inp.value).toBe("changed");
 
-    dispatchKey(inp, "Escape");
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     await flushDomEffects();
 
     expect(commit.count()).toBe(0);
+    expect(inp.value).toBe("base");
+
+    unmount();
+  });
+
+  test("dirty draft becomes stale when committed value changes externally", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("base");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    setInputValueAndFireInput(inp, "draft");
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(false);
+
+    text.value = "external";
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(true);
+
+    unmount();
+  });
+
+  test("committing while stale clears stale class and commits draft", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("base");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      kind: "traversable",
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    setInputValueAndFireInput(inp, "draft");
+    await flushDomEffects();
+
+    text.value = "external";
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(true);
+
+    dispatchKey(inp, "Enter");
+    await flushDomEffects();
+
+    expect(c.el.classList.contains("is-stale")).toBe(false);
+    expect(text.value).toBe("draft");
+
+    unmount();
+  });
+
+  test("Escape while stale clears stale class and reverts to session baseline", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("base");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    setInputValueAndFireInput(inp, "draft");
+    await flushDomEffects();
+
+    text.value = "external";
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(true);
+
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushDomEffects();
+
+    expect(c.el.classList.contains("is-stale")).toBe(false);
+    expect(inp.value).toBe("base");
+
+    unmount();
+  });
+
+  test("blur while stale clears stale class and next focus shows latest committed", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("base");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    setInputValueAndFireInput(inp, "draft");
+    await flushDomEffects();
+
+    text.value = "external";
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(true);
+
+    inp.blur();
+    await flushDomEffects();
+
+    expect(c.el.classList.contains("is-stale")).toBe(false);
+
+    text.value = "latest";
+    await flushDomEffects();
+
+    inp.focus();
+    await flushDomEffects();
+    expect(inp.value).toBe("latest");
+
+    unmount();
+  });
+
+  test("read-only transition while stale clears stale and resets to committed", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("base");
+    const readOnly = signal(false);
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: readOnly.value }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    setInputValueAndFireInput(inp, "draft");
+    await flushDomEffects();
+
+    text.value = "external";
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(true);
+
+    readOnly.value = true;
+    await flushDomEffects();
+
+    expect(c.el.classList.contains("is-stale")).toBe(false);
+    expect(inp.readOnly).toBe(true);
+    expect(inp.value).toBe("external");
+
+    unmount();
+  });
+
+  test("focused clean external sync preserves caret", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("abcdef");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    inp.setSelectionRange(2, 2);
+    text.value = "abcdefghi";
+    await flushDomEffects();
+
+    expect(inp.value).toBe("abcdefghi");
+    expect(inp.selectionStart).toBe(2);
+    expect(inp.selectionEnd).toBe(2);
+
+    unmount();
+  });
+
+  test("dirty session keeps baseline across multiple external committed updates", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "" });
+    const focus: Location = { item: id, portals: [] };
+
+    const text = signal("base");
+
+    const c = buildTextField(core, {
+      focus,
+      target: VALUE_TARGET,
+      multiline: false,
+      autosize: false,
+      commit: (t) => {
+        text.value = t;
+      },
+      getState: () => ({ text: text.value, readOnly: false }),
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    inp.focus();
+    await flushDomEffects();
+
+    setInputValueAndFireInput(inp, "draft");
+    await flushDomEffects();
+
+    text.value = "external-1";
+    await flushDomEffects();
+    text.value = "external-2";
+    await flushDomEffects();
+    expect(c.el.classList.contains("is-stale")).toBe(true);
+
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushDomEffects();
+
+    expect(c.el.classList.contains("is-stale")).toBe(false);
     expect(inp.value).toBe("base");
 
     unmount();

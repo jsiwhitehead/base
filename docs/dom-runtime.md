@@ -306,13 +306,14 @@ Canonical produced structure:
 Rules:
 
 - Wrapper MUST always have `.ui-textfield`.
+- Wrapper MUST toggle `.is-stale` when committed text diverges from baseline during a dirty draft session.
 - Wrapper MUST include `opts.className` when provided.
-- Input element MUST always have `.ui-textfield-input`.
+- Input MUST always have `.ui-textfield-input`.
 - Input MUST include `opts.inputClassName` when provided.
 - Input MUST set `data-target = opts.target`.
 - Input MUST always have `tabIndex = -1`.
 - Input MUST disable `autocomplete`, `autocorrect`, and spellcheck.
-- In autosize mode, `.ui-textfield-mirror` MUST be present and set `aria-hidden="true"`.
+- In autosize mode, `.ui-textfield-mirror` MUST be present with `aria-hidden="true"`.
 
 ### Behavioral contract
 
@@ -331,11 +332,13 @@ Read-only semantics:
 
 Sync rules:
 
-- When not focused on this target, input value syncs from committed state.
+- When this target is not focused, input value syncs from committed state.
 - When focused, local draft is preserved.
-- If committed state changes while draft is clean, the field syncs to committed state.
-- If draft is dirty, the visible field value remains local draft; external model updates are not pushed into the field mid-session.
-- If the focused editing target is no longer valid (for example item/target removed or focus repaired away), the draft session ends and subsequent renders reflect committed state.
+- If committed text changes while draft is clean, the field syncs to committed text.
+- If draft is dirty, visible input remains the local draft; external committed updates are not pushed into the field mid-session.
+- If draft is dirty and committed text diverges from baseline, wrapper MUST have `.is-stale`.
+- `.is-stale` MUST clear on commit, cancel, or draft-session end (for example blur, focus moved away, read-only transition, or target invalidation).
+- If the focused editing target becomes invalid (for example item/target removed or focus repaired away), the draft session ends and subsequent renders reflect committed state.
 
 Mirror rules:
 

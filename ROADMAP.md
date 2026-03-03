@@ -45,7 +45,6 @@ Purpose: Ensure all user input resolves to deterministic structural operations w
 - Validate shared outline operations across all `contenteditable` input paths (keyboard, IME, paste, drop)
 - Guarantee convergence across keyboard, drag-and-drop, and paste
 - Ensure equivalent operation sequences yield identical history and undo outcomes
-- Define draft textfield behavior for core-driven changes, including an "underlying value changed" indicator and consistent draft/caret outcomes
 - Provide replay and fuzz testing for editing flows
 
 ### Bounded automation
@@ -137,6 +136,7 @@ Purpose: Harden and extend the foundational views that allow structure to be inh
 - Harden slider value coercion, snapping, and undo semantics
 - Provide deterministic column totals in table contexts
 - Harden row and column operations under deletion and undo
+- Add `.is-stale` textfield styling consistently across views
 
 ### Structural relationships
 

@@ -156,6 +156,7 @@ export function buildTextField(
       opts.commit(draft);
       dirty = false;
       baseline = draft;
+      wrap.classList.remove("is-stale");
     };
 
     const cancelDraft = (): void => {
@@ -164,6 +165,7 @@ export function buildTextField(
       dirty = false;
       syncValue(inp, baseline);
       syncMirror(baseline);
+      wrap.classList.remove("is-stale");
     };
 
     const yieldCommit = (e: KeyboardEvent): void => {
@@ -323,6 +325,18 @@ export function buildTextField(
         dirty = false;
         baseline = committed;
         draft = committed;
+        wrap.classList.remove("is-stale");
+        syncValue(inp, committed);
+        syncMirror(committed);
+        return;
+      }
+
+      if (state.readOnly) {
+        editing = false;
+        dirty = false;
+        baseline = committed;
+        draft = committed;
+        wrap.classList.remove("is-stale");
         syncValue(inp, committed);
         syncMirror(committed);
         return;
@@ -342,6 +356,10 @@ export function buildTextField(
         baseline = committed;
         draft = committed;
       }
+      wrap.classList.toggle(
+        "is-stale",
+        editing && dirty && committed !== baseline,
+      );
 
       syncValue(inp, draft);
       syncMirror(draft);
