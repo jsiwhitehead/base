@@ -1,3 +1,4 @@
+import { CoreInvariantError } from "../dev";
 import type { EntryId, Model, Op, ViewName } from "./model";
 import { isGroupContent, makeBlankEntry, normalizeLabel } from "./model";
 import { CoreReadError } from "./read";
@@ -191,13 +192,13 @@ export function enforceViewShapes(
   touched: readonly EntryId[],
   applyOps: (ops: Op[]) => void,
 ): void {
+  const MAX_ENFORCE_PASSES_PER_ROOT = 64;
   const relevant = new Set<EntryId>();
   for (const id of touched) {
-    if (!model.hasEntry(id)) continue;
-    relevant.add(id);
-    const parentId = model.peekEntry(id).parentId;
-    if (parentId != null && model.hasEntry(parentId)) {
-      relevant.add(parentId);
+    let cur: EntryId | null = id;
+    while (cur != null && model.hasEntry(cur)) {
+      relevant.add(cur);
+      cur = model.peekEntry(cur).parentId;
     }
   }
 
@@ -210,10 +211,10 @@ export function enforceViewShapes(
     );
   };
 
-  const touchedSet = new Set(touched);
-
+  let appliedInPass = false;
   const applyIfAny = (ops: Op[]): void => {
     if (!ops.length) return;
+    appliedInPass = true;
     applyOps(ops);
   };
 
@@ -302,18 +303,31 @@ export function enforceViewShapes(
   const enqueueAlignChildrenOps = (groupId: EntryId, out: Op[]): void => {
     const rowIds = childIdsOfGroup(groupId);
     if (rowIds.length === 0) return;
+    const rowIdSet = new Set(rowIds);
 
-    const touchedWithChildren = rowIds.find(
-      (rid) => touchedSet.has(rid) && model.childIdsOf(rid).length > 0,
+    const touchedRows = new Set<EntryId>();
+    for (const touchedId of touched) {
+      let cur: EntryId | null = touchedId;
+      while (cur != null && model.hasEntry(cur)) {
+        if (rowIdSet.has(cur)) {
+          touchedRows.add(cur);
+          break;
+        }
+        const parentId: EntryId | null = model.peekEntry(cur).parentId;
+        if (parentId === groupId) break;
+        cur = parentId;
+      }
+    }
+
+    const touchedRowWithChildren = rowIds.find(
+      (rid) => touchedRows.has(rid) && model.childIdsOf(rid).length > 0,
     );
+    const touchedRow = rowIds.find((rid) => touchedRows.has(rid));
     const anyWithChildren = rowIds.find(
       (rid) => model.childIdsOf(rid).length > 0,
     );
     const leaderId =
-      touchedWithChildren ??
-      anyWithChildren ??
-      rowIds.find((rid) => touchedSet.has(rid)) ??
-      rowIds[0]!;
+      touchedRowWithChildren ?? touchedRow ?? anyWithChildren ?? rowIds[0]!;
     const schema = normalizedLabeledChildSchemaOf(leaderId);
     const schemaSet = new Set(schema);
 
@@ -377,19 +391,6 @@ export function enforceViewShapes(
     if (!ownerStillConstrained(ownerId)) return false;
     if (!model.hasEntry(id)) return true;
 
-    const entry = model.peekEntry(id);
-    if (!isGroupContent(entry.content)) return ownerStillConstrained(ownerId);
-    if ("alignChildren" in shape && shape.alignChildren) {
-      const ops: Op[] = [];
-      enqueueAlignChildrenOps(id, ops);
-      applyIfAny(ops);
-      if (!ownerStillConstrained(ownerId)) return false;
-      if (!model.hasEntry(id)) return true;
-      const refreshed = model.peekEntry(id);
-      if (!isGroupContent(refreshed.content))
-        return ownerStillConstrained(ownerId);
-    }
-
     if (shape.children.type !== "any") {
       const lockOps: Op[] = [];
       for (const childId of childIdsOfGroup(id)) {
@@ -401,8 +402,21 @@ export function enforceViewShapes(
       if (!ownerStillConstrained(ownerId)) return false;
     }
 
+    const entry = model.peekEntry(id);
+    if (!isGroupContent(entry.content)) return ownerStillConstrained(ownerId);
     for (const childId of childIdsOfGroup(id)) {
       if (!enforceNode(ownerId, childId, shape.children)) return false;
+    }
+
+    if ("alignChildren" in shape && shape.alignChildren) {
+      const ops: Op[] = [];
+      enqueueAlignChildrenOps(id, ops);
+      applyIfAny(ops);
+      if (!ownerStillConstrained(ownerId)) return false;
+      if (!model.hasEntry(id)) return true;
+      const refreshed = model.peekEntry(id);
+      if (!isGroupContent(refreshed.content))
+        return ownerStillConstrained(ownerId);
     }
 
     return ownerStillConstrained(ownerId);
@@ -414,6 +428,24 @@ export function enforceViewShapes(
     if (!entry.view) continue;
     const shape = shapes[entry.view];
     if (!shape) continue;
-    enforceNode(rootId, rootId, shape);
+
+    let converged = false;
+    for (let pass = 0; pass < MAX_ENFORCE_PASSES_PER_ROOT; pass += 1) {
+      appliedInPass = false;
+      if (!enforceNode(rootId, rootId, shape)) {
+        converged = true;
+        break;
+      }
+      if (!appliedInPass) {
+        converged = true;
+        break;
+      }
+    }
+
+    if (!converged) {
+      throw new CoreInvariantError(
+        "Shape enforcement did not converge within max passes",
+      );
+    }
   }
 }

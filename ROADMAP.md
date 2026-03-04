@@ -121,7 +121,6 @@ This axis covers representational scope: the structures, relationships, types, v
 Purpose: Harden and extend the foundational views that allow structure to be inhabited and revised without altering the data model.
 
 - Define and implement table and slider delete-focus landing rules consistent with item-boundary navigation contracts
-- Harden shape enforcement under deep nesting, undo, and complex alignment scenarios
 - Harden slider value coercion, snapping, and undo semantics
 - Provide deterministic column totals in table contexts
 - Harden row and column operations under deletion and undo

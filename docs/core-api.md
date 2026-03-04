@@ -440,13 +440,14 @@ Shape meanings:
 Enforcement rules:
 
 - Shape enforcement MUST run after every transaction (`commit`, `undo`, `redo`, remote apply).
-- Enforcement MUST only coerce plain items (blank, value, group).
-- Connected items (formula, query) MUST NOT be coerced. Shape incompatibility for non-plain items MUST NOT clear the stored view; render fallback is handled by `core.view(id)`.
-- Content coercion MUST run before non-empty enforcement. Non-empty enforcement MUST run before children coercion. Children coercion MUST run before child alignment (`alignChildren`).
+- Enforcement MUST iterate to a stable fixpoint within the same apply.
+- Enforcement MUST only coerce plain items (blank, value, group). Connected items (formula, query) MUST NOT be coerced; incompatibility for non-plain items MUST NOT clear stored view (render fallback is handled by `core.view(id)`).
+- Rule order per pass MUST be: content coercion -> non-empty enforcement -> children coercion -> child alignment (`alignChildren`).
 - If a shape requirement cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
 - If `nonEmpty` is set and the constrained group is empty, enforcement MUST create one direct child.
 - Label alignment MUST elect a leader child group, then create missing labeled children, reorder mismatched labeled children, and remove excess labeled children in other child groups.
 - Coercion ops MUST be captured for undo/redo.
+- Failure to converge within the implementation pass bound MUST be treated as an invariant failure.
 
 ## Undo and redo
 

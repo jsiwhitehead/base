@@ -6,6 +6,7 @@ import {
   CoreOpError,
   CoreReadError,
   createCore,
+  defineShape,
   VALUE_TARGET,
 } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
@@ -821,6 +822,43 @@ describe("core/view shapes & rules", () => {
     assertCoreInvariants(core, rootId);
   });
 
+  test("shape enforcement converges newly aligned children to nested child shape in one apply", () => {
+    const tableShape = defineShape({
+      type: "group",
+      alignChildren: true,
+      children: {
+        type: "group",
+        children: {
+          type: "group",
+          nonEmpty: true,
+          children: { type: "value" },
+        },
+      },
+    });
+
+    const { core, rootId } = createCore({ shapes: { table: tableShape } });
+    cleanups.push(() => core.dispose());
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+    const c1 = mkGroup(core, rowA, { label: "c1" });
+    mkBlank(core, c1, { value: 1 });
+
+    setView(core, tableId, "table");
+
+    const rowBKids = childrenOf(core, rowB);
+    expect(rowBKids.length).toBe(1);
+    const rowBCell = rowBKids[0]!;
+    expect(core.item(rowBCell).content.type).toBe("group");
+    const rowBCellKids = childrenOf(core, rowBCell);
+    expect(rowBCellKids.length).toBe(1);
+    expect(core.item(rowBCellKids[0]!).content.type).toBe("value");
+    expect(core.view(tableId)).toBe("table");
+
+    assertCoreInvariants(core, rootId);
+  });
+
   test("shape sync across table rows propagates by label (add/reorder/remove)", () => {
     const { core, rootId } = makeCoreForTest();
 
@@ -846,6 +884,82 @@ describe("core/view shapes & rules", () => {
     expect(groupLabels(core, rowA)).toEqual(["name"]);
     expect(groupLabels(core, rowB)).toEqual(["name"]);
     expect(groupLabels(core, rowC)).toEqual(["name"]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("table setView coerces mixed row types before label alignment", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkBlank(core, tableId, { label: "rowB", value: 1 });
+    mkBlank(core, rowA, { label: "a", value: "x" });
+
+    setView(core, tableId, "table");
+
+    expect(core.item(rowA).content.type).toBe("group");
+    expect(core.item(rowB).content.type).toBe("group");
+    expect(groupLabels(core, rowA)).toEqual(["a"]);
+    expect(groupLabels(core, rowB)).toEqual(["a"]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("shape sync relabel from first row is canonical and undo/redo stable", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    const aCell = mkBlank(core, rowA, { label: "a", value: 1 });
+
+    expect(groupLabels(core, rowA)).toEqual(["a"]);
+    expect(groupLabels(core, rowB)).toEqual(["a"]);
+
+    core.commit((t) => t.setLabel(aCell, "x"));
+    expect(groupLabels(core, rowA)).toEqual(["x"]);
+    expect(groupLabels(core, rowB)).toEqual(["x"]);
+
+    core.undo();
+    expect(groupLabels(core, rowA)).toEqual(["a"]);
+    expect(groupLabels(core, rowB)).toEqual(["a"]);
+
+    core.redo();
+    expect(groupLabels(core, rowA)).toEqual(["x"]);
+    expect(groupLabels(core, rowB)).toEqual(["x"]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("shape sync relabel from second row is canonical and undo/redo stable", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    const bCell = mkBlank(core, rowB, { label: "a", value: 2 });
+
+    expect(groupLabels(core, rowA)).toEqual(["a"]);
+    expect(groupLabels(core, rowB)).toEqual(["a"]);
+
+    core.commit((t) => t.setLabel(bCell, "y"));
+    expect(groupLabels(core, rowA)).toEqual(["y"]);
+    expect(groupLabels(core, rowB)).toEqual(["y"]);
+
+    core.undo();
+    expect(groupLabels(core, rowA)).toEqual(["a"]);
+    expect(groupLabels(core, rowB)).toEqual(["a"]);
+
+    core.redo();
+    expect(groupLabels(core, rowA)).toEqual(["y"]);
+    expect(groupLabels(core, rowB)).toEqual(["y"]);
 
     assertCoreInvariants(core, rootId);
   });
