@@ -243,10 +243,7 @@ function buildOutlineItem(
       const snap = core.item(itemId);
       const childPortals =
         snap.mode.type === "connected" ? [...portals, itemId] : portals;
-      const mounted = core.mountView({
-        id: itemId,
-        portals: childPortals,
-      });
+      const mounted = core.mountView({ id: itemId, portals: childPortals });
       mounted.el.contentEditable = "false";
       return mounted;
     });
@@ -1081,11 +1078,7 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
       }
       case "CONFIRM": {
         if (
-          convertEmptyGroupToValueAndFocus({
-            core,
-            focus,
-            initialText: "",
-          })
+          convertEmptyGroupToValueAndFocus({ core, focus, initialText: "" })
         ) {
           return;
         }

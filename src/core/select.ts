@@ -141,10 +141,7 @@ export function createSelectionController(
     }
 
     const caret = opts.readCurrentCaret?.();
-    return {
-      steps,
-      ...(caret !== undefined ? { caret } : {}),
-    };
+    return { steps, ...(caret !== undefined ? { caret } : {}) };
   };
 
   const resolveRepairAnchor = (

@@ -109,7 +109,7 @@ type MoveResult = {
   toIndex: number | null;
 };
 
-type EntryPatch = {
+export type EntryPatch = {
   label?: string;
   view?: ViewName | null;
   content?: EntryContent;
@@ -137,6 +137,10 @@ export type ApplyDelta = {
   readonly removed: readonly EntryId[];
   readonly touched: readonly EntryId[];
 };
+export type ApplyResult = {
+  readonly delta: ApplyDelta;
+  readonly undoOps: readonly Op[];
+};
 
 type LocateInParentResult = {
   readonly parentId: EntryId;
@@ -149,6 +153,7 @@ export type Model = {
   rootId(): EntryId;
 
   createId(): EntryId;
+  peekNextId(): EntryId;
   setNextId(next: EntryId): void;
 
   ops: {
@@ -172,7 +177,7 @@ export type Model = {
   findChildIdByLabel(groupId: EntryId, label: string): EntryId | null;
   locateInParent(childId: EntryId): LocateInParentResult | null;
 
-  apply(txn: Transaction): ApplyDelta;
+  apply(txn: Transaction): ApplyResult;
 
   snapshot(id: EntryId): SnapshotNode;
   exportSnapshot(): SnapshotData;
@@ -260,6 +265,7 @@ export function createModel(): Model {
   };
 
   const createId = (): EntryId => nextId++;
+  const peekNextId = (): EntryId => nextId;
   const setNextId = (next: EntryId): void => {
     nextId = next;
   };
@@ -585,26 +591,187 @@ export function createModel(): Model {
     };
   };
 
-  const apply = (txn: Transaction): ApplyDelta => {
+  const snapshotContentFromEntryContent = (
+    content: EntryContent,
+    groupChildren: SnapshotNode[] = [],
+  ): SnapshotNodeContent => {
+    switch (content.type) {
+      case "blank":
+        return { type: "blank" };
+      case "scalar":
+        return { type: "scalar", value: content.value };
+      case "formula":
+        return { type: "formula", expr: content.expr };
+      case "query":
+        return {
+          type: "query",
+          from: content.from,
+          where: content.where,
+          orderBy: content.orderBy,
+        };
+      case "group":
+        return { type: "group", children: groupChildren };
+      default:
+        return assertNever(content, "Unknown entry content");
+    }
+  };
+
+  const entryContentFromSnapshotContent = (
+    content: SnapshotNodeContent,
+  ): EntryContent => {
+    switch (content.type) {
+      case "blank":
+        return { type: "blank" };
+      case "scalar":
+        return { type: "scalar", value: content.value };
+      case "formula":
+        return { type: "formula", expr: content.expr };
+      case "query":
+        return {
+          type: "query",
+          from: content.from,
+          where: content.where,
+          orderBy: content.orderBy,
+        };
+      case "group":
+        return { type: "group", childIds: [] };
+      default:
+        return assertNever(content, "Unknown snapshot content");
+    }
+  };
+
+  const captureSubtree = (rootEntryId: EntryId): SnapshotNode => {
+    const entry = peekEntry(rootEntryId);
+    const children = isGroupContent(entry.content)
+      ? entry.content.childIds.map((childId) => captureSubtree(childId))
+      : [];
+    return {
+      id: entry.id,
+      ...(entry.label ? { label: entry.label } : {}),
+      ...(entry.view ? { view: entry.view } : {}),
+      content: snapshotContentFromEntryContent(entry.content, children),
+    };
+  };
+
+  const entryFromSnapshotNode = (
+    node: SnapshotNode,
+    parentId: EntryId | null,
+  ): Entry => {
+    return {
+      id: node.id,
+      parentId,
+      label: node.label ?? "",
+      view: node.view ?? null,
+      content: entryContentFromSnapshotContent(node.content),
+    };
+  };
+
+  const pushCreateSubtreeOps = (
+    node: SnapshotNode,
+    out: Op[],
+    parentId: EntryId | null,
+    opts?: { skipRoot?: true },
+  ): void => {
+    if (!opts?.skipRoot)
+      out.push(ops.create(entryFromSnapshotNode(node, parentId)));
+    if (node.content.type !== "group") return;
+    for (let i = 0; i < node.content.children.length; i += 1) {
+      const child = node.content.children[i]!;
+      pushCreateSubtreeOps(child, out, node.id);
+    }
+  };
+
+  const pushRestoreMoves = (node: SnapshotNode, out: Op[]): void => {
+    if (node.content.type !== "group") return;
+    for (let i = 0; i < node.content.children.length; i += 1) {
+      const child = node.content.children[i]!;
+      out.push(
+        ops.move({
+          childId: child.id,
+          toParentId: node.id,
+          toIndex: i,
+        }),
+      );
+      pushRestoreMoves(child, out);
+    }
+  };
+
+  const appendRestoreMovesInUndoBuildOrder = (
+    node: SnapshotNode,
+    out: Op[],
+  ): void => {
+    const restoreOps: Op[] = [];
+    pushRestoreMoves(node, restoreOps);
+    out.push(...restoreOps.toReversed());
+  };
+
+  const apply = (txn: Transaction): ApplyResult => {
     const removed = new Set<EntryId>();
     const touched = new Set<EntryId>();
+    const undoBuildOps: Op[] = [];
     const snapshot = snapshotEntries();
 
     try {
       batch(() => {
         for (const op of txn.ops) {
           switch (op.type) {
-            case "create":
+            case "create": {
+              undoBuildOps.push(ops.remove(op.entry.id));
               createEntryInternal(op.entry);
               touched.add(op.entry.id);
               break;
+            }
 
-            case "patch":
+            case "patch": {
+              const currentEntry = peekEntry(op.id);
+              const inversePatch: EntryPatch = {};
+              if (
+                op.next.label !== undefined &&
+                op.next.label !== currentEntry.label
+              ) {
+                inversePatch.label = currentEntry.label;
+              }
+              if (
+                op.next.view !== undefined &&
+                op.next.view !== currentEntry.view
+              ) {
+                inversePatch.view = currentEntry.view;
+              }
+              if (op.next.content !== undefined) {
+                if (
+                  !(
+                    op.next.content.type === "group" &&
+                    currentEntry.content.type === "group"
+                  )
+                ) {
+                  inversePatch.content = currentEntry.content;
+                }
+              }
+              if (
+                inversePatch.label !== undefined ||
+                inversePatch.view !== undefined ||
+                inversePatch.content !== undefined
+              ) {
+                undoBuildOps.push(ops.patch(op.id, inversePatch));
+              }
               patch(op.id, op.next);
               touched.add(op.id);
               break;
+            }
 
             case "move": {
+              const child = peekEntry(op.spec.childId);
+              const parentId = child.parentId;
+              if (parentId != null) {
+                const loc = locateInParent(op.spec.childId);
+                undoBuildOps.push(
+                  ops.move({
+                    childId: op.spec.childId,
+                    toParentId: parentId,
+                    ...(loc ? { toIndex: loc.index } : {}),
+                  }),
+                );
+              }
               const moveResult = move(op.spec);
               touched.add(op.spec.childId);
               if (moveResult.fromParentId != null)
@@ -615,6 +782,47 @@ export function createModel(): Model {
             }
 
             case "remove": {
+              const removedEntry = peekEntry(op.id);
+              const subtree = captureSubtree(op.id);
+              if (op.id === rootId()) {
+                if (subtree.content.type === "group") {
+                  appendRestoreMovesInUndoBuildOrder(subtree, undoBuildOps);
+                  pushCreateSubtreeOps(subtree, undoBuildOps, null, {
+                    skipRoot: true,
+                  });
+                  undoBuildOps.push(
+                    ops.patch(op.id, {
+                      label: removedEntry.label,
+                      view: removedEntry.view,
+                      content: { type: "group", childIds: [] },
+                    }),
+                  );
+                } else {
+                  undoBuildOps.push(
+                    ops.patch(op.id, {
+                      label: removedEntry.label,
+                      view: removedEntry.view,
+                      content: removedEntry.content,
+                    }),
+                  );
+                }
+              } else {
+                const parentId = removedEntry.parentId;
+                if (parentId == null)
+                  throw new CoreInvariantError(
+                    "Remove inverse expects non-root item to have a parent",
+                  );
+                const loc = locateInParent(op.id);
+                appendRestoreMovesInUndoBuildOrder(subtree, undoBuildOps);
+                undoBuildOps.push(
+                  ops.move({
+                    childId: op.id,
+                    toParentId: parentId,
+                    ...(loc ? { toIndex: loc.index } : {}),
+                  }),
+                );
+                pushCreateSubtreeOps(subtree, undoBuildOps, null);
+              }
               const removeResult = remove(op.id);
               for (const removedId of removeResult.removedIds) {
                 removed.add(removedId);
@@ -642,7 +850,10 @@ export function createModel(): Model {
       }
       for (const groupId of groupsToCheck) assertUniqueChildLabels(groupId);
       if (DEV) assertValidInternal();
-      return { removed: [...removed], touched: [...touched] };
+      return {
+        delta: { removed: [...removed], touched: [...touched] },
+        undoOps: undoBuildOps.toReversed(),
+      };
     } catch (err) {
       restoreEntries(snapshot);
       throw err;
@@ -785,27 +996,11 @@ export function createModel(): Model {
     }
   }
 
-  const snapshotNodeContent = (content: EntryContent): SnapshotNodeContent => {
-    switch (content.type) {
-      case "blank":
-        return { type: "blank" };
-      case "scalar":
-        return { type: "scalar", value: content.value };
-      case "formula":
-        return { type: "formula", expr: content.expr };
-      case "query":
-        return {
-          type: "query",
-          from: content.from,
-          where: content.where,
-          orderBy: content.orderBy,
-        };
-      case "group":
-        return { type: "group", children: content.childIds.map(snapshot) };
-      default:
-        return assertNever(content, "Unknown entry content");
-    }
-  };
+  const snapshotNodeContent = (content: EntryContent): SnapshotNodeContent =>
+    snapshotContentFromEntryContent(
+      content,
+      content.type === "group" ? content.childIds.map(snapshot) : [],
+    );
 
   const snapshot = (id: EntryId): SnapshotNode => {
     const entry = entrySignal(id).value;
@@ -920,6 +1115,7 @@ export function createModel(): Model {
     rootId,
 
     createId,
+    peekNextId,
     setNextId,
 
     ops,

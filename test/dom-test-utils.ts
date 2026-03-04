@@ -1,8 +1,13 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { afterEach, beforeAll, expect } from "bun:test";
 
-import type { Location, Intent, ItemId, ViewName } from "../src/core";
-import { createCore } from "../src/core";
+import type {
+  CollabWire,
+  Intent,
+  ItemId,
+  Location,
+  ViewName,
+} from "../src/core";
 import type { DomView, UiCore } from "../src/dom";
 import { createUiCoreRuntime } from "../src/setup";
 import { viewRegistrations } from "../src/views";
@@ -34,7 +39,7 @@ afterEach(() => {
 
 export function makeCoreRuntime(args?: {
   views?: Partial<typeof viewRegistrations>;
-  collab?: Parameters<typeof createCore>[0]["collab"];
+  collab?: CollabWire;
 }): { core: UiCore; rootId: ItemId } {
   const { core, pureCore, rootId, runtime } = createUiCoreRuntime({
     views: args?.views ?? viewRegistrations,

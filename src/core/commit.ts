@@ -1,6 +1,5 @@
-import { batch } from "@preact/signals-core";
+import { batch, signal } from "@preact/signals-core";
 
-import { CoreInvariantError } from "../dev";
 import { makeBlankEntry } from "./model";
 import type {
   ApplyDelta,
@@ -39,6 +38,8 @@ export type CommitController = {
   commit(run: (t: Tx) => void): void;
   undo(): void;
   redo(): void;
+  canUndo(): boolean;
+  canRedo(): boolean;
   undoBoundary(): void;
   applyRemote(txn: Transaction): void;
   resetState(): void;
@@ -67,18 +68,36 @@ type UserCommitHistoryCtx = {
   caret?: number;
   startedAt: number;
 };
-type CapturedSubtree = { entry: Entry; children: CapturedSubtree[] };
-type LocalPipelineCtx =
-  | { type: "user"; userHistoryCtx: UserCommitHistoryCtx }
-  | { type: "non-user" };
-type ApplyPipelineCtx =
-  | { type: "remote" }
-  | { type: "local"; local: LocalPipelineCtx };
+type ControllerStateSnapshot = {
+  selection: HistorySelectionSnapshot;
+  undo: UndoHistoryEntry[];
+  redo: RedoHistoryEntry[];
+  localSeq: number;
+};
+type ApplyLocalOptions = {
+  startNextId?: EntryId;
+  nextIdAfterCommit?: EntryId;
+};
+type PipelineCapture = {
+  undoOps: Op[];
+  historyForwardOps: Op[];
+  userUndoOps: Op[] | null;
+};
+type ApplyLocalResult = {
+  historyForward: Transaction;
+  freshUndo: Transaction;
+  userUndoOps: Op[];
+};
+type CommitPlanner = {
+  tx: Tx;
+  ops: Op[];
+  userHistoryCtx: UserCommitHistoryCtx;
+  getNextIdAfterCommit(): EntryId;
+};
 
 type CommitControllerOptions = {
   model: Model;
   shapes: Partial<Record<ViewName, ViewShape>>;
-  rootEntryId: EntryId;
   getSelection: () => Selection;
   readCurrentCaret?: () => number | undefined;
   restoreSelectionIfValid: (snapshot: HistorySelectionSnapshot) => void;
@@ -93,10 +112,6 @@ type CommitControllerOptions = {
 const TEXT_HISTORY_COALESCE_MS = 500;
 
 const emptyApply: ApplyDelta = { removed: [], touched: [] };
-
-function assertNever(_exhaustive: never, message: string): never {
-  throw new CoreInvariantError(message);
-}
 
 function storedFromValue(v: ValueOrBlank): EntryContent {
   return v === null ? { type: "blank" } : { type: "scalar", value: v };
@@ -119,10 +134,7 @@ function cloneSelection(selection: Selection): Selection {
       item: selection.anchor.item,
       portals: [...selection.anchor.portals],
     },
-    head: {
-      item: selection.head.item,
-      portals: [...selection.head.portals],
-    },
+    head: { item: selection.head.item, portals: [...selection.head.portals] },
   };
 }
 
@@ -156,9 +168,36 @@ export function createCommitController(
 ): CommitController {
   const currentModel = opts.model;
 
-  const history: { undo: UndoHistoryEntry[]; redo: RedoHistoryEntry[] } = {
-    undo: [],
-    redo: [],
+  const undoHistory = signal<UndoHistoryEntry[]>([]);
+  const redoHistory = signal<RedoHistoryEntry[]>([]);
+
+  const snapshotControllerState = (): ControllerStateSnapshot => {
+    const selection = opts.getSelection();
+    const caret =
+      selection.type === "editing" ? opts.readCurrentCaret?.() : undefined;
+    return {
+      selection: captureSelectionSnapshot(selection, caret),
+      undo: [...undoHistory.value],
+      redo: [...redoHistory.value],
+      localSeq,
+    };
+  };
+
+  const restoreControllerState = (snapshot: ControllerStateSnapshot): void => {
+    undoHistory.value = snapshot.undo;
+    redoHistory.value = snapshot.redo;
+    localSeq = snapshot.localSeq;
+    opts.restoreSelectionIfValid(snapshot.selection);
+  };
+
+  const applyAtomically = (run: () => void): void => {
+    const before = snapshotControllerState();
+    try {
+      run();
+    } catch (err) {
+      restoreControllerState(before);
+      throw err;
+    }
   };
 
   const mergeApply = (a: ApplyDelta, b: ApplyDelta): ApplyDelta => ({
@@ -166,165 +205,20 @@ export function createCommitController(
     touched: Array.from(new Set([...a.touched, ...b.touched])),
   });
 
-  const captureInverseForTxn = (txn: Transaction): Op[] => {
-    const model = currentModel;
-    const inverses: Op[] = [];
-
-    const captureSubtree = (rootEntryId: EntryId): CapturedSubtree => {
-      const entry = model.peekEntry(rootEntryId);
-      const childIds =
-        entry.content.type === "group" ? model.childIdsOf(rootEntryId) : [];
-      return {
-        entry,
-        children: childIds.map((childId) => captureSubtree(childId)),
-      };
-    };
-
-    const entryForRestoreCreate = (entry: Entry): Entry => {
-      if (entry.content.type !== "group") return { ...entry, parentId: null };
-      return {
-        ...entry,
-        parentId: null,
-        content: { type: "group", childIds: [] },
-      };
-    };
-
-    const pushCreateOpsForSubtree = (
-      node: CapturedSubtree,
-      out: Op[],
-      createOpts?: { skipRoot?: true },
-    ): void => {
-      if (!createOpts?.skipRoot)
-        out.push(model.ops.create(entryForRestoreCreate(node.entry)));
-      for (const child of node.children) pushCreateOpsForSubtree(child, out);
-    };
-
-    const pushChildRestoreMoves = (node: CapturedSubtree, out: Op[]): void => {
-      for (let i = 0; i < node.children.length; i += 1) {
-        const child = node.children[i]!;
-        out.push(
-          model.ops.move({
-            childId: child.entry.id,
-            toParentId: node.entry.id,
-            toIndex: i,
-          }),
-        );
-        pushChildRestoreMoves(child, out);
-      }
-    };
-
-    for (const op of txn.ops) {
-      if (op.type === "create") {
-        inverses.push(model.ops.remove(op.entry.id));
-        continue;
-      }
-
-      if (op.type === "patch") {
-        if (!model.hasEntry(op.id)) continue;
-        const cur = model.peekEntry(op.id);
-        const next: Parameters<typeof model.ops.patch>[1] = {};
-        if (op.next.label !== undefined) next.label = cur.label;
-        if (op.next.view !== undefined) next.view = cur.view;
-        if (op.next.content !== undefined) next.content = cur.content;
-        inverses.push(model.ops.patch(op.id, next));
-        continue;
-      }
-
-      if (op.type === "move") {
-        const childId = op.spec.childId;
-        if (!model.hasEntry(childId)) continue;
-        const child = model.peekEntry(childId);
-        const parentId = child.parentId;
-        if (parentId == null)
-          throw new CoreInvariantError(
-            "Move inverse expects child to have a parent",
-          );
-        const loc = model.locateInParent(childId);
-        inverses.push(
-          model.ops.move({
-            childId,
-            toParentId: parentId,
-            ...(loc ? { toIndex: loc.index } : {}),
-          }),
-        );
-        continue;
-      }
-
-      if (op.type === "remove") {
-        const id0 = op.id;
-        if (!model.hasEntry(id0)) continue;
-
-        const cur = model.peekEntry(id0);
-        const subtree = captureSubtree(id0);
-        if (id0 === opts.rootEntryId) {
-          if (subtree.entry.content.type === "group") {
-            pushChildRestoreMoves(subtree, inverses);
-            pushCreateOpsForSubtree(subtree, inverses, { skipRoot: true });
-            inverses.push(
-              model.ops.patch(id0, {
-                label: subtree.entry.label,
-                view: subtree.entry.view,
-                content: { type: "group", childIds: [] },
-              }),
-            );
-          } else {
-            inverses.push(
-              model.ops.patch(id0, {
-                label: subtree.entry.label,
-                view: subtree.entry.view,
-                content: subtree.entry.content,
-              }),
-            );
-          }
-          continue;
-        }
-
-        const parentId = cur.parentId;
-        if (parentId == null)
-          throw new CoreInvariantError(
-            "Remove inverse expects non-root item to have a parent",
-          );
-        const loc = model.locateInParent(id0);
-        const prevIndex = loc?.index ?? undefined;
-        pushChildRestoreMoves(subtree, inverses);
-        inverses.push(
-          model.ops.move({
-            childId: id0,
-            toParentId: parentId,
-            ...(prevIndex != null ? { toIndex: prevIndex } : {}),
-          }),
-        );
-        pushCreateOpsForSubtree(subtree, inverses);
-
-        continue;
-      }
-
-      assertNever(op, "Unhandled op");
-    }
-
-    return inverses;
-  };
-
-  const applyTxnWithInverse = (
-    txn: Transaction,
-  ): { delta: ApplyDelta; inverseOps: Op[] } => {
-    const inverseOps = captureInverseForTxn(txn);
-    const delta = currentModel.apply(txn);
-    return { delta, inverseOps };
-  };
-
   const applyShapeRuleOps = (
     touchedIds: readonly EntryId[],
-    inverseAcc: Op[],
+    undoSegments: Op[][],
+    historyForwardOps?: Op[],
   ): ApplyDelta => {
     let merged = emptyApply;
 
     const model = currentModel;
     enforceViewShapes(model, opts.shapes, touchedIds, (shapeOps) => {
       const txn = model.ops.transaction(shapeOps, { source: "rule" });
-      const { delta, inverseOps } = applyTxnWithInverse(txn);
-      inverseAcc.push(...inverseOps);
-      merged = mergeApply(merged, delta);
+      const result = model.apply(txn);
+      undoSegments.unshift([...result.undoOps]);
+      historyForwardOps?.push(...txn.ops);
+      merged = mergeApply(merged, result.delta);
     });
 
     return merged;
@@ -381,13 +275,12 @@ export function createCommitController(
     if (!content || (content.type !== "blank" && content.type !== "scalar")) {
       return null;
     }
-    if (!content) return null;
     return { id: op.id, content };
   };
 
   const classifyTextHistoryGroup = (
     txn: Transaction,
-    inverseOps: readonly Op[],
+    undoOps: readonly Op[],
     sel: Selection,
   ): TextHistoryGroupKey | null => {
     if (sel.type !== "editing") return null;
@@ -398,7 +291,7 @@ export function createCommitController(
 
     const nextPatch = readSingleTextPatch(txn.ops, focusedEntryId);
     if (!nextPatch) return null;
-    const prevPatch = readSingleTextPatch(inverseOps, nextPatch.id);
+    const prevPatch = readSingleTextPatch(undoOps, nextPatch.id);
     if (!prevPatch) return null;
 
     const prevLen =
@@ -454,92 +347,107 @@ export function createCommitController(
   });
 
   const pushOrCoalesceUndoEntry = (entry: UndoHistoryEntry): void => {
-    const last = history.undo.at(-1) ?? null;
-    if (!canCoalesceUndoEntries(last, entry)) {
-      history.undo.push(entry);
+    const undoStack = undoHistory.value;
+    const last = undoStack.at(-1);
+    if (!last || !canCoalesceUndoEntries(last, entry)) {
+      undoHistory.value = [...undoStack, entry];
       return;
     }
-    history.undo[history.undo.length - 1] = mergeUndoEntries(last!, entry);
+    undoHistory.value = [
+      ...undoStack.slice(0, -1),
+      mergeUndoEntries(last, entry),
+    ];
   };
 
   const applyRemotePipeline = (
     txn: Transaction,
-    inverseAcc: Op[],
+    undoSegments: Op[][],
   ): ApplyDelta => {
-    let merged = emptyApply;
+    const modelResult = currentModel.apply(txn);
+    undoSegments.unshift([...modelResult.undoOps]);
 
-    const modelDelta = currentModel.apply(txn);
-    merged = mergeApply(merged, modelDelta);
-
-    const shapeRuleDelta = applyShapeRuleOps(modelDelta.touched, inverseAcc);
-    merged = mergeApply(merged, shapeRuleDelta);
+    const shapeRuleDelta = applyShapeRuleOps(
+      modelResult.delta.touched,
+      undoSegments,
+    );
+    const delta = mergeApply(modelResult.delta, shapeRuleDelta);
 
     normalizeSelectionAfterApply(txn, { type: "remote" });
 
-    return merged;
+    return delta;
   };
 
   const applyLocalPipeline = (
     txn: Transaction,
-    inverseAcc: Op[],
-    localCtx: LocalPipelineCtx,
-  ): ApplyDelta => {
-    let merged = emptyApply;
+    undoSegments: Op[][],
+    historyForwardOps: Op[],
+  ): { delta: ApplyDelta; userUndoOps: Op[] } => {
     const anchor = opts.captureRepairAnchor();
 
-    const { delta: userDelta, inverseOps } = applyTxnWithInverse(txn);
-    inverseAcc.push(...inverseOps);
-    merged = mergeApply(merged, userDelta);
+    const userResult = currentModel.apply(txn);
+    const userUndoOps = [...userResult.undoOps];
+    historyForwardOps.push(...txn.ops);
+    undoSegments.unshift(userUndoOps);
 
-    const shapeRuleDelta = applyShapeRuleOps(userDelta.touched, inverseAcc);
-    merged = mergeApply(merged, shapeRuleDelta);
+    const shapeRuleDelta = applyShapeRuleOps(
+      userResult.delta.touched,
+      undoSegments,
+      historyForwardOps,
+    );
+    const delta = mergeApply(userResult.delta, shapeRuleDelta);
 
     normalizeSelectionAfterApply(txn, { type: "local", anchor });
 
-    if (localCtx.type === "user") {
-      const { userHistoryCtx } = localCtx;
-      const inverse = currentModel.ops.transaction(inverseAcc.toReversed(), {
-        source: "undo",
-      });
-      pushOrCoalesceUndoEntry({
-        user: txn,
-        inverse,
-        before: captureSelectionSnapshot(
-          userHistoryCtx.selection,
-          userHistoryCtx.caret,
-        ),
-        groupedAt: userHistoryCtx.startedAt,
-        groupKey: classifyTextHistoryGroup(
-          txn,
-          inverseOps,
-          userHistoryCtx.selection,
-        ),
-      });
-      history.redo = [];
-    }
-
-    return merged;
+    return { delta, userUndoOps };
   };
 
-  const applyPipeline = (
-    txn: Transaction,
-    pipelineCtx: ApplyPipelineCtx,
-  ): void => {
-    let final = emptyApply;
-    const inverseAcc: Op[] = [];
+  const rollbackUndoSegments = (undoSegments: readonly Op[][]): void => {
+    const rollbackUndoOps = undoSegments.flat();
+    if (!rollbackUndoOps.length) return;
+    try {
+      currentModel.apply(
+        currentModel.ops.transaction(rollbackUndoOps, { source: "undo" }),
+      );
+    } catch {}
+  };
 
-    batch(() => {
-      if (pipelineCtx.type === "remote") {
-        final = mergeApply(final, applyRemotePipeline(txn, inverseAcc));
-      } else {
-        final = mergeApply(
-          final,
-          applyLocalPipeline(txn, inverseAcc, pipelineCtx.local),
+  const applyLocalTxn = (txn: Transaction): PipelineCapture => {
+    let delta = emptyApply;
+    const undoSegments: Op[][] = [];
+    const historyForwardOps: Op[] = [];
+    let userUndoOps: Op[] | null = null;
+
+    try {
+      batch(() => {
+        const localApplied = applyLocalPipeline(
+          txn,
+          undoSegments,
+          historyForwardOps,
         );
-      }
+        userUndoOps = localApplied.userUndoOps;
+        delta = localApplied.delta;
+        opts.clearCachesForRemovedEntries(delta.removed);
+      });
+    } catch (err) {
+      rollbackUndoSegments(undoSegments);
+      throw err;
+    }
+    const undoOps = undoSegments.flat();
+    return { undoOps, historyForwardOps, userUndoOps };
+  };
 
-      opts.clearCachesForRemovedEntries(final.removed);
-    });
+  const applyRemoteTxn = (txn: Transaction): void => {
+    let final = emptyApply;
+    const undoSegments: Op[][] = [];
+    try {
+      batch(() => {
+        final = mergeApply(final, applyRemotePipeline(txn, undoSegments));
+        opts.clearCachesForRemovedEntries(final.removed);
+      });
+    } catch (err) {
+      rollbackUndoSegments(undoSegments);
+      throw err;
+    }
   };
 
   let localSeq = 0;
@@ -549,11 +457,9 @@ export function createCommitController(
   ): TransactionMeta => {
     const base = meta ?? {};
     const origin = opts.collab?.origin;
-    const seq = origin ? ++localSeq : undefined;
     return {
       ...base,
       ...(origin ? { origin } : {}),
-      ...(seq != null ? { seq } : {}),
     };
   };
 
@@ -564,17 +470,48 @@ export function createCommitController(
 
   const applyLocal = (
     txn: Transaction,
-    userHistoryCtx?: UserCommitHistoryCtx,
-  ): void => {
+    applyLocalOpts?: ApplyLocalOptions,
+  ): ApplyLocalResult => {
     const model = currentModel;
     const stamped = model.ops.transaction(txn.ops, stampLocalMeta(txn.meta));
-    applyPipeline(stamped, {
-      type: "local",
-      local: userHistoryCtx
-        ? { type: "user", userHistoryCtx }
-        : { type: "non-user" },
+    const startNextId = applyLocalOpts?.startNextId;
+    const nextIdAfterCommit = applyLocalOpts?.nextIdAfterCommit;
+    const stagedNextId = startNextId != null && nextIdAfterCommit != null;
+    if (stagedNextId) model.setNextId(nextIdAfterCommit);
+
+    let capture: PipelineCapture = {
+      undoOps: [],
+      historyForwardOps: [],
+      userUndoOps: null,
+    };
+
+    try {
+      applyAtomically(() => {
+        capture = applyLocalTxn(stamped);
+      });
+    } catch (err) {
+      if (stagedNextId) model.setNextId(startNextId);
+      throw err;
+    }
+
+    const freshUndo = model.ops.transaction(capture.undoOps, {
+      source: "undo",
     });
-    sendLocalTxn(stamped);
+    const committedMeta: TransactionMeta =
+      opts.collab?.origin != null
+        ? { ...(stamped.meta ?? {}), seq: ++localSeq }
+        : (stamped.meta ?? {});
+    const historyForward = model.ops.transaction(
+      capture.historyForwardOps,
+      committedMeta,
+    );
+    const outbound = model.ops.transaction(stamped.ops, committedMeta);
+    sendLocalTxn(outbound);
+    return {
+      historyForward,
+      freshUndo,
+      userUndoOps: capture.userUndoOps ?? [],
+    };
   };
 
   const applyRemote = (txn: Transaction): void => {
@@ -588,13 +525,16 @@ export function createCommitController(
 
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
     const model = currentModel;
-    applyPipeline(model.ops.transaction(txn.ops, meta), { type: "remote" });
+    applyAtomically(() => {
+      applyRemoteTxn(model.ops.transaction(txn.ops, meta));
+    });
   };
 
   const buildTx = (
     ops: Op[],
     pendingCreated: Set<EntryId>,
     requireTxEntryId: (id: ItemId, opName: string) => EntryId,
+    allocateEntryId: () => EntryId,
   ): Tx => ({
     setLabel: (id, label) => {
       const eid = requireTxEntryId(id, "setLabel");
@@ -649,14 +589,13 @@ export function createCommitController(
     insertChild: (parentId, insertOpts) => {
       const parentEid = requireTxEntryId(parentId, "insertChild");
 
-      const model = currentModel;
-      const id = model.createId();
+      const id = allocateEntryId();
       const entry: Entry = makeBlankEntry(id);
       pendingCreated.add(id);
 
-      ops.push(model.ops.create(entry));
+      ops.push(currentModel.ops.create(entry));
       ops.push(
-        model.ops.move({
+        currentModel.ops.move({
           childId: id,
           toParentId: parentEid,
           ...(insertOpts?.at != null ? { toIndex: insertOpts.at } : {}),
@@ -685,7 +624,14 @@ export function createCommitController(
     },
   });
 
-  const commit = (run: (t: Tx) => void): void => {
+  const createCommitPlanner = (startNextId: EntryId): CommitPlanner => {
+    let nextIdCursor = startNextId;
+    const allocateEntryId = (): EntryId => {
+      const id = nextIdCursor;
+      nextIdCursor += 1;
+      return id;
+    };
+
     const selBefore = opts.getSelection();
     const caretBefore =
       selBefore.type === "editing" ? opts.readCurrentCaret?.() : undefined;
@@ -722,17 +668,48 @@ export function createCommitController(
       return entryId;
     };
 
-    const t = buildTx(ops, pendingCreated, requireTxEntryId);
+    return {
+      tx: buildTx(ops, pendingCreated, requireTxEntryId, allocateEntryId),
+      ops,
+      userHistoryCtx,
+      getNextIdAfterCommit: () => nextIdCursor,
+    };
+  };
 
-    run(t);
-    if (!ops.length) return;
+  const commit = (run: (t: Tx) => void): void => {
+    const startNextId = currentModel.peekNextId();
+    const planner = createCommitPlanner(startNextId);
 
-    const txn = currentModel.ops.transaction(ops, { source: "user" });
-    applyLocal(txn, userHistoryCtx);
+    run(planner.tx);
+    if (!planner.ops.length) return;
+
+    const txn = currentModel.ops.transaction(planner.ops, { source: "user" });
+    const nextIdAfterCommit = planner.getNextIdAfterCommit();
+    const { historyForward, freshUndo, userUndoOps } = applyLocal(txn, {
+      ...(nextIdAfterCommit !== startNextId
+        ? { startNextId, nextIdAfterCommit }
+        : {}),
+    });
+    pushOrCoalesceUndoEntry({
+      user: historyForward,
+      inverse: freshUndo,
+      before: captureSelectionSnapshot(
+        planner.userHistoryCtx.selection,
+        planner.userHistoryCtx.caret,
+      ),
+      groupedAt: planner.userHistoryCtx.startedAt,
+      groupKey: classifyTextHistoryGroup(
+        txn,
+        userUndoOps,
+        planner.userHistoryCtx.selection,
+      ),
+    });
+    redoHistory.value = [];
   };
 
   const undo = (): void => {
-    const last = history.undo.pop() ?? null;
+    const undoStack = undoHistory.value;
+    const last = undoStack.at(-1) ?? null;
     if (!last) return;
     const selBeforeUndo = opts.getSelection();
     const caretBeforeUndo =
@@ -741,42 +718,69 @@ export function createCommitController(
       selBeforeUndo,
       caretBeforeUndo,
     );
-    applyLocal(last.inverse);
+    const { freshUndo } = applyLocal(last.inverse);
     if (!patchesViewOnSelection(last.inverse, last.before)) {
       opts.restoreSelectionIfValid(last.before);
     }
-    history.redo.push({ ...last, redoSnapshot });
+    undoHistory.value = undoStack.slice(0, -1);
+    redoHistory.value = [
+      ...redoHistory.value,
+      { ...last, inverse: freshUndo, redoSnapshot },
+    ];
   };
 
   const redo = (): void => {
-    const redone = history.redo.pop() ?? null;
+    const redoStack = redoHistory.value;
+    const redone = redoStack.at(-1) ?? null;
     if (!redone) return;
 
     const replay = currentModel.ops.transaction(redone.user.ops, {
       source: "redo",
     });
-    applyLocal(replay);
+    const { historyForward, freshUndo } = applyLocal(replay);
     if (!patchesViewOnSelection(replay, redone.redoSnapshot)) {
       opts.restoreSelectionIfValid(redone.redoSnapshot);
     }
-    history.undo.push({
-      user: redone.user,
-      inverse: redone.inverse,
-      before: redone.before,
-      groupedAt: redone.groupedAt,
-      groupKey: redone.groupKey,
-    });
+    redoHistory.value = redoStack.slice(0, -1);
+    undoHistory.value = [
+      ...undoHistory.value,
+      {
+        user: historyForward,
+        inverse: freshUndo,
+        before: redone.before,
+        groupedAt: redone.groupedAt,
+        groupKey: redone.groupKey,
+      },
+    ];
   };
 
+  const canUndo = (): boolean => undoHistory.value.length > 0;
+  const canRedo = (): boolean => redoHistory.value.length > 0;
+
   const undoBoundary = (): void => {
-    const last = history.undo.at(-1);
-    if (last) last.groupKey = null;
+    const undoStack = undoHistory.value;
+    const last = undoStack.at(-1);
+    if (last) {
+      undoHistory.value = [
+        ...undoStack.slice(0, -1),
+        { ...last, groupKey: null },
+      ];
+    }
   };
 
   const resetState = (): void => {
-    history.undo = [];
-    history.redo = [];
+    undoHistory.value = [];
+    redoHistory.value = [];
   };
 
-  return { commit, undo, redo, undoBoundary, applyRemote, resetState };
+  return {
+    commit,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    undoBoundary,
+    applyRemote,
+    resetState,
+  };
 }

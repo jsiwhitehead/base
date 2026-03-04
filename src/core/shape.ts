@@ -145,7 +145,7 @@ export function isShapeCompatible(
   id: ItemId,
   shape: ViewShape,
 ): boolean {
-  const normalizedLabeledChildSchemaOf = (groupId: ItemId): string[] => {
+  const normalizedChildLabelSchema = (groupId: ItemId): string[] => {
     const group = read.item(groupId);
     if (group.content.type !== "group") return [];
     const out: string[] = [];
@@ -164,14 +164,14 @@ export function isShapeCompatible(
   if (shape.nonEmpty && item.content.children.length === 0) return false;
 
   if ("alignChildren" in shape && shape.alignChildren) {
-    const rowIds = item.content.children;
-    const leaderId = rowIds[0] ?? null;
-    if (!leaderId) return true;
-    const schema = normalizedLabeledChildSchemaOf(leaderId);
+    const childGroupIds = item.content.children;
+    const leaderChildGroupId = childGroupIds[0] ?? null;
+    if (!leaderChildGroupId) return true;
+    const schema = normalizedChildLabelSchema(leaderChildGroupId);
 
-    for (let i = 1; i < rowIds.length; i += 1) {
-      const rowId = rowIds[i]!;
-      const labels = normalizedLabeledChildSchemaOf(rowId);
+    for (let i = 1; i < childGroupIds.length; i += 1) {
+      const childGroupId = childGroupIds[i]!;
+      const labels = normalizedChildLabelSchema(childGroupId);
       if (labels.length !== schema.length) return false;
       for (let j = 0; j < schema.length; j += 1) {
         if (labels[j] !== schema[j]) return false;
@@ -193,11 +193,11 @@ export function enforceViewShapes(
   applyOps: (ops: Op[]) => void,
 ): void {
   const MAX_ENFORCE_PASSES_PER_ROOT = 64;
-  const relevant = new Set<EntryId>();
+  const relevantRootCandidates = new Set<EntryId>();
   for (const id of touched) {
     let cur: EntryId | null = id;
     while (cur != null && model.hasEntry(cur)) {
-      relevant.add(cur);
+      relevantRootCandidates.add(cur);
       cur = model.peekEntry(cur).parentId;
     }
   }
@@ -218,16 +218,16 @@ export function enforceViewShapes(
     applyOps(ops);
   };
 
-  const clearOwnerView = (ownerId: EntryId): boolean => {
-    if (!model.hasEntry(ownerId)) return false;
-    if (model.peekEntry(ownerId).view == null) return false;
-    applyOps([model.ops.patch(ownerId, { view: null })]);
+  const clearConstraintRootView = (constraintRootId: EntryId): boolean => {
+    if (!model.hasEntry(constraintRootId)) return false;
+    if (model.peekEntry(constraintRootId).view == null) return false;
+    applyOps([model.ops.patch(constraintRootId, { view: null })]);
     return true;
   };
 
-  const childIdsOfGroup = (id: EntryId): EntryId[] => {
-    if (!model.hasEntry(id)) return [];
-    const entry = model.peekEntry(id);
+  const childIdsOfGroup = (groupId: EntryId): EntryId[] => {
+    if (!model.hasEntry(groupId)) return [];
+    const entry = model.peekEntry(groupId);
     if (!isGroupContent(entry.content)) return [];
     const out: EntryId[] = [];
     for (const childId of entry.content.childIds) {
@@ -237,7 +237,7 @@ export function enforceViewShapes(
     return out;
   };
 
-  const normalizedLabeledChildSchemaOf = (groupId: EntryId): string[] => {
+  const normalizedChildLabelSchema = (groupId: EntryId): string[] => {
     const schema: string[] = [];
     for (const cid of childIdsOfGroup(groupId)) {
       const label = normalizeLabel(model.peekEntry(cid).label);
@@ -246,21 +246,23 @@ export function enforceViewShapes(
     return schema;
   };
 
-  const ownerStillConstrained = (ownerId: EntryId): boolean => {
-    if (!model.hasEntry(ownerId)) return false;
-    return model.peekEntry(ownerId).view != null;
+  const constraintRootStillConstrained = (
+    constraintRootId: EntryId,
+  ): boolean => {
+    if (!model.hasEntry(constraintRootId)) return false;
+    return model.peekEntry(constraintRootId).view != null;
   };
 
   const enforceNodeType = (
-    ownerId: EntryId,
+    constraintRootId: EntryId,
     id: EntryId,
     shape: ViewShape,
   ): boolean => {
-    if (!ownerStillConstrained(ownerId)) return false;
+    if (!constraintRootStillConstrained(constraintRootId)) return false;
     if (!model.hasEntry(id)) return true;
     if (shape.type === "any") return true;
 
-    if (!isPlain(id)) return ownerStillConstrained(ownerId);
+    if (!isPlain(id)) return constraintRootStillConstrained(constraintRootId);
 
     const content = model.peekEntry(id).content;
 
@@ -268,19 +270,19 @@ export function enforceViewShapes(
       applyOps([
         model.ops.patch(id, { content: { type: "group", childIds: [] } }),
       ]);
-      return ownerStillConstrained(ownerId);
+      return constraintRootStillConstrained(constraintRootId);
     }
 
     if (shape.type === "value" && isGroupContent(content)) {
       if (content.childIds.length === 0) {
         applyOps([model.ops.patch(id, { content: { type: "blank" } })]);
       } else {
-        clearOwnerView(ownerId);
+        clearConstraintRootView(constraintRootId);
         return false;
       }
     }
 
-    return ownerStillConstrained(ownerId);
+    return constraintRootStillConstrained(constraintRootId);
   };
 
   const enforceNonEmpty = (
@@ -301,16 +303,19 @@ export function enforceViewShapes(
   };
 
   const enqueueAlignChildrenOps = (groupId: EntryId, out: Op[]): void => {
-    const rowIds = childIdsOfGroup(groupId);
-    if (rowIds.length === 0) return;
-    const rowIdSet = new Set(rowIds);
+    const childGroupIds = childIdsOfGroup(groupId).filter((childGroupId) => {
+      if (!model.hasEntry(childGroupId)) return false;
+      return isGroupContent(model.peekEntry(childGroupId).content);
+    });
+    if (childGroupIds.length < 2) return;
+    const childGroupIdSet = new Set(childGroupIds);
 
-    const touchedRows = new Set<EntryId>();
+    const touchedChildGroups = new Set<EntryId>();
     for (const touchedId of touched) {
       let cur: EntryId | null = touchedId;
       while (cur != null && model.hasEntry(cur)) {
-        if (rowIdSet.has(cur)) {
-          touchedRows.add(cur);
+        if (childGroupIdSet.has(cur)) {
+          touchedChildGroups.add(cur);
           break;
         }
         const parentId: EntryId | null = model.peekEntry(cur).parentId;
@@ -319,23 +324,31 @@ export function enforceViewShapes(
       }
     }
 
-    const touchedRowWithChildren = rowIds.find(
-      (rid) => touchedRows.has(rid) && model.childIdsOf(rid).length > 0,
+    const touchedChildGroupWithChildren = childGroupIds.find(
+      (childGroupId) =>
+        touchedChildGroups.has(childGroupId) &&
+        model.childIdsOf(childGroupId).length > 0,
     );
-    const touchedRow = rowIds.find((rid) => touchedRows.has(rid));
-    const anyWithChildren = rowIds.find(
-      (rid) => model.childIdsOf(rid).length > 0,
+    const touchedChildGroup = childGroupIds.find((childGroupId) =>
+      touchedChildGroups.has(childGroupId),
     );
-    const leaderId =
-      touchedRowWithChildren ?? touchedRow ?? anyWithChildren ?? rowIds[0]!;
-    const schema = normalizedLabeledChildSchemaOf(leaderId);
+    const childGroupWithChildren = childGroupIds.find(
+      (childGroupId) => model.childIdsOf(childGroupId).length > 0,
+    );
+    const leaderChildGroupId =
+      touchedChildGroupWithChildren ??
+      touchedChildGroup ??
+      childGroupWithChildren ??
+      childGroupIds[0]!;
+    const schema = normalizedChildLabelSchema(leaderChildGroupId);
     const schemaSet = new Set(schema);
 
-    for (const rowId of rowIds) {
-      if (rowId === leaderId) continue;
-      if (!model.hasEntry(rowId)) continue;
+    for (const childGroupId of childGroupIds) {
+      if (childGroupId === leaderChildGroupId) continue;
+      if (!model.hasEntry(childGroupId)) continue;
+      if (!isGroupContent(model.peekEntry(childGroupId).content)) continue;
 
-      const childIds = model.childIdsOf(rowId);
+      const childIds = model.childIdsOf(childGroupId);
       const byLabel = new Map<string, EntryId>();
       const indexOf = new Map<EntryId, number>();
 
@@ -355,7 +368,7 @@ export function enforceViewShapes(
             out.push(
               model.ops.move({
                 childId: existing,
-                toParentId: rowId,
+                toParentId: childGroupId,
                 toIndex: i,
               }),
             );
@@ -366,7 +379,11 @@ export function enforceViewShapes(
         const newId = model.createId();
         out.push(model.ops.create({ ...makeBlankEntry(newId), label }));
         out.push(
-          model.ops.move({ childId: newId, toParentId: rowId, toIndex: i }),
+          model.ops.move({
+            childId: newId,
+            toParentId: childGroupId,
+            toIndex: i,
+          }),
         );
       }
 
@@ -379,16 +396,18 @@ export function enforceViewShapes(
   };
 
   const enforceNode = (
-    ownerId: EntryId,
+    constraintRootId: EntryId,
     id: EntryId,
     shape: ViewShape,
   ): boolean => {
-    if (!enforceNodeType(ownerId, id, shape)) return false;
-    if (!model.hasEntry(id)) return ownerStillConstrained(ownerId);
-    if (shape.type !== "group") return ownerStillConstrained(ownerId);
+    if (!enforceNodeType(constraintRootId, id, shape)) return false;
+    if (!model.hasEntry(id))
+      return constraintRootStillConstrained(constraintRootId);
+    if (shape.type !== "group")
+      return constraintRootStillConstrained(constraintRootId);
 
     enforceNonEmpty(id, shape);
-    if (!ownerStillConstrained(ownerId)) return false;
+    if (!constraintRootStillConstrained(constraintRootId)) return false;
     if (!model.hasEntry(id)) return true;
 
     if (shape.children.type !== "any") {
@@ -399,30 +418,31 @@ export function enforceViewShapes(
         }
       }
       applyIfAny(lockOps);
-      if (!ownerStillConstrained(ownerId)) return false;
+      if (!constraintRootStillConstrained(constraintRootId)) return false;
     }
 
     const entry = model.peekEntry(id);
-    if (!isGroupContent(entry.content)) return ownerStillConstrained(ownerId);
+    if (!isGroupContent(entry.content))
+      return constraintRootStillConstrained(constraintRootId);
     for (const childId of childIdsOfGroup(id)) {
-      if (!enforceNode(ownerId, childId, shape.children)) return false;
+      if (!enforceNode(constraintRootId, childId, shape.children)) return false;
     }
 
     if ("alignChildren" in shape && shape.alignChildren) {
       const ops: Op[] = [];
       enqueueAlignChildrenOps(id, ops);
       applyIfAny(ops);
-      if (!ownerStillConstrained(ownerId)) return false;
+      if (!constraintRootStillConstrained(constraintRootId)) return false;
       if (!model.hasEntry(id)) return true;
       const refreshed = model.peekEntry(id);
       if (!isGroupContent(refreshed.content))
-        return ownerStillConstrained(ownerId);
+        return constraintRootStillConstrained(constraintRootId);
     }
 
-    return ownerStillConstrained(ownerId);
+    return constraintRootStillConstrained(constraintRootId);
   };
 
-  for (const rootId of relevant) {
+  for (const rootId of relevantRootCandidates) {
     if (!model.hasEntry(rootId)) continue;
     const entry = model.peekEntry(rootId);
     if (!entry.view) continue;

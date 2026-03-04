@@ -1,4 +1,10 @@
-import type { Core, CorePlatformHooks, ItemId, ViewName } from "./core";
+import type {
+  CollabWire,
+  Core,
+  CorePlatformHooks,
+  ItemId,
+  ViewName,
+} from "./core";
 import { createCore } from "./core";
 import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV } from "./dev";
@@ -18,7 +24,7 @@ const SHOW_DEBUG_PANEL = true;
 
 export function createUiCoreRuntime(args?: {
   views?: Partial<Record<ViewName, ViewRegistration>>;
-  collab?: Parameters<typeof createCore>[0]["collab"];
+  collab?: CollabWire;
 }): { core: UiCore; pureCore: Core; rootId: ItemId; runtime: DomRuntime } {
   const views = args?.views ?? {};
   const { shapes, factories } = splitViewRegistrations(views);

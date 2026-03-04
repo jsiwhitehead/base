@@ -1480,16 +1480,10 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const { core } = makeCoreRuntime();
 
     expect(() =>
-      core.mountView({
-        id: "not-an-id" as ItemId,
-        portals: [],
-      }),
+      core.mountView({ id: "not-an-id" as ItemId, portals: [] }),
     ).toThrow();
     expect(() =>
-      core.mountView({
-        id: "999999:" as ItemId,
-        portals: [],
-      }),
+      core.mountView({ id: "999999:" as ItemId, portals: [] }),
     ).toThrow();
   });
 

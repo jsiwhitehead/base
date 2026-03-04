@@ -148,6 +148,8 @@ export type Core = {
   commit(run: (t: Tx) => void): void;
   undo(): void;
   redo(): void;
+  canUndo(): boolean;
+  canRedo(): boolean;
   undoBoundary(): void;
 
   exportSnapshot(): SnapshotData;
@@ -283,7 +285,7 @@ export function applyTypeToPrimaryTarget(
   return { target, caret };
 }
 
-type CollabWire = {
+export type CollabWire = {
   origin: string;
   send(txn: Transaction): void;
   subscribe(onTxn: (txn: Transaction) => void): () => void;
@@ -299,11 +301,16 @@ type CorePlatformHooks = {
 
 export type { CorePlatformHooks };
 
-export function createCore(opts: {
+export type CreateCoreOptions = {
   shapes?: Partial<Record<ViewName, ViewShape>>;
   collab?: CollabWire;
   platform?: CorePlatformHooks;
-}): { core: Core; rootId: ItemId } {
+};
+
+export function createCore(opts: CreateCoreOptions): {
+  core: Core;
+  rootId: ItemId;
+} {
   const shapes = opts.shapes ?? {};
 
   const model = createModel();
@@ -342,10 +349,7 @@ export function createCore(opts: {
     resetToRoot,
   } = selectionController;
 
-  const read = createReadApi({
-    evaluator,
-    model,
-  });
+  const read = createReadApi({ evaluator, model });
 
   const item = (id: ItemId): Item => read.item(id);
 
@@ -392,13 +396,14 @@ export function createCore(opts: {
     commit,
     undo,
     redo,
+    canUndo,
+    canRedo,
     undoBoundary,
     applyRemote,
     resetState: resetCommitState,
   } = createCommitController({
     model,
     shapes,
-    rootEntryId,
     getSelection: () => peekSelection(),
     ...(opts.platform?.readCurrentCaret
       ? { readCurrentCaret: opts.platform.readCurrentCaret }
@@ -531,10 +536,7 @@ export function createCore(opts: {
             ) {
               const firstChildId = rootItem.content.children[0] ?? null;
               if (!firstChildId) return false;
-              const firstChild: Location = {
-                item: firstChildId,
-                portals: [],
-              };
+              const firstChild: Location = { item: firstChildId, portals: [] };
 
               setSelection({
                 type: "item",
@@ -630,6 +632,8 @@ export function createCore(opts: {
     commit,
     undo,
     redo,
+    canUndo,
+    canRedo,
     undoBoundary,
 
     exportSnapshot,

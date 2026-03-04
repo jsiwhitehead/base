@@ -141,7 +141,8 @@ function expectCommitThrowsNoChange(
       | { cls: typeof CoreApiError; code: "UNKNOWN_ITEM_ID" }
       | { cls: typeof CoreOpError; code: "DUPLICATE_CHILD_LABEL" }
       | { cls: typeof CoreOpError; code: "CANNOT_MOVE_INTO_SELF" }
-      | { cls: typeof CoreOpError; code: "CANNOT_MOVE_INTO_DESCENDANT" };
+      | { cls: typeof CoreOpError; code: "CANNOT_MOVE_INTO_DESCENDANT" }
+      | { cls: typeof CoreOpError; code: "PARENT_NOT_GROUP" };
   } = {},
 ): void {
   const before = snapshotState(core, rootId, opts);
@@ -317,9 +318,7 @@ describe("core/commit (transactionality)", () => {
       (t) => {
         t.setLabel(b, "a");
       },
-      {
-        expected: { cls: CoreOpError, code: "DUPLICATE_CHILD_LABEL" },
-      },
+      { expected: { cls: CoreOpError, code: "DUPLICATE_CHILD_LABEL" } },
     );
 
     assertCoreInvariants(core, rootId);
@@ -359,10 +358,33 @@ describe("core/commit (transactionality)", () => {
       core,
       rootId,
       (t) => t.setLabel("999999:", "x"),
-      {
-        expected: { cls: CoreApiError, code: "UNKNOWN_ITEM_ID" },
-      },
+      { expected: { cls: CoreApiError, code: "UNKNOWN_ITEM_ID" } },
     );
+  });
+
+  test("failed multi-op commit does not leak created ids or advance nextId", () => {
+    const { core, rootId } = makeCoreForTest();
+    const plain = mkBlank(core, rootId, { label: "plain", value: 1 });
+    const startNextId = nextEntryId(core);
+
+    expectCommitThrowsNoChange(
+      core,
+      rootId,
+      (t) => {
+        const created = t.insertChild(rootId);
+        t.setValue(created, 123);
+        t.insertChild(plain);
+      },
+      { expected: { cls: CoreOpError, code: "PARENT_NOT_GROUP" } },
+    );
+
+    expect(nextEntryId(core)).toBe(startNextId);
+
+    let createdAfterFailure = "";
+    core.commit((t) => {
+      createdAfterFailure = t.insertChild(rootId);
+    });
+    expect(entryIdOf(createdAfterFailure)).toBe(startNextId);
   });
 });
 
@@ -963,9 +985,59 @@ describe("core/view shapes & rules", () => {
 
     assertCoreInvariants(core, rootId);
   });
+
+  test("shape-created ids do not cause later duplicate-id failures after local allocation", () => {
+    const { core, rootId } = makeCoreForTest();
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    core.commit((t) => {
+      const c = t.insertChild(rowA);
+      t.setLabel(c, "col");
+      t.setValue(c, 1);
+    });
+    expect(groupLabels(core, rowA)).toEqual(["col"]);
+    expect(groupLabels(core, rowB)).toEqual(["col"]);
+
+    const nextBefore = nextEntryId(core);
+    let created = "";
+    core.commit((t) => {
+      created = t.insertChild(rootId);
+      t.setLabel(created, "z");
+    });
+    expect(entryIdOf(created)).toBe(nextBefore);
+    assertCoreInvariants(core, rootId);
+  });
 });
 
 describe("core/history", () => {
+  test("canUndo/canRedo reflect history state transitions", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: 1 });
+    core.importSnapshot(core.exportSnapshot());
+
+    expect(core.canUndo()).toBe(false);
+    expect(core.canRedo()).toBe(false);
+
+    core.commit((t) => t.setValue(x, 2));
+    expect(core.canUndo()).toBe(true);
+    expect(core.canRedo()).toBe(false);
+
+    core.undo();
+    expect(core.canUndo()).toBe(false);
+    expect(core.canRedo()).toBe(true);
+
+    core.redo();
+    expect(core.canUndo()).toBe(true);
+    expect(core.canRedo()).toBe(false);
+
+    core.commit((t) => t.setValue(x, 3));
+    expect(core.canUndo()).toBe(true);
+    expect(core.canRedo()).toBe(false);
+  });
+
   test("setValue edits on same item coalesce into one undo step", () => {
     const { core, rootId } = makeCoreForTest();
     const x = mkBlank(core, rootId, { label: "x", value: 0 });
@@ -1247,6 +1319,8 @@ describe("core/snapshot", () => {
     core.importSnapshot(snap);
 
     expectSel(core, { item: rootId, portals: [] });
+    expect(core.canUndo()).toBe(false);
+    expect(core.canRedo()).toBe(false);
 
     core.undo();
     expect(valueOfId(core, x)).toBe(2);
@@ -1599,6 +1673,38 @@ describe("core/determinism", () => {
 });
 
 describe("core/collab (wire contract)", () => {
+  test("local collab seq increments only on successful local applies", () => {
+    const sent: Transaction[] = [];
+    const collab = {
+      origin: "test-origin",
+      send(txn: Transaction) {
+        sent.push(txn);
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+
+    const { core, rootId } = createCore({ shapes: {}, collab });
+    const a = mkBlank(core, rootId, { label: "a", value: 1 });
+    const b = mkBlank(core, rootId, { label: "b", value: 2 });
+
+    const seqAfterSetup = sent.at(-1)?.meta?.seq ?? 0;
+    expect(seqAfterSetup).toBeGreaterThan(0);
+    const sentCountBeforeFailure = sent.length;
+
+    expectThrowsWithCode(CoreOpError, "DUPLICATE_CHILD_LABEL", () => {
+      core.commit((t) => t.setLabel(b, "a"));
+    });
+    expect(sent.length).toBe(sentCountBeforeFailure);
+    expect(sent.at(-1)?.meta?.seq).toBe(seqAfterSetup);
+
+    core.commit((t) => t.setValue(a, 3));
+    expect(sent.at(-1)?.meta?.seq).toBe(seqAfterSetup + 1);
+
+    core.dispose();
+  });
+
   test("remote applies; local echo ignored; undo still uses last local inverse", () => {
     let onRemote: ((txn: Transaction) => void) | undefined;
     const sent: Transaction[] = [];
@@ -1683,10 +1789,7 @@ describe("core/collab (wire contract)", () => {
       ops: [
         {
           type: "move",
-          spec: {
-            childId: entryIdOf(y),
-            toParentId: entryIdOf(g2),
-          },
+          spec: { childId: entryIdOf(y), toParentId: entryIdOf(g2) },
         },
       ],
       meta: { origin: "remote-peer", seq: 1 },

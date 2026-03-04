@@ -35,10 +35,7 @@ import {
 export const ITEM_SELECTOR = "[data-id]";
 export const VALUE_SELECTOR = ".ui-outline-value";
 
-export type SelectionSnapshot = {
-  anchor: ModelPosition;
-  focus: ModelPosition;
-};
+export type SelectionSnapshot = { anchor: ModelPosition; focus: ModelPosition };
 
 export type InputState = {
   isComposing: boolean;

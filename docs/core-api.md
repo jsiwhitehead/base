@@ -24,11 +24,12 @@ Rules:
 - The root item MUST always exist.
 - Removing `rootId` MUST completely clear the root rather than deleting it.
 - Core MUST be the single source of truth for model state.
-- `createCore` MAY receive a collaboration adapter that receives committed transactions and can apply remote transactions.
-- Collaboration transactions use the exported `Transaction` wire type (model/entry-level ops), while normal editing APIs remain item-based (`core.commit(...)` and `tx.*`).
+- `createCore` MAY receive a collaboration adapter for sending committed local transactions and applying remote transactions.
+- Collaboration transport MUST use exported `Transaction` values (model/entry-level ops); normal editing remains item-based (`core.commit(...)` and `tx.*`).
+- For locally emitted collaboration metadata, `txn.meta.seq` MUST be assigned only after successful local apply (failed local commits MUST NOT consume sequence numbers).
 - Malformed remote transactions MUST be rejected atomically and MUST NOT mutate Core state.
 - `createCore` MAY receive a view-shape registry (`ViewShape` by `ViewName`) used by `core.view(...)` resolution and post-transaction shape enforcement.
-- `createCore` MAY receive platform callbacks (`CorePlatformHooks`) for DOM/runtime-owned behavior while preserving Core semantics.
+- `createCore` MAY receive platform callbacks (`CorePlatformHooks`) for runtime-owned behavior while preserving Core semantics.
 - A Core instance owns all state and MUST be explicitly disposed.
 
 ## Reactivity model
@@ -41,6 +42,8 @@ The following methods are reactive when called inside a reactive context:
 - `core.selection()`.
 - `core.locate(id)`.
 - `core.view(id)`.
+- `core.canUndo()`.
+- `core.canRedo()`.
 
 Rules:
 
@@ -454,6 +457,8 @@ Enforcement rules:
 ```ts
 core.undo(): void
 core.redo(): void
+core.canUndo(): boolean
+core.canRedo(): boolean
 core.undoBoundary(): void
 ```
 
@@ -468,6 +473,7 @@ Rules:
 - Core MUST coalesce text edits only for consecutive single-op text commits on the same item and target within 500ms.
 - Core MUST NOT coalesce structural commits (create, move, or remove), multi-op transactions, or commits made outside editing selection mode.
 - A new edit MUST clear the redo stack.
+- `core.canUndo()` and `core.canRedo()` MUST reflect current undo/redo availability.
 - `core.undoBoundary()` closes the active coalescing group and MUST be a no-op if no group is active.
 - Views MUST call `core.undoBoundary()` at semantic breaks that Core cannot observe.
 
@@ -485,6 +491,7 @@ Rules:
 - Invalid snapshots MUST throw and MUST NOT mutate existing Core state.
 - `snapshot.rootId` MUST match the existing Core root ID.
 - Successful import MUST clear undo/redo history.
+- After successful import, `core.canUndo()` and `core.canRedo()` MUST both return `false`.
 - Successful import MUST reset selection to root item selection.
 - `SnapshotData` MUST NOT include selection/caret, history, caches, or debug state.
 

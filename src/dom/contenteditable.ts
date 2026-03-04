@@ -4,18 +4,11 @@ type DomSelectionPoints = {
   focus: DomPoint;
   isCollapsed: boolean;
 };
-type MappedSelectionPoints<T> = {
-  anchor: T;
-  focus: T;
-  isCollapsed: boolean;
-};
+type MappedSelectionPoints<T> = { anchor: T; focus: T; isCollapsed: boolean };
 type MappedRange<T> = { start: T; end: T };
 type MappedSelectionRange<T> = { range: Range; start: T; end: T };
 type MappedSelectionSnapshot<T> = { anchor: T; focus: T };
-type CollapsedCaretRectInSurface = {
-  rect: DOMRect;
-  surfaceEl: HTMLElement;
-};
+type CollapsedCaretRectInSurface = { rect: DOMRect; surfaceEl: HTMLElement };
 export type SuppressionFlag<T> = {
   get: () => T;
   set: (next: T) => void;

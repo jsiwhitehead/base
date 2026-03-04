@@ -226,12 +226,7 @@ async function mountOutline(
   unmount: Awaited<ReturnType<typeof mountView>>["unmount"];
   root: HTMLElement;
 }> {
-  const mounted = await mountView({
-    view: "outline",
-    core,
-    id: rootId,
-    focus,
-  });
+  const mounted = await mountView({ view: "outline", core, id: rootId, focus });
   return { ...mounted, root: requireOutlineRoot(document.body) };
 }
 
@@ -1128,11 +1123,7 @@ describe("outline/ce-beforeinput", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expect(valueOfId(core, nestedRoot)).toBeNull();
-    expectSel(core, {
-      item: nestedRoot,
-      target: VALUE_TARGET,
-      portals: [],
-    });
+    expectSel(core, { item: nestedRoot, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });

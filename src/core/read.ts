@@ -57,10 +57,7 @@ export type ReadEvaluator = { result(id: EntryId): Result };
 
 export type ReadApi = { item(id: ItemId): Item };
 
-type CreateReadApiOpts = {
-  evaluator: ReadEvaluator;
-  model: Model;
-};
+type CreateReadApiOpts = { evaluator: ReadEvaluator; model: Model };
 
 type ResolvedItem = { result: Result; label?: string };
 

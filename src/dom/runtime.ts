@@ -13,18 +13,10 @@ import { ITEM_TARGET, parseKeyIntent } from "../core";
 import { setContentEditableCaret } from "./contenteditable";
 
 type RuntimeEffect =
-  | {
-      type: "FOCUS";
-      focus: Location;
-      target: string;
-      caret?: number;
-    }
+  | { type: "FOCUS"; focus: Location; target: string; caret?: number }
   | { type: "CLEAR_FOCUS" };
 
-type ViewHandle = {
-  root: HTMLElement;
-  onIntent?: (intent: Intent) => void;
-};
+type ViewHandle = { root: HTMLElement; onIntent?: (intent: Intent) => void };
 
 export type Component = { el: HTMLElement; dispose(): void };
 
