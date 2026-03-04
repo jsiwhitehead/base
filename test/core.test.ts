@@ -904,6 +904,35 @@ describe("core/history", () => {
     expect(valueOfId(core, x)).toBe(0);
   });
 
+  test("mixed delete and insert within coalescing window do not merge", () => {
+    const { core, rootId } = makeCoreForTest();
+    const x = mkBlank(core, rootId, { label: "x", value: "ab" });
+    core.focus({
+      type: "editing",
+      location: { item: x, portals: [] },
+      target: VALUE_TARGET,
+    });
+
+    const realNow = Date.now;
+    let now = 20_000;
+    Date.now = () => now;
+    try {
+      core.commit((t) => t.setValue(x, "a"));
+      now = 20_100;
+      core.commit((t) => t.setValue(x, "ax"));
+    } finally {
+      Date.now = realNow;
+    }
+
+    expect(valueOfId(core, x)).toBe("ax");
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe("a");
+
+    core.undo();
+    expect(valueOfId(core, x)).toBe("ab");
+  });
+
   test("setValue edits on different items do not coalesce", () => {
     const { core, rootId } = makeCoreForTest();
     const a = mkBlank(core, rootId, { label: "a", value: 1 });

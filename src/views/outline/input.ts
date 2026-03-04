@@ -63,7 +63,7 @@ export type EditCtx = {
   navPoints: Signal<readonly NavPoint[]>;
   applyEditingResult: ApplyEditingResult;
   setCursorAndReveal: (itemId: ItemId, offset: number) => void;
-  drainObserver: () => void;
+  flushPendingMutations: () => void;
   suppressMutationSync: SuppressionFlag<boolean>;
   suppressHistoryKeydown: SuppressionFlag<"undo" | "redo" | null>;
 };
@@ -388,7 +388,7 @@ export function handleHistoryBeforeInput(
 export function handleInsertLineBreakBeforeInput(
   ctx: EditCtx,
   e: InputEvent,
-  range: Range,
+  range: AbstractRange,
 ): void {
   e.preventDefault();
   const rangePos = getMappedRange(range, (point) =>
@@ -416,7 +416,7 @@ export function handleInsertLineBreakBeforeInput(
 export function handleInsertParagraphBeforeInput(
   ctx: EditCtx,
   e: InputEvent,
-  range: Range,
+  range: AbstractRange,
 ): void {
   e.preventDefault();
   const rangePos = getMappedRange(range, (point) =>
@@ -483,7 +483,7 @@ export function handleDeleteBeforeInput(
   );
   const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (valueEl) {
-    ctx.drainObserver();
+    ctx.flushPendingMutations();
     renderPlainTextToContentEditable(valueEl, nextText);
   }
   ctx.applyEditingResult({
@@ -623,7 +623,7 @@ export function handleInsertReplacementTextBeforeInput(
     .querySelector<HTMLElement>(itemSelectorById(startPos.itemId))
     ?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (valueEl) {
-    ctx.drainObserver();
+    ctx.flushPendingMutations();
     renderPlainTextToContentEditable(valueEl, nextText);
   }
   ctx.applyEditingResult({
@@ -634,28 +634,32 @@ export function handleInsertReplacementTextBeforeInput(
   });
 }
 
-export function insertText(ctx: EditCtx, text: string): void {
+export function insertText(
+  ctx: EditCtx,
+  text: string,
+  range: AbstractRange | null = null,
+): void {
   if (!text) return;
   const modelSel = ctx.core.selection();
   if (modelSel.type !== "editing") return;
-  const range = getDomRangeInRoot(ctx.root);
-  if (!range) return;
+  const editRange = range ?? getDomRangeInRoot(ctx.root);
+  if (!editRange) return;
   const startValueEl = getSurfaceFromNodeInRoot(
     ctx.root,
-    range.startContainer,
+    editRange.startContainer,
     VALUE_SELECTOR,
   );
   const startPos = domPositionToModel(
     ctx.root,
-    range.startContainer,
-    range.startOffset,
+    editRange.startContainer,
+    editRange.startOffset,
   );
   if (!startPos) return;
-  if (!range.collapsed) {
+  if (!editRange.collapsed) {
     const endPos = domPositionToModel(
       ctx.root,
-      range.endContainer,
-      range.endOffset,
+      editRange.endContainer,
+      editRange.endOffset,
     );
     if (!endPos) return;
     if (!deleteSelection(ctx, startPos, endPos)) return;
@@ -688,7 +692,7 @@ export function insertText(ctx: EditCtx, text: string): void {
   if (startValueEl) {
     const startSnap = ctx.core.item(startPos.itemId);
     if (isPlainValueItem(startSnap)) {
-      ctx.drainObserver();
+      ctx.flushPendingMutations();
       renderPlainTextToContentEditable(
         startValueEl,
         valueToText(startSnap.content.value),

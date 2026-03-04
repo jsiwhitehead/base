@@ -83,7 +83,7 @@ function buildOutlineItem(
   ) => void,
   selectedRowKeys: Signal<Set<string>>,
   valueSelectionCollapsed: Signal<boolean>,
-  beforeProgrammaticDomWrite: () => void,
+  flushPendingMutations: () => void,
 ): Component {
   return createComponent(core, (ctx) => {
     const itemEl = el("div", "ui-frame ui-outline-child");
@@ -150,7 +150,7 @@ function buildOutlineItem(
         valueEl.contains(sel.getRangeAt(0).startContainer)
       )
         return;
-      beforeProgrammaticDomWrite();
+      flushPendingMutations();
       renderPlainTextToContentEditable(valueEl, newText);
     });
 
@@ -286,7 +286,7 @@ function buildOutlineItem(
           onGutterPointerDown,
           selectedRowKeys,
           valueSelectionCollapsed,
-          beforeProgrammaticDomWrite,
+          flushPendingMutations,
         ),
     );
 
@@ -381,16 +381,24 @@ function buildOutlineBody(
         ) {
           continue;
         }
+        if (
+          mutation.type === "characterData" &&
+          mutation.oldValue != null &&
+          mutation.target instanceof Text &&
+          mutation.target.data === mutation.oldValue
+        ) {
+          continue;
+        }
         const newText = readPlainTextFromContentEditable(valueEl);
         if (valueToText(snap.content.value) === newText) continue;
         core.commit((t) => t.setValue(itemId, newText));
       }
     });
-    const drainObserver = (): void => {
+    const flushPendingMutations = (): void => {
       mutObs.takeRecords();
     };
     const setCursorAndReveal = (itemId: ItemId, offset: number): void => {
-      drainObserver();
+      flushPendingMutations();
       const pos = modelPositionToDom(root, itemId, offset);
       if (pos) {
         suppressSelectionSync.suppressForTurn(true);
@@ -451,7 +459,7 @@ function buildOutlineBody(
         snap.anchor.itemId === snap.focus.itemId &&
         snap.anchor.offset === snap.focus.offset;
       suppressSelectionSync.suppressForTurn(true);
-      drainObserver();
+      flushPendingMutations();
       setDomSelectionRange(anchorDom, focusDom);
     };
     const isOutlineValueEditEvent = (target: EventTarget | null): boolean => {
@@ -475,7 +483,7 @@ function buildOutlineBody(
       navPoints,
       applyEditingResult,
       setCursorAndReveal,
-      drainObserver,
+      flushPendingMutations,
       suppressMutationSync,
       suppressHistoryKeydown,
     };
@@ -491,11 +499,367 @@ function buildOutlineBody(
           onGutterPointerDown,
           selectedRowKeys,
           valueSelectionCollapsed,
-          drainObserver,
+          flushPendingMutations,
         ),
     );
 
-    const onSelectionChange = (): void => {
+    ctx.on(root, "focus", (): void => {
+      resetStickyCaretX();
+      restoreSelection();
+    });
+    ctx.on(root, "blur", (e: FocusEvent): void => {
+      const next = e.relatedTarget;
+      if (!(next instanceof Node) || !root.contains(next)) {
+        state.restoreSelectionOnFocus = false;
+        return;
+      }
+      state.savedSelection = snapshotSelection();
+      state.restoreSelectionOnFocus = state.savedSelection != null;
+    });
+    ctx.on(root, "focusout", (): void => {
+      resetStickyCaretX();
+    });
+
+    ctx.on(
+      root,
+      "compositionstart",
+      gated((_e: CompositionEvent): void => {
+        state.isComposing = true;
+        core.undoBoundary();
+      }),
+    );
+    ctx.on(
+      root,
+      "compositionupdate",
+      gated((_e: CompositionEvent): void => {
+        state.isComposing = true;
+      }),
+    );
+    ctx.on(
+      root,
+      "compositionend",
+      gated((_e: CompositionEvent): void => {
+        state.isComposing = false;
+        state.compositionEndedAt = Date.now();
+        core.undoBoundary();
+      }),
+    );
+
+    ctx.on(
+      root,
+      "beforeinput",
+      gated((e: InputEvent): void => {
+        if (e.isComposing) return;
+        const resolveBeforeInputRange = (): AbstractRange | null => {
+          const targetRange = e.getTargetRanges()[0];
+          if (
+            targetRange &&
+            root.contains(targetRange.startContainer) &&
+            root.contains(targetRange.endContainer)
+          ) {
+            return targetRange;
+          }
+          return getDomRangeInRoot(root);
+        };
+        switch (e.inputType) {
+          case "historyUndo": {
+            handleHistoryBeforeInput(editCtx, e, "undo");
+            break;
+          }
+
+          case "historyRedo": {
+            handleHistoryBeforeInput(editCtx, e, "redo");
+            break;
+          }
+
+          case "insertText": {
+            if (!e.data) break;
+            const range = resolveBeforeInputRange();
+            if (!range) break;
+            const pos = domPositionToModel(
+              root,
+              range.startContainer,
+              range.startOffset,
+            );
+            if (!pos) break;
+            const snap = core.item(pos.itemId);
+            if (
+              snap.content.type === "group" &&
+              snap.content.children.length > 0
+            ) {
+              e.preventDefault();
+              break;
+            }
+            e.preventDefault();
+            insertText(editCtx, e.data, range);
+            break;
+          }
+
+          case "insertParagraph": {
+            const range = resolveBeforeInputRange();
+            if (!range) break;
+            handleInsertParagraphBeforeInput(editCtx, e, range);
+            break;
+          }
+          case "insertLineBreak": {
+            const range = resolveBeforeInputRange();
+            if (!range) break;
+            handleInsertLineBreakBeforeInput(editCtx, e, range);
+            break;
+          }
+
+          case "deleteContentBackward":
+          case "deleteContentForward":
+          case "deleteWordBackward":
+          case "deleteWordForward": {
+            const dir = e.inputType.includes("Backward")
+              ? "backward"
+              : "forward";
+            const targetRange = e.getTargetRanges()[0];
+            if (targetRange && handleDeleteBeforeInput(editCtx, e, targetRange))
+              break;
+            const range = getDomRangeInRoot(root);
+            if (!range) break;
+            handleBoundaryDeleteBeforeInput(editCtx, e, dir, range);
+            break;
+          }
+
+          case "insertFromPaste":
+            e.preventDefault();
+            break;
+
+          case "insertFromDrop":
+            e.preventDefault();
+            break;
+
+          case "deleteByDrag":
+            e.preventDefault();
+            break;
+
+          case "insertReplacementText":
+            handleInsertReplacementTextBeforeInput(editCtx, e);
+            break;
+
+          default:
+            e.preventDefault();
+            break;
+        }
+      }),
+    );
+    ctx.on(
+      root,
+      "keydown",
+      gated((e: KeyboardEvent): void => {
+        if (e.isComposing) return;
+        if (e.key === "Enter" && Date.now() - state.compositionEndedAt < 100) {
+          e.preventDefault();
+          return;
+        }
+        const sel = core.selection();
+        if (sel.type === "item") {
+          if (
+            e.shiftKey &&
+            !e.altKey &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            (e.key === "ArrowUp" || e.key === "ArrowDown")
+          ) {
+            const next = extendBlockSelectionByArrow(
+              core,
+              rootId,
+              sel,
+              e.key === "ArrowUp" ? "up" : "down",
+              portals,
+            );
+            if (!next) return;
+            e.preventDefault();
+            core.focus({ type: "item", anchor: sel.anchor, head: next });
+            return;
+          }
+          if (
+            !e.shiftKey &&
+            !e.altKey &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            (e.key === "Backspace" || e.key === "Delete")
+          ) {
+            e.preventDefault();
+            deleteBlockSelection(core, rootId, sel, portals);
+            return;
+          }
+        }
+        if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "Shift") {
+          resetStickyCaretX();
+        }
+        const isMod = e.metaKey || e.ctrlKey;
+        if (isMod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+          if (suppressHistoryKeydown.get() === "undo") {
+            e.preventDefault();
+            suppressHistoryKeydown.set(null);
+            return;
+          }
+          e.preventDefault();
+          core.undo();
+          return;
+        }
+        if (
+          isMod &&
+          (e.key.toLowerCase() === "y" ||
+            (e.key.toLowerCase() === "z" && e.shiftKey))
+        ) {
+          if (suppressHistoryKeydown.get() === "redo") {
+            e.preventDefault();
+            suppressHistoryKeydown.set(null);
+            return;
+          }
+          e.preventDefault();
+          core.redo();
+          return;
+        }
+        if (
+          (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+          !e.altKey &&
+          !isMod
+        ) {
+          const dir = e.key === "ArrowLeft" ? "backward" : ("forward" as const);
+          if (
+            handleArrowHorizontal(
+              core,
+              root,
+              navPoints.value,
+              state,
+              applyEditingResult,
+              e,
+              dir,
+            )
+          )
+            return;
+        }
+        if (
+          (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+          !e.shiftKey &&
+          !e.altKey &&
+          !isMod
+        ) {
+          const dir = e.key === "ArrowUp" ? "up" : "down";
+          if (
+            handleArrowVertical(
+              core,
+              root,
+              portals,
+              navPoints.value,
+              state,
+              applyEditingResult,
+              e,
+              dir,
+            )
+          )
+            return;
+        }
+        if (e.key === "Tab") {
+          resetStickyCaretX();
+          e.preventDefault();
+          e.stopPropagation();
+          const modelSel = core.selection();
+          if (modelSel.type !== "editing") return;
+          const caretOffset =
+            valueCaretOffset(root, modelSel.location.item) ?? 0;
+          suppressMutationSync.suppressForTurn(true);
+          const nextFocus = e.shiftKey
+            ? cmd.outdentInPlace(core, modelSel.location)
+            : cmd.indentInPlace(core, modelSel.location);
+          if (nextFocus) {
+            applyEditingResult({
+              location: nextFocus,
+              target: VALUE_TARGET,
+              caret: caretOffset,
+              reveal: { offset: caretOffset },
+            });
+          }
+          return;
+        }
+        if (e.key === "Escape") {
+          resetStickyCaretX();
+          e.preventDefault();
+          core.dispatch({ type: "NAV", dir: "out", mode: "step" });
+        }
+      }),
+    );
+
+    ctx.on(root, "copy", (e: ClipboardEvent): void => {
+      const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
+        domPositionToModel(root, point.node, point.offset),
+      );
+      if (!rangeSel) return;
+      const text = readSelectionText(core, rangeSel);
+      if (text == null) {
+        e.preventDefault();
+        return;
+      }
+      if (!writePlainTextClipboard(e, text)) return;
+      e.preventDefault();
+    });
+    ctx.on(root, "cut", (e: ClipboardEvent): void => {
+      const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
+        domPositionToModel(root, point.node, point.offset),
+      );
+      if (!rangeSel) return;
+      const text = readSelectionText(core, rangeSel);
+      if (text == null) {
+        e.preventDefault();
+        return;
+      }
+      if (!writePlainTextClipboard(e, text)) return;
+      e.preventDefault();
+
+      if (rangeSel.range.collapsed) return;
+      core.undoBoundary();
+      void deleteSelection(editCtx, rangeSel.start, rangeSel.end);
+      core.undoBoundary();
+    });
+    ctx.on(
+      root,
+      "paste",
+      gated((e: ClipboardEvent): void => {
+        const text = getPlainTextFromDataTransfer(e.clipboardData);
+        if (!text) return;
+        e.preventDefault();
+        core.undoBoundary();
+        insertText(editCtx, text);
+        core.undoBoundary();
+      }),
+    );
+    ctx.on(
+      root,
+      "dragstart",
+      gated((e: DragEvent): void => {
+        const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
+          domPositionToModel(root, point.node, point.offset),
+        );
+        if (!rangeSel || !e.dataTransfer) return;
+        const text = readSelectionText(core, rangeSel);
+        if (text == null) return;
+        e.dataTransfer.setData("text/plain", text);
+      }),
+    );
+    ctx.on(
+      root,
+      "drop",
+      gated((e: DragEvent): void => {
+        const text = getPlainTextFromDataTransfer(e.dataTransfer);
+        if (!text) return;
+        e.preventDefault();
+        core.undoBoundary();
+        insertText(editCtx, text);
+        core.undoBoundary();
+      }),
+    );
+
+    ctx.on(root, "pointerdown", (): void => {
+      resetStickyCaretX();
+    });
+
+    ctx.on(document, "selectionchange", (): void => {
       if (state.isComposing) return;
       if (suppressSelectionChangeFromGutter.get()) return;
       if (suppressSelectionSync.get()) return;
@@ -520,335 +884,12 @@ function buildOutlineBody(
         { type: "editing", location: itemFocus, target: VALUE_TARGET },
         { caret: focusPos.offset },
       );
-    };
-    const onBeforeInput = gated((e: InputEvent): void => {
-      if (e.isComposing) return;
-      switch (e.inputType) {
-        case "historyUndo": {
-          handleHistoryBeforeInput(editCtx, e, "undo");
-          break;
-        }
-
-        case "historyRedo": {
-          handleHistoryBeforeInput(editCtx, e, "redo");
-          break;
-        }
-
-        case "insertText": {
-          if (!e.data) break;
-          const range = getDomRangeInRoot(root);
-          if (!range) break;
-          const pos = domPositionToModel(
-            root,
-            range.startContainer,
-            range.startOffset,
-          );
-          if (!pos) break;
-          const snap = core.item(pos.itemId);
-          if (
-            snap.content.type === "group" &&
-            snap.content.children.length > 0
-          ) {
-            e.preventDefault();
-            break;
-          }
-          e.preventDefault();
-          insertText(editCtx, e.data);
-          break;
-        }
-
-        case "insertParagraph": {
-          const range = getDomRangeInRoot(root);
-          if (!range) break;
-          handleInsertParagraphBeforeInput(editCtx, e, range);
-          break;
-        }
-        case "insertLineBreak": {
-          const range = getDomRangeInRoot(root);
-          if (!range) break;
-          handleInsertLineBreakBeforeInput(editCtx, e, range);
-          break;
-        }
-
-        case "deleteContentBackward":
-        case "deleteContentForward":
-        case "deleteWordBackward":
-        case "deleteWordForward": {
-          const dir = e.inputType.includes("Backward") ? "backward" : "forward";
-          const targetRange = e.getTargetRanges()[0];
-          if (targetRange && handleDeleteBeforeInput(editCtx, e, targetRange))
-            break;
-          const range = getDomRangeInRoot(root);
-          if (!range) break;
-          handleBoundaryDeleteBeforeInput(editCtx, e, dir, range);
-          break;
-        }
-
-        case "insertFromPaste":
-          e.preventDefault();
-          break;
-
-        case "insertFromDrop":
-          e.preventDefault();
-          break;
-
-        case "deleteByDrag":
-          e.preventDefault();
-          break;
-
-        case "insertReplacementText":
-          handleInsertReplacementTextBeforeInput(editCtx, e);
-          break;
-
-        default:
-          e.preventDefault();
-          break;
-      }
     });
-
-    const onCopy = (e: ClipboardEvent): void => {
-      const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
-        domPositionToModel(root, point.node, point.offset),
-      );
-      if (!rangeSel) return;
-      const text = readSelectionText(core, rangeSel);
-      if (text == null) {
-        e.preventDefault();
-        return;
-      }
-      if (!writePlainTextClipboard(e, text)) return;
-      e.preventDefault();
-    };
-    const onDragStart = gated((e: DragEvent): void => {
-      const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
-        domPositionToModel(root, point.node, point.offset),
-      );
-      if (!rangeSel || !e.dataTransfer) return;
-      const text = readSelectionText(core, rangeSel);
-      if (text == null) return;
-      e.dataTransfer.setData("text/plain", text);
-    });
-
-    const onPaste = gated((e: ClipboardEvent): void => {
-      const text = getPlainTextFromDataTransfer(e.clipboardData);
-      if (!text) return;
-      e.preventDefault();
-      core.undoBoundary();
-      insertText(editCtx, text);
-      core.undoBoundary();
-    });
-    const onDrop = gated((e: DragEvent): void => {
-      const text = getPlainTextFromDataTransfer(e.dataTransfer);
-      if (!text) return;
-      e.preventDefault();
-      core.undoBoundary();
-      insertText(editCtx, text);
-      core.undoBoundary();
-    });
-
-    const onCut = (e: ClipboardEvent): void => {
-      const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
-        domPositionToModel(root, point.node, point.offset),
-      );
-      if (!rangeSel) return;
-      const text = readSelectionText(core, rangeSel);
-      if (text == null) {
-        e.preventDefault();
-        return;
-      }
-      if (!writePlainTextClipboard(e, text)) return;
-      e.preventDefault();
-
-      if (rangeSel.range.collapsed) return;
-      core.undoBoundary();
-      void deleteSelection(editCtx, rangeSel.start, rangeSel.end);
-      core.undoBoundary();
-    };
-
-    const onKeyDown = gated((e: KeyboardEvent): void => {
-      if (e.isComposing) return;
-      if (e.key === "Enter" && Date.now() - state.compositionEndedAt < 100) {
-        e.preventDefault();
-        return;
-      }
-      const sel = core.selection();
-      if (sel.type === "item") {
-        if (
-          e.shiftKey &&
-          !e.altKey &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          (e.key === "ArrowUp" || e.key === "ArrowDown")
-        ) {
-          const next = extendBlockSelectionByArrow(
-            core,
-            rootId,
-            sel,
-            e.key === "ArrowUp" ? "up" : "down",
-            portals,
-          );
-          if (!next) return;
-          e.preventDefault();
-          core.focus({ type: "item", anchor: sel.anchor, head: next });
-          return;
-        }
-        if (
-          !e.shiftKey &&
-          !e.altKey &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          (e.key === "Backspace" || e.key === "Delete")
-        ) {
-          e.preventDefault();
-          deleteBlockSelection(core, rootId, sel, portals);
-          return;
-        }
-      }
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "Shift") {
-        resetStickyCaretX();
-      }
-      const isMod = e.metaKey || e.ctrlKey;
-      if (isMod && e.key.toLowerCase() === "z" && !e.shiftKey) {
-        if (suppressHistoryKeydown.get() === "undo") {
-          e.preventDefault();
-          suppressHistoryKeydown.set(null);
-          return;
-        }
-        e.preventDefault();
-        core.undo();
-        return;
-      }
-      if (
-        isMod &&
-        (e.key.toLowerCase() === "y" ||
-          (e.key.toLowerCase() === "z" && e.shiftKey))
-      ) {
-        if (suppressHistoryKeydown.get() === "redo") {
-          e.preventDefault();
-          suppressHistoryKeydown.set(null);
-          return;
-        }
-        e.preventDefault();
-        core.redo();
-        return;
-      }
-      if (
-        (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
-        !e.altKey &&
-        !isMod
-      ) {
-        const dir = e.key === "ArrowLeft" ? "backward" : ("forward" as const);
-        if (
-          handleArrowHorizontal(
-            core,
-            root,
-            navPoints.value,
-            state,
-            applyEditingResult,
-            e,
-            dir,
-          )
-        )
-          return;
-      }
-      if (
-        (e.key === "ArrowUp" || e.key === "ArrowDown") &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !isMod
-      ) {
-        const dir = e.key === "ArrowUp" ? "up" : "down";
-        if (
-          handleArrowVertical(
-            core,
-            root,
-            portals,
-            navPoints.value,
-            state,
-            applyEditingResult,
-            e,
-            dir,
-          )
-        )
-          return;
-      }
-      if (e.key === "Tab") {
-        resetStickyCaretX();
-        e.preventDefault();
-        e.stopPropagation();
-        const modelSel = core.selection();
-        if (modelSel.type !== "editing") return;
-        const caretOffset = valueCaretOffset(root, modelSel.location.item) ?? 0;
-        suppressMutationSync.suppressForTurn(true);
-        const nextFocus = e.shiftKey
-          ? cmd.outdentInPlace(core, modelSel.location)
-          : cmd.indentInPlace(core, modelSel.location);
-        if (nextFocus) {
-          applyEditingResult({
-            location: nextFocus,
-            target: VALUE_TARGET,
-            caret: caretOffset,
-            reveal: { offset: caretOffset },
-          });
-        }
-        return;
-      }
-      if (e.key === "Escape") {
-        resetStickyCaretX();
-        e.preventDefault();
-        core.dispatch({ type: "NAV", dir: "out", mode: "step" });
-      }
-    });
-
-    const onCompositionStart = gated((_e: CompositionEvent): void => {
-      state.isComposing = true;
-      core.undoBoundary();
-    });
-
-    const onCompositionEnd = gated((_e: CompositionEvent): void => {
-      state.isComposing = false;
-      state.compositionEndedAt = Date.now();
-      core.undoBoundary();
-    });
-
-    const onFocusOut = (): void => {
-      resetStickyCaretX();
-    };
-    const onBlur = (e: FocusEvent): void => {
-      const next = e.relatedTarget;
-      if (!(next instanceof Node) || !root.contains(next)) {
-        state.restoreSelectionOnFocus = false;
-        return;
-      }
-      state.savedSelection = snapshotSelection();
-      state.restoreSelectionOnFocus = state.savedSelection != null;
-    };
-    const onFocus = (): void => {
-      resetStickyCaretX();
-      restoreSelection();
-    };
-    const onPointerDown = (): void => {
-      resetStickyCaretX();
-    };
-
-    ctx.on(root, "beforeinput", onBeforeInput);
-    ctx.on(root, "copy", onCopy);
-    ctx.on(root, "cut", onCut);
-    ctx.on(root, "paste", onPaste);
-    ctx.on(root, "drop", onDrop);
-    ctx.on(root, "dragstart", onDragStart);
-    ctx.on(root, "blur", onBlur);
-    ctx.on(root, "focus", onFocus);
-    ctx.on(root, "compositionstart", onCompositionStart);
-    ctx.on(root, "compositionend", onCompositionEnd);
-    ctx.on(root, "focusout", onFocusOut);
-    ctx.on(root, "keydown", onKeyDown);
-    ctx.on(root, "pointerdown", onPointerDown);
-    ctx.on(document, "selectionchange", onSelectionChange);
 
     ctx.effect(() => {
       mutObs.observe(root, {
         characterData: true,
+        characterDataOldValue: true,
         childList: true,
         subtree: true,
       });

@@ -131,6 +131,7 @@ A pure model->DOM approach — preventing all `beforeinput` — would break:
 ```ts
 observer.observe(ceRoot, {
   characterData: true,
+  characterDataOldValue: true,
   childList: true,
   subtree: true,
 });
@@ -141,6 +142,8 @@ Two mutation types matter:
 - `characterData` — normal typing; modifies an existing text node.
 - `childList` — **the first character in an empty item** creates a new text node rather than modifying one. Without `childList: true` this character is silently lost — a well-known gotcha. Also filter bare `<br>` insertions: browsers add one to maintain editability in an empty surface; treat it as structural noise, not a text edit, or the model briefly sees `"\n"` as content.
 
+`characterDataOldValue: true` provides each `characterData` record's previous text. If `record.target.data === record.oldValue`, treat it as a no-op re-normalization and skip the full-surface read. Keep the full-surface idempotency check as fallback for `childList` mutations and any case without usable `oldValue`.
+
 The observer is a **text-sync channel**, not a general source of truth for every DOM mutation. App-authored structural and reconciliation DOM churn must not be misclassified as user text edits. With `subtree: true` the observer fires for mutations anywhere in the editing root; each `MutationRecord.target` must be traced up the DOM to identify which item's value surface was affected. Mutations outside any value surface are skipped.
 
 Read the full value surface with the plain-text parser, not the mutated node. IME and autocorrect can produce multiple adjacent text nodes and `<br>`/block wrappers; only full-surface parsing is reliable.
@@ -149,26 +152,27 @@ Read the full value surface with the plain-text parser, not the mutated node. IM
 
 For plain-text `contenteditable` value surfaces:
 
-- Model text MUST use LF-only newlines (`\n`). Normalize `\r\n` and `\r` to `\n`.
-- DOM -> model parsing MUST treat line-break DOM structures (`<br>`, block wrappers such as `<div>` / `<p>`) as newline boundaries.
-- Parsing MUST preserve blank lines and trailing newline (for example `"a\n\nb\n"`).
+- Model text MUST use LF-only newlines (`\n`) (`\r\n`/`\r` normalize to `\n`).
+- Model -> DOM rendering is canonical plain-text structure: `Text` nodes plus `<br>` (including optional sentinel `<br>` for empty/trailing newline visibility), not block wrappers.
+- DOM -> model parsing MUST be tolerant: treat `<br>` and block wrappers (for example `<div>` / `<p>`) as line breaks, preserve blank lines and trailing newline (for example `"a\n\nb\n"`), and ignore sentinel `<br>`.
 - Model -> DOM writes MUST preserve the exact model string and MUST NOT rely on browser-default Enter/Shift+Enter DOM shape.
-- Model -> DOM rendering MAY add a visual-only `<br>` sentinel for empty/trailing-newline visibility. DOM -> model parsing MUST ignore this sentinel.
+- Tolerant parsing is a safety fallback for non-canonical browser/native mutations (for example paste/autocorrect/IME).
 
 This contract is shared across all views that implement plain-text `contenteditable` surfaces.
 
 ### Timing, suppression, and idempotency
 
-The MutationObserver callback fires as a **microtask** — after all synchronous code in the current task. Reactive effects run synchronously. This means: a structural model update runs -> effects run -> DOM updates -> _then_ the observer microtask fires. By that point the DOM already reflects the model; an idempotency check silently discards the mutations. An explicit suppression window is belt-and-suspenders for complex reconciliation edge cases.
+The MutationObserver callback runs as a **microtask** after synchronous work in the current task. In practice: model update -> reactive effects -> DOM update -> observer callback. By callback time, DOM usually already matches model, so idempotency checks discard no-op records; suppression is a defensive extra guard.
 
 **Flush pending observer records before programmatic DOM writes.** Before any programmatic DOM write, flush pending mutation records synchronously. Without this, a stale pending mutation may arrive after the write and incorrectly overwrite the updated content.
 
-**Idempotency.** Both sides use equality checks to prevent feedback loops: the observer commits only if parsed DOM text differs from model text; the render side writes only when model text/sentinel state differs from current DOM state.
-Renderer idempotency MUST consider sentinel presence, not only parsed text equality.
+**Idempotency.** Both sides use equality checks to prevent feedback loops. The observer commits only when parsed DOM text differs from model text; the renderer writes only when model text or sentinel state differs from DOM. Renderer idempotency MUST include sentinel presence, not just parsed text equality.
 
 **Signal safety guard.** Before running model-driven render into a value surface, check whether the browser cursor is currently inside that element. If so, skip the update — the browser is mid-edit and the observer is already syncing live. Once the cursor leaves, the effect reconciles if needed.
 
-**Direct DOM writes in `beforeinput` handlers.** If a `beforeinput` handler commits a model change and must place the caret immediately (for example after delete or insert), it writes the new content directly to the value element first. This is intentional: while the caret is inside the element, the signal safety guard blocks effect-driven writes. The MutationObserver then ignores the later microtask mutation because the DOM already matches the model.
+**Direct DOM writes in `beforeinput` handlers.** When a `beforeinput` handler commits and must place the caret immediately (for example after delete or insert), it writes content directly to the value element first. This is intentional: the signal safety guard blocks effect-driven writes while the caret is inside the element, and the observer later ignores the matching mutation as a no-op.
+
+**Suppression flag reset timing — `setTimeout(0)`, not `queueMicrotask`.** Reset suppression in the next macrotask so synchronous `selectionchange` handlers still see it as active. `queueMicrotask` resets too early. Because resets are async, use token-based suppression instead of a plain boolean so overlapping suppressions do not clear each other incorrectly.
 
 ---
 
@@ -222,6 +226,8 @@ selection.setBaseAndExtent(node, offset, node, offset);
 This is required after every structural op — omitting it leaves the cursor in an undefined or incorrect position. It is one of the most commonly broken aspects of naive contenteditable implementations.
 
 **Scroll-to-cursor.** After programmatic cursor placement, ensure the cursor is scrolled into view. The browser does not do this automatically for programmatic placements.
+
+**Cursor placement timing in a reactive system.** After `core.focus()`, place the cursor in the next microtask so focus effects and DOM reconciliation settle first. For structural edits inside live `beforeinput`, place it immediately (`defer: false`) because the surface is already focused and DOM was updated synchronously.
 
 Position mapping must remain stable under text-node fragmentation — IME, autocorrect, and browser-internal optimisations can produce multiple adjacent text nodes within a single value surface.
 

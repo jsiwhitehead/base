@@ -315,19 +315,12 @@ export function setDomSelectionRange(
   if (!sel) return false;
   const focusPoint = focus ?? anchor;
   sel.removeAllRanges();
-  if (typeof sel.setBaseAndExtent === "function") {
-    sel.setBaseAndExtent(
-      anchor.node,
-      anchor.offset,
-      focusPoint.node,
-      focusPoint.offset,
-    );
-    return true;
-  }
-  const range = document.createRange();
-  range.setStart(anchor.node, anchor.offset);
-  range.setEnd(focusPoint.node, focusPoint.offset);
-  sel.addRange(range);
+  sel.setBaseAndExtent(
+    anchor.node,
+    anchor.offset,
+    focusPoint.node,
+    focusPoint.offset,
+  );
   return true;
 }
 

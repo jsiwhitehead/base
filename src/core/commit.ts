@@ -44,7 +44,13 @@ export type CommitController = {
   resetState(): void;
 };
 
-type TextHistoryGroupKey = { type: "text"; itemId: ItemId; target: string };
+type TextHistoryOpClass = "insert" | "delete" | "replace";
+type TextHistoryGroupKey = {
+  type: "text";
+  itemId: ItemId;
+  target: string;
+  opClass: TextHistoryOpClass;
+};
 type HistorySelectionSnapshot = { selection: Selection; caret?: number };
 type UndoHistoryEntry = {
   user: Transaction;
@@ -353,33 +359,65 @@ export function createCommitController(
     opts.coerceAfterRemoteApply();
   };
 
-  const classifyTextHistoryGroup = (
-    txn: Transaction,
-    sel: Selection,
-  ): TextHistoryGroupKey | null => {
-    if (sel.type !== "editing") return null;
-    if (sel.target !== VALUE_TARGET) return null;
-    if (txn.ops.length !== 1) return null;
-
-    const op = txn.ops[0];
-    if (!op) return null;
+  const readSingleTextPatch = (
+    ops: readonly Op[],
+    expectedId?: EntryId,
+  ): {
+    id: EntryId;
+    content: Extract<EntryContent, { type: "blank" | "scalar" }>;
+  } | null => {
+    if (ops.length !== 1) return null;
+    const op = ops[0];
     if (
+      !op ||
       op.type !== "patch" ||
       op.next.label !== undefined ||
       op.next.view !== undefined
     ) {
       return null;
     }
-
+    if (expectedId != null && op.id !== expectedId) return null;
     const content = op.next.content;
     if (!content || (content.type !== "blank" && content.type !== "scalar")) {
       return null;
     }
+    if (!content) return null;
+    return { id: op.id, content };
+  };
+
+  const classifyTextHistoryGroup = (
+    txn: Transaction,
+    inverseOps: readonly Op[],
+    sel: Selection,
+  ): TextHistoryGroupKey | null => {
+    if (sel.type !== "editing") return null;
+    if (sel.target !== VALUE_TARGET) return null;
 
     const focusedEntryId = entryIdFromItemId(sel.location.item);
-    if (focusedEntryId == null || focusedEntryId !== op.id) return null;
+    if (focusedEntryId == null) return null;
 
-    return { type: "text", itemId: sel.location.item, target: sel.target };
+    const nextPatch = readSingleTextPatch(txn.ops, focusedEntryId);
+    if (!nextPatch) return null;
+    const prevPatch = readSingleTextPatch(inverseOps, nextPatch.id);
+    if (!prevPatch) return null;
+
+    const prevLen =
+      prevPatch.content.type === "blank"
+        ? 0
+        : String(prevPatch.content.value).length;
+    const nextLen =
+      nextPatch.content.type === "blank"
+        ? 0
+        : String(nextPatch.content.value).length;
+    const opClass: TextHistoryOpClass =
+      nextLen > prevLen ? "insert" : nextLen < prevLen ? "delete" : "replace";
+
+    return {
+      type: "text",
+      itemId: sel.location.item,
+      target: sel.target,
+      opClass,
+    };
   };
 
   const canCoalesceUndoEntries = (
@@ -393,6 +431,7 @@ export function createCommitController(
     return (
       prevKey.itemId === nextKey.itemId &&
       prevKey.target === nextKey.target &&
+      prevKey.opClass === nextKey.opClass &&
       next.groupedAt - prev.groupedAt <= TEXT_HISTORY_COALESCE_MS
     );
   };
@@ -470,7 +509,11 @@ export function createCommitController(
           userHistoryCtx.caret,
         ),
         groupedAt: userHistoryCtx.startedAt,
-        groupKey: classifyTextHistoryGroup(txn, userHistoryCtx.selection),
+        groupKey: classifyTextHistoryGroup(
+          txn,
+          inverseOps,
+          userHistoryCtx.selection,
+        ),
       });
       history.redo = [];
     }
