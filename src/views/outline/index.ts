@@ -58,6 +58,7 @@ import {
   handleDeleteBeforeInput,
   handleHistoryBeforeInput,
   handleInsertParagraphBeforeInput,
+  handleInsertReplacementTextBeforeInput,
   handleInsertLineBreakBeforeInput,
   insertText,
   ITEM_SELECTOR,
@@ -446,6 +447,10 @@ function buildOutlineBody(
         state.savedSelection = null;
         return;
       }
+      valueSelectionCollapsed.value =
+        snap.anchor.itemId === snap.focus.itemId &&
+        snap.anchor.offset === snap.focus.offset;
+      suppressSelectionSync.suppressForTurn(true);
       drainObserver();
       setDomSelectionRange(anchorDom, focusDom);
     };
@@ -496,12 +501,12 @@ function buildOutlineBody(
       if (suppressSelectionSync.get()) return;
       const winSel = window.getSelection();
       if (!winSel?.rangeCount) return;
-      const anchorNode = winSel.anchorNode;
-      if (!anchorNode || !root.contains(anchorNode)) return;
-      const pos = domPositionToModel(root, anchorNode, winSel.anchorOffset);
-      if (!pos) return;
+      const focusNode = winSel.focusNode;
+      if (!focusNode || !root.contains(focusNode)) return;
+      const focusPos = domPositionToModel(root, focusNode, winSel.focusOffset);
+      if (!focusPos) return;
       valueSelectionCollapsed.value = winSel.isCollapsed;
-      const itemFocus: Location = { item: pos.itemId, portals };
+      const itemFocus: Location = { item: focusPos.itemId, portals };
       const selNow = core.selection();
       if (
         selNow.type === "editing" &&
@@ -511,21 +516,13 @@ function buildOutlineBody(
         return;
       }
 
-      const focusNode = winSel.focusNode;
-      const focusPos =
-        focusNode && root.contains(focusNode)
-          ? domPositionToModel(root, focusNode, winSel.focusOffset)
-          : null;
-      const caret: number | undefined =
-        focusPos && focusPos.itemId === pos.itemId
-          ? focusPos.offset
-          : undefined;
       core.focus(
         { type: "editing", location: itemFocus, target: VALUE_TARGET },
-        caret !== undefined ? { caret } : undefined,
+        { caret: focusPos.offset },
       );
     };
     const onBeforeInput = gated((e: InputEvent): void => {
+      if (e.isComposing) return;
       switch (e.inputType) {
         case "historyUndo": {
           handleHistoryBeforeInput(editCtx, e, "undo");
@@ -538,7 +535,6 @@ function buildOutlineBody(
         }
 
         case "insertText": {
-          if (e.isComposing) break;
           if (!e.data) break;
           const range = getDomRangeInRoot(root);
           if (!range) break;
@@ -578,7 +574,6 @@ function buildOutlineBody(
         case "deleteContentForward":
         case "deleteWordBackward":
         case "deleteWordForward": {
-          if (e.isComposing) break;
           const dir = e.inputType.includes("Backward") ? "backward" : "forward";
           const targetRange = e.getTargetRanges()[0];
           if (targetRange && handleDeleteBeforeInput(editCtx, e, targetRange))
@@ -596,6 +591,18 @@ function buildOutlineBody(
         case "insertFromDrop":
           e.preventDefault();
           break;
+
+        case "deleteByDrag":
+          e.preventDefault();
+          break;
+
+        case "insertReplacementText":
+          handleInsertReplacementTextBeforeInput(editCtx, e);
+          break;
+
+        default:
+          e.preventDefault();
+          break;
       }
     });
 
@@ -605,7 +612,10 @@ function buildOutlineBody(
       );
       if (!rangeSel) return;
       const text = readSelectionText(core, rangeSel);
-      if (text == null) return;
+      if (text == null) {
+        e.preventDefault();
+        return;
+      }
       if (!writePlainTextClipboard(e, text)) return;
       e.preventDefault();
     };
@@ -642,12 +652,17 @@ function buildOutlineBody(
       );
       if (!rangeSel) return;
       const text = readSelectionText(core, rangeSel);
-      if (text == null) return;
+      if (text == null) {
+        e.preventDefault();
+        return;
+      }
       if (!writePlainTextClipboard(e, text)) return;
       e.preventDefault();
 
       if (rangeSel.range.collapsed) return;
+      core.undoBoundary();
       void deleteSelection(editCtx, rangeSel.start, rangeSel.end);
+      core.undoBoundary();
     };
 
     const onKeyDown = gated((e: KeyboardEvent): void => {

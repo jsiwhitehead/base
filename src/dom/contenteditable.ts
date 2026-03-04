@@ -9,6 +9,7 @@ type MappedSelectionPoints<T> = {
   focus: T;
   isCollapsed: boolean;
 };
+type MappedRange<T> = { start: T; end: T };
 type MappedSelectionRange<T> = { range: Range; start: T; end: T };
 type MappedSelectionSnapshot<T> = { anchor: T; focus: T };
 type CollapsedCaretRectInSurface = {
@@ -396,6 +397,15 @@ export function getMappedSelectionRangeInRoot<T>(
 ): MappedSelectionRange<T> | null {
   const range = getDomRangeInRoot(rootEl);
   if (!range) return null;
+  const mapped = getMappedRange(range, mapDomPoint);
+  if (!mapped) return null;
+  return { range, start: mapped.start, end: mapped.end };
+}
+
+export function getMappedRange<T>(
+  range: AbstractRange,
+  mapDomPoint: (point: DomPoint) => T | null,
+): MappedRange<T> | null {
   const start = mapDomPoint({
     node: range.startContainer,
     offset: range.startOffset,
@@ -405,7 +415,7 @@ export function getMappedSelectionRangeInRoot<T>(
     offset: range.endOffset,
   });
   if (!start || !end) return null;
-  return { range, start, end };
+  return { start, end };
 }
 
 export function getCollapsedCaretRectInSurface(

@@ -11,6 +11,7 @@ import {
   getCollapsedCaretRectInSurface,
   getDomPointFromViewport,
   getDomRangeInRoot,
+  getMappedRange,
   getDomSelectionPointsInRoot,
   getMappedSelectionPointsInRoot,
   getSurfaceFromNodeInRoot,
@@ -390,17 +391,9 @@ export function handleInsertLineBreakBeforeInput(
   range: Range,
 ): void {
   e.preventDefault();
-  const startPos = domPositionToModel(
-    ctx.root,
-    range.startContainer,
-    range.startOffset,
+  const rangePos = getMappedRange(range, (point) =>
+    domPositionToModel(ctx.root, point.node, point.offset),
   );
-  const endPos = domPositionToModel(
-    ctx.root,
-    range.endContainer,
-    range.endOffset,
-  );
-  const rangePos = startPos && endPos ? { start: startPos, end: endPos } : null;
   if (!rangePos) return;
   if (rangePos.start.itemId !== rangePos.end.itemId) return;
   const snap = ctx.core.item(rangePos.start.itemId);
@@ -426,17 +419,9 @@ export function handleInsertParagraphBeforeInput(
   range: Range,
 ): void {
   e.preventDefault();
-  const rStart = domPositionToModel(
-    ctx.root,
-    range.startContainer,
-    range.startOffset,
+  const rangePos = getMappedRange(range, (point) =>
+    domPositionToModel(ctx.root, point.node, point.offset),
   );
-  const rEnd = domPositionToModel(
-    ctx.root,
-    range.endContainer,
-    range.endOffset,
-  );
-  const rangePos = rStart && rEnd ? { start: rStart, end: rEnd } : null;
   if (!rangePos) return;
   if (ctx.core.selection().type !== "editing") return;
 
@@ -476,17 +461,12 @@ export function handleDeleteBeforeInput(
   e: InputEvent,
   targetRange: StaticRange,
 ): boolean {
-  const startPos = domPositionToModel(
-    ctx.root,
-    targetRange.startContainer,
-    targetRange.startOffset,
+  const rangePos = getMappedRange(targetRange, (point) =>
+    domPositionToModel(ctx.root, point.node, point.offset),
   );
-  const endPos = domPositionToModel(
-    ctx.root,
-    targetRange.endContainer,
-    targetRange.endOffset,
-  );
-  if (!startPos || !endPos) return false;
+  if (!rangePos) return false;
+  const startPos = rangePos.start;
+  const endPos = rangePos.end;
   if (startPos.itemId !== endPos.itemId) return false;
   if (startPos.offset === endPos.offset) return false;
 
@@ -591,17 +571,9 @@ export function handleBoundaryDeleteBeforeInput(
     return;
   }
 
-  const rStart = domPositionToModel(
-    ctx.root,
-    range.startContainer,
-    range.startOffset,
+  const rangePos = getMappedRange(range, (point) =>
+    domPositionToModel(ctx.root, point.node, point.offset),
   );
-  const rEnd = domPositionToModel(
-    ctx.root,
-    range.endContainer,
-    range.endOffset,
-  );
-  const rangePos = rStart && rEnd ? { start: rStart, end: rEnd } : null;
   if (!rangePos) return;
   if (
     !deleteMultiItemRange(
@@ -611,9 +583,55 @@ export function handleBoundaryDeleteBeforeInput(
       rangePos.end,
       ctx.setCursorAndReveal,
     )
-  )
+  ) {
+    e.preventDefault();
     return;
+  }
   e.preventDefault();
+}
+
+export function handleInsertReplacementTextBeforeInput(
+  ctx: EditCtx,
+  e: InputEvent,
+): void {
+  e.preventDefault();
+  const replacementText = e.data ?? "";
+  const fallback = () => insertText(ctx, replacementText);
+  const targetRange = e.getTargetRanges()[0];
+  if (!targetRange) return fallback();
+
+  const rangePos = getMappedRange(targetRange, (point) =>
+    domPositionToModel(ctx.root, point.node, point.offset),
+  );
+  if (!rangePos) return fallback();
+  const startPos = rangePos.start;
+  const endPos = rangePos.end;
+  if (startPos.itemId !== endPos.itemId) return fallback();
+
+  const snap = ctx.core.item(startPos.itemId);
+  if (!isPlainValueItem(snap)) return fallback();
+
+  const currentText = valueToText(snap.content.value);
+  const nextCaret = startPos.offset + replacementText.length;
+  const nextText =
+    currentText.slice(0, startPos.offset) +
+    replacementText +
+    currentText.slice(endPos.offset);
+  ctx.core.commit((t) => t.setValue(startPos.itemId, nextText));
+
+  const valueEl = ctx.root
+    .querySelector<HTMLElement>(itemSelectorById(startPos.itemId))
+    ?.querySelector<HTMLElement>(VALUE_SELECTOR);
+  if (valueEl) {
+    ctx.drainObserver();
+    renderPlainTextToContentEditable(valueEl, nextText);
+  }
+  ctx.applyEditingResult({
+    location: { item: startPos.itemId, portals: ctx.portals },
+    target: VALUE_TARGET,
+    caret: nextCaret,
+    reveal: { offset: nextCaret, defer: false },
+  });
 }
 
 export function insertText(ctx: EditCtx, text: string): void {

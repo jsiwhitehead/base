@@ -102,14 +102,21 @@ function readContentEditableCaret(valueEl: HTMLElement): number | null {
 function dispatchBeforeInput(
   target: Element,
   inputType: string,
-  init: Partial<InputEventInit> = {},
+  init: Partial<InputEventInit> & { isComposing?: boolean } = {},
 ): { defaultPrevented: boolean } {
+  const { isComposing, ...eventInit } = init;
   const ev = new InputEvent("beforeinput", {
     bubbles: true,
     cancelable: true,
     inputType,
-    ...init,
+    ...eventInit,
   });
+  if (typeof isComposing === "boolean") {
+    Object.defineProperty(ev, "isComposing", {
+      configurable: true,
+      value: isComposing,
+    });
+  }
   Object.defineProperty(ev, "getTargetRanges", {
     configurable: true,
     value: () => {
@@ -1177,6 +1184,33 @@ describe("outline/ce-beforeinput", () => {
     );
     expect(undoCalls.length).toBe(1);
     expect(redoCalls.length).toBe(1);
+
+    unmount();
+  });
+
+  test("beforeinput insertCompositionText is not prevented while composing", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const outlineRoot = requireOutlineRoot(document.body);
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(aValueEl, 2);
+    const ev = dispatchBeforeInput(outlineRoot, "insertCompositionText", {
+      isComposing: true,
+    });
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(false);
 
     unmount();
   });
