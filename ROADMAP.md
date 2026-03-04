@@ -94,6 +94,7 @@ Purpose: Ensure structural continuity, responsiveness, and diagnosability under 
 - Guarantee atomic persistence with no partial state on failure
 - Explicitly surface save, parse, and restore failures to the user
 - Add debounced autosave behavior to reduce write churn during rapid edits
+- Stress-test and harden outline traversal and range-edit behavior under deep nesting and large trees
 - Establish performance budgets, representative scale benchmarks, and regression detection
 - Provide deterministic structural hashing for state equivalence validation
 - Provide transaction inspection, replay, and trace tooling
@@ -119,8 +120,6 @@ This axis covers representational scope: the structures, relationships, types, v
 
 Purpose: Harden and extend the foundational views that allow structure to be inhabited and revised without altering the data model.
 
-- Harden outline traversal and range-edit behavior in deeply nested structures
-- Guarantee consistent conversion of outline placeholders to value items on edit
 - Define and implement table and slider delete-focus landing rules consistent with item-boundary navigation contracts
 - Harden shape enforcement under deep nesting, undo, and complex alignment scenarios
 - Harden slider value coercion, snapping, and undo semantics

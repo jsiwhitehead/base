@@ -929,6 +929,25 @@ function handleOutlineItemTypeIntent(args: {
   return true;
 }
 
+function convertEmptyGroupToValueAndFocus(args: {
+  core: UiCore;
+  focus: Location;
+  initialText: string;
+}): boolean {
+  const { core, focus, initialText } = args;
+  const item = core.item(focus.item);
+  if (item.mode.type === "readonly") return false;
+  if (item.content.type !== "group") return false;
+  if (item.content.children.length !== 0) return false;
+
+  core.commit((t) => t.setValue(focus.item, initialText));
+  core.focus(
+    { type: "editing", location: focus, target: VALUE_TARGET },
+    { caret: initialText.length },
+  );
+  return true;
+}
+
 function resolveFocusAfterOutlineRemove(
   core: UiCore,
   rootId: ItemId,
@@ -1040,14 +1059,12 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
         if (intent.char === "=" && handleItemIntent({ core, sel, intent }))
           return;
         if (
-          item.content.type === "group" &&
-          item.content.children.length === 0
+          convertEmptyGroupToValueAndFocus({
+            core,
+            focus,
+            initialText: intent.char,
+          })
         ) {
-          core.commit((t) => t.setValue(id, intent.char));
-          core.focus(
-            { type: "editing", location: focus, target: VALUE_TARGET },
-            { caret: intent.char.length },
-          );
           return;
         }
         if (
@@ -1063,18 +1080,13 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
         return;
       }
       case "CONFIRM": {
-        const id = sel.head.item;
-        const item = core.item(id);
         if (
-          item.content.type === "group" &&
-          item.content.children.length === 0 &&
-          item.mode.type !== "readonly"
+          convertEmptyGroupToValueAndFocus({
+            core,
+            focus,
+            initialText: "",
+          })
         ) {
-          core.commit((t) => t.setValue(id, ""));
-          core.focus(
-            { type: "editing", location: focus, target: VALUE_TARGET },
-            { caret: 0 },
-          );
           return;
         }
         if (handleItemIntent({ core, sel, intent })) return;
