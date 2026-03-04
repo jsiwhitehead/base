@@ -127,7 +127,6 @@ Purpose: Harden and extend the foundational views that allow structure to be inh
 - Provide deterministic column totals in table contexts
 - Harden row and column operations under deletion and undo
 - Add `.is-stale` textfield styling consistently across views
-- Scope selection-state reactivity in outline view to per-row signals to avoid full-outline re-renders on selection change
 
 ### Structural relationships
 

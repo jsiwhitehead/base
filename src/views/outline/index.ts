@@ -4,7 +4,6 @@ import type { Intent, ItemId, Location, Selection } from "../../core";
 import {
   applyTypeToPrimaryTarget,
   isNumericLikeValue,
-  LABEL_TARGET,
   patchConn,
   VALUE_TARGET,
 } from "../../core";
@@ -69,7 +68,7 @@ import {
   type InputState,
   type SelectionSnapshot,
 } from "./input";
-const OUTLINE_ROW_POINTERDOWN_IGNORE_SELECTOR =
+const OUTLINE_ITEM_POINTERDOWN_IGNORE_SELECTOR =
   ".ui-outline-value, .ui-outline-gutter, .ui-header, .ui-body:not(.ui-outline)";
 
 function buildOutlineItem(
@@ -81,23 +80,24 @@ function buildOutlineItem(
     portals: readonly ItemId[],
     shiftKey: boolean,
   ) => void,
-  selectedRowKeys: Signal<Set<string>>,
+  selectedItemKeys: Signal<Set<string>>,
   valueSelectionCollapsed: Signal<boolean>,
   flushPendingMutations: () => void,
 ): Component {
   return createComponent(core, (ctx) => {
     const itemEl = el("div", "ui-frame ui-outline-child");
-    const rowFocus: Location = { item: itemId, portals };
+    const itemFocus: Location = { item: itemId, portals };
+    const itemKey = focusKey(itemFocus);
     itemEl.dataset.id = itemId;
     if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
     ctx.on(itemEl, "pointerdown", (e: PointerEvent) => {
       if (e.defaultPrevented) return;
       const targetEl = e.target instanceof HTMLElement ? e.target : null;
-      if (targetEl?.closest(OUTLINE_ROW_POINTERDOWN_IGNORE_SELECTOR)) {
+      if (targetEl?.closest(OUTLINE_ITEM_POINTERDOWN_IGNORE_SELECTOR)) {
         return;
       }
-      core.focus({ type: "item", location: rowFocus });
+      core.focus({ type: "item", location: itemFocus });
       e.stopPropagation();
     });
 
@@ -118,7 +118,7 @@ function buildOutlineItem(
     itemEl.append(valueAnchor);
 
     ctx.target(
-      rowFocus,
+      itemFocus,
       VALUE_TARGET,
       () => (valueEl.isConnected ? valueEl : null),
       {
@@ -130,6 +130,22 @@ function buildOutlineItem(
       },
     );
 
+    const itemSelectionState = computed<
+      "none" | "item-head" | "item-range" | "value" | "header"
+    >(() => {
+      const sel = core.selection();
+      if (sel.type === "item") {
+        if (!selectedItemKeys.value.has(itemKey)) return "none";
+        return sameFocus(sel.head, itemFocus) ? "item-head" : "item-range";
+      }
+      if (sel.type !== "editing") return "none";
+      if (!sameFocus(sel.location, itemFocus)) return "none";
+      if (sel.target === VALUE_TARGET) {
+        return valueSelectionCollapsed.value ? "value" : "none";
+      }
+      return "header";
+    });
+
     ctx.effect(() => {
       const snap = core.item(itemId);
       const newText =
@@ -138,14 +154,9 @@ function buildOutlineItem(
           : snap.content.type === "issue"
             ? (snap.content.message ?? "")
             : "";
-      const modelSel = core.selection();
-      const isEditingThisValue =
-        modelSel.type === "editing" &&
-        modelSel.target === VALUE_TARGET &&
-        sameFocus(modelSel.location, rowFocus);
       const sel = window.getSelection();
       if (
-        isEditingThisValue &&
+        itemSelectionState.value === "value" &&
         sel?.rangeCount &&
         valueEl.contains(sel.getRangeAt(0).startContainer)
       )
@@ -173,30 +184,23 @@ function buildOutlineItem(
     });
 
     ctx.effect(() => {
-      const isSelected = selectedRowKeys.value.has(focusKey(rowFocus));
-      itemEl.classList.toggle("is-block-selected", isSelected);
+      itemEl.classList.toggle(
+        "is-block-selected",
+        itemSelectionState.value === "item-head" ||
+          itemSelectionState.value === "item-range",
+      );
     });
 
     ctx.effect(() => {
-      const sel = core.selection();
-      const isRowFocusedTarget =
-        sel.type === "editing" && sameFocus(sel.location, rowFocus);
-      const isFocusedTextCaret =
-        isRowFocusedTarget &&
-        sel.target === VALUE_TARGET &&
-        valueSelectionCollapsed.value;
-      const isFocusedNonText =
-        isRowFocusedTarget && sel.target !== VALUE_TARGET;
-      const isFocusedBlock =
-        sel.type === "item" && sameFocus(sel.head, rowFocus);
-      const isFocused =
-        isFocusedTextCaret || isFocusedNonText || isFocusedBlock;
       const snap = core.item(itemId);
       const isIssue = snap.content.type === "issue";
       const isNumeric =
         snap.content.type === "value" && isNumericLikeValue(snap.content.value);
 
-      itemEl.classList.toggle("is-focused", isFocused);
+      itemEl.classList.toggle(
+        "is-focused",
+        itemSelectionState.value !== "none",
+      );
       itemEl.classList.toggle("is-issue", isIssue);
       itemEl.classList.toggle("is-numeric", isNumeric);
     });
@@ -204,16 +208,11 @@ function buildOutlineItem(
     ctx.slot(itemEl, () => {
       const snap = core.item(itemId);
       const labelText = (snap.label ?? "").trim();
-      const sel = core.selection();
-      const focusedHeaderTarget =
-        sel.type === "editing" &&
-        sameFocus(sel.location, rowFocus) &&
-        (sel.target === LABEL_TARGET || sel.target.startsWith("conn:"));
 
       const shouldShowHeader =
         labelText.length > 0 ||
         snap.mode.type === "connected" ||
-        focusedHeaderTarget;
+        itemSelectionState.value === "header";
       if (!shouldShowHeader) return null;
 
       const focus: Location = { item: itemId, portals };
@@ -284,7 +283,7 @@ function buildOutlineItem(
           childId,
           portals,
           onGutterPointerDown,
-          selectedRowKeys,
+          selectedItemKeys,
           valueSelectionCollapsed,
           flushPendingMutations,
         ),
@@ -313,7 +312,7 @@ function buildOutlineBody(
     });
     const navPoints = computed(() => collectNavPoints(core, rootId, portals));
 
-    const selectedRowKeys = computed(() => {
+    const selectedItemKeys = computed(() => {
       const sel = core.selection();
       if (sel.type !== "item") return new Set<string>();
       return new Set(
@@ -497,7 +496,7 @@ function buildOutlineBody(
           childId,
           portals,
           onGutterPointerDown,
-          selectedRowKeys,
+          selectedItemKeys,
           valueSelectionCollapsed,
           flushPendingMutations,
         ),

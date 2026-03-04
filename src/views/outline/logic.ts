@@ -201,7 +201,7 @@ export function focusKey(focus: Location): string {
   return `${focus.portals.join("|")}::${focus.item}`;
 }
 
-function collectVisibleRowFocuses(
+function collectVisibleItemFocuses(
   core: Core,
   rootId: ItemId,
   portals: readonly ItemId[],
@@ -228,7 +228,7 @@ export function blockSelectionFocuses(
   sel: Extract<Selection, { type: "item" }>,
   portals: readonly ItemId[],
 ): Location[] {
-  const focuses = collectVisibleRowFocuses(core, rootId, portals);
+  const focuses = collectVisibleItemFocuses(core, rootId, portals);
   const anchorIdx = focuses.findIndex((focus) => sameFocus(focus, sel.anchor));
   const headIdx = focuses.findIndex((focus) => sameFocus(focus, sel.head));
   if (anchorIdx < 0 || headIdx < 0) return [];
@@ -260,7 +260,7 @@ export function extendBlockSelectionByArrow(
   dir: "up" | "down",
   portals: readonly ItemId[],
 ): Location | null {
-  const focuses = collectVisibleRowFocuses(core, rootId, portals);
+  const focuses = collectVisibleItemFocuses(core, rootId, portals);
   const headIdx = focuses.findIndex((focus) => sameFocus(focus, sel.head));
   if (headIdx < 0) return null;
   return dir === "up"
