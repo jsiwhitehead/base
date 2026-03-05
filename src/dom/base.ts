@@ -5,7 +5,7 @@ import { ITEM_TARGET, isCoreReadError, isNumericLikeValue } from "../core";
 import { DEV, devAssert } from "../dev";
 import type { Component, UiCore } from "./runtime";
 
-type Ctx = {
+export type Ctx = {
   on<K extends keyof HTMLElementEventMap>(
     target: HTMLElement,
     type: K,

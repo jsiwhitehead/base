@@ -5,6 +5,7 @@ export {
   resolveEventTargetElement,
   setBodyClasses,
 } from "./base";
+export type { Ctx } from "./base";
 export {
   createSuppressionFlag,
   getCollapsedCaretRectInSurface,
