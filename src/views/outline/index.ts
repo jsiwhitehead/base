@@ -29,7 +29,6 @@ import {
   setDomSelectionRange,
   writePlainTextClipboard,
 } from "../../dom";
-import type { SuppressionFlag } from "../../dom";
 import {
   blockSelectionFocuses,
   blockSelectionItems,
@@ -70,6 +69,7 @@ import {
   type EditCtx,
   type InputState,
 } from "./input";
+
 type OutlineItemSelectionState = "none" | "item" | "value" | "header";
 type OutlinePointerZone =
   | "value"
@@ -79,6 +79,23 @@ type OutlinePointerZone =
   | "shell"
   | "unknown";
 type OutlinePointerIntent = "value" | "item" | null;
+type OutlineSelectionState = {
+  selectedItemKeys: Signal<Set<string>>;
+  valueRangeSelectedItemKeys: Signal<Set<string>>;
+  valueSelectionCollapsed: Signal<boolean>;
+};
+type OutlineMountCtx = {
+  core: UiCore;
+  portals: readonly ItemId[];
+  onGutterPointerDown: (
+    itemId: ItemId,
+    portals: readonly ItemId[],
+    shiftKey: boolean,
+    pointerId: number,
+  ) => void;
+  selectionState: OutlineSelectionState;
+  flushPendingMutations: () => void;
+};
 
 function classifyOutlinePointerZone(
   targetEl: Element | null,
@@ -92,22 +109,72 @@ function classifyOutlinePointerZone(
   return "unknown";
 }
 
-function buildOutlineItem(
-  core: UiCore,
+function buildOutlineValue(
+  mountCtx: OutlineMountCtx,
   itemId: ItemId,
-  portals: readonly ItemId[],
-  onGutterPointerDown: (
-    itemId: ItemId,
-    portals: readonly ItemId[],
-    shiftKey: boolean,
-    pointerId: number,
-  ) => void,
-  selectedItemKeys: Signal<Set<string>>,
-  valueRangeSelectedItemKeys: Signal<Set<string>>,
-  valueSelectionCollapsed: Signal<boolean>,
-  suppressSelectionChangeFromGutter: SuppressionFlag<boolean>,
-  flushPendingMutations: () => void,
 ): Component {
+  const { core, portals, flushPendingMutations } = mountCtx;
+  return createComponent(core, (ctx) => {
+    const valueEl = el("span", "ui-outline-value");
+    valueEl.dataset.target = "value";
+
+    ctx.target(
+      { item: itemId, portals },
+      VALUE_TARGET,
+      () => (valueEl.isConnected ? valueEl : null),
+      {
+        getCaret: () => {
+          const host = valueEl.closest("[contenteditable='true']");
+          if (!(host instanceof HTMLElement)) return undefined;
+          return valueCaretOffset(host, itemId) ?? undefined;
+        },
+      },
+    );
+
+    ctx.effect(() => {
+      const snap = core.item(itemId);
+      const newText =
+        snap.content.type === "value"
+          ? valueToText(snap.content.value)
+          : snap.content.type === "issue"
+            ? (snap.content.message ?? "")
+            : "";
+
+      const currentText = readPlainTextFromContentEditable(valueEl);
+      if (hasActiveSelectionInSurface(valueEl) && currentText === newText) {
+        return;
+      }
+      flushPendingMutations();
+      renderPlainTextToContentEditable(valueEl, newText);
+    });
+
+    ctx.effect(() => {
+      const snap = core.item(itemId);
+      if (snap.mode.type === "plain" && snap.content.type === "value") {
+        valueEl.removeAttribute("contenteditable");
+        return;
+      }
+      valueEl.contentEditable = "false";
+    });
+
+    return valueEl;
+  });
+}
+
+function buildOutlineChild(
+  mountCtx: OutlineMountCtx,
+  itemId: ItemId,
+): Component {
+  const {
+    core,
+    portals,
+    onGutterPointerDown,
+    selectionState: {
+      selectedItemKeys,
+      valueRangeSelectedItemKeys,
+      valueSelectionCollapsed,
+    },
+  } = mountCtx;
   return createComponent(core, (ctx) => {
     const itemEl = el("div", "ui-frame ui-outline-child");
     const itemFocus: Location = { item: itemId, portals };
@@ -125,24 +192,6 @@ function buildOutlineItem(
       onGutterPointerDown(itemId, portals, e.shiftKey, e.pointerId);
     });
     itemEl.append(gutterEl);
-
-    const valueEl = el("span", "ui-outline-value");
-    valueEl.dataset.target = "value";
-    const valueAnchor = document.createComment("outline:value");
-    itemEl.append(valueAnchor);
-
-    ctx.target(
-      itemFocus,
-      VALUE_TARGET,
-      () => (valueEl.isConnected ? valueEl : null),
-      {
-        getCaret: () => {
-          const outlineRoot = valueEl.closest("[contenteditable='true']");
-          if (!(outlineRoot instanceof HTMLElement)) return undefined;
-          return valueCaretOffset(outlineRoot, itemId) ?? undefined;
-        },
-      },
-    );
 
     const itemSelectionState = computed<OutlineItemSelectionState>(() => {
       const selection = core.selection();
@@ -164,41 +213,14 @@ function buildOutlineItem(
       if (!sameFocus(selection.location, itemFocus)) return "none";
       return "header";
     });
-
-    ctx.effect(() => {
+    const shouldShowHeader = computed(() => {
       const snap = core.item(itemId);
-      const newText =
-        snap.content.type === "value"
-          ? valueToText(snap.content.value)
-          : snap.content.type === "issue"
-            ? (snap.content.message ?? "")
-            : "";
-      if (
-        hasActiveSelectionInSurface(valueEl) &&
-        readPlainTextFromContentEditable(valueEl) === newText
-      ) {
-        return;
-      }
-      flushPendingMutations();
-      renderPlainTextToContentEditable(valueEl, newText);
-    });
-
-    ctx.effect(() => {
-      const snap = core.item(itemId);
-      const isEmbedded = core.view(itemId) !== "outline";
-      const showValue = !isEmbedded && snap.content.type !== "group";
-      const canEditValue =
-        showValue &&
-        snap.mode.type === "plain" &&
-        snap.content.type === "value";
-      if (canEditValue) valueEl.removeAttribute("contenteditable");
-      else valueEl.contentEditable = "false";
-      if (showValue) {
-        if (valueEl.parentNode !== itemEl)
-          itemEl.insertBefore(valueEl, valueAnchor);
-      } else {
-        valueEl.remove();
-      }
+      const labelText = (snap.label ?? "").trim();
+      return (
+        labelText.length > 0 ||
+        snap.mode.type === "connected" ||
+        itemSelectionState.value === "header"
+      );
     });
 
     ctx.effect(() => {
@@ -223,14 +245,7 @@ function buildOutlineItem(
     });
 
     ctx.slot(itemEl, () => {
-      const snap = core.item(itemId);
-      const labelText = (snap.label ?? "").trim();
-
-      const shouldShowHeader =
-        labelText.length > 0 ||
-        snap.mode.type === "connected" ||
-        itemSelectionState.value === "header";
-      if (!shouldShowHeader) return null;
+      if (!shouldShowHeader.value) return null;
 
       const focus: Location = { item: itemId, portals };
       const canEditLabel = () => core.item(itemId).mode.type !== "readonly";
@@ -256,7 +271,10 @@ function buildOutlineItem(
     });
 
     ctx.slot(itemEl, () => {
-      if (core.view(itemId) === "outline") return null;
+      const nextView = core.view(itemId);
+      if (nextView === "outline") {
+        return buildOutlineItem(mountCtx, itemId);
+      }
       const snap = core.item(itemId);
       const childPortals =
         snap.mode.type === "connected" ? [...portals, itemId] : portals;
@@ -265,67 +283,65 @@ function buildOutlineItem(
       return mounted;
     });
 
-    ctx.slot(itemEl, () => {
-      const snap = core.item(itemId);
-      if (core.view(itemId) !== "outline") return null;
-      if (snap.content.type !== "group") return null;
-      if (snap.content.children.length !== 0) return null;
-      return createComponent(core, () => {
-        const placeholderEl = el(
-          "div",
-          "ui-outline-placeholder",
-          "Empty group",
-        );
-        placeholderEl.contentEditable = "false";
-        placeholderEl.setAttribute("aria-hidden", "true");
-        return placeholderEl;
-      });
-    });
-
-    const kids = computed(() => {
-      const snap = core.item(itemId);
-      if (snap.content.type !== "group") return [] as ItemId[];
-      if (core.view(itemId) !== "outline") return [] as ItemId[];
-      return [...snap.content.children];
-    });
-    ctx.list(
-      itemEl,
-      () => kids.value,
-      (childId) =>
-        buildOutlineItem(
-          core,
-          childId,
-          portals,
-          onGutterPointerDown,
-          selectedItemKeys,
-          valueRangeSelectedItemKeys,
-          valueSelectionCollapsed,
-          suppressSelectionChangeFromGutter,
-          flushPendingMutations,
-        ),
-    );
-
     return itemEl;
   });
 }
 
-function buildOutlineBody(
+function buildOutlineItem(
+  mountCtx: OutlineMountCtx,
+  itemId: ItemId,
+): Component {
+  const { core } = mountCtx;
+  return createComponent(core, (ctx) => {
+    const bodyEl = el("div");
+    setBodyClasses(bodyEl, "outline");
+    bodyEl.dataset.id = itemId;
+    const renderKind = computed<"value" | "group" | "placeholder">(() => {
+      const snap = core.item(itemId);
+      if (snap.content.type !== "group") return "value";
+      if (snap.content.children.length === 0) return "placeholder";
+      return "group";
+    });
+    const kids = computed(() => {
+      const snap = core.item(itemId);
+      if (snap.content.type !== "group") return [] as ItemId[];
+      return [...snap.content.children];
+    });
+
+    ctx.slot(bodyEl, () => {
+      const kind = renderKind.value;
+      if (kind === "value") return buildOutlineValue(mountCtx, itemId);
+      if (kind === "placeholder") {
+        return createComponent(core, () => {
+          const placeholderEl = el(
+            "div",
+            "ui-outline-placeholder",
+            "Empty group",
+          );
+          placeholderEl.contentEditable = "false";
+          placeholderEl.setAttribute("aria-hidden", "true");
+          return placeholderEl;
+        });
+      }
+      return null;
+    });
+
+    ctx.list(
+      bodyEl,
+      () => kids.value,
+      (childId) => buildOutlineChild(mountCtx, childId),
+    );
+
+    return bodyEl;
+  });
+}
+
+function buildOutlineRoot(
   core: UiCore,
   rootId: ItemId,
   portals: readonly ItemId[],
 ): Component {
   return createComponent(core, (ctx) => {
-    const root = el("div");
-    setBodyClasses(root, "outline");
-    root.contentEditable = "true";
-    root.spellcheck = false;
-    root.setAttribute("autocorrect", "off");
-    root.setAttribute("autocapitalize", "off");
-
-    const topKids = computed(() => {
-      const snap = core.item(rootId);
-      return snap.content.type === "group" ? snap.content.children : [];
-    });
     const navPoints = computed(() => collectNavPoints(core, rootId, portals));
 
     const selectedItemKeys = computed(() => {
@@ -406,14 +422,14 @@ function buildOutlineBody(
       }
       core.focus({ type: "item", location: nextFocus });
     };
+    const invalidatePointerFinalize = (): void => {
+      pointerFinalizeToken += 1;
+    };
     const clearPointerSelectionState = (): void => {
       isPointerSelecting = false;
       activePointerId = null;
       sawSelectionChangeThisPointer = false;
       pointerIntent = null;
-    };
-    const invalidatePointerFinalize = (): void => {
-      pointerFinalizeToken += 1;
     };
     const finishPointerSelection = (pointerId: number): boolean => {
       if (
@@ -550,6 +566,23 @@ function buildOutlineBody(
     const flushPendingMutations = (): void => {
       mutObs.takeRecords();
     };
+    const mountCtx: OutlineMountCtx = {
+      core,
+      portals,
+      onGutterPointerDown,
+      selectionState: {
+        selectedItemKeys,
+        valueRangeSelectedItemKeys,
+        valueSelectionCollapsed,
+      },
+      flushPendingMutations,
+    };
+    const rootItem = buildOutlineItem(mountCtx, rootId);
+    const root = rootItem.el;
+    root.contentEditable = "true";
+    root.spellcheck = false;
+    root.setAttribute("autocorrect", "off");
+    root.setAttribute("autocapitalize", "off");
     const setCursorAndReveal = (itemId: ItemId, offset: number): void => {
       flushPendingMutations();
       const pos = modelPositionToDom(root, itemId, offset);
@@ -612,22 +645,7 @@ function buildOutlineBody(
       suppressHistoryKeydown,
     };
 
-    ctx.list(
-      root,
-      () => [...topKids.value],
-      (childId) =>
-        buildOutlineItem(
-          core,
-          childId,
-          portals,
-          onGutterPointerDown,
-          selectedItemKeys,
-          valueRangeSelectedItemKeys,
-          valueSelectionCollapsed,
-          suppressSelectionChangeFromGutter,
-          flushPendingMutations,
-        ),
-    );
+    ctx.effect(() => () => rootItem.dispose());
 
     ctx.on(root, "focus", (): void => {
       resetStickyCaretX();
@@ -1306,7 +1324,7 @@ export const outlineView = defineView(({ core, id: rootId, focus }) => {
     }
   };
 
-  const body = buildOutlineBody(core, rootId, rootPortals);
+  const body = buildOutlineRoot(core, rootId, rootPortals);
 
   return { onIntent, body };
 });

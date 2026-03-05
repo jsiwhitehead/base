@@ -28,7 +28,7 @@ import {
 
 function requireOutlineRoot(root: ParentNode): HTMLElement {
   const el = root.querySelector(
-    "[contenteditable='true']",
+    ".ui-body.ui-outline[contenteditable='true']",
   ) as HTMLElement | null;
   if (!el) throw new Error("Missing outline root");
   return el;
@@ -44,13 +44,28 @@ function requireOutlineItemEl(root: ParentNode, id: ItemId): HTMLElement {
 }
 
 function requireOutlineValueEl(root: ParentNode, id: ItemId): HTMLElement {
-  const itemEl = requireOutlineItemEl(root, id);
-  const valueEl = itemEl.querySelector(
-    `.ui-outline-value[data-target="value"]`,
+  const itemEl = root.querySelector(
+    `.ui-frame.ui-outline-child[data-id="${id}"]`,
   ) as HTMLElement | null;
-  if (!valueEl)
+  if (itemEl) {
+    const valueEl = itemEl.querySelector(
+      `.ui-outline-value[data-target="value"]`,
+    ) as HTMLElement | null;
+    if (!valueEl)
+      throw new Error(`Missing outline value element for id=${String(id)}`);
+    return valueEl;
+  }
+
+  const outlineRoot = requireOutlineRoot(root);
+  if (outlineRoot.dataset.id !== id)
     throw new Error(`Missing outline value element for id=${String(id)}`);
-  return valueEl;
+
+  const rootValueEl = outlineRoot.querySelector(
+    ":scope > .ui-outline-value[data-target='value']",
+  ) as HTMLElement | null;
+  if (rootValueEl) return rootValueEl;
+
+  throw new Error(`Missing outline value element for id=${String(id)}`);
 }
 
 function requireOutlineGutterEl(root: ParentNode, id: ItemId): HTMLElement {
@@ -259,6 +274,9 @@ describe("outline/rendering", () => {
     const { unmount, root } = await mountOutline(core, rootId);
 
     expect(root.isContentEditable).toBe(true);
+    expect(root.classList.contains("ui-body")).toBe(true);
+    expect(root.classList.contains("ui-outline")).toBe(true);
+    expect(root.dataset.id).toBe(rootId);
     expect(root.spellcheck).toBe(false);
     expect(root.getAttribute("autocorrect")).toBe("off");
     expect(root.getAttribute("autocapitalize")).toBe("off");
@@ -273,6 +291,11 @@ describe("outline/rendering", () => {
     expect(gFrameEl).toBe(gEl);
     expect(gEl.classList.contains("ui-outline-child")).toBe(true);
     expect(gEl.dataset.id).toBe(g);
+    expect(gEl.firstElementChild).toBe(gutterEl);
+    expect(
+      gEl.lastElementChild instanceof HTMLElement &&
+        gEl.lastElementChild.matches(".ui-body.ui-outline"),
+    ).toBe(true);
     expect(gutterEl).toBeTruthy();
     expect(gutterEl?.getAttribute("contenteditable")).toBe("false");
     expect(valueEl.dataset.target).toBe("value");
@@ -347,6 +370,25 @@ describe("outline/rendering", () => {
     expect(requireOutlineValueEl(document.body, b).isConnected).toBe(true);
     expect(requireOutlineValueEl(document.body, c).isConnected).toBe(true);
     expect(requireOutlineValueEl(document.body, d).isConnected).toBe(true);
+
+    unmount();
+  });
+
+  test("scalar root renders direct outline value without row frame", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    core.commit((t) => t.setValue(rootId, "root"));
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+
+    const directValue = Array.from(root.children).find(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement &&
+        child.matches(".ui-outline-value[data-target='value']"),
+    );
+    expect(directValue).toBeTruthy();
+    expect(root.children.length).toBe(1);
+    expect(root.querySelector(".ui-frame.ui-outline-child")).toBeNull();
 
     unmount();
   });
@@ -1792,6 +1834,22 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("scalar root value selectionchange maps to root editing selection", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    core.commit((t) => t.setValue(rootId, "hello"));
+
+    const { unmount } = await mountOutline(core, rootId);
+    const rootValueEl = requireOutlineValueEl(document.body, rootId);
+
+    setContentEditableSelection(rootValueEl, 2);
+    document.dispatchEvent(new Event("selectionchange"));
+    await flushDomEffects();
+
+    expectSel(core, { item: rootId, target: VALUE_TARGET, portals: [] });
 
     unmount();
   });

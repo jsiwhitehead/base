@@ -68,20 +68,25 @@ export function domPositionToModel(
   node: Node,
   offset: number,
 ): ModelPosition | null {
+  const rootValueEl = outlineRoot.querySelector<HTMLElement>(
+    `:scope > ${VALUE_SELECTOR}[data-target="value"]`,
+  );
   let cur: Node | null = node instanceof Text ? node.parentNode : node;
 
-  while (cur && cur !== outlineRoot) {
-    if (!(cur instanceof HTMLElement)) {
-      cur = cur.parentNode;
-      continue;
+  while (cur) {
+    if (cur instanceof HTMLElement) {
+      const itemId = cur.dataset.id as ItemId | undefined;
+      if (itemId) {
+        const valueEl =
+          cur === outlineRoot
+            ? rootValueEl
+            : cur.querySelector<HTMLElement>(VALUE_SELECTOR);
+        if (!valueEl || !valueEl.contains(node)) return null;
+        const textOffset = domPointToTextOffset(valueEl, node, offset);
+        return textOffset == null ? null : { itemId, offset: textOffset };
+      }
     }
-    const itemId = cur.dataset.id as ItemId | undefined;
-    if (itemId) {
-      const valueEl = cur.querySelector<HTMLElement>(VALUE_SELECTOR);
-      if (!valueEl || !valueEl.contains(node)) return null;
-      const textOffset = domPointToTextOffset(valueEl, node, offset);
-      return textOffset == null ? null : { itemId, offset: textOffset };
-    }
+    if (cur === outlineRoot) break;
     cur = cur.parentNode;
   }
   return null;
@@ -92,11 +97,17 @@ export function modelPositionToDom(
   itemId: ItemId,
   offset: number,
 ): { node: Node; offset: number } | null {
-  const itemEl = outlineRoot.querySelector<HTMLElement>(
-    itemSelectorById(itemId),
+  const rootValueEl = outlineRoot.querySelector<HTMLElement>(
+    `:scope > ${VALUE_SELECTOR}[data-target="value"]`,
   );
+  const itemEl = outlineRoot.matches(itemSelectorById(itemId))
+    ? outlineRoot
+    : outlineRoot.querySelector<HTMLElement>(itemSelectorById(itemId));
   if (!itemEl) return null;
-  const valueEl = itemEl.querySelector<HTMLElement>(VALUE_SELECTOR);
+  const valueEl =
+    itemEl === outlineRoot
+      ? rootValueEl
+      : itemEl.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (!valueEl) return null;
   return textOffsetToDomPoint(valueEl, offset);
 }
