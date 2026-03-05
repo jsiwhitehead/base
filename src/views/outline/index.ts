@@ -17,7 +17,6 @@ import {
   getDomRangeInRoot,
   hasActiveSelectionInSurface,
   getMappedSelectionRangeInRoot,
-  getMappedSelectionSnapshotInRoot,
   getPlainTextFromDataTransfer,
   getSurfaceFromNodeInRoot,
   getTextNodeFromMutationRecord,
@@ -30,6 +29,7 @@ import {
   setDomSelectionRange,
   writePlainTextClipboard,
 } from "../../dom";
+import type { SuppressionFlag } from "../../dom";
 import {
   blockSelectionFocuses,
   blockSelectionItems,
@@ -69,7 +69,6 @@ import {
   VALUE_SELECTOR,
   type EditCtx,
   type InputState,
-  type SelectionSnapshot,
 } from "./input";
 type OutlineItemSelectionState = "none" | "item" | "value" | "header";
 type OutlinePointerZone =
@@ -79,6 +78,7 @@ type OutlinePointerZone =
   | "embedded"
   | "shell"
   | "unknown";
+type OutlinePointerIntent = "value" | "item" | null;
 
 function classifyOutlinePointerZone(
   targetEl: Element | null,
@@ -100,10 +100,12 @@ function buildOutlineItem(
     itemId: ItemId,
     portals: readonly ItemId[],
     shiftKey: boolean,
+    pointerId: number,
   ) => void,
   selectedItemKeys: Signal<Set<string>>,
   valueRangeSelectedItemKeys: Signal<Set<string>>,
   valueSelectionCollapsed: Signal<boolean>,
+  suppressSelectionChangeFromGutter: SuppressionFlag<boolean>,
   flushPendingMutations: () => void,
 ): Component {
   return createComponent(core, (ctx) => {
@@ -113,28 +115,18 @@ function buildOutlineItem(
     itemEl.dataset.id = itemId;
     if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
-    ctx.on(itemEl, "pointerdown", (e: PointerEvent) => {
-      if (e.defaultPrevented) return;
-      if ((e.button ?? 0) !== 0) return;
-      const targetEl = resolveEventTargetElement(e.target);
-      if (classifyOutlinePointerZone(targetEl) !== "shell") return;
-      core.focus({ type: "item", location: itemFocus });
-      e.stopPropagation();
-    });
-
     const gutterEl = el("span", "ui-outline-gutter");
-    gutterEl.dataset.dragStart = "block";
+    gutterEl.dataset.dragStart = "handle";
     gutterEl.contentEditable = "false";
     gutterEl.addEventListener("pointerdown", (e) => {
       if ((e.button ?? 0) !== 0) return;
       e.preventDefault();
       e.stopPropagation();
-      onGutterPointerDown(itemId, portals, e.shiftKey);
+      onGutterPointerDown(itemId, portals, e.shiftKey, e.pointerId);
     });
     itemEl.append(gutterEl);
 
     const valueEl = el("span", "ui-outline-value");
-    valueEl.dataset.dragStart = "block";
     valueEl.dataset.target = "value";
     const valueAnchor = document.createComment("outline:value");
     itemEl.append(valueAnchor);
@@ -308,6 +300,7 @@ function buildOutlineItem(
           selectedItemKeys,
           valueRangeSelectedItemKeys,
           valueSelectionCollapsed,
+          suppressSelectionChangeFromGutter,
           flushPendingMutations,
         ),
     );
@@ -386,11 +379,11 @@ function buildOutlineBody(
     let isPointerSelecting = false;
     let activePointerId: number | null = null;
     let sawSelectionChangeThisPointer = false;
+    let pointerIntent: OutlinePointerIntent = null;
+    let pointerFinalizeToken = 0;
     const state: InputState = {
       compositionEndedAt: 0,
       stickyCaretX: null,
-      savedSelection: null,
-      restoreSelectionOnFocus: false,
     };
     const valueSelectionCollapsed = signal(true);
 
@@ -398,7 +391,9 @@ function buildOutlineBody(
       itemId: ItemId,
       portals: readonly ItemId[],
       shiftKey: boolean,
+      pointerId: number,
     ): void => {
+      beginPointerSelection(pointerId, "item");
       suppressSelectionChangeFromGutter.suppressForTurn(true);
 
       const nextFocus: Location = { item: itemId, portals };
@@ -411,11 +406,14 @@ function buildOutlineBody(
       }
       core.focus({ type: "item", location: nextFocus });
     };
-
     const clearPointerSelectionState = (): void => {
       isPointerSelecting = false;
       activePointerId = null;
       sawSelectionChangeThisPointer = false;
+      pointerIntent = null;
+    };
+    const invalidatePointerFinalize = (): void => {
+      pointerFinalizeToken += 1;
     };
     const finishPointerSelection = (pointerId: number): boolean => {
       if (
@@ -426,12 +424,27 @@ function buildOutlineBody(
       clearPointerSelectionState();
       return true;
     };
+    const beginPointerSelection = (
+      pointerId: number,
+      intent: Exclude<OutlinePointerIntent, null>,
+    ): void => {
+      invalidatePointerFinalize();
+      isPointerSelecting = true;
+      activePointerId = pointerId;
+      sawSelectionChangeThisPointer = false;
+      pointerIntent = intent;
+      resetStickyCaretX();
+    };
     const reconcileDomSelectionToModel = (
-      deferWhilePointerSelecting: boolean,
+      allowNonCollapsedPointerDefer: boolean,
     ) => {
       if (isComposing) return;
       if (suppressSelectionChangeFromGutter.get()) return;
       if (suppressSelectionSync.get()) return;
+      if (pointerIntent === "item") {
+        setValueSelectionRangeState({ collapsed: true });
+        return;
+      }
 
       const winSel = window.getSelection();
       if (!winSel?.rangeCount) {
@@ -457,9 +470,9 @@ function buildOutlineBody(
       const startItemId = mappedRange.start.itemId;
       const endItemId = mappedRange.end.itemId;
       setValueSelectionRangeState({ collapsed, startItemId, endItemId });
-      const deferNonCollapsedPointerSync =
-        deferWhilePointerSelecting && isPointerSelecting && !collapsed;
-      if (deferNonCollapsedPointerSync) {
+      const shouldDeferNonCollapsedPointerSync =
+        allowNonCollapsedPointerDefer && isPointerSelecting && !collapsed;
+      if (shouldDeferNonCollapsedPointerSync) {
         const focusItemId = focusPos?.itemId ?? endItemId;
         const itemFocus: Location = { item: focusItemId, portals };
         const selNow = core.selection();
@@ -489,7 +502,6 @@ function buildOutlineBody(
       ) {
         return;
       }
-
       core.focus(
         { type: "editing", location: itemFocus, target: VALUE_TARGET },
         collapsed && focusPos ? { caret: focusPos.offset } : undefined,
@@ -575,45 +587,6 @@ function buildOutlineBody(
       state.stickyCaretX = null;
     };
 
-    const snapshotSelection = (): SelectionSnapshot | null => {
-      return getMappedSelectionSnapshotInRoot(root, (point) =>
-        domPositionToModel(root, point.node, point.offset),
-      );
-    };
-    const restoreSelection = (): void => {
-      if (!state.restoreSelectionOnFocus) return;
-      if (isPointerSelecting) {
-        state.restoreSelectionOnFocus = false;
-        return;
-      }
-      state.restoreSelectionOnFocus = false;
-      const snap = state.savedSelection;
-      if (!snap) return;
-      const anchorDom = modelPositionToDom(
-        root,
-        snap.anchor.itemId,
-        snap.anchor.offset,
-      );
-      const focusDom = modelPositionToDom(
-        root,
-        snap.focus.itemId,
-        snap.focus.offset,
-      );
-      if (!anchorDom || !focusDom) {
-        state.savedSelection = null;
-        return;
-      }
-      setValueSelectionRangeState({
-        collapsed:
-          snap.anchor.itemId === snap.focus.itemId &&
-          snap.anchor.offset === snap.focus.offset,
-        startItemId: snap.anchor.itemId,
-        endItemId: snap.focus.itemId,
-      });
-      suppressSelectionSync.suppressForTurn(true);
-      flushPendingMutations();
-      setDomSelectionRange(anchorDom, focusDom);
-    };
     const isOutlineValueEditEvent = (target: EventTarget | null): boolean => {
       const targetEl = resolveEventTargetElement(target);
       if (!targetEl || targetEl === root) return true;
@@ -651,25 +624,21 @@ function buildOutlineBody(
           selectedItemKeys,
           valueRangeSelectedItemKeys,
           valueSelectionCollapsed,
+          suppressSelectionChangeFromGutter,
           flushPendingMutations,
         ),
     );
 
     ctx.on(root, "focus", (): void => {
       resetStickyCaretX();
-      restoreSelection();
     });
     ctx.on(root, "blur", (e: FocusEvent): void => {
       const next = e.relatedTarget;
       if (!(next instanceof Node) || !root.contains(next)) {
-        state.savedSelection = snapshotSelection();
-        state.restoreSelectionOnFocus = state.savedSelection != null;
         clearPointerSelectionState();
+        invalidatePointerFinalize();
         clearValueRangeSelectedItems();
-        return;
       }
-      state.restoreSelectionOnFocus = false;
-      state.savedSelection = null;
     });
     ctx.on(root, "focusout", (): void => {
       resetStickyCaretX();
@@ -1056,38 +1025,55 @@ function buildOutlineBody(
       }),
     );
 
-    ctx.on(
-      root,
-      "pointerdown",
-      gated((e: PointerEvent): void => {
-        if ((e.button ?? 0) !== 0) return;
-        isPointerSelecting = true;
-        activePointerId = e.pointerId;
-        sawSelectionChangeThisPointer = false;
-        resetStickyCaretX();
-      }),
-    );
+    ctx.on(root, "pointerdown", (e: PointerEvent): void => {
+      if ((e.button ?? 0) !== 0) return;
+      const targetEl = resolveEventTargetElement(e.target);
+      const zone = classifyOutlinePointerZone(targetEl);
+      if (zone !== "value" && zone !== "shell") return;
+      const targetItemId =
+        targetEl?.closest<HTMLElement>(ITEM_SELECTOR)?.dataset.id ?? null;
+      if (!targetItemId) return;
+      beginPointerSelection(e.pointerId, "value");
+      const selNow = core.selection();
+      if (
+        selNow.type !== "editing" ||
+        selNow.target !== VALUE_TARGET ||
+        selNow.location.item !== targetItemId
+      ) {
+        core.focus({
+          type: "editing",
+          location: { item: targetItemId, portals },
+          target: VALUE_TARGET,
+        });
+      }
+    });
 
     ctx.on(document, "pointerup", (e: PointerEvent): void => {
       const sawSelectionChange = sawSelectionChangeThisPointer;
+      const intentAtPointerUp = pointerIntent;
       if (!finishPointerSelection(e.pointerId)) return;
-      if (sawSelectionChange) return;
+      const finalizeToken = ++pointerFinalizeToken;
+      if (sawSelectionChange || intentAtPointerUp !== "value") return;
       setTimeout(() => {
+        if (finalizeToken !== pointerFinalizeToken) return;
         reconcileDomSelectionToModel(false);
       }, 0);
     });
 
     ctx.on(document, "pointercancel", (e: PointerEvent): void => {
       if (!finishPointerSelection(e.pointerId)) return;
+      invalidatePointerFinalize();
     });
 
     ctx.on(window, "blur", (): void => {
       clearPointerSelectionState();
+      invalidatePointerFinalize();
     });
 
     ctx.on(document, "visibilitychange", (): void => {
       if (document.visibilityState !== "hidden") return;
       clearPointerSelectionState();
+      invalidatePointerFinalize();
     });
 
     ctx.on(document, "selectionchange", (): void => {

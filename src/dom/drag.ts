@@ -32,7 +32,7 @@ export type DragController = { state: Signal<DragState>; dispose(): void };
 
 const DRAG_THRESHOLD_PX = 5;
 const SLOT_EDGE_FRACTION = 0.25;
-const DRAG_START_BLOCK_SELECTOR = '[data-drag-start="block"]';
+const DRAG_START_HANDLE_SELECTOR = '[data-drag-start="handle"]';
 
 const INTERACTIVE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
@@ -42,12 +42,17 @@ function isInteractiveEl(target: EventTarget | null): boolean {
   return INTERACTIVE_TAGS.has(targetEl.tagName);
 }
 
-function isDragStartBlocked(target: EventTarget | null): boolean {
+function resolveDragStartFrame(
+  target: EventTarget | null,
+): { el: HTMLElement; itemId: ItemId } | null {
   const targetEl = resolveEventTargetElement(target);
-  if (!targetEl) return false;
-  if (isInteractiveEl(targetEl)) return true;
-  if (targetEl.getAttribute("contenteditable") === "true") return true;
-  return !!targetEl.closest(DRAG_START_BLOCK_SELECTOR);
+  if (!targetEl) return null;
+  if (isInteractiveEl(targetEl)) return null;
+  if (targetEl instanceof HTMLElement && targetEl.isContentEditable)
+    return null;
+  const handleEl = targetEl.closest<HTMLElement>(DRAG_START_HANDLE_SELECTOR);
+  if (!handleEl) return null;
+  return nearestFrame(handleEl);
 }
 
 function nearestFrame(
@@ -261,9 +266,7 @@ export function createDragController(core: Core): DragController {
 
   const onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || state.value.type !== "idle") return;
-    if (isDragStartBlocked(e.target)) return;
-
-    const frame = nearestFrame(e.target);
+    const frame = resolveDragStartFrame(e.target);
     if (!frame) return;
     if (core.item(frame.itemId).mode.type === "readonly") return;
 

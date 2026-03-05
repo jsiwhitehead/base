@@ -1796,6 +1796,33 @@ describe("outline/selection-cursor", () => {
     unmount();
   });
 
+  test("ArrowLeft at start of first value stays editing with caret preserved", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+
+    setContentEditableSelection(valueEl, 0);
+    const ev = dispatchKey(root, "ArrowLeft");
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expect(readContentEditableCaret(valueEl)).toBe(0);
+
+    unmount();
+  });
+
   test("pointerup fallback syncs to editing when no selectionchange fires in pointer cycle", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
@@ -1814,6 +1841,58 @@ describe("outline/selection-cursor", () => {
 
     dispatchPointerEvent(valueEl, "pointerdown", { pointerId: 7 });
     dispatchPointerEvent(document, "pointerup", { pointerId: 7 });
+    await flushDomEffects();
+
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("pointerup fallback is skipped for item-intent pointer cycle", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+
+    const { unmount } = await mountOutline(core, rootId);
+    const gutterEl = requireOutlineGutterEl(document.body, a);
+    const valueEl = requireOutlineValueEl(document.body, a);
+
+    dispatchPointerEvent(gutterEl, "pointerdown", { pointerId: 41 });
+    setContentEditableSelection(valueEl, 2);
+    dispatchPointerEvent(document, "pointerup", { pointerId: 41 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushDomEffects();
+
+    expectItemRangeSel(core, {
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
+    });
+
+    unmount();
+  });
+
+  test("new pointer cycle invalidates pending pointer finalize fallback", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "alpha" });
+    const b = mkBlank(core, rootId, { label: "b", value: "beta" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    const bValueEl = requireOutlineValueEl(document.body, b);
+
+    dispatchPointerEvent(aValueEl, "pointerdown", { pointerId: 42 });
+    setContentEditableSelection(bValueEl, 2);
+    dispatchPointerEvent(document, "pointerup", { pointerId: 42 });
+
+    dispatchPointerEvent(aValueEl, "pointerdown", { pointerId: 43 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await flushDomEffects();
 
     expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
@@ -1843,12 +1922,12 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expect(requireOutlineItemEl(document.body, a).classList.contains("is-selected")).toBe(
-      true,
-    );
-    expect(requireOutlineItemEl(document.body, b).classList.contains("is-selected")).toBe(
-      true,
-    );
+    expect(
+      requireOutlineItemEl(document.body, a).classList.contains("is-selected"),
+    ).toBe(true);
+    expect(
+      requireOutlineItemEl(document.body, b).classList.contains("is-selected"),
+    ).toBe(true);
 
     dispatchPointerEvent(bValueEl, "pointerdown", { pointerId: 9 });
     document.dispatchEvent(new Event("selectionchange"));
@@ -1865,12 +1944,12 @@ describe("outline/selection-cursor", () => {
 
     expect(readContentEditableCaret(bValueEl)).toBe(2);
     expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
-    expect(requireOutlineItemEl(document.body, a).classList.contains("is-selected")).toBe(
-      false,
-    );
-    expect(requireOutlineItemEl(document.body, b).classList.contains("is-selected")).toBe(
-      true,
-    );
+    expect(
+      requireOutlineItemEl(document.body, a).classList.contains("is-selected"),
+    ).toBe(false);
+    expect(
+      requireOutlineItemEl(document.body, b).classList.contains("is-selected"),
+    ).toBe(true);
 
     unmount();
   });
@@ -2386,7 +2465,7 @@ describe("outline/header-embedded", () => {
 });
 
 describe("outline/drag-integration", () => {
-  test("drag pointerdown on outline row shell enters pending state", async () => {
+  test("drag pointerdown on outline gutter handle enters pending state", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     mkBlank(core, rootId, { label: "b", value: "y" });
@@ -2396,8 +2475,8 @@ describe("outline/drag-integration", () => {
     const { unmount } = await mountOutline(core, rootId);
 
     try {
-      const aFrame = requireFrameEl(document.body, a);
-      dispatchPointerEvent(aFrame, "pointerdown", {
+      const aGutter = requireOutlineGutterEl(document.body, a);
+      dispatchPointerEvent(aGutter, "pointerdown", {
         pointerId: 11,
         clientX: 0,
         clientY: 0,
@@ -2410,6 +2489,7 @@ describe("outline/drag-integration", () => {
       cap.emitPointer("pointercancel", pointerId == null ? {} : { pointerId });
       await flushDomEffects();
       expect(document.documentElement.dataset.dragState).toBeUndefined();
+      const aFrame = requireFrameEl(document.body, a);
       expect(aFrame.classList.contains("is-dragging")).toBe(false);
     } finally {
       drag.dispose();
@@ -2418,7 +2498,7 @@ describe("outline/drag-integration", () => {
     }
   });
 
-  test("drag is blocked from outline value, gutter, header, and embedded body zones", async () => {
+  test("drag does not start from non-handle outline zones", async () => {
     const { core, rootId } = makeCoreRuntime();
     const withHeader = mkBlank(core, rootId, { label: "name", value: "x" });
     const withEmbed = mkBlank(core, rootId, { label: "slider", value: 5 });
@@ -2431,7 +2511,7 @@ describe("outline/drag-integration", () => {
     try {
       const zones = [
         requireOutlineValueEl(document.body, withHeader),
-        requireOutlineGutterEl(document.body, withHeader),
+        requireFrameEl(document.body, withHeader),
         requireEl(
           requireOutlineItemEl(document.body, withHeader).querySelector(
             ".ui-header",
@@ -2476,7 +2556,8 @@ describe("outline/drag-integration", () => {
     const { unmount } = await mountOutline(core, rootId);
     try {
       const aFrame = requireFrameEl(document.body, a);
-      dispatchPointerEvent(aFrame, "pointerdown", {
+      const aGutter = requireOutlineGutterEl(document.body, a);
+      dispatchPointerEvent(aGutter, "pointerdown", {
         pointerId: 14,
         clientX: 0,
         clientY: 0,

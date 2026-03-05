@@ -352,11 +352,16 @@ export function bindItemFrame(
       target instanceof HTMLTextAreaElement
     );
   };
+  const isInNestedContentEditable = (node: Element | null): boolean => {
+    const host = node?.closest<HTMLElement>("[contenteditable='true']");
+    return !!(host && host !== frameEl && frameEl.contains(host));
+  };
 
   ctx.on(frameEl, "pointerdown", (e: PointerEvent) => {
     if (e.defaultPrevented) return;
     if ((e.button ?? 0) !== 0) return;
     const targetEl = resolveEventTargetElement(e.target);
+    if (isInNestedContentEditable(targetEl)) return;
     if (isEditingTarget(targetEl)) return;
 
     if (targetEl === frameEl) {
@@ -382,6 +387,5 @@ export function bindItemFrame(
 
 export function setBodyClasses(root: HTMLElement, view: ViewName): void {
   root.classList.add("ui-body", `ui-${String(view)}`);
-  if (view === "outline") delete root.dataset.dragStart;
-  else root.dataset.dragStart = "block";
+  delete root.dataset.dragStart;
 }

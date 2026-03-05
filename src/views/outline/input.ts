@@ -35,13 +35,9 @@ import {
 export const ITEM_SELECTOR = "[data-id]";
 export const VALUE_SELECTOR = ".ui-outline-value";
 
-export type SelectionSnapshot = { anchor: ModelPosition; focus: ModelPosition };
-
 export type InputState = {
   compositionEndedAt: number;
   stickyCaretX: number | null;
-  savedSelection: SelectionSnapshot | null;
-  restoreSelectionOnFocus: boolean;
 };
 
 export type ApplyEditingResult = (args: {
@@ -253,6 +249,7 @@ export function handleArrowHorizontal(
   e: KeyboardEvent,
   dir: "backward" | "forward",
 ): boolean {
+  let atValueBoundaryWithNoNavMove = false;
   const resolveMovedPoint = (): ReturnType<typeof moveNavPoint> => {
     const modelSel = core.selection();
     if (modelSel.type === "editing" && modelSel.target === VALUE_TARGET) {
@@ -264,11 +261,13 @@ export function handleArrowHorizontal(
       const atBoundary =
         dir === "backward" ? caretOffset === 0 : caretOffset === textLen;
       if (!atBoundary) return null;
-      return moveNavPoint(
+      const moved = moveNavPoint(
         navPoints,
         { type: "editing", focus: modelSel.location, target: VALUE_TARGET },
         dir,
       );
+      if (!moved) atValueBoundaryWithNoNavMove = true;
+      return moved;
     }
     if (modelSel.type === "item") {
       if (
@@ -290,7 +289,13 @@ export function handleArrowHorizontal(
 
   state.stickyCaretX = null;
   const moved = resolveMovedPoint();
-  if (!moved) return false;
+  if (!moved) {
+    if (atValueBoundaryWithNoNavMove) {
+      e.preventDefault();
+      return true;
+    }
+    return false;
+  }
   if (moved.point.type === "item") {
     e.preventDefault();
     core.focus({ type: "item", location: moved.point.focus });

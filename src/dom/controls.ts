@@ -450,7 +450,6 @@ export function buildItemHeader(
 
   return createComponent(core, (ctx) => {
     const headerEl = el("div", "ui-header");
-    headerEl.dataset.dragStart = "block";
     headerEl.contentEditable = "false";
 
     const labelWrap = el("div", "ui-header-label");

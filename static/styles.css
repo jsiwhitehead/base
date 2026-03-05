@@ -385,7 +385,11 @@
     position: relative;
     min-width: 0;
 
+    --outline-caret-gap: 6px;
     --outline-indent: calc(var(--ui-rail) + var(--ui-space-pad));
+    --outline-gutter-width: calc(
+      var(--outline-indent) - var(--outline-caret-gap)
+    );
     padding-left: var(--outline-indent);
   }
 
@@ -398,10 +402,21 @@
     background: var(--rail-tint);
     border-radius: 0;
     z-index: 3;
+    pointer-events: none;
   }
 
   .ui-outline-gutter {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: var(--outline-gutter-width);
     user-select: none;
+    cursor: grab;
+    z-index: 4;
+  }
+
+  [data-drag-state="active"] .ui-outline-gutter {
+    cursor: grabbing;
   }
 
   .ui-outline > .ui-outline-child:first-child::before {
