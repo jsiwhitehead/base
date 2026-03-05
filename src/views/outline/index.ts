@@ -24,6 +24,7 @@ import {
   handleItemIntent,
   readPlainTextFromContentEditable,
   renderPlainTextToContentEditable,
+  resolveEventTargetElement,
   setBodyClasses,
   setDomCaret,
   setDomSelectionRange,
@@ -70,10 +71,26 @@ import {
   type InputState,
   type SelectionSnapshot,
 } from "./input";
-const OUTLINE_ITEM_POINTERDOWN_IGNORE_SELECTOR =
-  ".ui-outline-value, .ui-outline-gutter, .ui-header, .ui-body:not(.ui-outline)";
-
 type OutlineItemSelectionState = "none" | "item" | "value" | "header";
+type OutlinePointerZone =
+  | "value"
+  | "gutter"
+  | "header"
+  | "embedded"
+  | "shell"
+  | "unknown";
+
+function classifyOutlinePointerZone(
+  targetEl: Element | null,
+): OutlinePointerZone {
+  if (!targetEl) return "unknown";
+  if (targetEl.closest(VALUE_SELECTOR)) return "value";
+  if (targetEl.closest(".ui-outline-gutter")) return "gutter";
+  if (targetEl.closest(".ui-header")) return "header";
+  if (targetEl.closest(".ui-body:not(.ui-outline)")) return "embedded";
+  if (targetEl.closest(".ui-frame.ui-outline-child")) return "shell";
+  return "unknown";
+}
 
 function buildOutlineItem(
   core: UiCore,
@@ -98,10 +115,9 @@ function buildOutlineItem(
 
     ctx.on(itemEl, "pointerdown", (e: PointerEvent) => {
       if (e.defaultPrevented) return;
-      const targetEl = e.target instanceof HTMLElement ? e.target : null;
-      if (targetEl?.closest(OUTLINE_ITEM_POINTERDOWN_IGNORE_SELECTOR)) {
-        return;
-      }
+      if ((e.button ?? 0) !== 0) return;
+      const targetEl = resolveEventTargetElement(e.target);
+      if (classifyOutlinePointerZone(targetEl) !== "shell") return;
       core.focus({ type: "item", location: itemFocus });
       e.stopPropagation();
     });
@@ -110,6 +126,7 @@ function buildOutlineItem(
     gutterEl.dataset.dragStart = "block";
     gutterEl.contentEditable = "false";
     gutterEl.addEventListener("pointerdown", (e) => {
+      if ((e.button ?? 0) !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       onGutterPointerDown(itemId, portals, e.shiftKey);
@@ -365,8 +382,11 @@ function buildOutlineBody(
     const suppressHistoryKeydown = createSuppressionFlag<
       "undo" | "redo" | null
     >(null);
+    let isComposing = false;
+    let isPointerSelecting = false;
+    let activePointerId: number | null = null;
+    let sawSelectionChangeThisPointer = false;
     const state: InputState = {
-      isComposing: false,
       compositionEndedAt: 0,
       stickyCaretX: null,
       savedSelection: null,
@@ -391,8 +411,93 @@ function buildOutlineBody(
       }
       core.focus({ type: "item", location: nextFocus });
     };
+
+    const clearPointerSelectionState = (): void => {
+      isPointerSelecting = false;
+      activePointerId = null;
+      sawSelectionChangeThisPointer = false;
+    };
+    const finishPointerSelection = (pointerId: number): boolean => {
+      if (
+        !isPointerSelecting ||
+        (activePointerId !== null && pointerId !== activePointerId)
+      )
+        return false;
+      clearPointerSelectionState();
+      return true;
+    };
+    const reconcileDomSelectionToModel = (
+      deferWhilePointerSelecting: boolean,
+    ) => {
+      if (isComposing) return;
+      if (suppressSelectionChangeFromGutter.get()) return;
+      if (suppressSelectionSync.get()) return;
+
+      const winSel = window.getSelection();
+      if (!winSel?.rangeCount) {
+        setValueSelectionRangeState({ collapsed: true });
+        return;
+      }
+
+      const mappedRange = getMappedSelectionRangeInRoot(root, (point) =>
+        domPositionToModel(root, point.node, point.offset),
+      );
+      if (!mappedRange) {
+        if (isPointerSelecting) return;
+        setValueSelectionRangeState({ collapsed: true });
+        return;
+      }
+      const focusNode = winSel.focusNode;
+      const focusPos =
+        focusNode && root.contains(focusNode)
+          ? domPositionToModel(root, focusNode, winSel.focusOffset)
+          : null;
+
+      const collapsed = mappedRange.range.collapsed;
+      const startItemId = mappedRange.start.itemId;
+      const endItemId = mappedRange.end.itemId;
+      setValueSelectionRangeState({ collapsed, startItemId, endItemId });
+      const deferNonCollapsedPointerSync =
+        deferWhilePointerSelecting && isPointerSelecting && !collapsed;
+      if (deferNonCollapsedPointerSync) {
+        const focusItemId = focusPos?.itemId ?? endItemId;
+        const itemFocus: Location = { item: focusItemId, portals };
+        const selNow = core.selection();
+        if (
+          !(
+            selNow.type === "editing" &&
+            selNow.target === VALUE_TARGET &&
+            sameFocus(selNow.location, itemFocus)
+          )
+        ) {
+          core.focus({
+            type: "editing",
+            location: itemFocus,
+            target: VALUE_TARGET,
+          });
+        }
+        return;
+      }
+
+      const focusItemId = focusPos?.itemId ?? endItemId;
+      const itemFocus: Location = { item: focusItemId, portals };
+      const selNow = core.selection();
+      if (
+        selNow.type === "editing" &&
+        selNow.target === VALUE_TARGET &&
+        sameFocus(selNow.location, itemFocus)
+      ) {
+        return;
+      }
+
+      core.focus(
+        { type: "editing", location: itemFocus, target: VALUE_TARGET },
+        collapsed && focusPos ? { caret: focusPos.offset } : undefined,
+      );
+    };
+
     const mutObs = new MutationObserver((mutations) => {
-      if (suppressMutationSync.get() || state.isComposing) return;
+      if (suppressMutationSync.get() || isComposing) return;
       for (const mutation of mutations) {
         const textNode = getTextNodeFromMutationRecord(mutation);
         const valueEl =
@@ -477,6 +582,10 @@ function buildOutlineBody(
     };
     const restoreSelection = (): void => {
       if (!state.restoreSelectionOnFocus) return;
+      if (isPointerSelecting) {
+        state.restoreSelectionOnFocus = false;
+        return;
+      }
       state.restoreSelectionOnFocus = false;
       const snap = state.savedSelection;
       if (!snap) return;
@@ -506,10 +615,9 @@ function buildOutlineBody(
       setDomSelectionRange(anchorDom, focusDom);
     };
     const isOutlineValueEditEvent = (target: EventTarget | null): boolean => {
-      const targetEl = target instanceof HTMLElement ? target : null;
-      return (
-        !targetEl || targetEl === root || !!targetEl.closest(VALUE_SELECTOR)
-      );
+      const targetEl = resolveEventTargetElement(target);
+      if (!targetEl || targetEl === root) return true;
+      return classifyOutlinePointerZone(targetEl) === "value";
     };
     const gated =
       <E extends Event>(handler: (e: E) => void): ((e: E) => void) =>
@@ -554,12 +662,14 @@ function buildOutlineBody(
     ctx.on(root, "blur", (e: FocusEvent): void => {
       const next = e.relatedTarget;
       if (!(next instanceof Node) || !root.contains(next)) {
-        state.restoreSelectionOnFocus = false;
+        state.savedSelection = snapshotSelection();
+        state.restoreSelectionOnFocus = state.savedSelection != null;
+        clearPointerSelectionState();
         clearValueRangeSelectedItems();
         return;
       }
-      state.savedSelection = snapshotSelection();
-      state.restoreSelectionOnFocus = state.savedSelection != null;
+      state.restoreSelectionOnFocus = false;
+      state.savedSelection = null;
     });
     ctx.on(root, "focusout", (): void => {
       resetStickyCaretX();
@@ -569,7 +679,7 @@ function buildOutlineBody(
       root,
       "compositionstart",
       gated((_e: CompositionEvent): void => {
-        state.isComposing = true;
+        isComposing = true;
         core.undoBoundary();
       }),
     );
@@ -577,14 +687,14 @@ function buildOutlineBody(
       root,
       "compositionupdate",
       gated((_e: CompositionEvent): void => {
-        state.isComposing = true;
+        isComposing = true;
       }),
     );
     ctx.on(
       root,
       "compositionend",
       gated((_e: CompositionEvent): void => {
-        state.isComposing = false;
+        isComposing = false;
         state.compositionEndedAt = Date.now();
         core.undoBoundary();
       }),
@@ -946,52 +1056,43 @@ function buildOutlineBody(
       }),
     );
 
-    ctx.on(root, "pointerdown", (): void => {
-      resetStickyCaretX();
+    ctx.on(
+      root,
+      "pointerdown",
+      gated((e: PointerEvent): void => {
+        if ((e.button ?? 0) !== 0) return;
+        isPointerSelecting = true;
+        activePointerId = e.pointerId;
+        sawSelectionChangeThisPointer = false;
+        resetStickyCaretX();
+      }),
+    );
+
+    ctx.on(document, "pointerup", (e: PointerEvent): void => {
+      const sawSelectionChange = sawSelectionChangeThisPointer;
+      if (!finishPointerSelection(e.pointerId)) return;
+      if (sawSelectionChange) return;
+      setTimeout(() => {
+        reconcileDomSelectionToModel(false);
+      }, 0);
+    });
+
+    ctx.on(document, "pointercancel", (e: PointerEvent): void => {
+      if (!finishPointerSelection(e.pointerId)) return;
+    });
+
+    ctx.on(window, "blur", (): void => {
+      clearPointerSelectionState();
+    });
+
+    ctx.on(document, "visibilitychange", (): void => {
+      if (document.visibilityState !== "hidden") return;
+      clearPointerSelectionState();
     });
 
     ctx.on(document, "selectionchange", (): void => {
-      if (state.isComposing) return;
-      if (suppressSelectionChangeFromGutter.get()) return;
-      if (suppressSelectionSync.get()) return;
-
-      const resetToCollapsed = (): void => {
-        setValueSelectionRangeState({ collapsed: true });
-      };
-
-      const winSel = window.getSelection();
-      if (!winSel?.rangeCount) return resetToCollapsed();
-
-      const mappedRange = getMappedSelectionRangeInRoot(root, (point) =>
-        domPositionToModel(root, point.node, point.offset),
-      );
-      if (!mappedRange) return resetToCollapsed();
-      const focusNode = winSel.focusNode;
-      const focusPos =
-        focusNode && root.contains(focusNode)
-          ? domPositionToModel(root, focusNode, winSel.focusOffset)
-          : null;
-
-      const collapsed = mappedRange.range.collapsed;
-      const startItemId = mappedRange.start.itemId;
-      const endItemId = mappedRange.end.itemId;
-      setValueSelectionRangeState({ collapsed, startItemId, endItemId });
-
-      const focusItemId = focusPos?.itemId ?? endItemId;
-      const itemFocus: Location = { item: focusItemId, portals };
-      const selNow = core.selection();
-      if (
-        selNow.type === "editing" &&
-        selNow.target === VALUE_TARGET &&
-        sameFocus(selNow.location, itemFocus)
-      ) {
-        return;
-      }
-
-      core.focus(
-        { type: "editing", location: itemFocus, target: VALUE_TARGET },
-        collapsed && focusPos ? { caret: focusPos.offset } : undefined,
-      );
+      if (isPointerSelecting) sawSelectionChangeThisPointer = true;
+      reconcileDomSelectionToModel(true);
     });
 
     ctx.effect(() => {

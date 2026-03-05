@@ -83,6 +83,14 @@ export function el(
   return element;
 }
 
+export function resolveEventTargetElement(
+  target: EventTarget | null,
+): Element | null {
+  if (target instanceof Element) return target;
+  if (target instanceof Node) return target.parentElement;
+  return null;
+}
+
 function createRegion(host: HTMLElement): Region {
   const start = document.createComment("region:start");
   const end = document.createComment("region:end");
@@ -336,8 +344,29 @@ export function bindItemFrame(
     const content = spec.core.item(spec.focus.item).content;
     return content.type === "value" && isNumericLikeValue(content.value);
   });
+  const isEditingTarget = (node: Element | null): boolean => {
+    const target = node?.closest<HTMLElement>("[data-target]");
+    return !!(
+      target?.isContentEditable ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement
+    );
+  };
 
   ctx.on(frameEl, "pointerdown", (e: PointerEvent) => {
+    if (e.defaultPrevented) return;
+    if ((e.button ?? 0) !== 0) return;
+    const targetEl = resolveEventTargetElement(e.target);
+    if (isEditingTarget(targetEl)) return;
+
+    if (targetEl === frameEl) {
+      const sel = window.getSelection();
+      if (sel?.rangeCount) {
+        const start = sel.getRangeAt(0).startContainer;
+        const startEl = start instanceof Element ? start : start.parentElement;
+        if (isEditingTarget(startEl)) return;
+      }
+    }
     spec.core.focus({ type: "item", location: spec.focus });
     e.stopPropagation();
   });

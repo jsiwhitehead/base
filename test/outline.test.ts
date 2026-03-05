@@ -817,7 +817,7 @@ describe("outline/item-intents", () => {
   });
 });
 
-describe("outline/ce-beforeinput", () => {
+describe("outline/contenteditable-beforeinput", () => {
   test("beforeinput insertParagraph splits item at selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
@@ -1234,7 +1234,7 @@ describe("outline/ce-beforeinput", () => {
 });
 
 describe("outline/clipboard-drop", () => {
-  test("copy and cut single-item CE selection use model text/plain semantics", async () => {
+  test("copy and cut single-item contenteditable selection use model text/plain semantics", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
@@ -1653,7 +1653,7 @@ describe("outline/ime-mutation", () => {
     unmount();
   });
 
-  test("mutation sync preserves blank lines and trailing newline from CE DOM", async () => {
+  test("mutation sync preserves blank lines and trailing newline from contenteditable DOM", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "" });
     core.focus(
@@ -1781,7 +1781,7 @@ describe("outline/selection-cursor", () => {
     unmount();
   });
 
-  test("selectionchange maps CE caret to focused VALUE_TARGET", async () => {
+  test("selectionchange maps contenteditable caret to focused VALUE_TARGET", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
 
@@ -1796,7 +1796,110 @@ describe("outline/selection-cursor", () => {
     unmount();
   });
 
-  test("core.focus updates CE caret even when target is already focused", async () => {
+  test("pointerup fallback syncs to editing when no selectionchange fires in pointer cycle", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    core.focus({
+      type: "item",
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
+    });
+    await flushDomEffects();
+
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 2);
+
+    dispatchPointerEvent(valueEl, "pointerdown", { pointerId: 7 });
+    dispatchPointerEvent(document, "pointerup", { pointerId: 7 });
+    await flushDomEffects();
+
+    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("pointerup fallback clears stale multi-item range when collapse has no trailing selectionchange", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "alpha" });
+    const b = mkBlank(core, rootId, { label: "b", value: "beta" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    const bValueEl = requireOutlineValueEl(document.body, b);
+    const aText = aValueEl.firstChild as Text;
+    const bText = bValueEl.firstChild as Text;
+    const domSel = window.getSelection();
+    if (!domSel) throw new Error("Missing window selection");
+
+    const crossRange = document.createRange();
+    crossRange.setStart(aText, 1);
+    crossRange.setEnd(bText, 1);
+    domSel.removeAllRanges();
+    domSel.addRange(crossRange);
+    document.dispatchEvent(new Event("selectionchange"));
+    await flushDomEffects();
+
+    expect(requireOutlineItemEl(document.body, a).classList.contains("is-selected")).toBe(
+      true,
+    );
+    expect(requireOutlineItemEl(document.body, b).classList.contains("is-selected")).toBe(
+      true,
+    );
+
+    dispatchPointerEvent(bValueEl, "pointerdown", { pointerId: 9 });
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const collapse = document.createRange();
+    collapse.setStart(bText, 2);
+    collapse.collapse(true);
+    domSel.removeAllRanges();
+    domSel.addRange(collapse);
+
+    dispatchPointerEvent(document, "pointerup", { pointerId: 9 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushDomEffects();
+
+    expect(readContentEditableCaret(bValueEl)).toBe(2);
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expect(requireOutlineItemEl(document.body, a).classList.contains("is-selected")).toBe(
+      false,
+    );
+    expect(requireOutlineItemEl(document.body, b).classList.contains("is-selected")).toBe(
+      true,
+    );
+
+    unmount();
+  });
+
+  test("intra-outline blur/focus does not restore stale non-collapsed value selection", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "alphabet" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const root = requireOutlineRoot(document.body);
+    const itemEl = requireOutlineItemEl(document.body, a);
+    const valueEl = requireOutlineValueEl(document.body, a);
+
+    setContentEditableSelection(valueEl, 2, 6);
+    document.dispatchEvent(new Event("selectionchange"));
+    await flushDomEffects();
+
+    root.dispatchEvent(new FocusEvent("blur", { relatedTarget: itemEl }));
+    setContentEditableSelection(valueEl, 4);
+    root.dispatchEvent(new FocusEvent("focus"));
+    await flushDomEffects();
+
+    expect(readContentEditableCaret(valueEl)).toBe(4);
+
+    unmount();
+  });
+
+  test("core.focus updates contenteditable caret even when target is already focused", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
@@ -1830,7 +1933,7 @@ describe("outline/selection-cursor", () => {
     unmount();
   });
 
-  test("undo/redo text edit restores CE caret to pre-apply position", async () => {
+  test("undo/redo text edit restores contenteditable caret to pre-apply position", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
@@ -2091,7 +2194,7 @@ describe("outline/block-selection", () => {
 });
 
 describe("outline/vertical-navigation", () => {
-  test("ArrowUp/ArrowDown with non-collapsed CE selection are left to native behavior", async () => {
+  test("ArrowUp/ArrowDown with non-collapsed contenteditable selection are left to native behavior", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(

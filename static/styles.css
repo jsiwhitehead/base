@@ -195,7 +195,7 @@
     box-shadow: inset 0 0 0 2px var(--ui-color-focus);
   }
 
-  [data-drag-state] {
+  [data-drag-state="active"] {
     user-select: none;
   }
 

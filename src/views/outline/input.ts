@@ -38,7 +38,6 @@ export const VALUE_SELECTOR = ".ui-outline-value";
 export type SelectionSnapshot = { anchor: ModelPosition; focus: ModelPosition };
 
 export type InputState = {
-  isComposing: boolean;
   compositionEndedAt: number;
   stickyCaretX: number | null;
   savedSelection: SelectionSnapshot | null;

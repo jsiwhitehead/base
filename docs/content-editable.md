@@ -1,8 +1,6 @@
-# contenteditable View Layer
+# Contenteditable View Layer
 
 A view built on `contenteditable` uses a single editing root. This document covers the design and implementation of that layer — the event pipeline, text sync, DOM structure, position mapping, navigation, and selection.
-
----
 
 ## Why contenteditable
 
@@ -12,8 +10,6 @@ The established approach (ProseMirror, Lexical) uses a single `contenteditable` 
 - **Fully custom rendering** — must re-implement all browser text input behaviour; IME (CJK, Arabic, etc.) is notoriously hard to get right; accessibility requires `contenteditable`; spell-check, autocorrect, and OS text services are lost.
 
 `contenteditable` gives: native cursor and caret, IME, spell-check, autocorrect, accessibility, system copy/paste. The architecture's job is to intercept browser behaviour at the right points and keep the model as the single source of truth.
-
----
 
 ## The event pipeline
 
@@ -37,6 +33,26 @@ beforeinput          ← intercept structural operations here
 ```
 
 `beforeinput` is the contract boundary: recognized edit intents are model-owned and browser DOM writes are blocked. Browser-native mutation paths (notably composition and some autocorrect paths) are reconciled through the observer.
+
+### Event ownership and precedence
+
+`contenteditable` implementations are reliable only when event ownership is explicit and centralized.
+
+Use a single coordinator with strict precedence:
+
+1. **Ownership gate**: ignore events whose target is outside the active editing root or is captured by an embedded control subtree.
+2. **Editor-local handlers**: contenteditable pipeline (`beforeinput`, `selectionchange`, contenteditable-specific key handling).
+3. **Shared platform handlers**: generic frame/target/runtime handlers.
+4. **Global intent routing**: keyboard-intent pipeline for non-contenteditable surfaces.
+
+Rules:
+
+- Ownership must be resolved before any model selection write.
+- Non-owning handlers must return immediately and must not "repair" selection.
+- Global key routing must early-return when the target is `contenteditable`.
+- Embedded interactive subtrees should be able to block contenteditable ownership explicitly.
+
+Without this ordering, multiple pipelines race and produce transient focus/selection flips.
 
 ### `beforeinput`
 
@@ -67,6 +83,34 @@ Fires before DOM mutation; `e.preventDefault()` suppresses the browser's action.
 
 For operations that never produce `beforeinput`: Tab (nesting), Escape (NAV/out), `Cmd/Ctrl+Z` (undo), `Cmd/Ctrl+Shift+Z` / `Ctrl+Y` (redo). All structural `keydown` handlers must be guarded with `e.isComposing` — structural operations must not fire mid-composition.
 
+### Pointer lifecycle and click semantics
+
+Do not treat pointer input as isolated `click` events. Handle the full lifecycle:
+
+```
+pointerdown -> optional pointermove sequence -> pointerup / pointercancel
+```
+
+Keep explicit pointer state. Minimum required:
+
+- `isPointerSelecting`: primary-button text selection is in progress.
+
+Optional richer state (useful in more complex editors):
+
+- `pointerDownInValue`: pointer started in a value surface.
+- `pointerDownInChrome`: pointer started in structural chrome.
+- `lastPointerType`: mouse/touch/pen (selection logic may differ by type).
+
+Rules:
+
+- `pointerdown` in value surface: keep browser-native caret/selection behavior.
+- `pointerdown` in structural chrome inside the contenteditable root: call `preventDefault()` to block browser caret relocation.
+- Do not collapse or rewrite model selection during drag-select (`pointerdown` to `pointerup`) unless ownership changes.
+- `pointercancel` must clear pointer state exactly like `pointerup`.
+- Pointer lifecycle state must also be cleared on editor blur, root switch, and editor disposal to avoid stale cross-interaction state.
+
+Single/double/triple click handling should be explicit when behavior differs (for example line/paragraph select semantics), but must still route through the same ownership gate and suppression policy.
+
 ### IME and composition
 
 IME is a multi-step process: `compositionstart` -> repeated `insertCompositionText` -> `compositionend`. The in-progress candidate text is managed entirely by the browser.
@@ -93,15 +137,32 @@ Application undo/redo replays recorded transactions; reactive effects reconcile 
 
 ### Ownership boundary
 
-| Pipeline                                    | Owns                                                           | Guard                                                                          |
-| ------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `contenteditable` `beforeinput` + `keydown` | Text-edit target: text and structural edits                    | Return early from global key routing when event target is `contenteditable`.   |
-| Command/intent routing pipeline             | Item-level commands: navigation, selection, structural intents | Return early unless focus is in item command mode.                             |
-| MutationObserver                            | Browser-authored character sync in `value` surface             | Skip when model text already matches; ignore during structural reconciliation. |
-| `selectionchange`                           | Editing location/range tracking                                | Skip when model already matches current selection to avoid sync loops.         |
+| Pipeline                                    | Owns                                                                    | Guard                                                                          |
+| ------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `contenteditable` `beforeinput` + `keydown` | Text-edit target: text and structural edits                             | Return early from global key routing when event target is `contenteditable`.   |
+| Command/intent routing pipeline             | Non-contenteditable command handling: navigation and structural intents | Return early unless editor is in command-routing mode.                         |
+| MutationObserver                            | Browser-authored character sync in `value` surface                      | Skip when model text already matches; ignore during structural reconciliation. |
+| `selectionchange`                           | Editing location/range tracking                                         | Skip when model already matches current selection to avoid sync loops.         |
 
 These boundaries are strict: pipelines should not cross responsibilities.
 Model -> DOM rendering is the default write path; imperative DOM writes are for explicit cursor/selection repair only.
+
+### Selection origin tags (recommended pattern)
+
+Mature editors often model selection origin metadata for policy decisions:
+
+- `pointer` — pointerdown/drag/click lifecycle
+- `keyboard` — key navigation/edit operations
+- `composition` — IME phase
+- `programmatic` — model-driven focus repair/reveal
+
+Origins are ephemeral pipeline metadata and do not need to be persisted in canonical selection state.
+
+Why this matters:
+
+- Pointer-origin selection changes should tolerate temporary expanded DOM ranges.
+- Programmatic updates should enable stronger suppression of echo `selectionchange`.
+- Composition-origin updates should avoid structural behavior.
 
 ### Platform caveat: Android
 
@@ -110,8 +171,6 @@ On Android, the virtual keyboard communicates with the browser via the native `I
 This is explicitly off-spec (W3C Input Events Level 2 requires all non-IME `beforeinput` to be cancelable) but is a deliberate architectural constraint of Android's IME subsystem, not a bug. Both ProseMirror and Lexical implement a separate Android code path: MutationObserver becomes the primary input mechanism, with `beforeinput` used only as an intent signal, not for prevention. The [EditContext API](https://developer.chrome.com/blog/introducing-editcontext-api) (Chrome/Edge 121+) resolves this at the architectural level but has no Firefox/Safari implementation.
 
 **Android is not a supported platform for this editor.** This note exists so the constraint is understood if support is added later.
-
----
 
 ## Text sync — MutationObserver
 
@@ -129,7 +188,7 @@ A pure model->DOM approach — preventing all `beforeinput` — would break:
 ### What to watch
 
 ```ts
-observer.observe(ceRoot, {
+observer.observe(contenteditableRoot, {
   characterData: true,
   characterDataOldValue: true,
   childList: true,
@@ -173,8 +232,22 @@ The MutationObserver callback runs as a **microtask** after synchronous work in 
 **Direct DOM writes in `beforeinput` handlers.** When a `beforeinput` handler commits and must place the caret immediately (for example after delete or insert), it writes content directly to the value element first. This is intentional: the signal safety guard blocks effect-driven writes while the caret is inside the element, and the observer later ignores the matching mutation as a no-op.
 
 **Suppression flag reset timing — `setTimeout(0)`, not `queueMicrotask`.** Reset suppression in the next macrotask so synchronous `selectionchange` handlers still see it as active. `queueMicrotask` resets too early. Because resets are async, use token-based suppression instead of a plain boolean so overlapping suppressions do not clear each other incorrectly.
+Any deferred pointer-finalize reconcile should use compatible timing (typically next macrotask) so it does not race suppression resets.
 
----
+### Suppression channels
+
+Use separate suppression channels for separate causes; do not multiplex into one boolean:
+
+- Programmatic caret/selection set is in progress.
+- Structural-chrome pointer interaction should not be remapped to editing.
+- Model-authored reconciliation is in progress.
+- `beforeinput` history event already consumed undo/redo.
+
+Rules:
+
+- Suppression must be token-based and one-turn scoped.
+- Suppression channels must be independent; one channel ending must not clear another.
+- Suppression exists to prevent self-echo loops, not to hide real user input.
 
 ## DOM structure
 
@@ -207,8 +280,6 @@ Plain-text value surfaces SHOULD always contain at least one caret-host node (fo
 - `spellcheck="false"` `autocorrect="off"` `autocapitalize="off"` on the editing root — suppresses browser input transforms, particularly on mobile
 - Observer text sync is scoped to the value surface; structural DOM churn is distinguishable and ignorable
 
----
-
 ## Position and cursor
 
 A deterministic bridge between browser cursor positions and model positions is required:
@@ -227,16 +298,14 @@ This is required after every structural op — omitting it leaves the cursor in 
 
 **Scroll-to-cursor.** After programmatic cursor placement, ensure the cursor is scrolled into view. The browser does not do this automatically for programmatic placements.
 
-**Cursor placement timing in a reactive system.** After `core.focus()`, place the cursor in the next microtask so focus effects and DOM reconciliation settle first. For structural edits inside live `beforeinput`, place it immediately (`defer: false`) because the surface is already focused and DOM was updated synchronously.
+**Cursor placement timing in a reactive system.** After a model selection write, place the cursor in the next microtask so focus effects and DOM reconciliation settle first. For structural edits inside live `beforeinput`, place it immediately (`defer: false`) because the surface is already focused and DOM was updated synchronously.
 
 Position mapping must remain stable under text-node fragmentation — IME, autocorrect, and browser-internal optimisations can produce multiple adjacent text nodes within a single value surface.
 
 For plain-text surfaces, mapping MUST treat semantic `<br>` as one logical newline character. Visual-only terminal sentinel `<br>` nodes MUST contribute zero logical characters.
 
-Shared DOM helpers SHOULD expose mapped selection/range primitives (DOM point -> caller-mapped model point) so views can reuse CE mapping without embedding view semantics in the DOM layer.
+Shared DOM helpers SHOULD expose mapped selection/range primitives (DOM point -> caller-mapped model point) so views can reuse contenteditable mapping without embedding view semantics in the DOM layer.
 Shared DOM helpers MAY also expose collapsed-caret rect and mapped selection snapshot primitives for view-agnostic cursor/selection plumbing.
-
----
 
 ## Arrow key navigation
 
@@ -292,8 +361,6 @@ When jumping to an adjacent item vertically, the cursor should land at the neare
 - **Don't correct cursor position after `selectionchange`** — by then the cursor is already wrong; `keydown` interception before the browser acts is the correct point.
 - **Don't use character offset alone to detect first/last line** — `anchorOffset === 0` indicates the text start but not which visual line for wrapped items; rect comparison is the reliable approach.
 
----
-
 ## Selection
 
 ### Model during drag
@@ -310,6 +377,44 @@ settles     -> text edit focus may move to item X, DOM range collapsed
 Operations triggered mid-range (type to replace, copy, cut) use the live DOM range directly — no awkward save-and-restore logic needed.
 
 The browser exposes `anchorNode/anchorOffset` (fixed — where the selection started) and `focusNode/focusOffset` (the moving end). The `selectionchange` handler maps the **focus** side to the active editing position and caret, so backward drags and extended selections keep item identity aligned to the moving endpoint.
+
+### `selectionchange` reconciliation algorithm
+
+`selectionchange` is a reconciliation signal, not an unconditional command.
+
+Recommended order:
+
+1. Exit if composing.
+2. Exit if any relevant suppression channel is active.
+3. Read DOM `Selection`; if absent, clear range visuals and exit.
+4. Exit if either selection endpoint is outside the active editor root.
+5. Map DOM endpoints into model positions; if unmappable, clear range visuals and exit.
+   During active pointer selection, a temporary unmappable state may be tolerated to avoid range-visual flicker/churn.
+6. Update range-visual state (collapsed vs expanded; start/end items).
+7. Derive focus-side model location from DOM focus endpoint.
+8. If model selection is already on the same editing location+target, exit.
+9. Otherwise write editing selection, with caret only when collapsed.
+
+Rules:
+
+- Never "correct" intra-item cursor movement after the fact.
+- Reconcile only when mapping is valid inside owned contenteditable surfaces.
+- Prefer focus endpoint identity for active editing location.
+- Expanded ranges should preserve editing mode rather than dropping to item mode.
+
+This keeps pointer drag selection stable and avoids item/editing thrash.
+
+### Default-prevention matrix for pointer-related paths
+
+| Event/zone                                                   | Default action                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------- |
+| `pointerdown` in value surface                               | Allow default                                            |
+| `pointerdown` on structural chrome in contenteditable root   | `preventDefault()`                                       |
+| `pointerdown` in input/textarea controls                     | Allow default caret/selection behavior                   |
+| `dragstart` in contenteditable value surface                 | Allow default drag start, but override payload as needed |
+| `drop` in contenteditable value surface (model-owned insert) | `preventDefault()`                                       |
+
+This matrix should be treated as normative unless a view has an explicit exception.
 
 ### Select-all
 

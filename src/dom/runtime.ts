@@ -10,7 +10,10 @@ import type {
 } from "../core";
 import { ITEM_TARGET, parseKeyIntent } from "../core";
 
-import { setContentEditableCaret } from "./contenteditable";
+import {
+  domPointToTextOffset,
+  setContentEditableCaret,
+} from "./contenteditable";
 
 type RuntimeEffect =
   | { type: "FOCUS"; focus: Location; target: string; caret?: number }
@@ -271,22 +274,39 @@ export function createRuntime(opts: {
     const binding = resolveBinding(sel.location, sel.target);
     const targetEl = (binding?.getEl() as HTMLElement | null) ?? null;
     if (!binding || !targetEl) return;
+    const editingHost = targetEl.isContentEditable
+      ? targetEl.closest<HTMLElement>("[contenteditable='true']")
+      : null;
+    const focusEl = editingHost ?? targetEl;
 
-    const wasFocused = document.activeElement === targetEl;
-    if (!wasFocused) targetEl.focus({ preventScroll: true });
+    const activeEl = document.activeElement;
+    const wasFocused =
+      activeEl === focusEl ||
+      (activeEl instanceof Node && focusEl.contains(activeEl));
+    if (!wasFocused) focusEl.focus({ preventScroll: true });
 
     const caret = focusEff.caret;
-    const canCaret = caret !== undefined && !!binding.setCaret;
-    const shouldUpdateCaret = canCaret;
-
-    if (shouldUpdateCaret) {
+    if (caret !== undefined && binding.setCaret) {
       const len = binding.setCaret!.getLength();
-      binding.setCaret!.set(clamp(caret!, 0, len));
+      const nextCaret = clamp(caret!, 0, len);
+      const currentCaret = binding.getCaret?.();
+      if (currentCaret === nextCaret) return;
+      binding.setCaret!.set(nextCaret);
       return;
     }
 
     if (caret !== undefined && targetEl.isContentEditable) {
-      setContentEditableCaret(targetEl, caret);
+      const nextCaret = Math.max(0, caret);
+      const sel = window.getSelection();
+      const currentCaret =
+        sel?.rangeCount &&
+        sel.isCollapsed &&
+        sel.focusNode &&
+        targetEl.contains(sel.focusNode)
+          ? domPointToTextOffset(targetEl, sel.focusNode, sel.focusOffset)
+          : null;
+      if (currentCaret === nextCaret) return;
+      setContentEditableCaret(targetEl, nextCaret);
       return;
     }
 

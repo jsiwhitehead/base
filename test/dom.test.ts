@@ -488,6 +488,98 @@ describe("bindItemFrame contract", () => {
     unmount();
   });
 
+  test("pointerdown on contenteditable target does not force frame item focus", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: 1 });
+    const other = mkBlank(core, rootId, { label: "y", value: 2 });
+    const focus: Location = { item: id, portals: [] };
+
+    const c = createComponent(core, (ctx) => {
+      const frame = el("div");
+      const value = el("span");
+      value.dataset.target = VALUE_TARGET;
+      value.contentEditable = "true";
+      value.textContent = "hello";
+      frame.append(value);
+      bindItemFrame(ctx, { core, focus }, frame);
+      return frame;
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    core.focus({
+      type: "item",
+      anchor: { item: other, portals: [] },
+      head: { item: other, portals: [] },
+    });
+    await flushDomEffects();
+
+    const value = c.el.querySelector(
+      `[data-target="${VALUE_TARGET}"]`,
+    ) as HTMLElement;
+    pointerDown(value);
+    await flushDomEffects();
+
+    const selection = core.selection();
+    expect(selection.type).toBe("item");
+    if (selection.type !== "item") throw new Error("Expected item selection");
+    expect(selection.head.item).toBe(other);
+
+    unmount();
+  });
+
+  test("pointerdown on frame shell does not force item focus while CE selection is active", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: 1 });
+    const other = mkBlank(core, rootId, { label: "y", value: 2 });
+    const focus: Location = { item: id, portals: [] };
+
+    const c = createComponent(core, (ctx) => {
+      const frame = el("div");
+      const value = el("span");
+      value.dataset.target = VALUE_TARGET;
+      value.contentEditable = "true";
+      value.textContent = "hello";
+      frame.append(value);
+      bindItemFrame(ctx, { core, focus }, frame);
+      return frame;
+    });
+
+    const unmount = mount(c);
+    await flushDomEffects();
+
+    core.focus({
+      type: "item",
+      anchor: { item: other, portals: [] },
+      head: { item: other, portals: [] },
+    });
+    await flushDomEffects();
+
+    const value = c.el.querySelector(
+      `[data-target="${VALUE_TARGET}"]`,
+    ) as HTMLElement;
+    const textNode = value.firstChild as Text;
+    const sel = window.getSelection();
+    if (!sel) throw new Error("Missing window selection");
+    const range = document.createRange();
+    range.setStart(textNode, 1);
+    range.setEnd(textNode, 3);
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const frame = c.el as HTMLElement;
+    pointerDown(frame);
+    await flushDomEffects();
+
+    const selection = core.selection();
+    expect(selection.type).toBe("item");
+    if (selection.type !== "item") throw new Error("Expected item selection");
+    expect(selection.head.item).toBe(other);
+
+    unmount();
+  });
+
   test("class toggles reflect Core: is-selected and is-issue", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });

@@ -246,16 +246,6 @@ export function buildTextField(
     });
 
     ctx.on(inp, "pointerdown", (e: PointerEvent) => {
-      const paddingTopPx = Number.parseFloat(getComputedStyle(inp).paddingTop);
-      if (Number.isFinite(paddingTopPx) && paddingTopPx > 0) {
-        const y = e.clientY - inp.getBoundingClientRect().top;
-        if (y < paddingTopPx) {
-          e.preventDefault();
-          const end = inp.value.length;
-          inp.setSelectionRange(end, end);
-        }
-      }
-
       core.focus({
         type: "editing",
         location: opts.focus,

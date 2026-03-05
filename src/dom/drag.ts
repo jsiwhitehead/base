@@ -3,7 +3,7 @@ import { effect, signal } from "@preact/signals-core";
 
 import type { Core, ItemId, Tx } from "../core";
 import { devWarn } from "../dev";
-import { el } from "./base";
+import { el, resolveEventTargetElement } from "./base";
 import type { Component } from "./runtime";
 
 export type DropTarget =
@@ -37,15 +37,17 @@ const DRAG_START_BLOCK_SELECTOR = '[data-drag-start="block"]';
 const INTERACTIVE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
 function isInteractiveEl(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return INTERACTIVE_TAGS.has(target.tagName);
+  const targetEl = resolveEventTargetElement(target);
+  if (!targetEl) return false;
+  return INTERACTIVE_TAGS.has(targetEl.tagName);
 }
 
 function isDragStartBlocked(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (isInteractiveEl(target)) return true;
-  if (target.getAttribute("contenteditable") === "true") return true;
-  return !!target.closest(DRAG_START_BLOCK_SELECTOR);
+  const targetEl = resolveEventTargetElement(target);
+  if (!targetEl) return false;
+  if (isInteractiveEl(targetEl)) return true;
+  if (targetEl.getAttribute("contenteditable") === "true") return true;
+  return !!targetEl.closest(DRAG_START_BLOCK_SELECTOR);
 }
 
 function nearestFrame(

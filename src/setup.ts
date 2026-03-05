@@ -102,20 +102,6 @@ export function createApp(opts: CreateAppOpts): App {
   const main = appRoot.el;
   const mainScroll = el("div", "ui-main-scroll");
 
-  main.addEventListener(
-    "pointerdown",
-    (event) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement
-      )
-        return;
-      main.focus();
-    },
-    { capture: true },
-  );
-
   mainScroll.append(main);
   root.append(mainScroll, indicator.el);
 
@@ -134,10 +120,23 @@ export function createApp(opts: CreateAppOpts): App {
   hostEl.replaceChildren(root);
   main.focus();
 
+  const onDocumentPointerDown = (event: PointerEvent): void => {
+    const targetNode = event.target;
+    if (!(targetNode instanceof Node)) return;
+    if (main.contains(targetNode)) return;
+    core.focus({ type: "idle" });
+  };
+  document.addEventListener("pointerdown", onDocumentPointerDown, {
+    capture: true,
+  });
+
   const app: App = {
     core,
     rootId,
     dispose() {
+      document.removeEventListener("pointerdown", onDocumentPointerDown, {
+        capture: true,
+      });
       debugPanel?.dispose();
       indicator.dispose();
       drag.dispose();

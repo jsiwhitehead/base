@@ -417,7 +417,7 @@ Rules:
 
 ## Drag system
 
-Uses `pointerdown/pointermove/pointerup` exclusively — no HTML5 Drag and Drop API (`dragstart`/`drop`). Structural drag (pointer events) and CE text drag (HTML5 DnD) operate on separate browser event channels and do not conflict.
+Uses `pointerdown/pointermove/pointerup` exclusively — no HTML5 Drag and Drop API (`dragstart`/`drop`). Structural drag (pointer events) and contenteditable text drag (HTML5 DnD) operate on separate browser event channels and do not conflict.
 
 ### Types
 
