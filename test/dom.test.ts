@@ -488,7 +488,7 @@ describe("bindItemFrame contract", () => {
     unmount();
   });
 
-  test("class toggles reflect Core: is-focused and is-issue", async () => {
+  test("class toggles reflect Core: is-selected and is-issue", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
@@ -511,7 +511,7 @@ describe("bindItemFrame contract", () => {
       head: { item: other, portals: [] },
     });
     await flushDomEffects();
-    expect(frame.classList.contains("is-focused")).toBe(false);
+    expect(frame.classList.contains("is-selected")).toBe(false);
 
     core.focus({
       type: "item",
@@ -519,7 +519,7 @@ describe("bindItemFrame contract", () => {
       head: { item: focus.item, portals: [] },
     });
     await flushDomEffects();
-    expect(frame.classList.contains("is-focused")).toBe(true);
+    expect(frame.classList.contains("is-selected")).toBe(true);
 
     setFormula(core, id, "unknown_name");
     await flushDomEffects();

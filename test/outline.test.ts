@@ -1998,7 +1998,7 @@ describe("outline/block-selection", () => {
     unmount();
   });
 
-  test("block selected class toggles across selected range", async () => {
+  test("item-selected class toggles across selected range", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     const b = mkBlank(core, rootId, { label: "b", value: "y" });
@@ -2007,8 +2007,10 @@ describe("outline/block-selection", () => {
 
     const aItem = requireOutlineItemEl(document.body, a);
     const bItem = requireOutlineItemEl(document.body, b);
-    expect(aItem.classList.contains("is-block-selected")).toBe(false);
-    expect(bItem.classList.contains("is-block-selected")).toBe(false);
+    expect(aItem.classList.contains("is-item-selected")).toBe(false);
+    expect(bItem.classList.contains("is-item-selected")).toBe(false);
+    expect(aItem.classList.contains("is-selected")).toBe(false);
+    expect(bItem.classList.contains("is-selected")).toBe(false);
 
     dispatchPointerEvent(
       requireOutlineGutterEl(document.body, a),
@@ -2021,8 +2023,10 @@ describe("outline/block-selection", () => {
     );
     await flushDomEffects();
 
-    expect(aItem.classList.contains("is-block-selected")).toBe(true);
-    expect(bItem.classList.contains("is-block-selected")).toBe(true);
+    expect(aItem.classList.contains("is-item-selected")).toBe(true);
+    expect(bItem.classList.contains("is-item-selected")).toBe(true);
+    expect(aItem.classList.contains("is-selected")).toBe(true);
+    expect(bItem.classList.contains("is-selected")).toBe(true);
 
     unmount();
   });

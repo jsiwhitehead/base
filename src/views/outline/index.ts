@@ -15,6 +15,7 @@ import {
   defineView,
   el,
   getDomRangeInRoot,
+  hasActiveSelectionInSurface,
   getMappedSelectionRangeInRoot,
   getMappedSelectionSnapshotInRoot,
   getPlainTextFromDataTransfer,
@@ -45,6 +46,7 @@ import {
   prevSibling,
   readSelectionText,
   sameFocus,
+  textLengthForTarget,
   valueToText,
 } from "./logic";
 import {
@@ -71,6 +73,8 @@ import {
 const OUTLINE_ITEM_POINTERDOWN_IGNORE_SELECTOR =
   ".ui-outline-value, .ui-outline-gutter, .ui-header, .ui-body:not(.ui-outline)";
 
+type OutlineItemSelectionState = "none" | "item" | "value" | "header";
+
 function buildOutlineItem(
   core: UiCore,
   itemId: ItemId,
@@ -81,6 +85,7 @@ function buildOutlineItem(
     shiftKey: boolean,
   ) => void,
   selectedItemKeys: Signal<Set<string>>,
+  valueRangeSelectedItemKeys: Signal<Set<string>>,
   valueSelectionCollapsed: Signal<boolean>,
   flushPendingMutations: () => void,
 ): Component {
@@ -130,19 +135,24 @@ function buildOutlineItem(
       },
     );
 
-    const itemSelectionState = computed<
-      "none" | "item-head" | "item-range" | "value" | "header"
-    >(() => {
-      const sel = core.selection();
-      if (sel.type === "item") {
+    const itemSelectionState = computed<OutlineItemSelectionState>(() => {
+      const selection = core.selection();
+      if (selection.type === "item") {
         if (!selectedItemKeys.value.has(itemKey)) return "none";
-        return sameFocus(sel.head, itemFocus) ? "item-head" : "item-range";
+        return "item";
       }
-      if (sel.type !== "editing") return "none";
-      if (!sameFocus(sel.location, itemFocus)) return "none";
-      if (sel.target === VALUE_TARGET) {
-        return valueSelectionCollapsed.value ? "value" : "none";
+      if (selection.type !== "editing") return "none";
+
+      if (selection.target === VALUE_TARGET) {
+        if (!valueSelectionCollapsed.value) {
+          return valueRangeSelectedItemKeys.value.has(itemKey)
+            ? "value"
+            : "none";
+        }
+        if (!sameFocus(selection.location, itemFocus)) return "none";
+        return "value";
       }
+      if (!sameFocus(selection.location, itemFocus)) return "none";
       return "header";
     });
 
@@ -154,13 +164,12 @@ function buildOutlineItem(
           : snap.content.type === "issue"
             ? (snap.content.message ?? "")
             : "";
-      const sel = window.getSelection();
       if (
-        itemSelectionState.value === "value" &&
-        sel?.rangeCount &&
-        valueEl.contains(sel.getRangeAt(0).startContainer)
-      )
+        hasActiveSelectionInSurface(valueEl) &&
+        readPlainTextFromContentEditable(valueEl) === newText
+      ) {
         return;
+      }
       flushPendingMutations();
       renderPlainTextToContentEditable(valueEl, newText);
     });
@@ -185,9 +194,8 @@ function buildOutlineItem(
 
     ctx.effect(() => {
       itemEl.classList.toggle(
-        "is-block-selected",
-        itemSelectionState.value === "item-head" ||
-          itemSelectionState.value === "item-range",
+        "is-item-selected",
+        itemSelectionState.value === "item",
       );
     });
 
@@ -198,7 +206,7 @@ function buildOutlineItem(
         snap.content.type === "value" && isNumericLikeValue(snap.content.value);
 
       itemEl.classList.toggle(
-        "is-focused",
+        "is-selected",
         itemSelectionState.value !== "none",
       );
       itemEl.classList.toggle("is-issue", isIssue);
@@ -281,6 +289,7 @@ function buildOutlineItem(
           portals,
           onGutterPointerDown,
           selectedItemKeys,
+          valueRangeSelectedItemKeys,
           valueSelectionCollapsed,
           flushPendingMutations,
         ),
@@ -318,6 +327,37 @@ function buildOutlineBody(
         ),
       );
     });
+    const valueRangeSelectedItemKeys = signal(new Set<string>());
+
+    const clearValueRangeSelectedItems = (): void => {
+      if (valueRangeSelectedItemKeys.value.size === 0) return;
+      valueRangeSelectedItemKeys.value = new Set<string>();
+    };
+
+    const setValueSelectionRangeState = (args: {
+      collapsed: boolean;
+      startItemId?: ItemId;
+      endItemId?: ItemId;
+    }): void => {
+      const { collapsed, startItemId, endItemId } = args;
+      valueSelectionCollapsed.value = collapsed;
+      if (collapsed || !startItemId || !endItemId) {
+        clearValueRangeSelectedItems();
+        return;
+      }
+      valueRangeSelectedItemKeys.value = new Set(
+        blockSelectionFocuses(
+          core,
+          rootId,
+          {
+            type: "item",
+            anchor: { item: startItemId, portals },
+            head: { item: endItemId, portals },
+          },
+          portals,
+        ).map((focus) => focusKey(focus)),
+      );
+    };
 
     const suppressSelectionChangeFromGutter = createSuppressionFlag(false);
     const suppressSelectionSync = createSuppressionFlag(false);
@@ -399,7 +439,7 @@ function buildOutlineBody(
       if (pos) {
         suppressSelectionSync.suppressForTurn(true);
         setDomCaret(pos);
-        valueSelectionCollapsed.value = true;
+        setValueSelectionRangeState({ collapsed: true });
       }
       const itemEl = root.querySelector<HTMLElement>(itemSelectorById(itemId));
       const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
@@ -412,6 +452,9 @@ function buildOutlineBody(
       reveal?: { offset: number; defer?: boolean };
     }): void => {
       const { location, target, caret, reveal } = args;
+      if (target !== VALUE_TARGET || caret !== undefined) {
+        clearValueRangeSelectedItems();
+      }
       core.focus(
         { type: "editing", location, target },
         caret !== undefined ? { caret } : undefined,
@@ -451,9 +494,13 @@ function buildOutlineBody(
         state.savedSelection = null;
         return;
       }
-      valueSelectionCollapsed.value =
-        snap.anchor.itemId === snap.focus.itemId &&
-        snap.anchor.offset === snap.focus.offset;
+      setValueSelectionRangeState({
+        collapsed:
+          snap.anchor.itemId === snap.focus.itemId &&
+          snap.anchor.offset === snap.focus.offset,
+        startItemId: snap.anchor.itemId,
+        endItemId: snap.focus.itemId,
+      });
       suppressSelectionSync.suppressForTurn(true);
       flushPendingMutations();
       setDomSelectionRange(anchorDom, focusDom);
@@ -494,6 +541,7 @@ function buildOutlineBody(
           portals,
           onGutterPointerDown,
           selectedItemKeys,
+          valueRangeSelectedItemKeys,
           valueSelectionCollapsed,
           flushPendingMutations,
         ),
@@ -507,6 +555,7 @@ function buildOutlineBody(
       const next = e.relatedTarget;
       if (!(next instanceof Node) || !root.contains(next)) {
         state.restoreSelectionOnFocus = false;
+        clearValueRangeSelectedItems();
         return;
       }
       state.savedSelection = snapshotSelection();
@@ -688,6 +737,52 @@ function buildOutlineBody(
           resetStickyCaretX();
         }
         const isMod = e.metaKey || e.ctrlKey;
+        if (isMod && e.key.toLowerCase() === "a" && !e.altKey) {
+          const modelSel = core.selection();
+          if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET) {
+            return;
+          }
+
+          const seen = new Set<ItemId>();
+          let firstItemId: ItemId | undefined;
+          let lastItemId: ItemId | undefined;
+          for (const point of navPoints.value) {
+            if (point.type !== "editing" || point.target !== VALUE_TARGET) {
+              continue;
+            }
+            const itemId = point.focus.item;
+            if (seen.has(itemId)) continue;
+            seen.add(itemId);
+            if (!firstItemId) firstItemId = itemId;
+            lastItemId = itemId;
+          }
+          if (!firstItemId || !lastItemId) return;
+
+          e.preventDefault();
+          setValueSelectionRangeState({
+            collapsed: false,
+            startItemId: firstItemId,
+            endItemId: lastItemId,
+          });
+          core.focus({
+            type: "editing",
+            location: { item: lastItemId, portals },
+            target: VALUE_TARGET,
+          });
+
+          const anchorDom = modelPositionToDom(root, firstItemId, 0);
+          const focusDom = modelPositionToDom(
+            root,
+            lastItemId,
+            textLengthForTarget(core, lastItemId, VALUE_TARGET),
+          );
+          if (anchorDom && focusDom) {
+            suppressSelectionSync.suppressForTurn(true);
+            flushPendingMutations();
+            setDomSelectionRange(anchorDom, focusDom);
+          }
+          return;
+        }
         if (isMod && e.key.toLowerCase() === "z" && !e.shiftKey) {
           if (suppressHistoryKeydown.get() === "undo") {
             e.preventDefault();
@@ -859,14 +954,31 @@ function buildOutlineBody(
       if (state.isComposing) return;
       if (suppressSelectionChangeFromGutter.get()) return;
       if (suppressSelectionSync.get()) return;
+
+      const resetToCollapsed = (): void => {
+        setValueSelectionRangeState({ collapsed: true });
+      };
+
       const winSel = window.getSelection();
-      if (!winSel?.rangeCount) return;
+      if (!winSel?.rangeCount) return resetToCollapsed();
+
+      const mappedRange = getMappedSelectionRangeInRoot(root, (point) =>
+        domPositionToModel(root, point.node, point.offset),
+      );
+      if (!mappedRange) return resetToCollapsed();
       const focusNode = winSel.focusNode;
-      if (!focusNode || !root.contains(focusNode)) return;
-      const focusPos = domPositionToModel(root, focusNode, winSel.focusOffset);
-      if (!focusPos) return;
-      valueSelectionCollapsed.value = winSel.isCollapsed;
-      const itemFocus: Location = { item: focusPos.itemId, portals };
+      const focusPos =
+        focusNode && root.contains(focusNode)
+          ? domPositionToModel(root, focusNode, winSel.focusOffset)
+          : null;
+
+      const collapsed = mappedRange.range.collapsed;
+      const startItemId = mappedRange.start.itemId;
+      const endItemId = mappedRange.end.itemId;
+      setValueSelectionRangeState({ collapsed, startItemId, endItemId });
+
+      const focusItemId = focusPos?.itemId ?? endItemId;
+      const itemFocus: Location = { item: focusItemId, portals };
       const selNow = core.selection();
       if (
         selNow.type === "editing" &&
@@ -878,8 +990,17 @@ function buildOutlineBody(
 
       core.focus(
         { type: "editing", location: itemFocus, target: VALUE_TARGET },
-        { caret: focusPos.offset },
+        collapsed && focusPos ? { caret: focusPos.offset } : undefined,
       );
+    });
+
+    ctx.effect(() => {
+      const selNow = core.selection();
+      if (selNow.type !== "editing" || selNow.target !== VALUE_TARGET) {
+        clearValueRangeSelectedItems();
+        return;
+      }
+      if (valueSelectionCollapsed.value) clearValueRangeSelectedItems();
     });
 
     ctx.effect(() => {

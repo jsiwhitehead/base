@@ -377,6 +377,15 @@ export function getDomRangeInRoot(rootEl: HTMLElement): Range | null {
   return range;
 }
 
+export function hasActiveSelectionInSurface(surfaceEl: HTMLElement): boolean {
+  const sel = window.getSelection();
+  if (!sel?.rangeCount) return false;
+  const range = sel.getRangeAt(0);
+  return range.collapsed
+    ? surfaceEl.contains(range.startContainer)
+    : range.intersectsNode(surfaceEl);
+}
+
 export function getMappedSelectionRangeInRoot<T>(
   rootEl: HTMLElement,
   mapDomPoint: (point: DomPoint) => T | null,

@@ -93,15 +93,15 @@ Application undo/redo replays recorded transactions; reactive effects reconcile 
 
 ### Ownership boundary
 
-| Pipeline                                    | Owns                                                            | Guard                                                                                                                                                                                                      |
-| ------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `contenteditable` `beforeinput` + `keydown` | Text-edit target — all text and structural ops                  | Global keydown routing returns early when the event target is contenteditable                                                                                                                              |
-| Command/intent routing pipeline             | Item-level commands — navigation, selection, structural intents | Returns early unless current focus is in item command mode                                                                                                                                                 |
-| MutationObserver                            | Browser-authored character sync in `value` surface              | Skips if model already has this text; ignored during structural reconciliation                                                                                                                             |
-| `selectionchange`                           | Location tracking                                               | Skips if model already reflects this cursor position — guards against the infinite loop where programmatic cursor placement fires `selectionchange`, which would re-focus, which would re-place the cursor |
+| Pipeline                                    | Owns                                                           | Guard                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `contenteditable` `beforeinput` + `keydown` | Text-edit target: text and structural edits                    | Return early from global key routing when event target is `contenteditable`.   |
+| Command/intent routing pipeline             | Item-level commands: navigation, selection, structural intents | Return early unless focus is in item command mode.                             |
+| MutationObserver                            | Browser-authored character sync in `value` surface             | Skip when model text already matches; ignore during structural reconciliation. |
+| `selectionchange`                           | Editing location/range tracking                                | Skip when model already matches current selection to avoid sync loops.         |
 
-These boundaries are strict. Neither pipeline reaches into the other's domain.
-For maintainability, model -> DOM rendering is the primary write path; imperative DOM writes should be reserved for explicit cursor/selection repair only.
+These boundaries are strict: pipelines should not cross responsibilities.
+Model -> DOM rendering is the default write path; imperative DOM writes are for explicit cursor/selection repair only.
 
 ### Platform caveat: Android
 
@@ -311,21 +311,10 @@ Operations triggered mid-range (type to replace, copy, cut) use the live DOM ran
 
 The browser exposes `anchorNode/anchorOffset` (fixed — where the selection started) and `focusNode/focusOffset` (the moving end). The `selectionchange` handler maps the **focus** side to the active editing position and caret, so backward drags and extended selections keep item identity aligned to the moving endpoint.
 
-### Focused-item indicator
+### Select-all
 
-The focused-item indicator (`is-focused`) is a **caret indicator**, not a selection indicator. It answers "where is my cursor?" — which only has meaning when the selection is collapsed. During a text range, the selection highlight is the sole indicator; a simultaneous per-item focus highlight is redundant.
-
-```
-Show is-focused when:
-  this item is the active text-edit item
-  AND (
-    target is non-text
-    OR (target is text-edit and DOM selection is collapsed)
-  )
-  OR this item is the active item-selection target
-```
-
-For text-edit targets, the collapsed check suppresses `is-focused` during text ranges. For non-text editing targets and item selection, focus styling follows model selection directly.
+Handle `Mod+A`/`Cmd+A` as a model-first command, then sync DOM selection.
+Do not infer full-range selection from container-boundary DOM ranges.
 
 ### Selection visuals in embedded zones
 

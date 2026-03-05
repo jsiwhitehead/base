@@ -5,6 +5,7 @@ export {
   domPointToTextOffset,
   getDomPointFromViewport,
   getDomRangeInRoot,
+  hasActiveSelectionInSurface,
   getMappedRange,
   getMappedSelectionPointsInRoot,
   getMappedSelectionRangeInRoot,

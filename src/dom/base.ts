@@ -295,7 +295,7 @@ export function createComponent(
 
 export function bindItemFrame(
   ctx: Ctx,
-  spec: { core: UiCore; focus: Location },
+  spec: { core: UiCore; focus: Location; isItemSelected?: () => boolean },
   frameEl: HTMLElement,
 ): void {
   frameEl.classList.add("ui-frame");
@@ -307,20 +307,27 @@ export function bindItemFrame(
     a.portals.length === b.portals.length &&
     a.portals.every((portal, i) => portal === b.portals[i]);
 
-  const isFocused = computed(() => {
+  const isItemSelected = computed(() => {
+    const overrideSelected = spec.isItemSelected?.();
+    if (overrideSelected !== undefined) return overrideSelected;
     const sel = spec.core.selection();
-    if (sel.type === "editing") {
-      return (
-        sel.location.item === spec.focus.item &&
-        sameFocus(sel.location, spec.focus)
-      );
-    }
     if (sel.type === "item") {
       return (
         sameFocus(sel.anchor, spec.focus) || sameFocus(sel.head, spec.focus)
       );
     }
     return false;
+  });
+  const isEditingOnItem = computed(() => {
+    const sel = spec.core.selection();
+    if (sel.type !== "editing") return false;
+    return (
+      sel.location.item === spec.focus.item &&
+      sameFocus(sel.location, spec.focus)
+    );
+  });
+  const isSelected = computed(() => {
+    return isItemSelected.value || isEditingOnItem.value;
   });
   const isIssue = computed(() => {
     return spec.core.item(spec.focus.item).content.type === "issue";
@@ -337,7 +344,8 @@ export function bindItemFrame(
   ctx.target(spec.focus, ITEM_TARGET, () => frameEl);
 
   ctx.effect(() => {
-    frameEl.classList.toggle("is-focused", isFocused.value);
+    frameEl.classList.toggle("is-selected", isSelected.value);
+    frameEl.classList.toggle("is-item-selected", isItemSelected.value);
     frameEl.classList.toggle("is-issue", isIssue.value);
     frameEl.classList.toggle("is-numeric", isNumeric.value);
   });

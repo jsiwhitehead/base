@@ -9,7 +9,7 @@ This document defines:
 - Design tokens and token usage rules.
 - CSS layering responsibilities.
 - Shared primitives (`frame`, `body`, `header`, `rail`, `wash`).
-- Universal state styling (`.is-focused`, `.is-issue`, and derived variables).
+- Universal state styling (`.is-selected`, `.is-item-selected`, `.is-issue`, and derived variables).
 - Location language (item vs target, item-target vs edit-target, control vs editor).
 - Issue language and issue/focus interaction.
 
@@ -143,7 +143,7 @@ Recommended order:
 Rules:
 
 - Views MAY add view-specific state classes for view-specific semantics.
-- Views MUST NOT redefine `.is-focused`, `.is-issue`, or frame-derived variables.
+- Views MUST NOT redefine `.is-selected`, `.is-item-selected`, `.is-issue`, or frame-derived variables.
 - Views MUST NOT alter rail segmentation/geometry language.
 - Views MUST NOT replace the shared header language with a view-specific header system.
 - Views MUST NOT add item-level focus rings; item-level focus belongs to rail and optional wash.
@@ -239,7 +239,8 @@ Rules:
 
 All frames MUST support these classes on the frame root:
 
-- `.is-focused`.
+- `.is-selected`.
+- `.is-item-selected`.
 - `.is-issue`.
 - `.is-numeric`.
 
@@ -251,7 +252,7 @@ Application rules:
 
 Rules:
 
-- `.is-issue` MUST override `.is-focused` for derived color decisions.
+- `.is-issue` MUST override `.is-selected` for derived color decisions.
 - The frame MUST derive canonical variables consumed by primitives.
 - Frame-derived variables SHOULD be defined on `.ui-frame` so nested controls can consume them.
 - Views MUST NOT set frame-derived state colors ad hoc.
@@ -267,7 +268,7 @@ Required derived variables:
 
 Rules:
 
-- Item focus MUST be driven by `.is-focused`, not DOM `:focus`/`:focus-within`.
+- Item-level selected state MUST be driven by `.is-selected`/`.is-item-selected`, not DOM `:focus`/`:focus-within`.
 - Rail/header/wash MUST use frame-derived variables.
 - DOM focus MAY be used only for item-target vs edit-target mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
 
@@ -295,20 +296,20 @@ Rules:
 
 ### How DOM focus is used
 
-DOM focus is a modifier for the focused item. It MUST NOT determine item focus.
+Item state is model-driven by frame classes. DOM focus is only for local target affordances.
 
 Signals:
 
-- `.ui-frame.is-focused`: authoritative item focus.
-- `.ui-frame:focus`: item frame itself has DOM focus.
-- `.ui-frame:focus-within`: DOM focus is inside the item (including item selection).
-- `input/textarea/select/button:focus`: the active control/editor.
+- `.ui-frame.is-selected`: item is active in selection/editing context.
+- `.ui-frame.is-item-selected`: item is part of item-selection range.
+- `.ui-frame:focus`: frame outline reset only (no item-state meaning).
+- `input/textarea/select/button:focus` and `.ui-textfield:focus-within`: active local control/editor.
 
 Model:
 
-- Item selection: `.ui-frame.is-focused:focus` (wash MAY be on).
-- Edit focus: `.ui-frame.is-focused:focus-within:not(:focus)` (wash SHOULD be off; local affordance on `:focus`).
-- Target affordances SHOULD use `:focus`, not `:focus-visible`.
+- Item visuals (rail/wash) come from `.is-selected` / `.is-item-selected`.
+- Target visuals (halo/ring/caret) come from local DOM focus.
+- Use `:focus`/`:focus-within` for target affordances only; never for item state.
 
 ### Root focus indicator
 
@@ -435,13 +436,14 @@ Rules:
 
 Universal state classes:
 
-- `.is-focused`: active item.
+- `.is-selected`: item participates in active selection/editing context.
+- `.is-item-selected`: item is part of item-selection range.
 - `.is-issue`: broken/invalid connection.
 - `.is-numeric`: numeric-like resolved value.
 
 Precedence:
 
-- `.is-issue` overrides `.is-focused` for frame-derived palette.
+- `.is-issue` overrides `.is-selected` for frame-derived palette.
 
 Frame-derived variables:
 

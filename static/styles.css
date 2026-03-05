@@ -139,7 +139,7 @@
     outline: none;
   }
 
-  .ui-frame.is-focused {
+  .ui-frame.is-selected {
     --rail-tint: color-mix(
       in oklch,
       var(--accent) 70%,
@@ -152,12 +152,8 @@
     );
   }
 
-  .ui-frame.is-focused:focus {
+  .ui-frame.is-item-selected {
     --frame-wash: color-mix(in oklch, var(--ui-color-bg) 94%, var(--accent) 6%);
-  }
-
-  .ui-frame.is-focused:focus-within:not(:focus) {
-    --frame-wash: transparent;
   }
 
   .ui-frame.is-issue {
@@ -174,7 +170,7 @@
     );
   }
 
-  .ui-frame.is-issue.is-focused {
+  .ui-frame.is-issue.is-selected {
     --rail-tint: color-mix(
       in oklch,
       var(--ui-color-issue) 72%,
@@ -506,7 +502,7 @@
     --row-wash: transparent;
   }
 
-  .ui-table-row.is-focused {
+  .ui-table-row.is-selected {
     --row-wash: var(--frame-wash);
   }
 
