@@ -682,10 +682,35 @@ export function insertText(
   const caretStart = startPos.offset;
   const before = current.slice(0, caretStart);
   const after = current.slice(caretStart);
+  const syncStartValueSurface = (): void => {
+    if (!startValueEl) return;
+    const startSnap = ctx.core.item(startPos.itemId);
+    if (!isPlainValueItem(startSnap)) return;
+    ctx.flushPendingMutations();
+    renderPlainTextToContentEditable(
+      startValueEl,
+      valueToText(startSnap.content.value),
+    );
+  };
+  const applyValueEditingResult = (itemId: ItemId, caret: number): void => {
+    ctx.applyEditingResult({
+      location: { item: itemId, portals: ctx.portals },
+      target: VALUE_TARGET,
+      caret,
+      reveal: { offset: caret, defer: false },
+    });
+  };
+
   const lines = text.split("\n");
   const loc = ctx.core.locate(startPos.itemId);
-  if (!loc) return;
-
+  if (!loc) {
+    const nextText = before + text + after;
+    const nextCaret = before.length + text.length;
+    ctx.core.commit((t) => t.setValue(startPos.itemId, nextText));
+    syncStartValueSurface();
+    applyValueEditingResult(startPos.itemId, nextCaret);
+    return;
+  }
   const insertedIds: ItemId[] = [];
   ctx.core.commit((t) => {
     t.setValue(
@@ -701,25 +726,11 @@ export function insertText(
       insertedIds.push(newId);
     }
   });
-  if (startValueEl) {
-    const startSnap = ctx.core.item(startPos.itemId);
-    if (isPlainValueItem(startSnap)) {
-      ctx.flushPendingMutations();
-      renderPlainTextToContentEditable(
-        startValueEl,
-        valueToText(startSnap.content.value),
-      );
-    }
-  }
+  syncStartValueSurface();
   const lastId = insertedIds[insertedIds.length - 1] ?? startPos.itemId;
   const lastOffset =
     lastId === startPos.itemId
       ? before.length + (lines[0]?.length ?? 0)
       : (lines[lines.length - 1]?.length ?? 0);
-  ctx.applyEditingResult({
-    location: { item: lastId, portals: ctx.portals },
-    target: VALUE_TARGET,
-    caret: lastOffset,
-    reveal: { offset: lastOffset, defer: false },
-  });
+  applyValueEditingResult(lastId, lastOffset);
 }
