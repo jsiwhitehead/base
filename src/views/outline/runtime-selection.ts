@@ -1,7 +1,7 @@
 import { computed, signal, type Signal } from "@preact/signals-core";
 
 import type { ItemId, Location, Selection } from "../../core";
-import { VALUE_TARGET } from "../../core";
+import { sameLocation, VALUE_TARGET } from "../../core";
 import {
   createSuppressionFlag,
   getMappedSelectionRangeInRoot,
@@ -14,11 +14,7 @@ import {
   ITEM_SELECTOR,
   VALUE_SELECTOR,
 } from "./dom-mapping";
-import {
-  blockSelectionLocations,
-  locationKey,
-  sameLocation,
-} from "./navigation";
+import { blockSelectionLocations, locationKey } from "./navigation";
 
 export type OutlinePointerIntent = "value" | "item" | null;
 

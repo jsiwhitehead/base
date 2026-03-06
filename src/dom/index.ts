@@ -1,7 +1,7 @@
 export { createComponent, el, resolveEventTargetElement } from "./component";
 export type { Ctx } from "./component";
 export { bindItemFrame, setBodyClasses } from "./frame";
-export { buildItemHeader, buildTextField } from "./fields";
+export { buildTextField, mountHeader } from "./controls";
 export {
   createSuppressionFlag,
   getCollapsedCaretRectInSurface,
@@ -26,8 +26,7 @@ export {
 } from "./contenteditable";
 export type { SuppressionFlag } from "./contenteditable";
 
-export type { NavDirection } from "./intent";
-export { handleItemIntent, resolveFocusAfterRemove } from "./intent";
+export type { NavDirection } from "../core";
 
 export { buildDropIndicator, createDragController } from "./drag";
 

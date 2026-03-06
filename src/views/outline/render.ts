@@ -1,19 +1,19 @@
 import { computed } from "@preact/signals-core";
 
-import { isNumericLikeValue, patchConn, VALUE_TARGET } from "../../core";
+import { isNumericLikeValue, sameLocation, VALUE_TARGET } from "../../core";
 import type { ItemId, Location } from "../../core";
 import type { Component, UiCore } from "../../dom";
 import {
-  buildItemHeader,
   createComponent,
   el,
   hasActiveSelectionInSurface,
+  mountHeader,
   readPlainTextFromContentEditable,
   renderPlainTextToContentEditable,
   setBodyClasses,
 } from "../../dom";
 import { valueCaretOffset } from "./dom-mapping";
-import { locationKey, sameLocation, valueToText } from "./navigation";
+import { locationKey, valueToText } from "./navigation";
 import type { OutlineSelectionState } from "./runtime";
 
 type OutlineItemSelectionState = "none" | "item" | "value" | "header";
@@ -135,16 +135,6 @@ function buildOutlineChild(
       if (!sameLocation(selection.location, itemFocus)) return "none";
       return "header";
     });
-    const shouldShowHeader = computed(() => {
-      const snap = core.item(itemId);
-      const labelText = (snap.label ?? "").trim();
-      return (
-        labelText.length > 0 ||
-        snap.mode.type === "connected" ||
-        itemSelectionState.value === "header"
-      );
-    });
-
     ctx.effect(() => {
       itemEl.classList.toggle(
         "is-item-selected",
@@ -166,30 +156,11 @@ function buildOutlineChild(
       itemEl.classList.toggle("is-numeric", isNumeric);
     });
 
-    ctx.slot(itemEl, () => {
-      if (!shouldShowHeader.value) return null;
-
-      const location: Location = { item: itemId, portals };
-      const canEditLabel = () => core.item(itemId).mode.type !== "readonly";
-      const commitLabel = (text: string) => {
-        if (!canEditLabel()) return;
-        if ((core.item(itemId).label ?? "") === text) return;
-        core.commit((t) => t.setLabel(itemId, text));
-      };
-      const commitConnField = (key: string, text: string) => {
-        const item = core.item(itemId);
-        if (item.mode.type !== "connected") return;
-        const { conn } = item.mode;
-        core.commit((t) => t.setConnected(itemId, patchConn(conn, key, text)));
-      };
-
-      return buildItemHeader(core, {
-        location,
-        id: itemId,
-        canEditLabel,
-        commitLabel,
-        commitConnField,
-      });
+    mountHeader(ctx, {
+      core,
+      host: itemEl,
+      location: { item: itemId, portals },
+      id: itemId,
     });
 
     ctx.slot(itemEl, () => {
@@ -200,7 +171,11 @@ function buildOutlineChild(
       const snap = core.item(itemId);
       const childPortals =
         snap.mode.type === "connected" ? [...portals, itemId] : portals;
-      const mounted = core.mountView({ id: itemId, portals: childPortals });
+      const mounted = core.mountView({
+        id: itemId,
+        portals: childPortals,
+        view: nextView,
+      });
       mounted.el.contentEditable = "false";
       return mounted;
     });

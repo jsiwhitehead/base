@@ -2,17 +2,21 @@ import { signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
 import type { Location, Intent, ItemId } from "../src/core";
-import { LABEL_TARGET, VALUE_TARGET, connTarget } from "../src/core";
+import {
+  LABEL_TARGET,
+  VALUE_TARGET,
+  connTarget,
+  handleItemIntent,
+} from "../src/core";
 import type { Component } from "../src/dom";
 import {
   bindItemFrame,
-  buildItemHeader,
   buildTextField,
   createComponent,
   domPointToTextOffset,
   el,
   getPlainTextFromDataTransfer,
-  handleItemIntent,
+  mountHeader,
   readPlainTextFromContentEditable,
   renderPlainTextToContentEditable,
   setDomCaret,
@@ -41,6 +45,20 @@ function mount(c: Component): () => void {
     c.dispose();
     document.body.replaceChildren();
   };
+}
+
+function mountInItemFrame(
+  core: Parameters<typeof createComponent>[0],
+  location: Location,
+  c: Component,
+): () => void {
+  const wrapped = createComponent(core, (ctx) => {
+    const frameEl = el("div");
+    bindItemFrame(ctx, { core, location }, frameEl);
+    ctx.mount(frameEl, c);
+    return frameEl;
+  });
+  return mount(wrapped);
 }
 
 function spy<T extends unknown[] = unknown[]>() {
@@ -592,7 +610,7 @@ describe("bindItemFrame contract", () => {
       return frame;
     });
 
-    const unmount = mount(c);
+    const unmount = mountInItemFrame(core, location, c);
     await flushDomEffects();
 
     const frame = c.el as HTMLElement;
@@ -640,7 +658,7 @@ describe("buildTextField contract", () => {
       getState: () => ({ text: text.value, readOnly: false }),
     });
 
-    const unmount = mount(c);
+    const unmount = mountInItemFrame(core, location, c);
     await flushDomEffects();
 
     expect(c.el.classList.contains("ui-textfield")).toBe(true);
@@ -671,7 +689,7 @@ describe("buildTextField contract", () => {
       getState: () => ({ text: text.value, readOnly: false }),
     });
 
-    const unmount = mount(c);
+    const unmount = mountInItemFrame(core, location, c);
     await flushDomEffects();
 
     const mirror = c.el.querySelector(
@@ -1334,18 +1352,22 @@ describe("buildTextField contract", () => {
   });
 });
 
-describe("buildItemHeader contract", () => {
+describe("mountHeader contract", () => {
   test("always renders label field (LABEL_TARGET)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     const location: Location = { item: id, portals: [] };
 
-    const c = buildItemHeader(core, {
-      location,
-      id,
-      commitLabel: () => {},
-      canEditLabel: () => true,
-      commitConnField: () => {},
+    const c = createComponent(core, (ctx) => {
+      const host = el("div");
+      mountHeader(ctx, {
+        core,
+        host,
+        location,
+        id,
+        visibility: "always",
+      });
+      return host;
     });
 
     const unmount = mount(c);
@@ -1362,12 +1384,16 @@ describe("buildItemHeader contract", () => {
     setFormula(core, id, "");
     const location: Location = { item: id, portals: [] };
 
-    const c = buildItemHeader(core, {
-      location,
-      id,
-      commitLabel: () => {},
-      canEditLabel: () => true,
-      commitConnField: () => {},
+    const c = createComponent(core, (ctx) => {
+      const host = el("div");
+      mountHeader(ctx, {
+        core,
+        host,
+        location,
+        id,
+        visibility: "always",
+      });
+      return host;
     });
 
     const unmount = mount(c);
@@ -1388,12 +1414,16 @@ describe("buildItemHeader contract", () => {
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
     const location: Location = { item: id, portals: [] };
 
-    const c = buildItemHeader(core, {
-      location,
-      id,
-      commitLabel: () => {},
-      canEditLabel: () => true,
-      commitConnField: () => {},
+    const c = createComponent(core, (ctx) => {
+      const host = el("div");
+      mountHeader(ctx, {
+        core,
+        host,
+        location,
+        id,
+        visibility: "always",
+      });
+      return host;
     });
 
     const unmount = mount(c);
@@ -1418,12 +1448,16 @@ describe("buildItemHeader contract", () => {
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
     const location: Location = { item: id, portals: [] };
 
-    const c = buildItemHeader(core, {
-      location,
-      id,
-      commitLabel: () => {},
-      canEditLabel: () => true,
-      commitConnField: () => {},
+    const c = createComponent(core, (ctx) => {
+      const host = el("div");
+      mountHeader(ctx, {
+        core,
+        host,
+        location,
+        id,
+        visibility: "always",
+      });
+      return host;
     });
 
     const unmount = mount(c);
@@ -1572,10 +1606,18 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const { core } = makeCoreRuntime();
 
     expect(() =>
-      core.mountView({ id: "not-an-id" as ItemId, portals: [] }),
+      core.mountView({
+        id: "not-an-id" as ItemId,
+        portals: [],
+        view: "outline",
+      }),
     ).toThrow();
     expect(() =>
-      core.mountView({ id: "999999:" as ItemId, portals: [] }),
+      core.mountView({
+        id: "999999:" as ItemId,
+        portals: [],
+        view: "outline",
+      }),
     ).toThrow();
   });
 
@@ -1585,7 +1627,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const s = mkBlank(core, rootId, { label: "s", value: 1 });
     setView(core, s, "slider");
 
-    const mounted = core.mountView({ id: s, portals: [] });
+    const mounted = core.mountView({ id: s, portals: [], view: "slider" });
 
     expect(mounted.el.classList.contains("ui-body")).toBe(true);
     expect(mounted.el.classList.contains("ui-outline")).toBe(true);
@@ -1596,6 +1638,8 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("mountView throws when requested view and outline fallback are both missing", () => {
     const { core, rootId } = makeCoreRuntime({ views: {} });
 
-    expect(() => core.mountView({ id: rootId, portals: [] })).toThrow();
+    expect(() =>
+      core.mountView({ id: rootId, portals: [], view: "outline" }),
+    ).toThrow();
   });
 });

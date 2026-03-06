@@ -1,4 +1,5 @@
 import {
+  sameLocation,
   VALUE_TARGET,
   type Core,
   type Item,
@@ -55,11 +56,6 @@ export function nextSibling(core: Core, id: ItemId): ItemId | null {
   const loc = core.locate(id);
   return loc ? (loc.siblings[loc.index + 1] ?? null) : null;
 }
-
-export const sameLocation = (a: Location, b: Location): boolean =>
-  a.item === b.item &&
-  a.portals.length === b.portals.length &&
-  a.portals.every((portal, i) => portal === b.portals[i]);
 
 export function locationKey(location: Location): string {
   return `${location.portals.join("|")}::${location.item}`;

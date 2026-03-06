@@ -1,9 +1,15 @@
 import { computed } from "@preact/signals-core";
 
 import type { Location, ItemId } from "../core";
-import { LABEL_TARGET, connTarget, fieldsFromConn } from "../core";
-import { createComponent, el } from "./component";
+import {
+  LABEL_TARGET,
+  connTarget,
+  fieldsFromConn,
+  sameLocation,
+} from "../core";
+import { createComponent, type Ctx, el } from "./component";
 import type { Component, UiCore } from "./runtime";
+import { patchConn } from "../core";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -100,11 +106,7 @@ export function buildTextField(
       const selection = core.selection();
       return (
         selection.type === "editing" &&
-        selection.location.item === opts.location.item &&
-        selection.location.portals.length === opts.location.portals.length &&
-        selection.location.portals.every(
-          (portal, i) => portal === opts.location.portals[i],
-        ) &&
+        sameLocation(selection.location, opts.location) &&
         selection.target === opts.target
       );
     };
@@ -339,19 +341,23 @@ export function buildTextField(
   return { ...c, focusEl };
 }
 
-export function buildItemHeader(
+function buildHeader(
   core: UiCore,
   args: {
     location: Location;
     id: ItemId;
-    commitLabel: (text: string) => void;
-    canEditLabel: () => boolean;
-    commitConnField: (key: string, text: string) => void;
   },
 ): Component {
-  const id = args.id;
+  const { location, id } = args;
 
   return createComponent(core, (ctx) => {
+    const fieldsSignal = computed(() => {
+      const item = core.item(id);
+      return item.mode.type === "connected"
+        ? fieldsFromConn(item.mode.conn)
+        : [];
+    });
+
     const headerEl = el("div", "ui-header");
     headerEl.contentEditable = "false";
 
@@ -362,28 +368,29 @@ export function buildItemHeader(
     ctx.mount(
       labelWrap,
       buildTextField(core, {
-        location: args.location,
+        location,
         target: LABEL_TARGET,
         multiline: false,
         autosize: true,
         kind: "isolated",
         onExitToItem: () => {
-          core.focus({ type: "item", location: args.location });
+          core.focus({ type: "item", location });
         },
-        commit: args.commitLabel,
+        commit: (text) => {
+          const item = core.item(id);
+          if (item.mode.type === "readonly") return;
+          if ((item.label ?? "") === text) return;
+          core.commit((t) => t.setLabel(id, text));
+        },
         getState: () => {
           const snap = core.item(id);
-          return { text: snap.label ?? "", readOnly: !args.canEditLabel() };
+          return {
+            text: snap.label ?? "",
+            readOnly: snap.mode.type === "readonly",
+          };
         },
       }),
     );
-
-    const fieldsSignal = computed(() => {
-      const snap = core.item(id);
-      return snap.mode.type === "connected"
-        ? fieldsFromConn(snap.mode.conn)
-        : [];
-    });
 
     ctx.list<string>(
       connWrap,
@@ -408,12 +415,19 @@ export function buildItemHeader(
           rowCtx.mount(
             valueEl,
             buildTextField(core, {
-              location: args.location,
+              location,
               target: connTarget(key),
               multiline: fieldSignal.value?.multiline ?? true,
               autosize: true,
               kind: "traversable",
-              commit: (text) => args.commitConnField(key, text),
+              commit: (text) => {
+                const item = core.item(id);
+                if (item.mode.type !== "connected") return;
+                const { conn } = item.mode;
+                core.commit((t) =>
+                  t.setConnected(id, patchConn(conn, key, text)),
+                );
+              },
               getState: () => {
                 const field = fieldSignal.value;
                 if (!field) return { text: "", readOnly: true };
@@ -427,5 +441,39 @@ export function buildItemHeader(
     );
 
     return headerEl;
+  });
+}
+
+export function mountHeader(
+  ctx: Ctx,
+  args: {
+    core: UiCore;
+    host: HTMLElement;
+    location: Location;
+    id: ItemId;
+    visibility?: "auto" | "always";
+  },
+): void {
+  const { core, host, location, id, visibility = "auto" } = args;
+  if (visibility === "always") {
+    ctx.mount(host, buildHeader(core, { location, id }));
+    return;
+  }
+
+  const shouldShowHeader = computed(() => {
+    const item = core.item(id);
+    const selection = core.selection();
+    return (
+      (item.label ?? "").trim().length > 0 ||
+      item.mode.type === "connected" ||
+      (selection.type === "editing" &&
+        selection.target === LABEL_TARGET &&
+        sameLocation(selection.location, location))
+    );
+  });
+
+  ctx.slot(host, () => {
+    if (!shouldShowHeader.value) return null;
+    return buildHeader(core, { location, id });
   });
 }

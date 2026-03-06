@@ -63,10 +63,15 @@ Ownership boundaries MUST remain stable under extension.
 
 ### View resolution and routing
 
-The active view resolves to the nearest containing mounted view root. It MUST update on pointer interactions and on programmatic focus application.
+The active view resolves from the current selection binding, not from browser focus alone.
+Routing is binding-based: outer-owned bindings route to outer handlers, and body-owned bindings route to body handlers.
 
-Core routes all non-global view intents to that active view handler.
+Rules:
 
+- Selection must resolve to a single view handler.
+- Missing or cross-view selection bindings are invariant violations.
+
+Core routes non-global intents to that active view handler.
 Intent routing MUST be deterministic and MUST NOT depend on DOM traversal order.
 
 ### Model state vs view state

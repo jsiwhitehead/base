@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ItemId, Transaction } from "../src/core";
 import type { UiCore } from "../src/dom";
-import { bindItemFrame, createComponent, el } from "../src/dom";
+import { buildRootShell } from "../src/setup";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -21,21 +21,7 @@ import {
 } from "./dom-test-utils";
 
 function mountAppShell(core: UiCore, rootId: ItemId): () => void {
-  const location = { item: rootId, portals: [] };
-
-  const appRoot = createComponent(core, (ctx) => {
-    const rootFrame = el("div");
-    rootFrame.classList.add("ui-main");
-    rootFrame.tabIndex = 0;
-
-    bindItemFrame(ctx, { core, location }, rootFrame);
-
-    ctx.slot(rootFrame, () => {
-      return core.mountView({ id: rootId, portals: [] });
-    });
-
-    return rootFrame;
-  });
+  const appRoot = buildRootShell(core, rootId);
 
   document.body.replaceChildren(appRoot.el);
   appRoot.el.focus();

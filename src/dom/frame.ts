@@ -1,19 +1,11 @@
 import { computed } from "@preact/signals-core";
 
 import type { Location, ViewName } from "../core";
-import { ITEM_TARGET, isNumericLikeValue } from "../core";
+import { ITEM_TARGET, isNumericLikeValue, sameLocation } from "../core";
 
 import { resolveEventTargetElement } from "./component";
 import type { Ctx } from "./component";
 import type { UiCore } from "./runtime";
-
-function sameLocation(a: Location, b: Location): boolean {
-  return (
-    a.item === b.item &&
-    a.portals.length === b.portals.length &&
-    a.portals.every((portal, i) => portal === b.portals[i])
-  );
-}
 
 export function bindItemFrame(
   ctx: Ctx,
@@ -40,10 +32,7 @@ export function bindItemFrame(
   const isEditingOnItem = computed(() => {
     const sel = spec.core.selection();
     if (sel.type !== "editing") return false;
-    return (
-      sel.location.item === spec.location.item &&
-      sameLocation(sel.location, spec.location)
-    );
+    return sameLocation(sel.location, spec.location);
   });
   const isSelected = computed(() => {
     return isItemSelected.value || isEditingOnItem.value;

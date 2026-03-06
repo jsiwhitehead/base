@@ -401,13 +401,13 @@ core.view(id): ViewName
 
 Rules:
 
-- Core owns semantic intent parsing (`parseKeyIntent`) and routing.
+- Core owns semantic intent parsing (`parseKeyIntent`) and dispatch.
 - DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
-- Core routes non-global intents through `resolveIntentHandler(selection)` when provided.
-- Core receives editor key events only when editors/controls allow those events to bubble (yield).
-- Native text editors (`input`, `textarea`, `contenteditable`) SHOULD process local text edits first.
-- Core MAY still handle explicit global commands while focus is in native text editors.
-- Core MUST handle root bootstrap intents globally. From root item selection, only `NAV right`, `TAB`, `CONFIRM`, and `TYPE` are enabled; each MUST follow the corresponding Outline behavior (`docs/views-spec.md`).
+- Core handles `NAV/out` before any active-view delegation.
+- Core routes other non-global intents through `resolveIntentHandler(selection)` when provided.
+- Editors and controls decide which key events bubble to Core.
+- Native text editors (`input`, `textarea`, `contenteditable`) SHOULD handle local text edits first.
+- Core MAY still handle explicit global commands while focus is in a native text editor.
 - View behavior MUST remain intent-driven (semantic), not raw-key driven.
 
 ### View shapes
@@ -612,7 +612,7 @@ Type exports:
 - `CorePlatformHooks`
 - `Intent`
 - `KeyIntentInput`
-- `NavDir`
+- `NavDirection`
 - `Selection`
 - `Location`
 - `SnapshotData`

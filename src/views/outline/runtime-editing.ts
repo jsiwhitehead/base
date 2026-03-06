@@ -49,8 +49,8 @@ import {
   valueCaretOffset,
   VALUE_SELECTOR,
 } from "./dom-mapping";
-import type { OutlineSelectionEditingControls } from "./selection-runtime";
-import { isOutlineValueEditEvent } from "./selection-runtime";
+import type { OutlineSelectionEditingControls } from "./runtime-selection";
+import { isOutlineValueEditEvent } from "./runtime-selection";
 
 export type InputState = {
   compositionEndedAt: number;

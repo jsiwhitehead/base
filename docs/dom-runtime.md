@@ -235,7 +235,11 @@ Rules:
 
 Intent routing:
 
-- Escape is represented as `NAV/out` and may be handled by the active view after Core global handling.
+- Editing selection resolves from the exact bound `(location, target)`.
+- Item selection resolves from bound `ITEM_TARGET`s at both endpoints.
+- Non-root item selection must resolve to a mounted view.
+- Exact root item selection does not resolve through a mounted view; it routes to the root outer handler.
+- Missing bindings or mixed/cross-view item selection are invariant violations.
 
 ### `handleItemIntent({ core, sel, intent })`
 

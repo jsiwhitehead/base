@@ -8,7 +8,7 @@ import type {
   ViewShape,
   ViewName,
 } from "../core";
-import { ITEM_TARGET, parseKeyIntent } from "../core";
+import { ITEM_TARGET, VALUE_TARGET, parseKeyIntent } from "../core";
 
 import {
   domPointToTextOffset,
@@ -24,7 +24,7 @@ type ViewHandle = { root: HTMLElement; onIntent?: (intent: Intent) => void };
 export type Component = { el: HTMLElement; dispose(): void };
 
 export type DomView = {
-  body?: object;
+  bodyRoot?: object;
   root: HTMLElement;
   onIntent?: (intent: Intent) => void;
   dispose(): void;
@@ -45,7 +45,7 @@ type ViewMountArgs = { core: UiCore; id: ItemId; location: Location };
 
 export type AuthoredView = {
   onIntent?: (intent: Intent) => void;
-  body: Component;
+  bodyRoot: Component;
 };
 
 export type ShapedViewRegistration<S extends ViewShape> = {
@@ -55,11 +55,11 @@ export type ShapedViewRegistration<S extends ViewShape> = {
 
 function authoredViewToDomView(view: AuthoredView): DomView {
   return {
-    body: view.body,
-    root: view.body.el,
+    bodyRoot: view.bodyRoot,
+    root: view.bodyRoot.el,
     ...(view.onIntent ? { onIntent: view.onIntent } : {}),
     dispose() {
-      view.body.dispose();
+      view.bodyRoot.dispose();
     },
   };
 }
@@ -106,7 +106,11 @@ type AttachTargetOpts = {
   getCaret?: () => number | undefined;
 };
 
-type MountViewOpts = { id: ItemId; portals: readonly ItemId[] };
+type MountViewOpts = {
+  id: ItemId;
+  portals: readonly ItemId[];
+  view: ViewName;
+};
 
 const itemKey = (id: ItemId): string => id;
 const keyOf = (f: Location): string =>
@@ -172,6 +176,7 @@ export type DomRuntime = {
   attachTarget(opts: AttachTargetOpts): () => void;
 
   mountView(opts: MountViewOpts): Component;
+  setRootOuterIntentHandler(handler: (intent: Intent) => void): void;
 
   installGlobalListeners(win?: Window): () => void;
 
@@ -182,6 +187,7 @@ export type DomRuntime = {
 
 export function createRuntime(opts: {
   getCore: () => UiCore;
+  rootId: ItemId;
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
   dispatchIntent: (intent: Intent) => void;
   getSelection: () => Selection;
@@ -194,6 +200,7 @@ export function createRuntime(opts: {
   const mountedViewsByLocation = new Map<string, ViewHandle>();
   let pending: { selection: Selection; effects: RuntimeEffect[] } | null = null;
   let flushScheduled = false;
+  let rootOuterIntentHandler: ((intent: Intent) => void) | null = null;
 
   const locationMapFor = (
     location: Location,
@@ -226,36 +233,51 @@ export function createRuntime(opts: {
       return viewAtTarget(viewRoots, el);
     };
 
-    const direct = fromBinding(resolveBinding(location, target));
-    if (direct) return direct;
+    return fromBinding(resolveBinding(location, target));
+  };
 
-    if (target !== ITEM_TARGET) return null;
+  const isExactRootLocation = (location: Location): boolean =>
+    location.item === opts.rootId && location.portals.length === 0;
 
-    const resolveByMountedItem = (itemId: ItemId): ViewHandle | null => {
-      const core = opts.getCore();
-      let cur: ItemId | null = itemId;
-      while (cur) {
-        const mounted = mountedViewsByLocation.get(
-          keyOf({ item: cur, portals: location.portals }),
+  const resolveItemSelectionView = (
+    selection: Extract<Selection, { type: "item" }>,
+  ): ViewHandle | null => {
+    const anchorIsRoot = isExactRootLocation(selection.anchor);
+    const headIsRoot = isExactRootLocation(selection.head);
+
+    if (anchorIsRoot || headIsRoot) {
+      if (!anchorIsRoot || !headIsRoot) {
+        throw new Error(
+          `Mixed root/non-root item selection is invalid: anchor=${keyOf(selection.anchor)} head=${keyOf(selection.head)}`,
         );
-        if (mounted) return mounted;
-        const loc = core.locate(cur);
-        cur = loc?.parentId ?? null;
       }
       return null;
-    };
-
-    const byItem = resolveByMountedItem(location.item);
-    if (byItem) return byItem;
-
-    const targetBindings = bindings.get(keyOf(location));
-    if (!targetBindings) return null;
-
-    for (const rec of targetBindings.values()) {
-      const viaSiblingTarget = fromBinding(rec.binding);
-      if (viaSiblingTarget) return viaSiblingTarget;
     }
-    return null;
+
+    const anchorView = resolveViewForLocationTarget(
+      selection.anchor,
+      ITEM_TARGET,
+    );
+    if (!anchorView) {
+      throw new Error(
+        `Missing ITEM_TARGET binding for item selection anchor at ${keyOf(selection.anchor)}`,
+      );
+    }
+
+    const headView = resolveViewForLocationTarget(selection.head, ITEM_TARGET);
+    if (!headView) {
+      throw new Error(
+        `Missing ITEM_TARGET binding for item selection head at ${keyOf(selection.head)}`,
+      );
+    }
+
+    if (anchorView !== headView) {
+      throw new Error(
+        `Cross-view item selection is invalid: anchor=${keyOf(selection.anchor)} head=${keyOf(selection.head)}`,
+      );
+    }
+
+    return headView;
   };
 
   const applyDomFocus = (
@@ -469,11 +491,11 @@ export function createRuntime(opts: {
     const id = mountOpts.id;
     const location: Location = { item: id, portals: mountOpts.portals };
     const core = opts.getCore();
-    const resolvedView = core.view(id);
-    const factory = views[resolvedView] ?? views.outline;
+    core.item(id);
+    const factory = views[mountOpts.view] ?? views.outline;
     if (!factory) {
       throw new Error(
-        `No view factory available for '${resolvedView}' and outline fallback is missing`,
+        `No view factory available for '${mountOpts.view}' and outline fallback is missing`,
       );
     }
 
@@ -498,10 +520,21 @@ export function createRuntime(opts: {
     selection: Selection,
   ): ((intent: Intent) => void) | null => {
     if (selection.type === "idle") return null;
-    const view =
-      selection.type === "editing"
-        ? resolveViewForLocationTarget(selection.location, selection.target)
-        : resolveViewForLocationTarget(selection.head, ITEM_TARGET);
+    if (selection.type === "item") {
+      const view = resolveItemSelectionView(selection);
+      if (!view) return rootOuterIntentHandler;
+      return view.onIntent ?? null;
+    }
+    if (
+      isExactRootLocation(selection.location) &&
+      selection.target !== VALUE_TARGET
+    ) {
+      return rootOuterIntentHandler;
+    }
+    const view = resolveViewForLocationTarget(
+      selection.location,
+      selection.target,
+    );
     return view?.onIntent ?? null;
   };
 
@@ -517,6 +550,9 @@ export function createRuntime(opts: {
     readCurrentCaret,
     attachTarget,
     mountView,
+    setRootOuterIntentHandler(handler) {
+      rootOuterIntentHandler = handler;
+    },
     installGlobalListeners,
     resolveIntentHandler,
     dispose,
@@ -542,11 +578,13 @@ function createUiCore(core: Core, runtime: DomRuntime): UiCore {
 
 export function bindUiRuntime(args: {
   core: Core;
+  rootId: ItemId;
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
 }): { core: UiCore; runtime: DomRuntime } {
   let uiCore!: UiCore;
   const runtime = createRuntime({
     getCore: () => uiCore,
+    rootId: args.rootId,
     views: args.views,
     dispatchIntent: (intent) => args.core.dispatch(intent),
     getSelection: () => args.core.selection(),

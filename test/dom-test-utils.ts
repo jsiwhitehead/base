@@ -27,20 +27,26 @@ export {
 
 const cleanups: Array<() => void> = [];
 
+function drainCleanups(): void {
+  document.body.replaceChildren();
+  for (const fn of cleanups.toReversed()) fn();
+  cleanups.length = 0;
+}
+
 beforeAll(() => {
   GlobalRegistrator.register();
 });
 
 afterEach(() => {
-  document.body.replaceChildren();
-  for (const fn of cleanups.toReversed()) fn();
-  cleanups.length = 0;
+  drainCleanups();
 });
 
 export function makeCoreRuntime(args?: {
   views?: Partial<typeof viewRegistrations>;
   collab?: CollabWire;
 }): { core: UiCore; rootId: ItemId } {
+  drainCleanups();
+
   const { core, pureCore, rootId, runtime } = createUiCoreRuntime({
     views: args?.views ?? viewRegistrations,
     ...(args?.collab ? { collab: args.collab } : {}),

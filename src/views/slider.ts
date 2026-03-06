@@ -175,8 +175,8 @@ export const sliderView = defineShapedView(
       }
     };
 
-    const body = buildSliderBody({ core, id, reader, opts, location });
+    const bodyRoot = buildSliderBody({ core, id, reader, opts, location });
 
-    return { onIntent, body };
+    return { onIntent, bodyRoot };
   },
 );

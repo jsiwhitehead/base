@@ -13,14 +13,45 @@ import {
   bindItemFrame,
   bindUiRuntime,
   buildDropIndicator,
-  createComponent,
   createDragController,
+  createComponent,
   el,
+  mountHeader,
 } from "./dom";
 import type { ViewRegistration } from "./dom";
+import { createOutlineIntentHandler } from "./views/outline/intent";
 import { splitViewRegistrations, viewRegistrations } from "./views";
 
 const SHOW_DEBUG_PANEL = true;
+
+export function buildRootShell(core: UiCore, rootId: ItemId) {
+  const location = { item: rootId, portals: [] } as const;
+
+  return createComponent(core, (ctx) => {
+    const rootFrame = el("div");
+    rootFrame.classList.add("ui-main");
+    rootFrame.tabIndex = 0;
+
+    bindItemFrame(ctx, { core, location }, rootFrame);
+
+    mountHeader(ctx, {
+      core,
+      host: rootFrame,
+      location,
+      id: rootId,
+    });
+
+    ctx.slot(rootFrame, () => {
+      return core.mountView({
+        id: rootId,
+        portals: [],
+        view: core.view(rootId),
+      });
+    });
+
+    return rootFrame;
+  });
+}
 
 export function createUiCoreRuntime(args?: {
   views?: Partial<Record<ViewName, ViewRegistration>>;
@@ -48,7 +79,18 @@ export function createUiCoreRuntime(args?: {
     platform,
   });
 
-  const bound = bindUiRuntime({ core: pureCore, views: factories });
+  const bound = bindUiRuntime({
+    core: pureCore,
+    rootId,
+    views: factories,
+  });
+  bound.runtime.setRootOuterIntentHandler(
+    createOutlineIntentHandler({
+      core: bound.core,
+      viewRootId: rootId,
+      portals: [],
+    }),
+  );
   runtime = bound.runtime;
 
   return { core: bound.core, pureCore, rootId, runtime: bound.runtime };
@@ -78,21 +120,7 @@ export function createApp(opts: CreateAppOpts): App {
     t.setView(rootId, rootView);
   });
 
-  const location = { item: rootId, portals: [] };
-
-  const appRoot = createComponent(core, (ctx) => {
-    const rootFrame = el("div");
-    rootFrame.classList.add("ui-main");
-    rootFrame.tabIndex = 0;
-
-    bindItemFrame(ctx, { core, location }, rootFrame);
-
-    ctx.slot(rootFrame, () => {
-      return core.mountView({ id: rootId, portals: [] });
-    });
-
-    return rootFrame;
-  });
+  const appRoot = buildRootShell(core, rootId);
 
   const drag = createDragController(core);
   const indicator = buildDropIndicator(drag.state);

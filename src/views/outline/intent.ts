@@ -1,7 +1,10 @@
 import type { Intent, ItemId, Location, Selection } from "../../core";
-import { applyTypeToPrimaryTarget, VALUE_TARGET } from "../../core";
+import {
+  applyTypeToPrimaryTarget,
+  handleItemIntent,
+  VALUE_TARGET,
+} from "../../core";
 import type { UiCore } from "../../dom";
-import { handleItemIntent } from "../../dom";
 
 import {
   computePruneAncestorsForRemoval,
@@ -17,6 +20,36 @@ import {
   parentOf,
   prevSibling,
 } from "./navigation";
+
+function focusFirstChildIfAny(core: UiCore, location: Location): boolean {
+  const item = core.item(location.item);
+  if (item.content.type !== "group") return false;
+  const firstChildId = item.content.children[0] ?? null;
+  if (!firstChildId) return false;
+  core.focus({
+    type: "item",
+    location: { item: firstChildId, portals: location.portals },
+  });
+  return true;
+}
+
+function convertEmptyGroupToValueAndFocus(
+  core: UiCore,
+  location: Location,
+  initialText: string,
+): boolean {
+  const item = core.item(location.item);
+  if (item.mode.type === "readonly") return false;
+  if (item.content.type !== "group") return false;
+  if (item.content.children.length !== 0) return false;
+
+  core.commit((t) => t.setValue(location.item, initialText));
+  core.focus(
+    { type: "editing", location, target: VALUE_TARGET },
+    { caret: initialText.length },
+  );
+  return true;
+}
 
 function handleOutlineItemTypeIntent(args: {
   core: UiCore;
@@ -46,25 +79,6 @@ function handleOutlineItemTypeIntent(args: {
   return true;
 }
 
-function convertEmptyGroupToValueAndFocus(args: {
-  core: UiCore;
-  location: Location;
-  initialText: string;
-}): boolean {
-  const { core, location, initialText } = args;
-  const item = core.item(location.item);
-  if (item.mode.type === "readonly") return false;
-  if (item.content.type !== "group") return false;
-  if (item.content.children.length !== 0) return false;
-
-  core.commit((t) => t.setValue(location.item, initialText));
-  core.focus(
-    { type: "editing", location, target: VALUE_TARGET },
-    { caret: initialText.length },
-  );
-  return true;
-}
-
 export function createOutlineValueTabHandler(args: {
   core: UiCore;
 }): (location: Location, shift: boolean, caret: number) => void {
@@ -83,10 +97,10 @@ export function createOutlineValueTabHandler(args: {
 
 export function createOutlineIntentHandler(args: {
   core: UiCore;
-  rootId: ItemId;
-  rootPortals: readonly ItemId[];
+  viewRootId: ItemId;
+  portals: readonly ItemId[];
 }): (intent: Intent) => void {
-  const { core, rootId, rootPortals } = args;
+  const { core, viewRootId, portals } = args;
 
   return (intent: Intent): void => {
     const selection = core.selection();
@@ -94,39 +108,40 @@ export function createOutlineIntentHandler(args: {
     const sel = selection;
 
     const location: Location = sel.head;
-    const selectedItems = blockSelectionItems(core, rootId, sel, rootPortals);
+    const selectedItems = blockSelectionItems(core, viewRootId, sel, portals);
 
     if (intent.type === "DELETE") {
       if (selectedItems.length > 1) {
         const lastId = selectedItems[selectedItems.length - 1]!;
-        const blockPlan = planBlockRemoval(core, rootId, selectedItems);
+        const blockPlan = planBlockRemoval(core, viewRootId, selectedItems);
         const nextFocus = resolveFocusAfterOutlineRemove(
           core,
-          rootId,
+          viewRootId,
           lastId,
           "next",
-          rootPortals,
+          portals,
           blockPlan.removedIds,
         );
-        removeBlockSelection(core, rootId, sel, rootPortals, blockPlan);
+        removeBlockSelection(core, viewRootId, sel, portals, blockPlan);
         if (nextFocus) core.focus({ type: "item", location: nextFocus });
         return;
       }
       const id = sel.head.item;
+      if (!core.locate(id)) return;
       if (core.item(id).mode.type === "readonly") return;
       const removedIds = new Set<ItemId>([
         id,
-        ...computePruneAncestorsForRemoval(core, rootId, id),
+        ...computePruneAncestorsForRemoval(core, viewRootId, id),
       ]);
       const nextFocus = resolveFocusAfterOutlineRemove(
         core,
-        rootId,
+        viewRootId,
         id,
         "next",
-        rootPortals,
+        portals,
         removedIds,
       );
-      outlineCmd.removeAndPruneAncestors(core, rootId, id);
+      outlineCmd.removeAndPruneAncestors(core, viewRootId, id);
       if (nextFocus) core.focus({ type: "item", location: nextFocus });
       return;
     }
@@ -144,13 +159,13 @@ export function createOutlineIntentHandler(args: {
         const dir = intent.dir === "out" ? "left" : intent.dir;
         const fromId = sel.head.item;
         let nextId: ItemId | null = null;
-        if (dir === "left") nextId = parentOf(core, rootId, fromId);
+        if (dir === "left") nextId = parentOf(core, viewRootId, fromId);
         else if (dir === "right")
           nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
         else if (dir === "up") nextId = prevSibling(core, fromId);
         else if (dir === "down") nextId = nextSibling(core, fromId);
         if (!nextId) return;
-        const nextFocus = { item: nextId, portals: rootPortals };
+        const nextFocus = { item: nextId, portals };
         core.focus({ type: "item", location: nextFocus });
         return;
       }
@@ -161,19 +176,13 @@ export function createOutlineIntentHandler(args: {
         if (intent.char === "=" && handleItemIntent({ core, sel, intent })) {
           return;
         }
-        if (
-          convertEmptyGroupToValueAndFocus({
-            core,
-            location,
-            initialText: intent.char,
-          })
-        ) {
+        if (convertEmptyGroupToValueAndFocus(core, location, intent.char)) {
           return;
         }
         if (
           handleOutlineItemTypeIntent({
             core,
-            portals: rootPortals,
+            portals,
             sel,
             intent,
           })
@@ -184,18 +193,22 @@ export function createOutlineIntentHandler(args: {
         return;
       }
       case "CONFIRM": {
-        if (
-          convertEmptyGroupToValueAndFocus({ core, location, initialText: "" })
-        ) {
+        if (convertEmptyGroupToValueAndFocus(core, location, "")) {
           return;
         }
         if (handleItemIntent({ core, sel, intent })) return;
+        if (
+          location.item === viewRootId &&
+          focusFirstChildIfAny(core, location)
+        ) {
+          return;
+        }
         const nextId = outlineCmd.insertSibling(core, location, "after");
         if (!nextId) return;
         core.focus(
           {
             type: "editing",
-            location: { item: nextId, portals: rootPortals },
+            location: { item: nextId, portals },
             target: VALUE_TARGET,
           },
           { caret: 0 },

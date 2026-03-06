@@ -11,6 +11,14 @@ export const connTarget: (key: string) => string = (key) => `conn:${key}`;
 
 export type Location = { item: ItemId; portals: readonly ItemId[] };
 
+export function sameLocation(a: Location, b: Location): boolean {
+  return (
+    a.item === b.item &&
+    a.portals.length === b.portals.length &&
+    a.portals.every((portal, i) => portal === b.portals[i])
+  );
+}
+
 export type Selection =
   | { type: "idle" }
   | { type: "editing"; location: Location; target: string }

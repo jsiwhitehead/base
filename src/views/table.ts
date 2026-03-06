@@ -7,16 +7,14 @@ import type {
   ReaderForShape,
   Selection,
 } from "../core";
-import { defineShape, patchConn, VALUE_TARGET } from "../core";
+import { defineShape, handleItemIntent, VALUE_TARGET } from "../core";
 import type { Component, NavDirection, UiCore } from "../dom";
 import {
   bindItemFrame,
-  buildItemHeader,
   createComponent,
   defineShapedView,
   el,
-  handleItemIntent,
-  resolveFocusAfterRemove,
+  mountHeader,
   setBodyClasses,
 } from "../dom";
 
@@ -81,6 +79,26 @@ function isCellValueSel(
 
 function cellColIdx(rowReader: RowReader, cellId: ItemId): number {
   return rowReader.childIds().indexOf(cellId);
+}
+
+function resolveFocusAfterRemove(
+  core: UiCore,
+  removedId: ItemId,
+  prefer: "prev" | "next",
+  portals: readonly ItemId[],
+): Location | null {
+  const loc = core.locate(removedId);
+  if (!loc) return null;
+
+  const prev = loc.siblings[loc.index - 1] ?? null;
+  const next = loc.siblings[loc.index + 1] ?? null;
+  const sibling =
+    prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
+  if (sibling) {
+    return { item: sibling, portals };
+  }
+
+  return { item: loc.parentId, portals };
 }
 
 const plan = {
@@ -282,33 +300,13 @@ function buildHeader(mountCtx: TableMountCtx): Component {
         createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-cell");
           const location: Location = { item: cellId, portals };
-
-          const canEditLabel = () => core.item(cellId).mode.type !== "readonly";
-
-          const commitLabel = (text: string) => {
-            if (!canEditLabel()) return;
-            const cur = core.item(cellId).label ?? "";
-            if (cur === text) return;
-            core.commit((t) => t.setLabel(cellId, text));
-          };
-
-          const commitConnField = (key: string, text: string) => {
-            const snap = core.item(cellId);
-            if (snap.mode.type !== "connected") return;
-            const next = patchConn(snap.mode.conn, key, text);
-            core.commit((t) => t.setConnected(cellId, next));
-          };
-
-          colCtx.mount(
-            col,
-            buildItemHeader(core, {
-              location,
-              id: cellId,
-              canEditLabel,
-              commitLabel,
-              commitConnField,
-            }),
-          );
+          mountHeader(colCtx, {
+            core,
+            host: col,
+            location,
+            id: cellId,
+            visibility: "always",
+          });
 
           return col;
         }),
@@ -331,7 +329,7 @@ function buildDataCell(
     bindItemFrame(ctx, { core, location }, host);
 
     ctx.slot(host, () => {
-      return core.mountView({ id: cellId, portals });
+      return core.mountView({ id: cellId, portals, view: core.view(cellId) });
     });
 
     return host;
@@ -348,33 +346,13 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
     const headerCell = el("div", "ui-table-cell ui-table-first");
     row.append(headerCell);
-
-    const canEditLabel = () => core.item(rowId).mode.type !== "readonly";
-
-    const commitLabel = (text: string) => {
-      if (!canEditLabel()) return;
-      const cur = core.item(rowId).label ?? "";
-      if (cur === text) return;
-      core.commit((t) => t.setLabel(rowId, text));
-    };
-
-    const commitConnField = (key: string, text: string) => {
-      const snap = core.item(rowId);
-      if (snap.mode.type !== "connected") return;
-      const next = patchConn(snap.mode.conn, key, text);
-      core.commit((t) => t.setConnected(rowId, next));
-    };
-
-    ctx.mount(
-      headerCell,
-      buildItemHeader(core, {
-        location: { item: rowId, portals },
-        id: rowId,
-        canEditLabel,
-        commitLabel,
-        commitConnField,
-      }),
-    );
+    mountHeader(ctx, {
+      core,
+      host: headerCell,
+      location: { item: rowId, portals },
+      id: rowId,
+      visibility: "always",
+    });
 
     ctx.list<ItemId>(
       row,
@@ -542,7 +520,7 @@ export const tableView = defineShapedView(
       }
     };
 
-    const body = createComponent(core, (ctx) => {
+    const bodyRoot = createComponent(core, (ctx) => {
       const root = el("div");
       setBodyClasses(root, "table");
 
@@ -562,6 +540,6 @@ export const tableView = defineShapedView(
       return root;
     });
 
-    return { onIntent, body };
+    return { onIntent, bodyRoot };
   },
 );

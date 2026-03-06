@@ -8,7 +8,7 @@ import {
   createOutlineEditingRuntime,
   createOutlineMutationSync,
   type InputState,
-} from "./editing-runtime";
+} from "./runtime-editing";
 import { collectNavPoints } from "./navigation";
 import { buildOutlineItem, type OutlineMountCtx } from "./render";
 export type {
@@ -17,19 +17,19 @@ export type {
   OutlinePointerRuntime,
   OutlineSelectionRuntime,
   OutlineSelectionState,
-} from "./selection-runtime";
+} from "./runtime-selection";
 export {
   createOutlineSelectionRuntime,
   isOutlineValueEditEvent,
   resolveValuePointerItemId,
-} from "./selection-runtime";
-import { createOutlineSelectionRuntime } from "./selection-runtime";
+} from "./runtime-selection";
+import { createOutlineSelectionRuntime } from "./runtime-selection";
 
-export type { ApplyEditingResult, InputState } from "./editing-runtime";
+export type { ApplyEditingResult, InputState } from "./runtime-editing";
 export {
   createOutlineEditingRuntime,
   createOutlineMutationSync,
-} from "./editing-runtime";
+} from "./runtime-editing";
 
 function configureOutlineRootElement(root: HTMLElement): void {
   root.contentEditable = "true";
@@ -56,12 +56,14 @@ function createOutlineInputState(): {
 
 export function buildOutlineRoot(
   core: UiCore,
-  rootId: ItemId,
+  viewRootId: ItemId,
   portals: readonly ItemId[],
   onValueTab: (location: Location, shift: boolean, caret: number) => void,
 ): Component {
   return createComponent(core, (ctx) => {
-    const navPoints = computed(() => collectNavPoints(core, rootId, portals));
+    const navPoints = computed(() =>
+      collectNavPoints(core, viewRootId, portals),
+    );
     const suppressMutationSync = createSuppressionFlag(false);
     const suppressHistoryKeydown = createSuppressionFlag<
       "undo" | "redo" | null
@@ -72,7 +74,7 @@ export function buildOutlineRoot(
     let rootRef: HTMLElement | null = null;
     const selectionRuntime = createOutlineSelectionRuntime({
       core,
-      rootId,
+      rootId: viewRootId,
       portals,
       getRoot: () => rootRef,
       clearStickyCaretX,
@@ -92,7 +94,7 @@ export function buildOutlineRoot(
       discardPendingMutationRecords,
       onValueTab,
     };
-    const rootItem = buildOutlineItem(mountCtx, rootId);
+    const rootItem = buildOutlineItem(mountCtx, viewRootId);
     const root = rootItem.el;
     rootRef = root;
     configureOutlineRootElement(root);
@@ -106,7 +108,7 @@ export function buildOutlineRoot(
 
     const editingRuntime = createOutlineEditingRuntime({
       core,
-      rootId,
+      rootId: viewRootId,
       portals,
       root,
       navPoints,

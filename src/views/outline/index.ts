@@ -6,12 +6,12 @@ import {
 } from "./intent";
 import { buildOutlineRoot } from "./runtime";
 
-export const outlineView = defineView(({ core, id: rootId, location }) => {
-  const rootPortals = location.portals;
+export const outlineView = defineView(({ core, id: viewRootId, location }) => {
+  const portals = location.portals;
   const onValueTab = createOutlineValueTabHandler({ core });
-  const onIntent = createOutlineIntentHandler({ core, rootId, rootPortals });
+  const onIntent = createOutlineIntentHandler({ core, viewRootId, portals });
 
-  const body = buildOutlineRoot(core, rootId, rootPortals, onValueTab);
+  const bodyRoot = buildOutlineRoot(core, viewRootId, portals, onValueTab);
 
-  return { onIntent, body };
+  return { onIntent, bodyRoot };
 });
