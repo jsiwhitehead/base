@@ -232,7 +232,7 @@ function dispatchComposition(
 async function mountOutline(
   core: UiCore,
   rootId: ItemId,
-  focus: { item: ItemId; portals: readonly ItemId[] } = {
+  location: { item: ItemId; portals: readonly ItemId[] } = {
     item: rootId,
     portals: [],
   },
@@ -241,7 +241,12 @@ async function mountOutline(
   unmount: Awaited<ReturnType<typeof mountView>>["unmount"];
   root: HTMLElement;
 }> {
-  const mounted = await mountView({ view: "outline", core, id: rootId, focus });
+  const mounted = await mountView({
+    view: "outline",
+    core,
+    id: rootId,
+    location,
+  });
   return { ...mounted, root: requireOutlineRoot(document.body) };
 }
 

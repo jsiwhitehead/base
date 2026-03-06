@@ -7,7 +7,7 @@ import { resolveEventTargetElement } from "./component";
 import type { Ctx } from "./component";
 import type { UiCore } from "./runtime";
 
-function sameFocus(a: Location, b: Location): boolean {
+function sameLocation(a: Location, b: Location): boolean {
   return (
     a.item === b.item &&
     a.portals.length === b.portals.length &&
@@ -17,11 +17,11 @@ function sameFocus(a: Location, b: Location): boolean {
 
 export function bindItemFrame(
   ctx: Ctx,
-  spec: { core: UiCore; focus: Location; isItemSelected?: () => boolean },
+  spec: { core: UiCore; location: Location; isItemSelected?: () => boolean },
   frameEl: HTMLElement,
 ): void {
   frameEl.classList.add("ui-frame");
-  frameEl.dataset.id = spec.focus.item;
+  frameEl.dataset.id = spec.location.item;
   if (!frameEl.hasAttribute("tabindex")) frameEl.tabIndex = -1;
 
   const isItemSelected = computed(() => {
@@ -30,7 +30,8 @@ export function bindItemFrame(
     const sel = spec.core.selection();
     if (sel.type === "item") {
       return (
-        sameFocus(sel.anchor, spec.focus) || sameFocus(sel.head, spec.focus)
+        sameLocation(sel.anchor, spec.location) ||
+        sameLocation(sel.head, spec.location)
       );
     }
     return false;
@@ -40,8 +41,8 @@ export function bindItemFrame(
     const sel = spec.core.selection();
     if (sel.type !== "editing") return false;
     return (
-      sel.location.item === spec.focus.item &&
-      sameFocus(sel.location, spec.focus)
+      sel.location.item === spec.location.item &&
+      sameLocation(sel.location, spec.location)
     );
   });
   const isSelected = computed(() => {
@@ -49,11 +50,11 @@ export function bindItemFrame(
   });
 
   const isIssue = computed(() => {
-    return spec.core.item(spec.focus.item).content.type === "issue";
+    return spec.core.item(spec.location.item).content.type === "issue";
   });
 
   const isNumeric = computed(() => {
-    const content = spec.core.item(spec.focus.item).content;
+    const content = spec.core.item(spec.location.item).content;
     return content.type === "value" && isNumericLikeValue(content.value);
   });
   const isEditingTarget = (node: Element | null): boolean => {
@@ -84,10 +85,10 @@ export function bindItemFrame(
         if (isEditingTarget(startEl)) return;
       }
     }
-    spec.core.focus({ type: "item", location: spec.focus });
+    spec.core.focus({ type: "item", location: spec.location });
     e.stopPropagation();
   });
-  ctx.target(spec.focus, ITEM_TARGET, () => frameEl);
+  ctx.target(spec.location, ITEM_TARGET, () => frameEl);
 
   ctx.effect(() => {
     frameEl.classList.toggle("is-selected", isSelected.value);

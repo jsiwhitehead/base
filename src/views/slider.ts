@@ -24,7 +24,7 @@ type SliderMountCtx = {
   id: ItemId;
   reader: SliderReader;
   opts: SliderOpts;
-  focus: Location;
+  location: Location;
 };
 
 type SliderReader = ReaderForShape<typeof sliderShape>;
@@ -98,12 +98,12 @@ function buildSliderBody({
   id,
   reader,
   opts,
-  focus,
+  location,
 }: SliderMountCtx): Component {
   return createComponent(core, (ctx) => {
     const root = el("div");
     setBodyClasses(root, "slider");
-    bindItemFrame(ctx, { core, focus }, root);
+    bindItemFrame(ctx, { core, location }, root);
 
     const input = document.createElement("input");
     input.type = "range";
@@ -122,7 +122,7 @@ function buildSliderBody({
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
       core.focus(
-        { type: "editing", location: focus, target: VALUE_TARGET },
+        { type: "editing", location, target: VALUE_TARGET },
         { caret: 0 },
       );
       e.stopPropagation();
@@ -137,7 +137,7 @@ function buildSliderBody({
       commitValue(Number(input.value));
     });
 
-    ctx.target(focus, VALUE_TARGET, () => input);
+    ctx.target(location, VALUE_TARGET, () => input);
 
     ctx.effect(() => {
       const currentValue = toNumberOr(reader.value(), opts.min);
@@ -154,7 +154,7 @@ function buildSliderBody({
 
 export const sliderView = defineShapedView(
   sliderShape,
-  ({ core, id, reader, focus }) => {
+  ({ core, id, reader, location }) => {
     const opts = DEFAULT_SLIDER_OPTS;
 
     const onIntent = (intent: Intent): void => {
@@ -175,7 +175,7 @@ export const sliderView = defineShapedView(
       }
     };
 
-    const body = buildSliderBody({ core, id, reader, opts, focus });
+    const body = buildSliderBody({ core, id, reader, opts, location });
 
     return { onIntent, body };
   },

@@ -86,10 +86,10 @@ function adjacentOutlineValueItem(
     (p): p is Extract<NavPoint, { type: "editing" }> =>
       p.type === "editing" && p.target === VALUE_TARGET,
   );
-  const idx = points.findIndex((p) => p.focus.item === fromId);
+  const idx = points.findIndex((p) => p.location.item === fromId);
   if (idx < 0) return null;
   const next = points[dir === "up" ? idx - 1 : idx + 1];
-  return next?.focus.item ?? null;
+  return next?.location.item ?? null;
 }
 
 function moveVerticalAcrossOutlineValue(
@@ -201,7 +201,7 @@ function handleArrowHorizontal(
       if (!atBoundary) return null;
       const moved = moveNavPoint(
         navPoints,
-        { type: "editing", focus: modelSel.location, target: VALUE_TARGET },
+        { type: "editing", location: modelSel.location, target: VALUE_TARGET },
         dir,
       );
       if (!moved) atValueBoundaryWithNoNavMove = true;
@@ -219,7 +219,7 @@ function handleArrowHorizontal(
       }
       return moveNavPoint(
         navPoints,
-        { type: "item", focus: modelSel.head },
+        { type: "item", location: modelSel.head },
         dir,
       );
     }
@@ -237,7 +237,7 @@ function handleArrowHorizontal(
   }
   if (moved.point.type === "item") {
     e.preventDefault();
-    core.focus({ type: "item", location: moved.point.focus });
+    core.focus({ type: "item", location: moved.point.location });
     return true;
   }
   e.preventDefault();
@@ -246,9 +246,13 @@ function handleArrowHorizontal(
       ? undefined
       : moved.edge === "start"
         ? 0
-        : textLengthForTarget(core, moved.point.focus.item, moved.point.target);
+        : textLengthForTarget(
+            core,
+            moved.point.location.item,
+            moved.point.target,
+          );
   applyEditingResult({
-    location: moved.point.focus,
+    location: moved.point.location,
     target: moved.point.target,
     ...(caret !== undefined ? { caret } : {}),
     ...(moved.point.target === VALUE_TARGET
@@ -444,14 +448,18 @@ function handleBoundaryDeleteBeforeInput(
     ) {
       const nextStop = moveNavPoint(
         ctx.navPoints.value,
-        { type: "editing", focus: modelSel.location, target: modelSel.target },
+        {
+          type: "editing",
+          location: modelSel.location,
+          target: modelSel.target,
+        },
         dir,
       );
       ctx.suppressMutationSync.suppressForTurn(true);
       outlineCmd.removeAndPruneAncestors(ctx.core, ctx.rootId, pos.itemId);
       if (!nextStop) return;
       if (nextStop.point.type === "item") {
-        ctx.core.focus({ type: "item", location: nextStop.point.focus });
+        ctx.core.focus({ type: "item", location: nextStop.point.location });
         return;
       }
       const caret =
@@ -461,11 +469,11 @@ function handleBoundaryDeleteBeforeInput(
             ? 0
             : textLengthForTarget(
                 ctx.core,
-                nextStop.point.focus.item,
+                nextStop.point.location.item,
                 nextStop.point.target,
               );
       ctx.applyEditingResult({
-        location: nextStop.point.focus,
+        location: nextStop.point.location,
         target: nextStop.point.target,
         ...(caret !== undefined ? { caret } : {}),
         ...(nextStop.point.target === VALUE_TARGET
@@ -1137,7 +1145,7 @@ function bindOutlineKeydownEvents(args: {
           if (point.type !== "editing" || point.target !== VALUE_TARGET) {
             continue;
           }
-          const itemId = point.focus.item;
+          const itemId = point.location.item;
           if (seen.has(itemId)) continue;
           seen.add(itemId);
           if (!firstItemId) firstItemId = itemId;

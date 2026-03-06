@@ -326,10 +326,10 @@ export function createCore(opts: CreateCoreOptions): {
   let core!: Core;
 
   const rootId = itemIdOf(rootEntryId);
-  const rootFocus: Location = { item: rootId, portals: [] };
+  const rootLocation: Location = { item: rootId, portals: [] };
   const selectionController = createSelectionController({
     model,
-    rootFocus,
+    rootLocation,
     ...(opts.platform?.readCurrentCaret
       ? { readCurrentCaret: opts.platform.readCurrentCaret }
       : {}),
@@ -560,7 +560,10 @@ export function createCore(opts: CreateCoreOptions): {
           }
         }
 
-        setSelection({ type: "editing", location: rootFocus, target }, caret);
+        setSelection(
+          { type: "editing", location: rootLocation, target },
+          caret,
+        );
 
         return true;
       }

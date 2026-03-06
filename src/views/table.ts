@@ -281,7 +281,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
       (cellId) =>
         createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-cell");
-          const focus: Location = { item: cellId, portals };
+          const location: Location = { item: cellId, portals };
 
           const canEditLabel = () => core.item(cellId).mode.type !== "readonly";
 
@@ -302,7 +302,7 @@ function buildHeader(mountCtx: TableMountCtx): Component {
           colCtx.mount(
             col,
             buildItemHeader(core, {
-              focus,
+              location,
               id: cellId,
               canEditLabel,
               commitLabel,
@@ -327,8 +327,8 @@ function buildDataCell(
     const host = el("div", "ui-table-cell");
     host.dataset.dragSlot = "true";
 
-    const focus: Location = { item: cellId, portals };
-    bindItemFrame(ctx, { core, focus }, host);
+    const location: Location = { item: cellId, portals };
+    bindItemFrame(ctx, { core, location }, host);
 
     ctx.slot(host, () => {
       return core.mountView({ id: cellId, portals });
@@ -344,7 +344,7 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
 
   return createComponent(core, (ctx) => {
     const row = el("div", "ui-table-row");
-    bindItemFrame(ctx, { core, focus: { item: rowId, portals } }, row);
+    bindItemFrame(ctx, { core, location: { item: rowId, portals } }, row);
 
     const headerCell = el("div", "ui-table-cell ui-table-first");
     row.append(headerCell);
@@ -368,7 +368,7 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
     ctx.mount(
       headerCell,
       buildItemHeader(core, {
-        focus: { item: rowId, portals },
+        location: { item: rowId, portals },
         id: rowId,
         canEditLabel,
         commitLabel,
@@ -404,8 +404,8 @@ function buildBody(mountCtx: TableMountCtx): Component {
 
 export const tableView = defineShapedView(
   tableShape,
-  ({ core, id: tableId, focus, reader: tableReader }) => {
-    const rootPortals = focus.portals;
+  ({ core, id: tableId, location, reader: tableReader }) => {
+    const rootPortals = location.portals;
     const rowsSignal = computed(() => tableReader.childIds());
     const schemaRowIdSignal = computed(() => rowsSignal.value[0]);
     const colCountSignal = computed(

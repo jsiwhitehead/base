@@ -11,8 +11,8 @@ import {
 export type ModelPosition = { itemId: ItemId; offset: number };
 
 export type NavPoint =
-  | { type: "editing"; focus: Location; target: string }
-  | { type: "item"; focus: Location };
+  | { type: "editing"; location: Location; target: string }
+  | { type: "item"; location: Location };
 
 type NavMove = { point: NavPoint; edge: "start" | "end" | null };
 
@@ -56,16 +56,16 @@ export function nextSibling(core: Core, id: ItemId): ItemId | null {
   return loc ? (loc.siblings[loc.index + 1] ?? null) : null;
 }
 
-export const sameFocus = (a: Location, b: Location): boolean =>
+export const sameLocation = (a: Location, b: Location): boolean =>
   a.item === b.item &&
   a.portals.length === b.portals.length &&
   a.portals.every((portal, i) => portal === b.portals[i]);
 
-export function focusKey(focus: Location): string {
-  return `${focus.portals.join("|")}::${focus.item}`;
+export function locationKey(location: Location): string {
+  return `${location.portals.join("|")}::${location.item}`;
 }
 
-function collectVisibleItemFocuses(
+function collectVisibleItemLocations(
   core: Core,
   rootId: ItemId,
   portals: readonly ItemId[],
@@ -86,19 +86,23 @@ function collectVisibleItemFocuses(
   return out;
 }
 
-export function blockSelectionFocuses(
+export function blockSelectionLocations(
   core: Core,
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
   portals: readonly ItemId[],
 ): Location[] {
-  const focuses = collectVisibleItemFocuses(core, rootId, portals);
-  const anchorIdx = focuses.findIndex((focus) => sameFocus(focus, sel.anchor));
-  const headIdx = focuses.findIndex((focus) => sameFocus(focus, sel.head));
+  const locations = collectVisibleItemLocations(core, rootId, portals);
+  const anchorIdx = locations.findIndex((location) =>
+    sameLocation(location, sel.anchor),
+  );
+  const headIdx = locations.findIndex((location) =>
+    sameLocation(location, sel.head),
+  );
   if (anchorIdx < 0 || headIdx < 0) return [];
   const lo = Math.min(anchorIdx, headIdx);
   const hi = Math.max(anchorIdx, headIdx);
-  return focuses.slice(lo, hi + 1);
+  return locations.slice(lo, hi + 1);
 }
 
 export function blockSelectionItems(
@@ -109,10 +113,10 @@ export function blockSelectionItems(
 ): ItemId[] {
   const out: ItemId[] = [];
   const seen = new Set<ItemId>();
-  for (const focus of blockSelectionFocuses(core, rootId, sel, portals)) {
-    if (seen.has(focus.item)) continue;
-    seen.add(focus.item);
-    out.push(focus.item);
+  for (const location of blockSelectionLocations(core, rootId, sel, portals)) {
+    if (seen.has(location.item)) continue;
+    seen.add(location.item);
+    out.push(location.item);
   }
   return out;
 }
@@ -124,12 +128,14 @@ export function extendBlockSelectionByArrow(
   dir: "up" | "down",
   portals: readonly ItemId[],
 ): Location | null {
-  const focuses = collectVisibleItemFocuses(core, rootId, portals);
-  const headIdx = focuses.findIndex((focus) => sameFocus(focus, sel.head));
+  const locations = collectVisibleItemLocations(core, rootId, portals);
+  const headIdx = locations.findIndex((location) =>
+    sameLocation(location, sel.head),
+  );
   if (headIdx < 0) return null;
   return dir === "up"
-    ? (focuses[headIdx - 1] ?? null)
-    : (focuses[headIdx + 1] ?? null);
+    ? (locations[headIdx - 1] ?? null)
+    : (locations[headIdx + 1] ?? null);
 }
 
 function isEditLeaf(core: Core, id: ItemId): boolean {
@@ -164,13 +170,13 @@ export function collectNavPoints(
       return;
     }
     if (!isEditLeaf(core, id)) return;
-    const focus = { item: id, portals };
+    const location = { item: id, portals };
     if (core.view(id) !== "outline") {
-      out.push({ type: "item", focus });
+      out.push({ type: "item", location });
       return;
     }
     for (const target of editTargetsForItem(core, id)) {
-      out.push({ type: "editing", focus, target });
+      out.push({ type: "editing", location, target });
     }
   };
 
@@ -191,7 +197,7 @@ export function moveNavPoint(
   const idx = points.findIndex(
     (p) =>
       p.type === current.type &&
-      sameFocus(p.focus, current.focus) &&
+      sameLocation(p.location, current.location) &&
       (p.type === "editing" && current.type === "editing"
         ? p.target === current.target
         : true),

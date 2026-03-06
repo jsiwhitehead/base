@@ -13,7 +13,7 @@ import {
   setBodyClasses,
 } from "../../dom";
 import { valueCaretOffset } from "./dom-mapping";
-import { focusKey, sameFocus, valueToText } from "./navigation";
+import { locationKey, sameLocation, valueToText } from "./navigation";
 import type { OutlineSelectionState } from "./runtime";
 
 type OutlineItemSelectionState = "none" | "item" | "value" | "header";
@@ -100,7 +100,7 @@ function buildOutlineChild(
   return createComponent(core, (ctx) => {
     const itemEl = el("div", "ui-frame ui-outline-child");
     const itemFocus: Location = { item: itemId, portals };
-    const itemKey = focusKey(itemFocus);
+    const itemKey = locationKey(itemFocus);
     itemEl.dataset.id = itemId;
     if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
@@ -129,10 +129,10 @@ function buildOutlineChild(
             ? "value"
             : "none";
         }
-        if (!sameFocus(selection.location, itemFocus)) return "none";
+        if (!sameLocation(selection.location, itemFocus)) return "none";
         return "value";
       }
-      if (!sameFocus(selection.location, itemFocus)) return "none";
+      if (!sameLocation(selection.location, itemFocus)) return "none";
       return "header";
     });
     const shouldShowHeader = computed(() => {
@@ -169,7 +169,7 @@ function buildOutlineChild(
     ctx.slot(itemEl, () => {
       if (!shouldShowHeader.value) return null;
 
-      const focus: Location = { item: itemId, portals };
+      const location: Location = { item: itemId, portals };
       const canEditLabel = () => core.item(itemId).mode.type !== "readonly";
       const commitLabel = (text: string) => {
         if (!canEditLabel()) return;
@@ -184,7 +184,7 @@ function buildOutlineChild(
       };
 
       return buildItemHeader(core, {
-        focus,
+        location,
         id: itemId,
         canEditLabel,
         commitLabel,

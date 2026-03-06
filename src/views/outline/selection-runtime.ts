@@ -14,7 +14,11 @@ import {
   ITEM_SELECTOR,
   VALUE_SELECTOR,
 } from "./dom-mapping";
-import { blockSelectionFocuses, focusKey, sameFocus } from "./navigation";
+import {
+  blockSelectionLocations,
+  locationKey,
+  sameLocation,
+} from "./navigation";
 
 export type OutlinePointerIntent = "value" | "item" | null;
 
@@ -179,8 +183,8 @@ export function createOutlineSelectionRuntime(args: {
     const sel = core.selection();
     if (sel.type !== "item") return new Set<string>();
     return new Set(
-      blockSelectionFocuses(core, rootId, sel, portals).map((focus) =>
-        focusKey(focus),
+      blockSelectionLocations(core, rootId, sel, portals).map((location) =>
+        locationKey(location),
       ),
     );
   });
@@ -204,7 +208,7 @@ export function createOutlineSelectionRuntime(args: {
       return;
     }
     valueRangeSelectedItemKeys.value = new Set(
-      blockSelectionFocuses(
+      blockSelectionLocations(
         core,
         rootId,
         {
@@ -213,7 +217,7 @@ export function createOutlineSelectionRuntime(args: {
           head: { item: endItemId, portals },
         },
         portals,
-      ).map((focus) => focusKey(focus)),
+      ).map((location) => locationKey(location)),
     );
   };
 
@@ -289,7 +293,7 @@ export function createOutlineSelectionRuntime(args: {
         !(
           selNow.type === "editing" &&
           selNow.target === VALUE_TARGET &&
-          sameFocus(selNow.location, itemFocus)
+          sameLocation(selNow.location, itemFocus)
         )
       ) {
         core.focus({
@@ -307,7 +311,7 @@ export function createOutlineSelectionRuntime(args: {
     if (
       selNow.type === "editing" &&
       selNow.target === VALUE_TARGET &&
-      sameFocus(selNow.location, itemFocus)
+      sameLocation(selNow.location, itemFocus)
     ) {
       return;
     }

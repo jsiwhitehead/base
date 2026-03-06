@@ -5,9 +5,9 @@ This document defines **view-specific behavior**.
 For each view, it specifies:
 
 - What the view's **body subtree** looks like.
-- What **focus surfaces** exist inside the body.
+- What **location surfaces** exist inside the body.
 - Which **targets** the view introduces (if any).
-- How the view interprets **intents** into Core operations and focus transitions.
+- How the view interprets **intents** into Core operations and selection transitions.
 
 ## Scope
 
@@ -15,7 +15,7 @@ This document covers:
 
 - Per-view purpose and mental model.
 - Per-view body DOM shape.
-- Per-view focus surfaces and targets.
+- Per-view location surfaces and targets.
 - Per-view intent handling.
 - Per-view commands, invariants, and styling notes.
 
@@ -87,7 +87,7 @@ Structural rules:
 - `.ui-header` subtree in `.ui-frame.ui-outline-child` MAY mount/unmount by header visibility policy.
 - Mounted child body subtree MAY swap by child view name, but `.ui-frame.ui-outline-child` MUST NOT.
 - When a group has zero children, Outline MUST render a body-only empty state.
-- Empty-state UI for an empty group MUST NOT be a focus surface and MUST NOT add edit targets.
+- Empty-state UI for an empty group MUST NOT be a location surface and MUST NOT add edit targets.
 
 Content-editable rules:
 
@@ -105,7 +105,7 @@ Notes:
 
 ### Location surfaces and targets
 
-Outline focus surfaces:
+Outline location surfaces:
 
 - **Frame item selection**: `ITEM_TARGET` on the item's `.ui-frame` (outer view).
 - **Inline edit focus**:
@@ -308,25 +308,25 @@ Structural rules:
 Notes:
 
 - For the table item itself, `ITEM_TARGET` is on the table's `.ui-frame` outside `.ui-body.ui-table`.
-- Row/cell item selection in table body MUST be implemented as Core focus surfaces on `.ui-frame.ui-table-row` / `.ui-frame.ui-table-cell`, not raw DOM focus.
+- Row/cell item selection in table body MUST be implemented as Core location surfaces on `.ui-frame.ui-table-row` / `.ui-frame.ui-table-cell`, not raw DOM focus.
 
 ### Location surfaces and targets
 
-Table focus modes:
+Table location and target modes:
 
 - **Table frame item selection**:
   - `ITEM_TARGET` on the table's `.ui-frame`
 
 - **Row item selection**:
-  - focus refers to a row item
+  - location refers to a row item
   - `ITEM_TARGET`
 
 - **Cell item selection**:
-  - focus refers to a cell item
+  - location refers to a cell item
   - `ITEM_TARGET`
 
 - **Cell edit focus**:
-  - focus refers to a cell item
+  - location refers to a cell item
   - `value`
 
 Rules:
@@ -334,7 +334,7 @@ Rules:
 - Table MUST distinguish item selection from `value` edit focus.
 - Table MUST NOT implement outline-style multi-target edit traversal.
 - `NAV` and `TAB` are item-selection operations in table mode.
-- Row/cell item selection MUST be implemented as Core focus surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
+- Row/cell item selection MUST be implemented as Core location surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
 
 ### Schema row behavior
 

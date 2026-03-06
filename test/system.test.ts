@@ -21,14 +21,14 @@ import {
 } from "./dom-test-utils";
 
 function mountAppShell(core: UiCore, rootId: ItemId): () => void {
-  const focus = { item: rootId, portals: [] };
+  const location = { item: rootId, portals: [] };
 
   const appRoot = createComponent(core, (ctx) => {
     const rootFrame = el("div");
     rootFrame.classList.add("ui-main");
     rootFrame.tabIndex = 0;
 
-    bindItemFrame(ctx, { core, focus }, rootFrame);
+    bindItemFrame(ctx, { core, location }, rootFrame);
 
     ctx.slot(rootFrame, () => {
       return core.mountView({ id: rootId, portals: [] });

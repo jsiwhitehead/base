@@ -49,7 +49,7 @@ export type SelectionController = {
 
 type SelectionControllerOptions = {
   model: Model;
-  rootFocus: Location;
+  rootLocation: Location;
   readCurrentCaret?: () => number | undefined;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
 };
@@ -59,16 +59,16 @@ export function createSelectionController(
 ): SelectionController {
   const selectionSignal = signal<Selection>({
     type: "item",
-    anchor: opts.rootFocus,
-    head: opts.rootFocus,
+    anchor: opts.rootLocation,
+    head: opts.rootLocation,
   });
 
-  const isValidFocus = (focus: Location): boolean => {
+  const isValidLocation = (location: Location): boolean => {
     const model = opts.model;
-    const itemEid = entryIdFromItemId(focus.item);
+    const itemEid = entryIdFromItemId(location.item);
     if (itemEid == null) return false;
     if (!model.hasEntry(itemEid)) return false;
-    for (const portalItemId of focus.portals) {
+    for (const portalItemId of location.portals) {
       const portalEid = entryIdFromItemId(portalItemId);
       if (portalEid == null || !model.hasEntry(portalEid)) return false;
       const contentType = model.contentTypeOf(portalEid);
@@ -79,8 +79,8 @@ export function createSelectionController(
 
   const isValidSelection = (sel: Selection): boolean => {
     if (sel.type === "idle") return true;
-    if (sel.type === "editing") return isValidFocus(sel.location);
-    return isValidFocus(sel.anchor) && isValidFocus(sel.head);
+    if (sel.type === "editing") return isValidLocation(sel.location);
+    return isValidLocation(sel.anchor) && isValidLocation(sel.head);
   };
 
   const setSelection = (next: Selection, caret?: number): void => {
@@ -175,18 +175,22 @@ export function createSelectionController(
     }
 
     if (anchor) {
-      const focusLocation = resolveRepairAnchor(anchor);
-      if (focusLocation) {
+      const repairedLocation = resolveRepairAnchor(anchor);
+      if (repairedLocation) {
         if (anchor.caret !== undefined) {
           setSelection(
-            { type: "editing", location: focusLocation, target: VALUE_TARGET },
+            {
+              type: "editing",
+              location: repairedLocation,
+              target: VALUE_TARGET,
+            },
             anchor.caret,
           );
         } else {
           setSelection({
             type: "item",
-            anchor: focusLocation,
-            head: focusLocation,
+            anchor: repairedLocation,
+            head: repairedLocation,
           });
         }
         return;
@@ -195,8 +199,8 @@ export function createSelectionController(
 
     setSelection({
       type: "item",
-      anchor: opts.rootFocus,
-      head: opts.rootFocus,
+      anchor: opts.rootLocation,
+      head: opts.rootLocation,
     });
   };
 
@@ -218,8 +222,8 @@ export function createSelectionController(
   const resetToRoot = (): void => {
     setSelection({
       type: "item",
-      anchor: opts.rootFocus,
-      head: opts.rootFocus,
+      anchor: opts.rootLocation,
+      head: opts.rootLocation,
     });
   };
 

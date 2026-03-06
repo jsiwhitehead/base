@@ -39,7 +39,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     const header = document.body.querySelector(
@@ -77,7 +77,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "ArrowDown");
@@ -120,7 +120,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "ArrowRight");
@@ -166,7 +166,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "Tab");
@@ -207,7 +207,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "Enter");
@@ -234,7 +234,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     core.focus({
@@ -284,7 +284,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      focus: { item: tableId, portals: [] },
+      location: { item: tableId, portals: [] },
     });
 
     fireViewKey(domView, "ArrowUp");
@@ -324,7 +324,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { item: s, portals: [] },
+      location: { item: s, portals: [] },
     });
 
     requireFrameEl(document.body, s);
@@ -358,7 +358,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { item: s, portals: [] },
+      location: { item: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -390,7 +390,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { item: s, portals: [] },
+      location: { item: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -416,7 +416,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { item: s, portals: [] },
+      location: { item: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -454,7 +454,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      focus: { item: s, portals: [] },
+      location: { item: s, portals: [] },
     });
 
     fireViewKey(domView, "Enter");

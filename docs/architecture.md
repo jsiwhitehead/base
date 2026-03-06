@@ -235,7 +235,8 @@ The invariants defined in this section are stable contracts. Changes to these in
 
 ### Target-driven focus
 
-- Location is `(itemId, target)` — not DOM tab order.
+- `Location` is `(itemId, portals)` — not DOM tab order.
+- An editing address is `(location, target)`.
 - `.ui-main` is the only tabbable element.
 - Targets remain stable across selection changes.
 

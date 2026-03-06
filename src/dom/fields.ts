@@ -52,7 +52,7 @@ function syncValue(inp: TextInputElement, next: string): void {
 type TextFieldState = { text: string; readOnly: boolean };
 
 type TextFieldOpts = {
-  focus: Location;
+  location: Location;
   target: string;
   multiline: boolean;
   autosize?: boolean;
@@ -100,10 +100,10 @@ export function buildTextField(
       const selection = core.selection();
       return (
         selection.type === "editing" &&
-        selection.location.item === opts.focus.item &&
-        selection.location.portals.length === opts.focus.portals.length &&
+        selection.location.item === opts.location.item &&
+        selection.location.portals.length === opts.location.portals.length &&
         selection.location.portals.every(
-          (portal, i) => portal === opts.focus.portals[i],
+          (portal, i) => portal === opts.location.portals[i],
         ) &&
         selection.target === opts.target
       );
@@ -262,7 +262,7 @@ export function buildTextField(
     ctx.on(inp, "pointerdown", (e: PointerEvent) => {
       core.focus({
         type: "editing",
-        location: opts.focus,
+        location: opts.location,
         target: opts.target,
       });
       e.stopPropagation();
@@ -272,7 +272,7 @@ export function buildTextField(
       if (!isThisTargetFocused()) {
         core.focus({
           type: "editing",
-          location: opts.focus,
+          location: opts.location,
           target: opts.target,
         });
       }
@@ -291,7 +291,7 @@ export function buildTextField(
       commitDraft();
     });
 
-    ctx.target(opts.focus, opts.target, () => inp, {
+    ctx.target(opts.location, opts.target, () => inp, {
       setCaret: {
         set(pos: number): void {
           const p = Math.max(0, Math.min(pos, inp.value.length));
@@ -342,7 +342,7 @@ export function buildTextField(
 export function buildItemHeader(
   core: UiCore,
   args: {
-    focus: Location;
+    location: Location;
     id: ItemId;
     commitLabel: (text: string) => void;
     canEditLabel: () => boolean;
@@ -362,13 +362,13 @@ export function buildItemHeader(
     ctx.mount(
       labelWrap,
       buildTextField(core, {
-        focus: args.focus,
+        location: args.location,
         target: LABEL_TARGET,
         multiline: false,
         autosize: true,
         kind: "isolated",
         onExitToItem: () => {
-          core.focus({ type: "item", location: args.focus });
+          core.focus({ type: "item", location: args.location });
         },
         commit: args.commitLabel,
         getState: () => {
@@ -408,7 +408,7 @@ export function buildItemHeader(
           rowCtx.mount(
             valueEl,
             buildTextField(core, {
-              focus: args.focus,
+              location: args.location,
               target: connTarget(key),
               multiline: fieldSignal.value?.multiline ?? true,
               autosize: true,

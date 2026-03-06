@@ -48,18 +48,18 @@ function handleOutlineItemTypeIntent(args: {
 
 function convertEmptyGroupToValueAndFocus(args: {
   core: UiCore;
-  focus: Location;
+  location: Location;
   initialText: string;
 }): boolean {
-  const { core, focus, initialText } = args;
-  const item = core.item(focus.item);
+  const { core, location, initialText } = args;
+  const item = core.item(location.item);
   if (item.mode.type === "readonly") return false;
   if (item.content.type !== "group") return false;
   if (item.content.children.length !== 0) return false;
 
-  core.commit((t) => t.setValue(focus.item, initialText));
+  core.commit((t) => t.setValue(location.item, initialText));
   core.focus(
-    { type: "editing", location: focus, target: VALUE_TARGET },
+    { type: "editing", location, target: VALUE_TARGET },
     { caret: initialText.length },
   );
   return true;
@@ -93,7 +93,7 @@ export function createOutlineIntentHandler(args: {
     if (selection.type !== "item") return;
     const sel = selection;
 
-    const focus: Location = sel.head;
+    const location: Location = sel.head;
     const selectedItems = blockSelectionItems(core, rootId, sel, rootPortals);
 
     if (intent.type === "DELETE") {
@@ -134,8 +134,8 @@ export function createOutlineIntentHandler(args: {
     switch (intent.type) {
       case "TAB": {
         const nextFocus = intent.shift
-          ? outlineCmd.outdentInPlace(core, focus)
-          : outlineCmd.indentInPlace(core, focus);
+          ? outlineCmd.outdentInPlace(core, location)
+          : outlineCmd.indentInPlace(core, location);
         if (!nextFocus) return;
         core.focus({ type: "item", location: nextFocus });
         return;
@@ -164,7 +164,7 @@ export function createOutlineIntentHandler(args: {
         if (
           convertEmptyGroupToValueAndFocus({
             core,
-            focus,
+            location,
             initialText: intent.char,
           })
         ) {
@@ -185,12 +185,12 @@ export function createOutlineIntentHandler(args: {
       }
       case "CONFIRM": {
         if (
-          convertEmptyGroupToValueAndFocus({ core, focus, initialText: "" })
+          convertEmptyGroupToValueAndFocus({ core, location, initialText: "" })
         ) {
           return;
         }
         if (handleItemIntent({ core, sel, intent })) return;
-        const nextId = outlineCmd.insertSibling(core, focus, "after");
+        const nextId = outlineCmd.insertSibling(core, location, "after");
         if (!nextId) return;
         core.focus(
           {

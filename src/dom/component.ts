@@ -38,7 +38,7 @@ export type Ctx = {
   ): void;
 
   target(
-    focus: Location,
+    location: Location,
     target: string,
     getEl: () => HTMLElement | null,
     opts?: {
@@ -277,10 +277,10 @@ export function createComponent(
       });
     },
 
-    target(focus, target, getEl, opts) {
+    target(location, target, getEl, opts) {
       bag.add(
         core.attachTarget({
-          focus,
+          location,
           target,
           getEl,
           ...(opts?.setCaret !== undefined ? { setCaret: opts.setCaret } : {}),

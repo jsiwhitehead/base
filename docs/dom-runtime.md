@@ -112,7 +112,7 @@ type Ctx = {
   mount(host, child);
   slot(host, getComponent);
   list(host, getIds, buildById);
-  target(focus, target, getEl, opts?);
+  target(location, target, getEl, opts?);
 };
 ```
 
@@ -172,7 +172,7 @@ Rules:
 - Reordering MUST move existing nodes; it MUST NOT force remount for retained keys.
 - The list occupies a stable position in host; only the list's contents are reconciled.
 
-### `ctx.target(focus, target, getEl, opts?)`
+### `ctx.target(location, target, getEl, opts?)`
 
 Registers a focus target with Core.
 
@@ -212,10 +212,10 @@ Canonical `.ui-frame` behavior contract.
 Rules:
 
 - Adds class `ui-frame`.
-- Sets `data-id = focus.item`.
+- Sets `data-id = location.item`.
 - If `tabindex` is absent, sets `tabIndex = -1`.
 - Registers `ITEM_TARGET` on `frameEl` via `ctx.target`.
-- On `pointerdown`, MUST focus Core on `ITEM_TARGET` for the same focus surface.
+- On `pointerdown`, MUST focus Core on `ITEM_TARGET` for the same item location.
 - On `pointerdown`, MUST NOT set caret.
 - On `pointerdown`, MUST call `stopPropagation()`.
 - Pointerdown handling MUST apply only when the event reaches the frame (that is, it was not already handled/stopped by an inner control).
@@ -267,7 +267,7 @@ Canonical shared text-editing component.
 
 ```ts
 buildTextField(core, {
-  focus,
+  location,
   target,
   multiline,
   autosize?,

@@ -66,10 +66,10 @@ export async function mountView(args: {
   view: Extract<ViewName, "outline" | "table" | "slider">;
   core: UiCore;
   id: ItemId;
-  focus: Location;
+  location: Location;
 }): Promise<{ domView: DomView; unmount: () => void }> {
-  const { view, core, id, focus } = args;
-  const domView = viewFactories[view]({ core, id, focus });
+  const { view, core, id, location } = args;
+  const domView = viewFactories[view]({ core, id, location });
   document.body.replaceChildren(domView.root);
   const unmount = (): void => {
     domView.dispose();
