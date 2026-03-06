@@ -1,8 +1,13 @@
 import { computed } from "@preact/signals-core";
 
-import { isNumericLikeValue, sameLocation, VALUE_TARGET } from "../../core";
+import {
+  ITEM_TARGET,
+  isNumericLikeValue,
+  sameLocation,
+  VALUE_TARGET,
+} from "../../core";
 import type { ItemId, Location } from "../../core";
-import type { Component, UiCore } from "../../dom";
+import type { Component, Ctx, UiCore } from "../../dom";
 import {
   createComponent,
   el,
@@ -30,6 +35,39 @@ export type OutlineMountCtx = {
   discardPendingMutationRecords: () => void;
   onValueTab: (location: Location, shift: boolean, caret: number) => void;
 };
+
+function bindOutlineFrame(args: {
+  core: UiCore;
+  ctx: Ctx;
+  itemEl: HTMLElement;
+  itemFocus: Location;
+  itemSelectionState: { value: OutlineItemSelectionState };
+}): void {
+  const { core, ctx, itemEl, itemFocus, itemSelectionState } = args;
+
+  itemEl.classList.add("ui-frame");
+  itemEl.dataset.id = itemFocus.item;
+  if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
+
+  ctx.target(itemFocus, ITEM_TARGET, () =>
+    itemEl.isConnected ? itemEl : null,
+  );
+
+  ctx.effect(() => {
+    const snap = core.item(itemFocus.item);
+    const isIssue = snap.content.type === "issue";
+    const isNumeric =
+      snap.content.type === "value" && isNumericLikeValue(snap.content.value);
+
+    itemEl.classList.toggle(
+      "is-item-selected",
+      itemSelectionState.value === "item",
+    );
+    itemEl.classList.toggle("is-selected", itemSelectionState.value !== "none");
+    itemEl.classList.toggle("is-issue", isIssue);
+    itemEl.classList.toggle("is-numeric", isNumeric);
+  });
+}
 
 function buildOutlineValue(
   mountCtx: OutlineMountCtx,
@@ -98,11 +136,9 @@ function buildOutlineChild(
     },
   } = mountCtx;
   return createComponent(core, (ctx) => {
-    const itemEl = el("div", "ui-frame ui-outline-child");
+    const itemEl = el("div", "ui-outline-child");
     const itemFocus: Location = { item: itemId, portals };
     const itemKey = locationKey(itemFocus);
-    itemEl.dataset.id = itemId;
-    if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
     const gutterEl = el("span", "ui-outline-gutter");
     gutterEl.dataset.drag = "reorder";
@@ -135,25 +171,12 @@ function buildOutlineChild(
       if (!sameLocation(selection.location, itemFocus)) return "none";
       return "header";
     });
-    ctx.effect(() => {
-      itemEl.classList.toggle(
-        "is-item-selected",
-        itemSelectionState.value === "item",
-      );
-    });
-
-    ctx.effect(() => {
-      const snap = core.item(itemId);
-      const isIssue = snap.content.type === "issue";
-      const isNumeric =
-        snap.content.type === "value" && isNumericLikeValue(snap.content.value);
-
-      itemEl.classList.toggle(
-        "is-selected",
-        itemSelectionState.value !== "none",
-      );
-      itemEl.classList.toggle("is-issue", isIssue);
-      itemEl.classList.toggle("is-numeric", isNumeric);
+    bindOutlineFrame({
+      core,
+      ctx,
+      itemEl,
+      itemFocus,
+      itemSelectionState,
     });
 
     mountHeader(ctx, {
