@@ -964,6 +964,73 @@ describe("outline/contenteditable-beforeinput", () => {
     unmount();
   });
 
+  test("Mod+Enter splits text into a new parent-level item", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "hello" });
+    const z = mkBlank(core, rootId, { label: "z", value: "tail" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(aValueEl, 2);
+    const ev = dispatchKey(aValueEl, "Enter", { metaKey: true });
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(valueOfId(core, a)).toBe("he");
+
+    const rootKids = childrenOf(core, rootId);
+    expect(rootKids[0]).toBe(g);
+    expect(rootKids[2]).toBe(z);
+    const b = rootKids[1]!;
+    expect(valueOfId(core, b)).toBe("llo");
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("Mod+Enter falls back to normal Enter when parent-level split is invalid", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    const z = mkBlank(core, rootId, { label: "z", value: "tail" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(aValueEl, 2);
+    const ev = dispatchKey(aValueEl, "Enter", { metaKey: true });
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(valueOfId(core, a)).toBe("he");
+
+    const rootKids = childrenOf(core, rootId);
+    expect(rootKids[0]).toBe(a);
+    expect(rootKids[2]).toBe(z);
+    const b = rootKids[1]!;
+    expect(valueOfId(core, b)).toBe("llo");
+    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+
+    unmount();
+  });
+
   test("beforeinput insertParagraph with non-collapsed single-item selection splits using range end", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });

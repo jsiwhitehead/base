@@ -286,10 +286,12 @@ export const outlineCmd = {
     return rightId;
   },
 
-  insertAfterParentFromEmptyLastChild(
+  splitAfterParent(
     core: Core,
     rootId: ItemId,
     location: Location,
+    caretStart: number,
+    caretEnd = caretStart,
   ): ItemId | null {
     const childLoc = core.locate(location.item);
     if (!childLoc) return null;
@@ -297,7 +299,7 @@ export const outlineCmd = {
 
     const parentLoc = core.locate(childLoc.parentId);
     if (!parentLoc) return null;
-    if (parentLoc.parentId === rootId) return null;
+    if (childLoc.parentId === rootId) return null;
 
     const parentSnap = core.item(childLoc.parentId);
     if (
@@ -313,37 +315,30 @@ export const outlineCmd = {
     ) {
       return null;
     }
-    if (valueToText(childSnap.content.value) !== "") return null;
+    const curText = valueToText(childSnap.content.value);
+    const len = curText.length;
+    const start = Math.max(0, Math.min(caretStart, len));
+    const end = Math.max(0, Math.min(caretEnd, len));
+    const left = curText.slice(0, start);
+    const right = curText.slice(end);
 
     let nextId!: ItemId;
 
     core.commit((t) => {
+      t.setValue(location.item, left);
       nextId = t.insertChild(parentLoc.parentId, { at: parentLoc.index + 1 });
+      t.setValue(nextId, right);
     });
 
     return nextId;
   },
 
-  joinBoundary(
+  joinValues(
     core: Core,
     rootId: ItemId,
-    location: Location,
-    dir: "backward" | "forward",
+    leftId: ItemId,
+    rightId: ItemId,
   ): { id: ItemId; caret: number } | null {
-    const loc = core.locate(location.item);
-    if (!loc) return null;
-
-    const { index: idx, siblings } = loc;
-
-    const neighbor =
-      dir === "backward"
-        ? (siblings[idx - 1] ?? null)
-        : (siblings[idx + 1] ?? null);
-    if (!neighbor) return null;
-
-    const leftId = dir === "backward" ? neighbor : location.item;
-    const rightId = dir === "backward" ? location.item : neighbor;
-
     const leftItem = core.item(leftId);
     const rightItem = core.item(rightId);
 

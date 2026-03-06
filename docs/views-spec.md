@@ -199,13 +199,13 @@ When the adjacent leaf is a non-outline embedded child view, traversal lands on 
 
 Enter from a plain value `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain value items, never to `conn:*` fields.
 Shift+Enter from a plain value `value` target inserts a newline in place within the same item and keeps edit focus on that item.
-`Mod+Enter` from a plain value `value` target inserts a new empty item after the parent when the focused item is empty, is the last child, and the parent is an editable Outline group below `rootId`. Focus moves to the new item's `value` target with caret at start. Otherwise, `Mod+Enter` is a no-op.
+`Mod+Enter` from a plain value `value` target works like `Enter`, but when the focused item is the last child of an editable Outline group whose parent is not `rootId`, it inserts the split-off item after the parent instead. The current item keeps the text before the caret, the new parent-level item gets the text after the caret, and focus moves to the new item's `value` target with caret at start. Otherwise, it falls back to normal `Enter`.
 
 Delete at boundary from a `conn:*` target is a no-op.
 
 Delete at boundary from a `value` target is target-specific:
 
-- If the current text is non-empty, boundary delete joins adjacent plain value items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join boundary in the surviving item. Join only applies when both items are plain value items.
+- If the current text is non-empty, boundary delete checks the adjacent edit stop in the delete direction. If that stop is a plain value item, Outline joins the two values at the boundary point and places the caret at the join boundary in the surviving item. Otherwise, no-op.
 - If the current text is empty, that DELETE intent removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
 
 When the contenteditable selection spans multiple plain value items within the same parent, delete/backspace merges the start item's text up to the selection start with the end item's text from the selection end, removing all spanned items between them. The caret lands at the merge point in the surviving start item. Constrained to same-parent siblings; cross-parent ranges are a no-op.
@@ -230,8 +230,8 @@ Outline-local commands:
 - `convertEmptyGroupToValue(id)`
 - `insertSibling(sel, side)`
 - `splitAt(sel, caretStart, caretEnd)`
-- `insertAfterParentFromEmptyLastChild(sel)`
-- `joinBoundary(sel, dir)`
+- `splitAfterParent(sel, caretStart, caretEnd)`
+- `joinValues(leftId, rightId)`
 - `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
 - `promoteChildToRoot(rootId, childId)`

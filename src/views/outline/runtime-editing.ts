@@ -482,11 +482,31 @@ function handleBoundaryDeleteBeforeInput(
       });
       return;
     }
-    const joined = outlineCmd.joinBoundary(
+    const adjacentStop = moveNavPoint(
+      ctx.navPoints.value,
+      {
+        type: "editing",
+        location: modelSel.location,
+        target: modelSel.target,
+      },
+      dir,
+    );
+    if (
+      !adjacentStop ||
+      adjacentStop.point.type !== "editing" ||
+      adjacentStop.point.target !== VALUE_TARGET
+    ) {
+      return;
+    }
+    const joined = outlineCmd.joinValues(
       ctx.core,
       ctx.rootId,
-      modelSel.location,
-      dir,
+      dir === "backward"
+        ? adjacentStop.point.location.item
+        : modelSel.location.item,
+      dir === "backward"
+        ? modelSel.location.item
+        : adjacentStop.point.location.item,
     );
     if (!joined) return;
     ctx.applyEditingResult({
@@ -1016,7 +1036,11 @@ function bindOutlineBeforeInputEvents(args: {
         case "deleteContentBackward":
         case "deleteContentForward":
         case "deleteWordBackward":
-        case "deleteWordForward": {
+        case "deleteWordForward":
+        case "deleteHardLineBackward":
+        case "deleteHardLineForward":
+        case "deleteSoftLineBackward":
+        case "deleteSoftLineForward": {
           const dir = e.inputType.includes("Backward") ? "backward" : "forward";
           const targetRange = e.getTargetRanges()[0];
           if (targetRange && handleDeleteBeforeInput(editCtx, e, targetRange)) {
@@ -1045,6 +1069,7 @@ function bindOutlineBeforeInputEvents(args: {
           break;
 
         default:
+          e.preventDefault();
           return;
       }
     }),
@@ -1247,15 +1272,49 @@ function bindOutlineKeydownEvents(args: {
       if (e.key === "Enter" && isMod && !e.altKey && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
-        const modelSel = core.selection();
-        if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET) {
-          return;
-        }
-        const nextId = outlineCmd.insertAfterParentFromEmptyLastChild(
-          core,
-          rootId,
-          modelSel.location,
+        const range = getDomRangeInRoot(root);
+        if (!range) return;
+        const rangePos = getMappedRange(range, (point) =>
+          domPositionToModel(root, point.node, point.offset),
         );
+        if (!rangePos) return;
+        if (core.selection().type !== "editing") return;
+
+        const caretStart = rangePos.start.offset;
+        let caretEnd = caretStart;
+        const multiItem =
+          !range.collapsed && rangePos.start.itemId !== rangePos.end.itemId;
+        if (multiItem) {
+          editCtx.suppressMutationSync.suppressForTurn(true);
+          if (
+            !deleteMultiItemRange(
+              core,
+              portals,
+              rangePos.start,
+              rangePos.end,
+              editCtx.setCursorAndReveal,
+            )
+          ) {
+            return;
+          }
+        } else if (!range.collapsed) {
+          caretEnd = rangePos.end.offset;
+        }
+
+        const nextId =
+          outlineCmd.splitAfterParent(
+            core,
+            rootId,
+            { item: rangePos.start.itemId, portals },
+            caretStart,
+            caretEnd,
+          ) ??
+          outlineCmd.splitAt(
+            core,
+            { item: rangePos.start.itemId, portals },
+            caretStart,
+            caretEnd,
+          );
         if (!nextId) return;
         clearStickyCaretX();
         editCtx.suppressMutationSync.suppressForTurn(true);
