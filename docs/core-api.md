@@ -403,6 +403,7 @@ Rules:
 
 - Core owns semantic intent parsing (`parseKeyIntent`) and dispatch.
 - DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
+- Global history intents (`Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`) MUST be handled by Core before view delegation. Global keydown paths SHOULD route them through `parseKeyIntent`; contenteditable surfaces MAY handle them in their editing pipeline (`docs/content-editable.md`).
 - Core handles `NAV/out` before any active-view delegation.
 - Core routes other non-global intents through `resolveIntentHandler(selection)` when provided.
 - Editors and controls decide which key events bubble to Core.

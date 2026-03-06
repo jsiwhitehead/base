@@ -1550,6 +1550,42 @@ describe("smoke: item TYPE intent model-apply path", () => {
 });
 
 describe("dom runtime: UiCore target binding and view mounting", () => {
+  test("global Cmd+Z and Cmd+Shift+Z route through core history", () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "one" });
+
+    core.commit((t) => {
+      t.setValue(id, "two");
+    });
+    expect(core.item(id).content).toEqual({ type: "value", value: "two" });
+
+    const undo = dispatchKey(document.body, "z", { metaKey: true });
+    expect(undo.defaultPrevented).toBe(true);
+    expect(core.item(id).content).toEqual({ type: "value", value: "one" });
+
+    const redo = dispatchKey(document.body, "z", {
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(redo.defaultPrevented).toBe(true);
+    expect(core.item(id).content).toEqual({ type: "value", value: "two" });
+  });
+
+  test("global Ctrl+Y redoes through core history", () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "x", value: "one" });
+
+    core.commit((t) => {
+      t.setValue(id, "two");
+    });
+    core.undo();
+    expect(core.item(id).content).toEqual({ type: "value", value: "one" });
+
+    const redo = dispatchKey(document.body, "y", { ctrlKey: true });
+    expect(redo.defaultPrevented).toBe(true);
+    expect(core.item(id).content).toEqual({ type: "value", value: "two" });
+  });
+
   test("edit with exact target binding focuses correct element", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });

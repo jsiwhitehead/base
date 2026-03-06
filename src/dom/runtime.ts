@@ -191,8 +191,6 @@ export function createRuntime(opts: {
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
   dispatchIntent: (intent: Intent) => void;
   getSelection: () => Selection;
-  undo: () => void;
-  redo: () => void;
 }): DomRuntime {
   const views = opts.views;
   const bindings = new Map<string, Map<string, TargetBindingRecord>>();
@@ -444,13 +442,6 @@ export function createRuntime(opts: {
   const dispatchKeyDown = (e: KeyboardEvent) => {
     if ((e.target as HTMLElement | null)?.isContentEditable) return;
 
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
-      e.preventDefault();
-      if (e.shiftKey) opts.redo();
-      else opts.undo();
-      return;
-    }
-
     const intent = parseKeyIntent({
       key: e.key,
       ctrlKey: !!e.ctrlKey,
@@ -588,8 +579,6 @@ export function bindUiRuntime(args: {
     views: args.views,
     dispatchIntent: (intent) => args.core.dispatch(intent),
     getSelection: () => args.core.selection(),
-    undo: () => args.core.undo(),
-    redo: () => args.core.redo(),
   });
   uiCore = createUiCore(args.core, runtime);
   runtime.syncSelection(args.core.selection());

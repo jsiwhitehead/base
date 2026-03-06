@@ -59,6 +59,7 @@ export type Intent =
   | { type: "NAV"; dir: NavDirection; mode: "step" | "jump" }
   | { type: "CONFIRM"; caret?: number }
   | { type: "TAB"; shift: boolean; caret?: number }
+  | { type: "HISTORY"; action: "undo" | "redo" }
   | { type: "TYPE"; char: string }
   | { type: "DELETE"; dir: "backward" | "forward" };
 
@@ -71,11 +72,26 @@ export type KeyIntentInput = {
 };
 
 export function parseKeyIntent(input: KeyIntentInput): Intent | null {
+  const isMod = input.metaKey || input.ctrlKey;
+  const key = input.key.toLowerCase();
+
+  if (isMod && !input.altKey) {
+    if (key === "z") {
+      return {
+        type: "HISTORY",
+        action: input.shiftKey ? "redo" : "undo",
+      };
+    }
+    if (key === "y") {
+      return { type: "HISTORY", action: "redo" };
+    }
+  }
+
   if (input.key === "Escape") {
     return {
       type: "NAV",
       dir: "out",
-      mode: input.metaKey || input.ctrlKey ? "jump" : "step",
+      mode: isMod ? "jump" : "step",
     };
   }
   if (input.key === "Tab") return { type: "TAB", shift: !!input.shiftKey };
@@ -103,7 +119,7 @@ export function parseKeyIntent(input: KeyIntentInput): Intent | null {
     return {
       type: "NAV",
       dir,
-      mode: input.metaKey || input.ctrlKey ? "jump" : "step",
+      mode: isMod ? "jump" : "step",
     };
   }
 
@@ -422,6 +438,12 @@ export function createCore(opts: CreateCoreOptions): {
 
   const dispatch = (intent: Intent): void => {
     const sel = peekSelection();
+
+    if (intent.type === "HISTORY") {
+      if (intent.action === "undo") undo();
+      else redo();
+      return;
+    }
 
     if (
       intent.type === "NAV" &&

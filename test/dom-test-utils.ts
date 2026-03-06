@@ -126,6 +126,17 @@ function intentFromKey(
   }
   if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
   if (key === "Enter") return { type: "CONFIRM" };
+  if ((opts.metaKey || opts.ctrlKey) && !opts.altKey) {
+    if (key.toLowerCase() === "z") {
+      return {
+        type: "HISTORY",
+        action: opts.shiftKey ? "redo" : "undo",
+      };
+    }
+    if (key.toLowerCase() === "y") {
+      return { type: "HISTORY", action: "redo" };
+    }
+  }
   if (key === "Backspace") return { type: "DELETE", dir: "backward" };
   if (key === "Delete") return { type: "DELETE", dir: "forward" };
 
