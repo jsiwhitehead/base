@@ -1244,6 +1244,29 @@ function bindOutlineKeydownEvents(args: {
           return;
         }
       }
+      if (e.key === "Enter" && isMod && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const modelSel = core.selection();
+        if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET) {
+          return;
+        }
+        const nextId = outlineCmd.insertAfterParentFromEmptyLastChild(
+          core,
+          rootId,
+          modelSel.location,
+        );
+        if (!nextId) return;
+        clearStickyCaretX();
+        editCtx.suppressMutationSync.suppressForTurn(true);
+        editCtx.applyEditingResult({
+          location: { item: nextId, portals },
+          target: VALUE_TARGET,
+          caret: 0,
+          reveal: { offset: 0, defer: false },
+        });
+        return;
+      }
       if (e.key === "Tab") {
         clearStickyCaretX();
         e.preventDefault();

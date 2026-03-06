@@ -286,6 +286,44 @@ export const outlineCmd = {
     return rightId;
   },
 
+  insertAfterParentFromEmptyLastChild(
+    core: Core,
+    rootId: ItemId,
+    location: Location,
+  ): ItemId | null {
+    const childLoc = core.locate(location.item);
+    if (!childLoc) return null;
+    if (childLoc.index !== childLoc.siblings.length - 1) return null;
+
+    const parentLoc = core.locate(childLoc.parentId);
+    if (!parentLoc) return null;
+    if (parentLoc.parentId === rootId) return null;
+
+    const parentSnap = core.item(childLoc.parentId);
+    if (
+      parentSnap.mode.type === "readonly" ||
+      parentSnap.mode.type === "connected"
+    ) {
+      return null;
+    }
+
+    const childSnap = core.item(location.item);
+    if (
+      !(childSnap.mode.type === "plain" && childSnap.content.type === "value")
+    ) {
+      return null;
+    }
+    if (valueToText(childSnap.content.value) !== "") return null;
+
+    let nextId!: ItemId;
+
+    core.commit((t) => {
+      nextId = t.insertChild(parentLoc.parentId, { at: parentLoc.index + 1 });
+    });
+
+    return nextId;
+  },
+
   joinBoundary(
     core: Core,
     rootId: ItemId,

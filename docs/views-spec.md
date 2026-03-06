@@ -199,6 +199,7 @@ When the adjacent leaf is a non-outline embedded child view, traversal lands on 
 
 Enter from a plain value `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain value items, never to `conn:*` fields.
 Shift+Enter from a plain value `value` target inserts a newline in place within the same item and keeps edit focus on that item.
+`Mod+Enter` from a plain value `value` target inserts a new empty item after the parent when the focused item is empty, is the last child, and the parent is an editable Outline group below `rootId`. Focus moves to the new item's `value` target with caret at start. Otherwise, `Mod+Enter` is a no-op.
 
 Delete at boundary from a `conn:*` target is a no-op.
 
@@ -229,6 +230,7 @@ Outline-local commands:
 - `convertEmptyGroupToValue(id)`
 - `insertSibling(sel, side)`
 - `splitAt(sel, caretStart, caretEnd)`
+- `insertAfterParentFromEmptyLastChild(sel)`
 - `joinBoundary(sel, dir)`
 - `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
