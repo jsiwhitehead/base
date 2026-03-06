@@ -1,16 +1,8 @@
 import { computed } from "@preact/signals-core";
 
-import type { Location, Intent, ItemId, Selection } from "../core";
-import {
-  applyTypeToPrimaryTarget,
-  LABEL_TARGET,
-  connTarget,
-  editTargetsForItem,
-  fieldsFromConn,
-  getTextForTarget,
-  primaryEditTarget,
-} from "../core";
-import { createComponent, el } from "./base";
+import type { Location, ItemId } from "../core";
+import { LABEL_TARGET, connTarget, fieldsFromConn } from "../core";
+import { createComponent, el } from "./component";
 import type { Component, UiCore } from "./runtime";
 
 type TextInputElement = HTMLInputElement | HTMLTextAreaElement;
@@ -19,10 +11,9 @@ type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
 };
 
-export type NavDir = Extract<Intent, { type: "NAV" }>["dir"];
 export type TextFieldKind = "isolated" | "traversable";
 
-function prevent(e: Event): void {
+function preventDefaultEvent(e: Event): void {
   e.preventDefault?.();
 }
 
@@ -124,6 +115,29 @@ export function buildTextField(
       if (mirror.textContent !== next) mirror.textContent = next;
     };
 
+    const resetToCommitted = (committed: string): void => {
+      editing = false;
+      dirty = false;
+      baseline = committed;
+      draft = committed;
+      wrap.classList.remove("is-stale");
+      syncValue(inp, committed);
+      syncMirror(committed);
+    };
+
+    const syncDraftSession = (committed: string): void => {
+      if (!dirty && committed !== baseline) {
+        baseline = committed;
+        draft = committed;
+      }
+      wrap.classList.toggle(
+        "is-stale",
+        editing && dirty && committed !== baseline,
+      );
+      syncValue(inp, draft);
+      syncMirror(draft);
+    };
+
     const beginDraftSession = (): void => {
       if (editing) return;
       const state = opts.getState();
@@ -160,7 +174,7 @@ export function buildTextField(
 
     const yieldCommit = (e: KeyboardEvent): void => {
       commitDraft();
-      prevent(e);
+      preventDefaultEvent(e);
     };
 
     ctx.on(inp, "keydown", (e: KeyboardEvent) => {
@@ -174,7 +188,7 @@ export function buildTextField(
       if (kind === "isolated") {
         if (e.key === "Enter" || e.key === "Tab") {
           commitDraft();
-          prevent(e);
+          preventDefaultEvent(e);
           opts.onExitToItem?.();
         }
         e.stopPropagation();
@@ -193,7 +207,7 @@ export function buildTextField(
             return;
           }
           if (e.metaKey || e.ctrlKey) {
-            prevent(e);
+            preventDefaultEvent(e);
             e.stopPropagation();
             return;
           }
@@ -297,24 +311,12 @@ export function buildTextField(
       const focused = isThisTargetFocused();
 
       if (!focused) {
-        editing = false;
-        dirty = false;
-        baseline = committed;
-        draft = committed;
-        wrap.classList.remove("is-stale");
-        syncValue(inp, committed);
-        syncMirror(committed);
+        resetToCommitted(committed);
         return;
       }
 
       if (state.readOnly) {
-        editing = false;
-        dirty = false;
-        baseline = committed;
-        draft = committed;
-        wrap.classList.remove("is-stale");
-        syncValue(inp, committed);
-        syncMirror(committed);
+        resetToCommitted(committed);
         return;
       }
 
@@ -328,112 +330,13 @@ export function buildTextField(
         return;
       }
 
-      if (!dirty && committed !== baseline) {
-        baseline = committed;
-        draft = committed;
-      }
-      wrap.classList.toggle(
-        "is-stale",
-        editing && dirty && committed !== baseline,
-      );
-
-      syncValue(inp, draft);
-      syncMirror(draft);
+      syncDraftSession(committed);
     });
 
     return wrap;
   });
 
   return { ...c, focusEl };
-}
-
-export function moveWithinItemEditTargets(
-  core: UiCore,
-  id: ItemId,
-  fromTarget: string,
-  dir: "backward" | "forward",
-): { target: string; caret: number } | null {
-  const targets = editTargetsForItem(core, id);
-  const at = targets.indexOf(fromTarget);
-  if (at < 0) return null;
-  const nextIdx = dir === "backward" ? at - 1 : at + 1;
-  const target = targets[nextIdx] ?? null;
-  if (!target) return null;
-  if (dir === "forward") return { target, caret: 0 };
-  return { target, caret: getTextForTarget(core, id, target).length };
-}
-
-export function resolveFocusAfterRemove(
-  core: UiCore,
-  removedId: ItemId,
-  prefer: "prev" | "next",
-  portals: readonly ItemId[],
-): Location | null {
-  const loc = core.locate(removedId);
-  if (!loc) return null;
-
-  const prev = loc.siblings[loc.index - 1] ?? null;
-  const next = loc.siblings[loc.index + 1] ?? null;
-  const sibling =
-    prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
-  if (sibling) {
-    return { item: sibling, portals };
-  }
-
-  return { item: loc.parentId, portals };
-}
-
-export function handleItemIntent(args: {
-  core: UiCore;
-  sel: Extract<Selection, { type: "item" }>;
-  intent: Extract<Intent, { type: "CONFIRM" | "TYPE" }>;
-}): boolean {
-  const { core, sel, intent } = args;
-
-  const id = sel.head.item;
-  const location: Location = sel.head;
-
-  if (intent.type === "TYPE") {
-    const item = core.item(id);
-    const valueText =
-      item.content.type === "value" ? String(item.content.value ?? "") : "";
-    const isEmptyPlainValue =
-      item.content.type === "value" && valueText.trim() === "";
-    const isEmptyPlainGroup =
-      item.content.type === "group" && item.content.children.length === 0;
-
-    if (
-      intent.char === "=" &&
-      item.mode.type === "plain" &&
-      (isEmptyPlainValue || isEmptyPlainGroup)
-    ) {
-      core.commit((t) => t.setConnected(id, { type: "formula", expr: "" }));
-      core.focus(
-        { type: "editing", location: location, target: connTarget("expr") },
-        { caret: 0 },
-      );
-      return true;
-    }
-
-    const applied = applyTypeToPrimaryTarget(core, id, intent.char);
-    if (!applied) return false;
-    core.focus(
-      { type: "editing", location: location, target: applied.target },
-      { caret: applied.caret },
-    );
-    return true;
-  }
-
-  const target = primaryEditTarget(core, id);
-  if (!target) return false;
-
-  const text = getTextForTarget(core, id, target);
-  const caretPos = text.length;
-  core.focus(
-    { type: "editing", location: location, target },
-    { caret: caretPos },
-  );
-  return true;
 }
 
 export function buildItemHeader(

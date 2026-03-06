@@ -3,7 +3,7 @@ import { effect, signal } from "@preact/signals-core";
 
 import type { Core, ItemId, Tx } from "../core";
 import { devWarn } from "../dev";
-import { el, resolveEventTargetElement } from "./base";
+import { el, resolveEventTargetElement } from "./component";
 import type { Component } from "./runtime";
 
 export type DropTarget =

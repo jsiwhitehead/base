@@ -8,7 +8,7 @@ import type {
   Selection,
 } from "../core";
 import { defineShape, patchConn, VALUE_TARGET } from "../core";
-import type { Component, NavDir, UiCore } from "../dom";
+import type { Component, NavDirection, UiCore } from "../dom";
 import {
   bindItemFrame,
   buildItemHeader,
@@ -92,7 +92,7 @@ const plan = {
     rows: readonly ItemId[],
     colCount: number,
     sel: Extract<Selection, { type: "item" }>,
-    dir: NavDir,
+    dir: NavDirection,
   ): Location | null {
     if (isRowItemSel(core, sel, tableId)) {
       const rowId = sel.anchor.item;

@@ -30,8 +30,9 @@ Base helpers:
 Controls/editing helpers:
 
 - `buildTextField`: canonical shared text editor component.
+- `buildItemHeader`: canonical header subtree component.
+- `NavDirection`: shared item-navigation direction type.
 - `handleItemIntent`: shared item-selection `TYPE`/`CONFIRM` adaptor for views.
-- `moveWithinItemEditTargets`: intra-item traversable-target movement helper.
 - `resolveFocusAfterRemove`: canonical remove-focus destination helper.
 
 Contenteditable helpers:
@@ -41,26 +42,24 @@ Contenteditable helpers:
 - `domPointToTextOffset`, `textOffsetToDomPoint`
 - `setDomSelectionRange`, `setDomCaret`
 - `getDomSelectionPointsInRoot`, `getMappedSelectionPointsInRoot`
-- `getMappedSelectionSnapshotInRoot`, `getDomRangeInRoot`, `getMappedSelectionRangeInRoot`
+- `getDomRangeInRoot`, `getMappedSelectionRangeInRoot`
+- `getMappedRange`
 - `getCollapsedCaretRectInSurface`, `getTextSurfaceLineRects`, `getDomPointFromViewport`
+- `hasActiveSelectionInSurface`
 - `getSurfaceFromNodeInRoot`, `getTextNodeFromMutationRecord`
 - `getPlainTextFromDataTransfer`, `writePlainTextClipboard`
-
-Connected header helpers:
-
-- `buildItemHeader`: canonical header subtree component.
 
 Drag helpers:
 
 - `createDragController`: creates the drag-and-drop controller.
 - `buildDropIndicator`: builds the drop-position indicator component.
-- Types: `DragController`, `DragState`, `DropTarget`.
 
 Runtime integration helpers/types:
 
 - `UiCore`: DOM-facing composed API (`Core` plus runtime-backed methods such as view mounting and target binding).
 - `bindUiRuntime`: composes a headless `Core` with the DOM runtime and returns `{ core: UiCore, runtime }`.
-- `createRuntime`: low-level DOM runtime factory used by `bindUiRuntime`.
+- `defineView`, `defineShapedView`: view-definition helpers for DOM-backed views.
+- `Component`, `DomView`, `ViewRegistration`, `ViewFactory`: runtime-facing DOM view types.
 - `DomRuntime`: runtime adapter type (selection sync, target binding, view mounting, listeners, disposal).
 
 ## Core/runtime boundary
@@ -248,15 +247,6 @@ Behavior:
 - For `CONFIRM`, enters primary edit target with caret at end.
 - Returns `true` when handled, else `false`.
 - **contenteditable value surfaces do not use this helper for `TYPE`.** Views with a contenteditable `value` target handle `TYPE` model-side: commit the character directly (`t.setValue(id, char)`) and focus `VALUE_TARGET` at the new caret. This is the same pattern the empty-group case already uses.
-
-### `moveWithinItemEditTargets(core, id, fromTarget, dir)`
-
-Behavior:
-
-- Moves to the previous/next edit target within the same item.
-- Returns `null` if `fromTarget` is not in the item target list or if there is no target in `dir`.
-- On forward move, returns `{ target, caret: 0 }`.
-- On backward move, returns `{ target, caret: endOfTargetText }`.
 
 ### `resolveFocusAfterRemove(core, removedId, prefer, portals)`
 

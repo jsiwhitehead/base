@@ -61,7 +61,6 @@ export function buildOutlineRoot(
   onValueTab: (location: Location, shift: boolean, caret: number) => void,
 ): Component {
   return createComponent(core, (ctx) => {
-    // Shared editor session state.
     const navPoints = computed(() => collectNavPoints(core, rootId, portals));
     const suppressMutationSync = createSuppressionFlag(false);
     const suppressHistoryKeydown = createSuppressionFlag<
@@ -70,7 +69,6 @@ export function buildOutlineRoot(
     let isComposing = false;
     const { state, clearStickyCaretX } = createOutlineInputState();
 
-    // Selection state needs the root element lazily while the tree mounts.
     let rootRef: HTMLElement | null = null;
     const selectionRuntime = createOutlineSelectionRuntime({
       core,
@@ -86,7 +84,6 @@ export function buildOutlineRoot(
       mutationSync?.discardPendingMutationRecords();
     };
 
-    // Rendering stays in render.ts; runtime just provides the mount context.
     const mountCtx: OutlineMountCtx = {
       core,
       portals,
@@ -100,7 +97,6 @@ export function buildOutlineRoot(
     rootRef = root;
     configureOutlineRootElement(root);
 
-    // Editing and mutation runtimes share the root element and session flags.
     mutationSync = createOutlineMutationSync({
       core,
       root,
@@ -120,7 +116,6 @@ export function buildOutlineRoot(
       selection: selectionRuntime.editingControls,
     });
 
-    // Bind runtime lifecycles after the root tree exists.
     ctx.effect(() => () => rootItem.dispose());
     selectionRuntime.bind({
       on: ctx.on,

@@ -53,21 +53,22 @@ export type ShapedViewRegistration<S extends ViewShape> = {
   shape: S;
 };
 
+function authoredViewToDomView(view: AuthoredView): DomView {
+  return {
+    body: view.body,
+    root: view.body.el,
+    ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+    dispose() {
+      view.body.dispose();
+    },
+  };
+}
+
 export function defineView(
   mount: (args: ViewMountArgs) => AuthoredView,
 ): ViewRegistration {
   return {
-    factory: (args) => {
-      const view = mount(args);
-      return {
-        body: view.body,
-        root: view.body.el,
-        ...(view.onIntent ? { onIntent: view.onIntent } : {}),
-        dispose() {
-          view.body.dispose();
-        },
-      };
-    },
+    factory: (args) => authoredViewToDomView(mount(args)),
   };
 }
 
@@ -82,17 +83,10 @@ export function defineShapedView<S extends ViewShape>(
 ): ShapedViewRegistration<S> {
   return {
     shape,
-    factory: ({ core, id, focus }) => {
-      const view = mount({ core, id, reader: core.reader(id, shape), focus });
-      return {
-        body: view.body,
-        root: view.body.el,
-        ...(view.onIntent ? { onIntent: view.onIntent } : {}),
-        dispose() {
-          view.body.dispose();
-        },
-      };
-    },
+    factory: ({ core, id, focus }) =>
+      authoredViewToDomView(
+        mount({ core, id, reader: core.reader(id, shape), focus }),
+      ),
   };
 }
 
@@ -195,12 +189,9 @@ export function createRuntime(opts: {
   redo: () => void;
 }): DomRuntime {
   const views = opts.views;
-
   const bindings = new Map<string, Map<string, TargetBindingRecord>>();
-
   const viewRoots = new WeakMap<HTMLElement, ViewHandle>();
   const mountedViewsByFocus = new Map<string, ViewHandle>();
-
   let pending: { selection: Selection; effects: RuntimeEffect[] } | null = null;
   let flushScheduled = false;
 
