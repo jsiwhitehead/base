@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
 import { VALUE_TARGET } from "../src/core";
+import { createDragController } from "../src/dom";
 
 import {
   childrenOf,
+  dispatchPointerEvent,
   dispatchKey,
   expectSel,
   fireViewKey,
   flushDomEffects,
+  installCapturedWindowHandlers,
   makeCoreRuntime,
   mountView,
   mkBlank,
@@ -304,6 +307,143 @@ describe("views/table", () => {
     expectSel(core, { item: firstCell, portals: [] });
 
     unmount();
+  });
+
+  test("slot replace moves the cell and clears the source slot", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
+    mkBlank(core, r1, { label: "c2", value: "b" });
+    const c21 = childrenOf(core, r2)[0]!;
+
+    const cap = installCapturedWindowHandlers();
+    const drag = createDragController(core);
+    const { unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+      location: { item: tableId, portals: [] },
+    });
+
+    try {
+      const c11Frame = requireFrameEl(document.body, c11);
+      const c21Frame = requireFrameEl(document.body, c21);
+      dispatchPointerEvent(c11Frame, "pointerdown", {
+        pointerId: 31,
+        clientX: 0,
+        clientY: 0,
+      });
+      expect(drag.state.value.type).toBe("pending");
+      cap.emitPointer("pointermove", {
+        pointerId: 31,
+        clientX: 10,
+        clientY: 0,
+      });
+      await flushDomEffects();
+
+      if (drag.state.value.type !== "active")
+        throw new Error("Drag not active");
+      drag.state.value = {
+        ...drag.state.value,
+        drop: { type: "replace", itemId: c21, anchorEl: c21Frame },
+      };
+
+      cap.emitPointer("pointerup", { pointerId: 31, clientX: 0, clientY: 0 });
+      await flushDomEffects();
+
+      const nextR1 = childrenOf(core, r1);
+      const nextR2 = childrenOf(core, r2);
+      expect(nextR2[0]).toBe(c11);
+      expect(valueOfId(core, c11)).toBe("a");
+      expect(nextR1[0]).not.toBe(c11);
+      expect(valueOfId(core, nextR1[0]!)).toBe(null);
+    } finally {
+      drag.dispose();
+      cap.dispose();
+      unmount();
+    }
+  });
+
+  test("slot edge drop inserts a new row and clears the source slot", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r2 = mkGroup(core, tableId, { label: "r2" });
+
+    const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
+    mkBlank(core, r1, { label: "c2", value: "b" });
+    const c21 = childrenOf(core, r2)[0]!;
+
+    const cap = installCapturedWindowHandlers();
+    const drag = createDragController(core);
+    const { unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+      location: { item: tableId, portals: [] },
+    });
+
+    try {
+      const c11Frame = requireFrameEl(document.body, c11);
+      const r2Frame = requireFrameEl(document.body, r2);
+      const rowsBefore = childrenOf(core, tableId);
+      const insertAt = rowsBefore.indexOf(r2);
+      dispatchPointerEvent(c11Frame, "pointerdown", {
+        pointerId: 32,
+        clientX: 0,
+        clientY: 0,
+      });
+      expect(drag.state.value.type).toBe("pending");
+      cap.emitPointer("pointermove", {
+        pointerId: 32,
+        clientX: 10,
+        clientY: 0,
+      });
+      await flushDomEffects();
+
+      if (drag.state.value.type !== "active")
+        throw new Error("Drag not active");
+      drag.state.value = {
+        ...drag.state.value,
+        drop: {
+          type: "gap",
+          parentId: tableId,
+          at: insertAt,
+          side: "before",
+          anchorEl: r2Frame,
+          referenceItemId: c21,
+        },
+      };
+
+      cap.emitPointer("pointerup", { pointerId: 32, clientX: 0, clientY: 0 });
+      await flushDomEffects();
+
+      const rows = childrenOf(core, tableId);
+      const insertedRow = rows[insertAt]!;
+      const insertedCells = childrenOf(core, insertedRow);
+      const nextR1 = childrenOf(core, r1);
+
+      expect(rows).toHaveLength(rowsBefore.length + 1);
+      expect(insertedRow).not.toBe(r1);
+      expect(insertedRow).not.toBe(r2);
+      expect(insertedCells[0]).toBe(c11);
+      expect(insertedCells).toHaveLength(2);
+      expect(nextR1[0]).not.toBe(c11);
+      expect(valueOfId(core, nextR1[0]!)).toBe(null);
+    } finally {
+      drag.dispose();
+      cap.dispose();
+      unmount();
+    }
   });
 });
 

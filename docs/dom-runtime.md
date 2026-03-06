@@ -420,12 +420,20 @@ type DragState =
   | { type: "idle" }
   | {
       type: "pending";
+      cleanupType: DragType;
       itemId: ItemId;
       pointerId: number;
       startX: number;
       startY: number;
     }
-  | { type: "active"; itemId: ItemId; drop: DropTarget | null };
+  | {
+      type: "active";
+      cleanupType: DragType;
+      itemId: ItemId;
+      drop: DropTarget | null;
+    };
+
+type DragType = "reorder" | "slot";
 
 type DropTarget =
   | {
@@ -433,10 +441,10 @@ type DropTarget =
       parentId: ItemId;
       at: number;
       side: "before" | "after";
-      axis: "horizontal" | "vertical";
       anchorEl: HTMLElement;
+      referenceItemId?: ItemId;
     }
-  | { type: "slot"; itemId: ItemId; anchorEl: HTMLElement };
+  | { type: "replace"; itemId: ItemId; anchorEl: HTMLElement };
 
 type DragController = {
   state: Signal<DragState>;
@@ -450,32 +458,33 @@ type DragController = {
 createDragController(core: Core): DragController
 ```
 
-Creates a drag controller that manages pointer-driven item reordering.
+Creates the structural pointer-drag controller.
 
 Rules:
 
 - Attaches global `pointerdown`, `pointermove`, `pointerup`, and `pointercancel` listeners.
-- Drags MUST NOT start when the event target is inside an element marked `data-drag-start="block"`.
-- Drags MUST NOT start on interactive elements (`input`, `textarea`, `select`, `button`) or readonly frames.
-- Drags MUST NOT start on explicit `contenteditable="true"` edit surfaces (defensive guard; marker-based blocking remains the primary contract).
-- `DragState` transitions: `idle` -> `pending` -> `active` -> `idle`.
-- While pending/active, `document.documentElement.dataset.dragState` is `"pending"` or `"active"`.
-- The dragged frame receives `is-dragging` while active.
-- Escape cancels an active drag without committing.
-- On `pointerup` while active, commits the drop atomically via `core.commit(...)`.
+- Drag start is opt-in via `data-drag="reorder" | "slot"` on a drag surface or frame.
+- Drags do not start on interactive elements, readonly frames, or explicit `contenteditable="true"` edit surfaces.
+- `DragState` transitions `idle -> pending -> active -> idle`.
+- Successful drag start captures the active pointer on the source frame and releases capture through the shared cancel/finish path.
+- While pending or active, `document.documentElement.dataset.dragState` is `"pending"` or `"active"`.
+- The source frame receives `is-dragging` while active.
+- Escape cancels an active drag.
+- `pointerup` while active commits the resolved drop atomically through `core.commit(...)`.
 - `dispose()` MUST remove all global listeners.
 
-Drop commit rules:
+Drop rules:
 
-- `gap` drop: moves the item to the target position; cleans up the source vacancy.
-- `slot` drop: swaps the item into the slot; labels are exchanged and the displaced item is removed.
-- Newly-empty ancestor groups at the source are pruned (non-slot sources only).
+- `data-drag="reorder"` on the source removes the source item on success and prunes newly empty source ancestors when needed.
+- `data-drag="slot"` on the source clears the source slot on success.
+- Hovered `data-drag="reorder"` resolves a vertical `gap` from the upper/lower half.
+- Hovered `data-drag="slot"` resolves `replace` in the middle band and parent-level `gap` in the top/bottom bands.
+- `slot` edge-band `gap` drops insert a new parent-level group entry and move the dragged item into it.
 
-Drag metadata contract:
+Drag contract:
 
-- `data-drag-start="block"` marks a subtree as drag-start blocked while preserving normal pointer behavior. Views SHOULD use this marker explicitly for all non-draggable editing/chrome subtrees.
-- `data-drag-slot="true"` marks a frame as eligible for slot-drop resolution.
-- `data-drag-axis="horizontal" | "vertical"` hints the parent frame axis for gap placement; default is vertical.
+- `data-drag="reorder"` marks a reorder drag surface.
+- `data-drag="slot"` marks a slot drag surface.
 
 ### `buildDropIndicator(dragState)`
 
@@ -488,17 +497,17 @@ Builds a fixed-position drop indicator component.
 Rules:
 
 - Tracks `dragState` reactively.
-- When `dragState` is not `active` or has no drop target, the indicator is hidden.
-- For `slot` drop targets, the indicator is hidden and `is-drop-target` is added to `anchorEl`.
-- For `gap` drop targets, the indicator is shown at the near edge of `anchorEl`; `dataset.side` and `dataset.axis` are set for CSS targeting.
-- `dispose()` removes `is-drop-target` from any slot element and stops the effect.
+- Hidden when drag is not active or no drop target is resolved.
+- `replace` highlights `anchorEl` with `is-drop-target` and hides the line indicator.
+- `gap` shows the line indicator at the near vertical edge of `anchorEl`.
+- `dispose()` removes `is-drop-target` and stops the effect.
 
 ### Observable DOM outputs
 
 - `document.documentElement.dataset.dragState`: `"pending"` or `"active"` while dragging; absent when idle.
 - `.is-dragging`: on the source `.ui-frame` during an active drag.
-- `.is-drop-target`: on a slot `anchorEl` when it is the current drop target.
-- `.ui-drop-indicator`: the fixed-position indicator element managed by `buildDropIndicator`.
+- `.is-drop-target`: on the current replace target.
+- `.ui-drop-indicator`: the fixed-position gap indicator.
 
 ## Key parsing boundary
 

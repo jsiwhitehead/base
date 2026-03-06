@@ -105,7 +105,7 @@ function buildOutlineChild(
     if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
 
     const gutterEl = el("span", "ui-outline-gutter");
-    gutterEl.dataset.dragStart = "handle";
+    gutterEl.dataset.drag = "reorder";
     gutterEl.contentEditable = "false";
     gutterEl.addEventListener("pointerdown", (e) => {
       if ((e.button ?? 0) !== 0) return;

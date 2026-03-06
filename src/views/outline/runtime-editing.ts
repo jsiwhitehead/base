@@ -1273,6 +1273,26 @@ function bindOutlineClipboardEvents(args: {
 }): void {
   const { on, root, gated, core, editCtx } = args;
 
+  const insertPlainTextFromTransfer = (
+    e: ClipboardEvent | DragEvent,
+    dt: DataTransfer | null | undefined,
+  ): void => {
+    const text = getPlainTextFromDataTransfer(dt);
+    if (!text) return;
+    e.preventDefault();
+    core.undoBoundary();
+    insertText(editCtx, text);
+    core.undoBoundary();
+  };
+
+  const canAcceptPlainTextDrop = (
+    dt: DataTransfer | null | undefined,
+  ): boolean => {
+    if (!dt) return false;
+    const types = Array.from(dt.types ?? []);
+    return types.length === 0 || types.includes("text/plain");
+  };
+
   on(root, "copy", (e: ClipboardEvent): void => {
     const rangeSel = getMappedSelectionRangeInRoot(root, (point) =>
       domPositionToModel(root, point.node, point.offset),
@@ -1310,12 +1330,7 @@ function bindOutlineClipboardEvents(args: {
     root,
     "paste",
     gated((e: ClipboardEvent): void => {
-      const text = getPlainTextFromDataTransfer(e.clipboardData);
-      if (!text) return;
-      e.preventDefault();
-      core.undoBoundary();
-      insertText(editCtx, text);
-      core.undoBoundary();
+      insertPlainTextFromTransfer(e, e.clipboardData);
     }),
   );
 
@@ -1329,7 +1344,18 @@ function bindOutlineClipboardEvents(args: {
       if (!rangeSel || !e.dataTransfer) return;
       const text = readSelectionText(core, rangeSel);
       if (text == null) return;
+      e.dataTransfer.effectAllowed = "copy";
       e.dataTransfer.setData("text/plain", text);
+    }),
+  );
+
+  on(
+    root,
+    "dragover",
+    gated((e: DragEvent): void => {
+      if (!canAcceptPlainTextDrop(e.dataTransfer)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     }),
   );
 
@@ -1337,12 +1363,7 @@ function bindOutlineClipboardEvents(args: {
     root,
     "drop",
     gated((e: DragEvent): void => {
-      const text = getPlainTextFromDataTransfer(e.dataTransfer);
-      if (!text) return;
-      e.preventDefault();
-      core.undoBoundary();
-      insertText(editCtx, text);
-      core.undoBoundary();
+      insertPlainTextFromTransfer(e, e.dataTransfer);
     }),
   );
 }

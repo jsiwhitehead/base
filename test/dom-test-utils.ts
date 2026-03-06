@@ -26,6 +26,16 @@ export {
 } from "./core-test-utils";
 
 const cleanups: Array<() => void> = [];
+const capturedPointers = new WeakMap<HTMLElement, Set<number>>();
+
+function ensureCapturedPointers(el: HTMLElement): Set<number> {
+  let pointers = capturedPointers.get(el);
+  if (!pointers) {
+    pointers = new Set<number>();
+    capturedPointers.set(el, pointers);
+  }
+  return pointers;
+}
 
 function drainCleanups(): void {
   document.body.replaceChildren();
@@ -35,6 +45,24 @@ function drainCleanups(): void {
 
 beforeAll(() => {
   GlobalRegistrator.register();
+  HTMLElement.prototype.setPointerCapture = function (
+    this: HTMLElement,
+    pointerId: number,
+  ): void {
+    ensureCapturedPointers(this).add(pointerId);
+  };
+  HTMLElement.prototype.hasPointerCapture = function (
+    this: HTMLElement,
+    pointerId: number,
+  ): boolean {
+    return capturedPointers.get(this)?.has(pointerId) ?? false;
+  };
+  HTMLElement.prototype.releasePointerCapture = function (
+    this: HTMLElement,
+    pointerId: number,
+  ): void {
+    capturedPointers.get(this)?.delete(pointerId);
+  };
 });
 
 afterEach(() => {

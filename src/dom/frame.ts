@@ -89,5 +89,5 @@ export function bindItemFrame(
 
 export function setBodyClasses(root: HTMLElement, view: ViewName): void {
   root.classList.add("ui-body", `ui-${String(view)}`);
-  delete root.dataset.dragStart;
+  delete root.dataset.drag;
 }

@@ -323,7 +323,7 @@ function buildDataCell(
 ): Component {
   return createComponent(core, (ctx) => {
     const host = el("div", "ui-table-cell");
-    host.dataset.dragSlot = "true";
+    host.dataset.drag = "slot";
 
     const location: Location = { item: cellId, portals };
     bindItemFrame(ctx, { core, location }, host);

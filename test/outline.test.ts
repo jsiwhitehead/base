@@ -154,6 +154,9 @@ function dispatchBeforeInput(
 
 type MockTransfer = {
   _data: Record<string, string>;
+  dropEffect: string;
+  effectAllowed: string;
+  types: string[];
   setData(type: string, value: string): void;
   getData(type: string): string;
 };
@@ -162,6 +165,11 @@ function makeMockTransfer(seed?: Record<string, string>): MockTransfer {
   const data = { ...(seed ?? {}) };
   return {
     _data: data,
+    dropEffect: "none",
+    effectAllowed: "all",
+    get types() {
+      return Object.keys(data);
+    },
     setData(type, value) {
       data[type] = value;
     },
@@ -218,6 +226,50 @@ function dispatchDropText(
   });
   target.dispatchEvent(ev);
   return { defaultPrevented: ev.defaultPrevented };
+}
+
+function dispatchDragStart(target: Element): {
+  defaultPrevented: boolean;
+  textPlain: string;
+  effectAllowed: string;
+} {
+  const ev = new Event("dragstart", {
+    bubbles: true,
+    cancelable: true,
+  }) as DragEvent;
+  const transfer = makeMockTransfer();
+  Object.defineProperty(ev, "dataTransfer", {
+    value: transfer,
+    configurable: true,
+  });
+  target.dispatchEvent(ev);
+  return {
+    defaultPrevented: ev.defaultPrevented,
+    textPlain: transfer.getData("text/plain"),
+    effectAllowed: transfer.effectAllowed,
+  };
+}
+
+function dispatchDragOver(
+  target: Element,
+  init: { textPlain?: string } = {},
+): { defaultPrevented: boolean; dropEffect: string } {
+  const ev = new Event("dragover", {
+    bubbles: true,
+    cancelable: true,
+  }) as DragEvent;
+  const transfer = makeMockTransfer(
+    init.textPlain != null ? { "text/plain": init.textPlain } : undefined,
+  );
+  Object.defineProperty(ev, "dataTransfer", {
+    value: transfer,
+    configurable: true,
+  });
+  target.dispatchEvent(ev);
+  return {
+    defaultPrevented: ev.defaultPrevented,
+    dropEffect: transfer.dropEffect,
+  };
 }
 
 function dispatchComposition(
@@ -1349,6 +1401,35 @@ describe("outline/clipboard-drop", () => {
     unmount();
   });
 
+  test("dragstart and dragover use plain-text copy semantics", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 1, 4);
+
+    const dragStart = dispatchDragStart(valueEl);
+    expect(dragStart.textPlain).toBe("ell");
+    expect(dragStart.effectAllowed).toBe("copy");
+
+    const dragOver = dispatchDragOver(root, { textPlain: "X" });
+    expect(dragOver.defaultPrevented).toBe(true);
+    expect(dragOver.dropEffect).toBe("copy");
+
+    unmount();
+  });
+
   test("paste and drop insert external text into current selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
@@ -1378,6 +1459,37 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(drop.defaultPrevented).toBe(true);
     expect(valueOfId(core, a)).toBe("aXYb");
+
+    unmount();
+  });
+
+  test("internal drag/drop copies text without deleting the source selection", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: VALUE_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(valueEl, 1, 4);
+
+    const dragStart = dispatchDragStart(valueEl);
+    expect(dragStart.textPlain).toBe("ell");
+
+    setContentEditableSelection(valueEl, 5);
+    const drop = dispatchDropText(root, dragStart.textPlain);
+    await flushDomEffects();
+
+    expect(drop.defaultPrevented).toBe(true);
+    expect(valueOfId(core, a)).toBe("helloell");
 
     unmount();
   });
@@ -2651,29 +2763,101 @@ describe("outline/drag-integration", () => {
 
     const { unmount } = await mountOutline(core, rootId);
     try {
-      const aFrame = requireFrameEl(document.body, a);
+      const aGutter = requireOutlineGutterEl(document.body, a);
       const cFrame = requireFrameEl(document.body, c);
-      aFrame.classList.add("is-dragging");
-      document.documentElement.dataset.dragState = "active";
+      dispatchPointerEvent(aGutter, "pointerdown", {
+        pointerId: 41,
+        clientX: 0,
+        clientY: 0,
+      });
+      expect(drag.state.value.type).toBe("pending");
+      cap.emitPointer("pointermove", {
+        pointerId: 41,
+        clientX: 10,
+        clientY: 0,
+      });
+      await flushDomEffects();
+
+      if (drag.state.value.type !== "active")
+        throw new Error("Drag not active");
       drag.state.value = {
-        type: "active",
-        itemId: a,
+        ...drag.state.value,
         drop: {
           type: "gap",
           parentId: rootId,
           at: 3,
           side: "after",
-          axis: "vertical",
           anchorEl: cFrame,
         },
       };
 
-      cap.emitPointer("pointerup", { clientX: 10, clientY: 30 });
+      cap.emitPointer("pointerup", { pointerId: 41, clientX: 10, clientY: 30 });
       await flushDomEffects();
 
       expect(childrenOf(core, rootId)).toEqual([b, c, a]);
       expect(document.documentElement.dataset.dragState).toBeUndefined();
     } finally {
+      drag.dispose();
+      cap.dispose();
+      unmount();
+    }
+  });
+
+  test("same-position reorder resolves to no drop and no commit", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "x" });
+    const b = mkBlank(core, rootId, { label: "b", value: "y" });
+    const c = mkBlank(core, rootId, { label: "c", value: "z" });
+    const cap = installCapturedWindowHandlers();
+    const drag = createDragController(core);
+
+    const { unmount } = await mountOutline(core, rootId);
+    const originalElementFromPoint = document.elementFromPoint.bind(document);
+    try {
+      const bGutter = requireOutlineGutterEl(document.body, b);
+      const cFrame = requireFrameEl(document.body, c);
+      cFrame.getBoundingClientRect = () =>
+        ({
+          top: 100,
+          bottom: 140,
+          left: 0,
+          right: 200,
+          width: 200,
+          height: 40,
+        }) as DOMRect;
+      document.elementFromPoint = (() =>
+        cFrame) as typeof document.elementFromPoint;
+
+      dispatchPointerEvent(bGutter, "pointerdown", {
+        pointerId: 51,
+        clientX: 10,
+        clientY: 110,
+      });
+      expect(drag.state.value.type).toBe("pending");
+
+      cap.emitPointer("pointermove", {
+        pointerId: 51,
+        clientX: 10,
+        clientY: 119,
+      });
+      await flushDomEffects();
+
+      expect(drag.state.value.type).toBe("active");
+      if (drag.state.value.type !== "active")
+        throw new Error("Drag not active");
+      expect(drag.state.value.drop).toBeNull();
+
+      cap.emitPointer("pointerup", {
+        pointerId: 51,
+        clientX: 10,
+        clientY: 119,
+      });
+      await flushDomEffects();
+
+      expect(childrenOf(core, rootId)).toEqual([a, b, c]);
+      expect(document.documentElement.dataset.dragState).toBeUndefined();
+    } finally {
+      document.elementFromPoint = originalElementFromPoint;
       drag.dispose();
       cap.dispose();
       unmount();

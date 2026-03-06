@@ -150,7 +150,7 @@ Pointer hit routing inside `.ui-outline-child`:
 - For the non-gutter content area, the value textarea SHOULD span under the header area while its text starts below the header via padding.
 - For clicks in the value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
 - Header interactive controls retain native behavior and MUST win hit-testing over body text-editing surfaces.
-- Outline MUST mark gutter, value, and header subtrees with `data-drag-start="block"` so shared drag runtime does not start drags from editing chrome.
+- Outline gutter is the reorder drag surface and MUST set `data-drag="reorder"`.
 
 When a group is empty and item selection is on that group (`ITEM_TARGET`):
 
@@ -302,8 +302,7 @@ Structural rules:
 
 - `.ui-frame.ui-table-row` and `.ui-frame.ui-table-cell` wrappers MUST stay stable for visible rows/cells.
 - Cell bodies MAY swap by view name.
-- Table editing/body surfaces (including `.ui-body.ui-table`) MUST participate in the `data-drag-start="block"` contract to prevent drag-start from edit surfaces while allowing frame-level drag interactions.
-- Slot-capable cell frames MUST set `data-drag-slot="true"` for shared drag slot resolution.
+- Slot-capable cell frames MUST set `data-drag="slot"` for shared drag slot resolution.
 
 Notes:
 
