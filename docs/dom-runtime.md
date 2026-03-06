@@ -33,7 +33,7 @@ Controls/editing helpers:
 - `buildItemHeader`: canonical header subtree component.
 - `NavDirection`: shared item-navigation direction type.
 - `handleItemIntent`: shared item-selection `TYPE`/`CONFIRM` adaptor for views.
-- `resolveFocusAfterRemove`: canonical remove-focus destination helper.
+- `resolveFocusAfterRemove`: canonical post-remove destination helper.
 
 Contenteditable helpers:
 
@@ -256,7 +256,7 @@ Behavior:
 - Parent fallback is valid only if that parent survives the same remove/prune commit.
 - Returns `null` when no live destination exists (caller/Core repair handles fallback).
 - Returned location keeps the same `portals`.
-- Local remove/navigation handlers SHOULD pass the current selection portals.
+- Local remove handlers SHOULD pass the current selection portals.
 - Use `portals: []` only for explicit Core root/repair fallback, not normal view landing.
 
 ## `buildTextField` contract

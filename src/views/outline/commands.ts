@@ -20,7 +20,7 @@ export type BlockRemovalPlan = {
   removeRoots: ItemId[];
   pruneIds: ItemId[];
   removedIds: Set<ItemId>;
-  shouldBlankRoot: boolean;
+  shouldClearRoot: boolean;
 };
 
 export function resolveFocusAfterOutlineRemove(
@@ -98,7 +98,7 @@ function itemDepth(core: Core, id: ItemId): number {
   return depth;
 }
 
-function shouldBlankRootAfterRemovals(
+function shouldClearRootAfterRemovals(
   core: Core,
   rootId: ItemId,
   removedIds: ReadonlySet<ItemId>,
@@ -182,15 +182,15 @@ export function planBlockRemoval(
   const removeRoots = normalizeRemovalRoots(core, itemIds);
   const pruneIds = computePruneAncestorsForRemovals(core, rootId, removeRoots);
   const removedIds = new Set<ItemId>([...removeRoots, ...pruneIds]);
-  const shouldBlankRoot = shouldBlankRootAfterRemovals(
+  const shouldClearRoot = shouldClearRootAfterRemovals(
     core,
     rootId,
     removedIds,
   );
-  return { removeRoots, pruneIds, removedIds, shouldBlankRoot };
+  return { removeRoots, pruneIds, removedIds, shouldClearRoot };
 }
 
-export function deleteBlockSelection(
+export function removeBlockSelection(
   core: Core,
   rootId: ItemId,
   sel: Extract<Selection, { type: "item" }>,
@@ -208,7 +208,7 @@ export function deleteBlockSelection(
   core.commit((t) => {
     for (const id of nextPlan.removeRoots) t.remove(id);
     for (const pruneId of nextPlan.pruneIds) t.remove(pruneId);
-    if (nextPlan.shouldBlankRoot) t.setValue(rootId, null);
+    if (nextPlan.shouldClearRoot) t.setValue(rootId, null);
   });
 }
 
@@ -216,7 +216,7 @@ export const outlineCmd = {
   removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, id);
     const removedIds = new Set<ItemId>([id, ...pruneIds]);
-    const shouldBlankRoot = shouldBlankRootAfterRemovals(
+    const shouldClearRoot = shouldClearRootAfterRemovals(
       core,
       rootId,
       removedIds,
@@ -225,7 +225,7 @@ export const outlineCmd = {
     core.commit((t) => {
       t.remove(id);
       for (const pruneId of pruneIds) t.remove(pruneId);
-      if (shouldBlankRoot) t.setValue(rootId, null);
+      if (shouldClearRoot) t.setValue(rootId, null);
     });
   },
 
@@ -478,13 +478,13 @@ export function deleteMultiItemRange(
 
   const startText = valueToText(startSnap.content.value).slice(0, start.offset);
   const endText = valueToText(endSnap.content.value).slice(end.offset);
-  const toDelete = [
+  const toRemove = [
     ...startLoc.siblings.slice(startLoc.index + 1, endLoc.index + 1),
   ];
 
   core.commit((t) => {
     t.setValue(start.itemId, startText + endText);
-    for (const id of toDelete) t.remove(id);
+    for (const id of toRemove) t.remove(id);
   });
   core.focus({
     type: "editing",

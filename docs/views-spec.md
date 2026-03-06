@@ -205,18 +205,18 @@ Delete at boundary from a `conn:*` target is a no-op.
 Delete at boundary from a `value` target is target-specific:
 
 - If the current text is non-empty, boundary delete joins adjacent plain value items at the boundary point. Backspace at start joins with the previous item. Delete at end joins with the next item. The caret is placed at the join boundary in the surviving item. Join only applies when both items are plain value items.
-- If the current text is empty, boundary delete removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
+- If the current text is empty, that DELETE intent removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
 
 When the contenteditable selection spans multiple plain value items within the same parent, delete/backspace merges the start item's text up to the selection start with the end item's text from the selection end, removing all spanned items between them. The caret lands at the merge point in the surviving start item. Constrained to same-parent siblings; cross-parent ranges are a no-op.
 
 #### DELETE policy
 
-- Outline uses remove semantics for delete (not clear-in-place).
-- `ITEM_TARGET` delete MUST remove the selected subtree.
+- Outline handles DELETE with remove semantics (not clear-in-place).
+- `ITEM_TARGET` DELETE MUST remove the selected subtree.
 - After remove, focus lands on: next sibling, then previous sibling, then parent.
 - Parent fallback is valid only if that parent survives the same commit.
 - If no live destination exists, Core repair MUST apply.
-- Structural deletes (`ITEM_TARGET` delete, block delete, empty-`value` delete, and join removal of the absorbed neighbor) MUST prune newly-empty ancestor groups in the same commit.
+- Structural removals triggered by DELETE (`ITEM_TARGET`, block selection, empty-`value`, and join removal of the absorbed neighbor) MUST prune newly-empty ancestor groups in the same commit.
 - Pruning stops at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
 
 ### Commands and state transitions
@@ -249,7 +249,7 @@ Outline value edit storage:
 ### Edge cases and invariants
 
 - Prune invariant: After any Outline structural edit, Outline MUST NOT leave any newly-empty groups in the edited ancestry; newly-empty groups MUST be removed immediately.
-- Root normalization: if a structural delete leaves the current Outline `rootId` as an empty group, Outline MUST convert that `rootId` to blank.
+- Root normalization: if a structural removal leaves the current Outline `rootId` as an empty group, Outline MUST clear that `rootId` to blank.
 - Outline MAY still encounter pre-existing empty groups (for example, from other views); these are handled by the placeholder rule.
 
 ### Styling notes
@@ -379,7 +379,7 @@ Rows use remove with a last-row special case:
 - If the table has more than one row, remove the row. After removing a row, focus the next row at row `ITEM_TARGET`, then previous row `ITEM_TARGET`, then table `ITEM_TARGET`.
 - If the row is the last remaining row, remove the whole table item.
 
-Cells use clear — reset the cell to blank and stay on the same cell at item selection.
+Cells use clear — clear the cell to blank and stay on the same cell at item selection.
 
 ### Commands and state transitions
 
@@ -387,7 +387,7 @@ Table-local commands:
 
 - `addRowAfter(tableId, afterRowId)`
 - `removeRow(tableId, rowId)`
-- `clearCell(cellId)` — reset cell value to blank.
+- `clearCell(cellId)` — clear the cell value to blank.
 
 Notes:
 

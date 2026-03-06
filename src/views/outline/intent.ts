@@ -5,9 +5,9 @@ import { handleItemIntent } from "../../dom";
 
 import {
   computePruneAncestorsForRemoval,
-  deleteBlockSelection,
   outlineCmd,
   planBlockRemoval,
+  removeBlockSelection,
   resolveFocusAfterOutlineRemove,
 } from "./commands";
 import {
@@ -108,7 +108,7 @@ export function createOutlineIntentHandler(args: {
           rootPortals,
           blockPlan.removedIds,
         );
-        deleteBlockSelection(core, rootId, sel, rootPortals, blockPlan);
+        removeBlockSelection(core, rootId, sel, rootPortals, blockPlan);
         if (nextFocus) core.focus({ type: "item", location: nextFocus });
         return;
       }

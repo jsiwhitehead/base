@@ -22,7 +22,7 @@ Rules:
 
 - `rootId` MUST reference the root item.
 - The root item MUST always exist.
-- Removing `rootId` MUST completely clear the root rather than deleting it.
+- Removing `rootId` MUST completely clear the root to blank rather than deleting it.
 - Core MUST be the single source of truth for model state.
 - `createCore` MAY receive a collaboration adapter for sending committed local transactions and applying remote transactions.
 - Collaboration transport MUST use exported `Transaction` values (model/entry-level ops); normal editing remains item-based (`core.commit(...)` and `tx.*`).

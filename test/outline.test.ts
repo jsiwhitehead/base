@@ -1050,7 +1050,7 @@ describe("outline/contenteditable-beforeinput", () => {
     unmount();
   });
 
-  test("deleteContentBackward on final empty leaf blanks outline root and repairs selection", async () => {
+  test("deleteContentBackward on final empty leaf clears outline root to blank and repairs selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "" });
     core.focus(
@@ -1145,7 +1145,7 @@ describe("outline/contenteditable-beforeinput", () => {
     unmount();
   });
 
-  test("nested outline root: final leaf delete blanks nested root and repairs to parent location", async () => {
+  test("nested outline root: final leaf delete clears nested root to blank and repairs to parent location", async () => {
     const { core, rootId } = makeCoreRuntime();
     const nestedRoot = mkGroup(core, rootId, { label: "nested" });
     const a = mkBlank(core, nestedRoot, { label: "a", value: "" });

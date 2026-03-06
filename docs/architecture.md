@@ -161,7 +161,7 @@ The **primary edit target** is the first in this list, or `null` if empty. Reado
 | NAV       | Always                     | Move by view geometry; stay in item selection. Escape -> NAV/out |
 | TAB       | Always                     | View-specific structural action                                  |
 | DELETE    | Supports remove            | Remove item; focus next sibling, then previous, then parent      |
-| DELETE    | Supports clear             | Clear to blank; stay on same item                                |
+| DELETE    | Supports clear             | Clear item to blank; stay on same item                           |
 
 ### Behaviors from traversable targets
 
@@ -176,7 +176,7 @@ Normal typing, cursor movement, and selection are handled natively. At a text bo
 
 **Tab** — commits and bubbles; outer view performs its standard structural action.
 
-**Delete at boundary** — Backspace at start or Delete at end commits and yields; outer view decides.
+**Delete at boundary** — Backspace at start or Delete at end commits and yields; the outer view decides whether that DELETE intent removes, clears, joins, or no-ops.
 
 **Escape** — always bubbles to Core. Draft fields cancel draft first, then NAV/out.
 

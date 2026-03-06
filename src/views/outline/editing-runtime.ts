@@ -24,9 +24,9 @@ import {
 import type { Ctx, SuppressionFlag, UiCore } from "../../dom";
 
 import {
-  deleteBlockSelection,
   deleteMultiItemRange,
   deleteSingleItemRange,
+  removeBlockSelection,
   outlineCmd,
   readSelectionText,
 } from "./commands";
@@ -1124,7 +1124,7 @@ function bindOutlineKeydownEvents(args: {
           (e.key === "Backspace" || e.key === "Delete")
         ) {
           e.preventDefault();
-          deleteBlockSelection(core, rootId, sel, portals);
+          removeBlockSelection(core, rootId, sel, portals);
           return;
         }
       }
