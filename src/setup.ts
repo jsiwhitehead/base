@@ -19,6 +19,7 @@ import {
   mountHeader,
 } from "./dom";
 import type { ViewRegistration } from "./dom";
+import { buildToolbar } from "./toolbar";
 import { createOutlineIntentHandler } from "./views/outline/intent";
 import { splitViewRegistrations, viewRegistrations } from "./views";
 
@@ -127,14 +128,17 @@ export function createApp(opts: CreateAppOpts): App {
 
   const drag = createDragController(core);
   const indicator = buildDropIndicator(drag.state);
+  const toolbar = buildToolbar(core);
 
   const root = el("div", "ui-root");
   root.dataset.debug = showDebugPanel ? "on" : "off";
   const main = appRoot.el;
   const mainScroll = el("div", "ui-main-scroll");
+  const shell = el("div", "ui-shell");
 
   mainScroll.append(main);
-  root.append(mainScroll, indicator.el);
+  shell.append(toolbar.el, mainScroll);
+  root.append(shell, indicator.el);
 
   let debugPanel: { el: HTMLElement; dispose(): void } | null = null;
 
@@ -154,7 +158,7 @@ export function createApp(opts: CreateAppOpts): App {
   const onDocumentPointerDown = (event: PointerEvent): void => {
     const targetNode = event.target;
     if (!(targetNode instanceof Node)) return;
-    if (main.contains(targetNode)) return;
+    if (root.contains(targetNode)) return;
     core.focus({ type: "idle" });
   };
   document.addEventListener("pointerdown", onDocumentPointerDown, {
@@ -171,6 +175,7 @@ export function createApp(opts: CreateAppOpts): App {
       debugPanel?.dispose();
       indicator.dispose();
       drag.dispose();
+      toolbar.dispose();
       appRoot.dispose();
       hostEl.replaceChildren();
       uninstallGlobal();

@@ -87,7 +87,7 @@
     height: 100%;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--ui-space-gap);
+    gap: var(--ui-space-pad);
     align-items: stretch;
     overflow: hidden;
   }
@@ -96,6 +96,7 @@
     grid-template-columns: minmax(0, 1fr) var(--ui-sidebar);
   }
 
+  .ui-shell,
   .ui-main,
   .ui-main-scroll,
   .ui-body {
@@ -103,8 +104,91 @@
     min-height: 0;
   }
 
+  .ui-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--ui-space-pad);
+    overflow: hidden;
+  }
+
   .ui-main-scroll {
     overflow: auto;
+  }
+
+  .ui-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: calc(var(--ui-space-pad) * 3);
+    padding: calc(var(--ui-space-tight) * 1.5) var(--ui-space-pad);
+    border-radius: var(--ui-radius);
+    background: color-mix(
+      in oklch,
+      var(--ui-color-header) 88%,
+      var(--ui-color-bg) 12%
+    );
+    box-shadow: inset 0 0 0 1px
+      color-mix(in oklch, var(--ui-color-rail) 82%, var(--ui-color-muted) 18%);
+  }
+
+  .ui-toolbar-section {
+    display: flex;
+  }
+
+  .ui-toolbar-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: calc(var(--ui-space-gap) * 3);
+  }
+
+  .ui-toolbar-button {
+    appearance: none;
+    border: 1px solid
+      color-mix(in oklch, var(--ui-color-rail) 72%, var(--ui-color-muted) 28%);
+    margin: 0;
+    padding: var(--ui-space-tight) var(--ui-space-pad);
+    border-radius: var(--ui-radius);
+    background: color-mix(
+      in oklch,
+      var(--ui-color-bg) 72%,
+      var(--ui-color-header) 28%
+    );
+    color: var(--ui-color-fg);
+    font: inherit;
+    font-size: var(--ui-size-meta);
+    line-height: var(--ui-leading-meta);
+    cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      color 120ms ease,
+      opacity 120ms ease;
+  }
+
+  .ui-toolbar-button:hover:enabled {
+    background: color-mix(
+      in oklch,
+      var(--ui-color-focus) 10%,
+      var(--ui-color-header) 90%
+    );
+  }
+
+  .ui-toolbar-button.is-active {
+    background: color-mix(
+      in oklch,
+      var(--ui-color-focus) 18%,
+      var(--ui-color-header) 82%
+    );
+    color: color-mix(in oklch, var(--ui-color-focus) 70%, var(--ui-color-fg));
+  }
+
+  .ui-toolbar-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 var(--ui-ring) var(--ui-color-focus);
+  }
+
+  .ui-toolbar-button:disabled {
+    cursor: default;
+    opacity: 0.45;
   }
 
   .ui-main {

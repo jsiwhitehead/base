@@ -19,6 +19,7 @@ import {
   textOffsetToDomPoint,
   writePlainTextClipboard,
 } from "../src/dom";
+import { buildToolbar } from "../src/toolbar";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -26,6 +27,7 @@ import {
   flushDomEffects,
   makeCoreRuntime,
   mkBlank,
+  mkGroup,
   pointerDown,
   queryTargetInput,
   requireTargetInput,
@@ -81,6 +83,14 @@ function connTargetsInHeaderConn(root: ParentNode): string[] {
   return els
     .map((e) => e.dataset.target ?? "")
     .filter((t) => t.startsWith("conn:"));
+}
+
+function requireToolbarButton(command: string): HTMLButtonElement {
+  const button = document.body.querySelector(
+    `.ui-toolbar-button[data-command="${command}"]`,
+  ) as HTMLButtonElement | null;
+  if (!button) throw new Error(`Missing toolbar button command=${command}`);
+  return button;
 }
 
 type MockTransfer = {
@@ -363,6 +373,65 @@ describe("dom runtime: createComponent and Ctx primitives", () => {
     await flushDomEffects();
 
     expect(created.calls.map((c) => c[0])).toEqual(["a", "b", "c"]);
+
+    unmount();
+  });
+});
+
+describe("dom toolbar", () => {
+  test("reflects current state and disables invalid content conversions", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const groupId = mkGroup(core, rootId, { label: "group" });
+    mkBlank(core, groupId, { label: "child", value: "x" });
+
+    core.focus({ type: "item", location: { item: groupId, portals: [] } });
+
+    const toolbar = buildToolbar(core);
+    const unmount = mount(toolbar);
+    await flushDomEffects();
+
+    expect(
+      requireToolbarButton("outline").classList.contains("is-active"),
+    ).toBe(true);
+    expect(requireToolbarButton("plain").classList.contains("is-active")).toBe(
+      true,
+    );
+    expect(requireToolbarButton("formula").disabled).toBe(true);
+    expect(requireToolbarButton("query").disabled).toBe(true);
+
+    unmount();
+  });
+
+  test("clicking commands updates the selected item", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const valueId = mkBlank(core, rootId, { label: "x", value: "hello" });
+
+    core.focus({ type: "item", location: { item: valueId, portals: [] } });
+
+    const toolbar = buildToolbar(core);
+    const unmount = mount(toolbar);
+    await flushDomEffects();
+
+    requireToolbarButton("formula").click();
+    await flushDomEffects();
+    expect(core.item(valueId).mode.type).toBe("connected");
+    expect(
+      requireToolbarButton("formula").classList.contains("is-active"),
+    ).toBe(true);
+
+    requireToolbarButton("plain").click();
+    await flushDomEffects();
+    expect(core.item(valueId).mode.type).toBe("plain");
+    expect(requireToolbarButton("plain").classList.contains("is-active")).toBe(
+      true,
+    );
+
+    requireToolbarButton("table").click();
+    await flushDomEffects();
+    expect(core.view(valueId)).toBe("table");
+    expect(requireToolbarButton("table").classList.contains("is-active")).toBe(
+      true,
+    );
 
     unmount();
   });

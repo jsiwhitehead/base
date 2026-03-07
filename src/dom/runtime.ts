@@ -1,3 +1,5 @@
+import { untracked } from "@preact/signals-core";
+
 import type {
   Core,
   Location,
@@ -19,14 +21,14 @@ type RuntimeEffect =
   | { type: "FOCUS"; location: Location; target: string; caret?: number }
   | { type: "CLEAR_FOCUS" };
 
-type ViewHandle = { root: HTMLElement; onIntent?: (intent: Intent) => void };
+type ViewHandle = { root: HTMLElement; onIntent: (intent: Intent) => void };
 
 export type Component = { el: HTMLElement; dispose(): void };
 
 export type DomView = {
   bodyRoot?: object;
   root: HTMLElement;
-  onIntent?: (intent: Intent) => void;
+  onIntent: (intent: Intent) => void;
   dispose(): void;
 };
 
@@ -44,7 +46,7 @@ export type ViewRegistration = {
 type ViewMountArgs = { core: UiCore; id: ItemId; location: Location };
 
 export type AuthoredView = {
-  onIntent?: (intent: Intent) => void;
+  onIntent: (intent: Intent) => void;
   bodyRoot: Component;
 };
 
@@ -57,7 +59,7 @@ function authoredViewToDomView(view: AuthoredView): DomView {
   return {
     bodyRoot: view.bodyRoot,
     root: view.bodyRoot.el,
-    ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+    onIntent: view.onIntent,
     dispose() {
       view.bodyRoot.dispose();
     },
@@ -399,11 +401,11 @@ export function createRuntime(opts: {
   const registerViewRoot = (view: {
     location: Location;
     root: HTMLElement;
-    onIntent?: (intent: Intent) => void;
+    onIntent: (intent: Intent) => void;
   }): (() => void) => {
     const handle: ViewHandle = {
       root: view.root,
-      ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+      onIntent: view.onIntent,
     };
 
     viewRoots.set(handle.root, handle);
@@ -497,7 +499,8 @@ export function createRuntime(opts: {
     const id = mountOpts.id;
     const location: Location = { item: id, portals: mountOpts.portals };
     const core = opts.getCore();
-    core.item(id);
+    untracked(() => core.item(id));
+
     const factory = views[mountOpts.view] ?? views.outline;
     if (!factory) {
       throw new Error(
@@ -510,7 +513,7 @@ export function createRuntime(opts: {
     const unreg = registerViewRoot({
       location,
       root: view.root,
-      ...(view.onIntent ? { onIntent: view.onIntent } : {}),
+      onIntent: view.onIntent,
     });
 
     return {

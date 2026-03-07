@@ -187,18 +187,22 @@ function buildOutlineChild(
       id: itemId,
     });
 
+    const childView = computed(() => core.view(itemId));
+    const childUsesPortal = computed(() => {
+      const mode = core.item(itemId).mode;
+      return mode.type === "connected" && mode.conn.type === "query";
+    });
+
     ctx.slot(itemEl, () => {
-      const nextView = core.view(itemId);
-      if (nextView === "outline") {
-        return buildOutlineItem(mountCtx, itemId);
-      }
-      const snap = core.item(itemId);
-      const childPortals =
-        snap.mode.type === "connected" ? [...portals, itemId] : portals;
+      const view = childView.value;
+      if (view === "outline") return buildOutlineItem(mountCtx, itemId);
+      const childPortals = childUsesPortal.value
+        ? [...portals, itemId]
+        : portals;
       const mounted = core.mountView({
         id: itemId,
         portals: childPortals,
-        view: nextView,
+        view,
       });
       mounted.el.contentEditable = "false";
       return mounted;

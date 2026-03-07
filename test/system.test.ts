@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ItemId, Transaction } from "../src/core";
 import type { UiCore } from "../src/dom";
-import { buildRootShell } from "../src/setup";
+import { buildRootShell, createApp } from "../src/setup";
 import { viewRegistrations } from "../src/views";
 
 import {
@@ -77,6 +77,37 @@ describe("system/keyboard routing & focus ownership", () => {
     expectSel(core, { item: c21, portals: [] });
 
     unmount();
+  });
+
+  test("toolbar clicks do not clear the current selection", async () => {
+    const host = document.createElement("div");
+    document.body.replaceChildren(host);
+
+    const app = createApp({ host, rootView: "outline" });
+    const { core, rootId } = app;
+
+    let itemId: ItemId = "";
+    core.commit((t) => {
+      itemId = t.insertChild(rootId);
+      t.setValue(itemId, "hello");
+    });
+
+    core.focus({ type: "item", location: { item: itemId, portals: [] } });
+    await flushDomEffects();
+
+    const toolbarButton = document.body.querySelector(
+      '.ui-toolbar-button[data-command="table"]',
+    ) as HTMLButtonElement | null;
+    expect(toolbarButton).toBeTruthy();
+
+    pointerDown(toolbarButton!);
+    toolbarButton!.click();
+    await flushDomEffects();
+
+    expectSel(core, { item: itemId, portals: [] });
+
+    app.dispose();
+    document.body.replaceChildren();
   });
 });
 

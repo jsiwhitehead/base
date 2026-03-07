@@ -54,9 +54,11 @@ Ownership boundaries MUST remain stable under extension.
 ```text
 #root
   .ui-root
-    .ui-main-scroll
-      .ui-main.ui-frame
-        .ui-body.<root-view>
+    .ui-shell
+      .ui-toolbar
+      .ui-main-scroll
+        .ui-main.ui-frame
+          .ui-body.<root-view>
 ```
 
 `.ui-main` is the root `.ui-frame` and the only tabbable element (`tabIndex=0`).
