@@ -27,10 +27,8 @@ import {
 import {
   connTarget,
   createSelectionController,
-  ITEM_TARGET,
   LABEL_TARGET,
   sameLocation,
-  VALUE_TARGET,
 } from "./select";
 import type {
   FocusOpts,
@@ -49,8 +47,8 @@ import type {
 import { createShapeReader, defineShape, isShapeCompatible } from "./shape";
 import {
   applyTypeToPrimaryTarget,
+  fieldsFromConn,
   getTextForTarget,
-  primaryEditTarget,
 } from "./editing";
 
 export type NavDirection = "left" | "right" | "up" | "down" | "out";
@@ -60,6 +58,7 @@ export type Intent =
   | { type: "CONFIRM"; caret?: number }
   | { type: "TAB"; shift: boolean; caret?: number }
   | { type: "HISTORY"; action: "undo" | "redo" }
+  | { type: "EDIT_LABEL" }
   | { type: "TYPE"; char: string }
   | { type: "DELETE"; dir: "backward" | "forward" };
 
@@ -84,6 +83,9 @@ export function parseKeyIntent(input: KeyIntentInput): Intent | null {
     }
     if (key === "y") {
       return { type: "HISTORY", action: "redo" };
+    }
+    if (key === ".") {
+      return { type: "EDIT_LABEL" };
     }
   }
 
@@ -211,6 +213,7 @@ export type CollabWire = {
 };
 
 type CorePlatformHooks = {
+  primaryContentTarget?: (location: Location) => string | null;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
   readCurrentCaret?: () => number | undefined;
   resolveIntentHandler?: (
@@ -226,53 +229,18 @@ export type CreateCoreOptions = {
   platform?: CorePlatformHooks;
 };
 
-export function handleItemIntent(args: {
-  core: Core;
-  sel: Extract<Selection, { type: "item" }>;
-  intent: Extract<Intent, { type: "CONFIRM" | "TYPE" }>;
-}): boolean {
-  const { core, sel, intent } = args;
+function resolvePrimaryTarget(
+  core: Core,
+  platform: CorePlatformHooks | undefined,
+  location: Location,
+): string | null {
+  const target = platform?.primaryContentTarget?.(location);
+  if (target) return target;
 
-  const id = sel.head.item;
-  const location: Location = sel.head;
-
-  if (intent.type === "TYPE") {
-    const item = core.item(id);
-    const valueText =
-      item.content.type === "value" ? String(item.content.value ?? "") : "";
-    const isEmptyPlainValue =
-      item.content.type === "value" && valueText.trim() === "";
-    const isEmptyPlainGroup =
-      item.content.type === "group" && item.content.children.length === 0;
-
-    if (
-      intent.char === "=" &&
-      item.mode.type === "plain" &&
-      (isEmptyPlainValue || isEmptyPlainGroup)
-    ) {
-      core.commit((t) => t.setConnected(id, { type: "formula", expr: "" }));
-      core.focus(
-        { type: "editing", location, target: connTarget("expr") },
-        { caret: 0 },
-      );
-      return true;
-    }
-
-    const applied = applyTypeToPrimaryTarget(core, id, intent.char);
-    if (!applied) return false;
-    core.focus(
-      { type: "editing", location, target: applied.target },
-      { caret: applied.caret },
-    );
-    return true;
-  }
-
-  const target = primaryEditTarget(core, id);
-  if (!target) return false;
-
-  const text = getTextForTarget(core, id, target);
-  core.focus({ type: "editing", location, target }, { caret: text.length });
-  return true;
+  const item = core.item(location.item);
+  if (item.mode.type !== "connected") return null;
+  const firstField = fieldsFromConn(item.mode.conn)[0];
+  return firstField ? connTarget(firstField.key) : null;
 }
 
 export function createCore(opts: CreateCoreOptions): {
@@ -438,10 +406,26 @@ export function createCore(opts: CreateCoreOptions): {
 
   const dispatch = (intent: Intent): void => {
     const sel = peekSelection();
+    const location =
+      sel.type === "editing"
+        ? sel.location
+        : sel.type === "item"
+          ? sel.head
+          : null;
 
     if (intent.type === "HISTORY") {
       if (intent.action === "undo") undo();
       else redo();
+      return;
+    }
+
+    if (intent.type === "EDIT_LABEL") {
+      if (!location) return;
+      const text = getTextForTarget(core, location.item, LABEL_TARGET);
+      focus(
+        { type: "editing", location, target: LABEL_TARGET },
+        { caret: text.length },
+      );
       return;
     }
 
@@ -451,6 +435,35 @@ export function createCore(opts: CreateCoreOptions): {
       handleNavOut(core, sel, setSelection)
     ) {
       return;
+    }
+
+    if (sel.type === "item" && location) {
+      const primaryTarget = resolvePrimaryTarget(core, opts.platform, location);
+
+      if (intent.type === "TYPE") {
+        const applied = applyTypeToPrimaryTarget(
+          core,
+          location.item,
+          intent.char,
+          primaryTarget,
+        );
+        if (applied) {
+          core.focus(
+            { type: "editing", location, target: applied.target },
+            { caret: applied.caret },
+          );
+          return;
+        }
+      }
+
+      if (intent.type === "CONFIRM" && primaryTarget) {
+        const text = getTextForTarget(core, location.item, primaryTarget);
+        core.focus(
+          { type: "editing", location, target: primaryTarget },
+          { caret: text.length },
+        );
+        return;
+      }
     }
 
     opts.platform?.resolveIntentHandler?.(sel)?.(intent);
@@ -508,18 +521,21 @@ export type {
   ViewShape,
 };
 
-export { LABEL_TARGET, VALUE_TARGET, connTarget };
-export { ITEM_TARGET };
+export {
+  CONTENT_TEXT_TARGET,
+  contentTarget,
+  ITEM_TARGET,
+  LABEL_TARGET,
+  connTarget,
+} from "./select";
 export { sameLocation };
 export {
   applyTypeToPrimaryTarget,
-  editTargetsForItem,
   fieldsFromConn,
   getTextForTarget,
   indentItemInPlace,
   isNumericLikeValue,
   patchConn,
-  primaryEditTarget,
 } from "./editing";
 
 export { isCoreReadError };

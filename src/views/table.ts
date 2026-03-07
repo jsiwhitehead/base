@@ -7,7 +7,7 @@ import type {
   ReaderForShape,
   Selection,
 } from "../core";
-import { defineShape, handleItemIntent, VALUE_TARGET } from "../core";
+import { defineShape, CONTENT_TEXT_TARGET } from "../core";
 import type { Component, NavDirection, UiCore } from "../dom";
 import {
   bindItemFrame,
@@ -70,7 +70,7 @@ function isCellValueSel(
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "editing" }>,
 ): boolean {
-  if (sel.target !== VALUE_TARGET) return false;
+  if (sel.target !== CONTENT_TEXT_TARGET) return false;
   const rowId = core.locate(sel.location.item)?.parentId;
   if (!rowId || rowId === tableId) return false;
   if (!rows.includes(rowId)) return false;
@@ -483,16 +483,10 @@ export const tableView = defineShapedView(
             });
             return;
           }
-          if (!isCellSel(core, tableReader, tableId, rows, selection)) return;
-          handleItemIntent({ core, sel: selection, intent });
           return;
         }
-        case "TYPE": {
-          const rows = signals.rows.value;
-          if (!isCellSel(core, tableReader, tableId, rows, selection)) return;
-          handleItemIntent({ core, sel: selection, intent });
+        case "TYPE":
           return;
-        }
         case "DELETE": {
           if (isRowItemSel(core, selection, tableId)) {
             const rows = signals.rows.value;

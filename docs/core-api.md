@@ -310,7 +310,7 @@ type Location = { item: ItemId; portals: readonly ItemId[] };
 Variants:
 
 - `idle`: no focus.
-- `editing`: cursor active in a named text control (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`); the primary text-edit mode.
+- `editing`: cursor active in a named target such as `CONTENT_TEXT_TARGET`, `LABEL_TARGET`, `conn:*`, or another `content:*`.
 - `item`: item-level keyboard cursor or structural multi-item selection; no text target.
 
 Read selection:
@@ -332,7 +332,7 @@ Rules:
 
 - Selection MUST be the single source of truth for focus state.
 - `core.focus` is the canonical selection write API.
-- Editing focus requires an explicit `target` (`VALUE_TARGET`, `LABEL_TARGET`, or `conn:*`).
+- Editing focus requires an explicit `target`.
 - `opts.caret` is valid only with editing focus, is forwarded ephemerally to `onSelectionChange`, and MUST NOT be stored in `Selection`.
 - Location validity is model-only: `location.item` MUST exist, and every `location.portals` entry MUST exist and be connected.
 - Item focus supports both explicit ranges (`anchor` + `head`) and collapsed shorthand (`location`, equivalent to `anchor=head=location`).
@@ -344,7 +344,7 @@ Rules:
 - After any apply, invalid selection MUST be repaired.
 - For local apply (`commit`, `undo`, `redo`, and in-pipeline rule ops), Core MUST first attempt structural repair from a pre-apply ancestor anchor.
 - Local structural repair chooses the original sibling slot at the nearest surviving anchored parent; if missing, it chooses the last surviving sibling at that level.
-- If item selection is still invalid after local repair, Core MUST repair to an item selection using the same ancestor-anchor strategy.
+- Local structural repair always lands on item selection at the repaired location.
 - If local structural repair cannot produce valid focus, Core MUST fall back to a Core-owned valid selection (`root` item selection or `idle`).
 - For remote apply, invalid selection MUST become `idle`.
 
@@ -354,6 +354,7 @@ Rules:
 
 ```ts
 type CorePlatformHooks = {
+  primaryContentTarget?: (location: Location) => string | null;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
   readCurrentCaret?: () => number | undefined;
   resolveIntentHandler?: (
@@ -366,6 +367,7 @@ Rules:
 
 - Core MUST remain headless and MUST NOT depend on DOM APIs directly.
 - Platform callbacks MUST be optional so Core can run headless in tests/non-DOM contexts.
+- `primaryContentTarget` lets runtime/view registration expose the current primary body target for an item location.
 - `onSelectionChange` synchronizes platform focus from Core selection. For `core.focus(...)` with editing selection, it receives `opts.caret` as the second argument when provided. For non-editing selection, no caret is forwarded.
 - `readCurrentCaret` allows runtime-owned surfaces to provide the current caret offset during local repair-anchor capture (`commit`, `undo`, `redo`, and in-pipeline local apply). This is mainly for live surfaces such as `contenteditable`. The value is optional and MUST NOT be stored in `Selection`.
 - `resolveIntentHandler` allows Core to delegate non-global intents to runtime-resolved mounted views.
@@ -404,6 +406,7 @@ Rules:
 - Core owns semantic intent parsing (`parseKeyIntent`) and dispatch.
 - DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
 - Global history intents (`Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`) MUST be handled by Core before view delegation. Global keydown paths SHOULD route them through `parseKeyIntent`; contenteditable surfaces MAY handle them in their editing pipeline (`docs/content-editable.md`).
+- Global edit shortcuts parsed by Core include `Cmd/Ctrl+.` -> focus `LABEL_TARGET`.
 - Core handles `NAV/out` before any active-view delegation.
 - Core routes other non-global intents through `resolveIntentHandler(selection)` when provided.
 - Editors and controls decide which key events bubble to Core.
@@ -526,20 +529,6 @@ Rules:
 - For `query`, recognized keys are `"from"`, `"where"`, and `"orderBy"`.
 - For unknown keys, returns the original object unchanged.
 
-### `editTargetsForItem(core, id)`
-
-```ts
-editTargetsForItem(core: Core, id: ItemId): string[]
-```
-
-Returns the ordered list of traversable edit targets for an item (see `docs/architecture.md` edit target list).
-
-Rules:
-
-- For connected items: returns `connTarget(key)` for each field in `fieldsFromConn` order.
-- For plain value items: returns `[VALUE_TARGET]`.
-- For readonly or group items: returns `[]`.
-
 ### `getTextForTarget(core, id, target)`
 
 ```ts
@@ -550,9 +539,10 @@ Returns the current text for a given item and target.
 
 Rules:
 
-- For `VALUE_TARGET`: returns the item's value as a string, or `""` if blank or non-value.
+- For `CONTENT_TEXT_TARGET`: returns the item's value as a string, or `""` if blank or non-value.
 - For `LABEL_TARGET`: returns the item's label, or `""` if absent.
 - For `conn:*` targets: returns the matching connected field text, or `""` if not found.
+- Other `content:*` targets are opaque to this helper and return `""`.
 
 ### `isNumericLikeValue(value)`
 
@@ -624,8 +614,9 @@ Type exports:
 
 Constant exports:
 
+- `contentTarget`
 - `LABEL_TARGET`
-- `VALUE_TARGET`
+- `CONTENT_TEXT_TARGET`
 - `connTarget`
 
 Function exports:
@@ -633,7 +624,5 @@ Function exports:
 - `parseKeyIntent`
 - `defineShape`
 - `fieldsFromConn`
-- `editTargetsForItem`
 - `getTextForTarget`
 - `isNumericLikeValue`
-- `primaryEditTarget`

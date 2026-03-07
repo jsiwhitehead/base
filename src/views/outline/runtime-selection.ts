@@ -1,7 +1,7 @@
 import { computed, signal, type Signal } from "@preact/signals-core";
 
 import type { ItemId, Location, Selection } from "../../core";
-import { sameLocation, VALUE_TARGET } from "../../core";
+import { sameLocation, CONTENT_TEXT_TARGET } from "../../core";
 import {
   createSuppressionFlag,
   getMappedSelectionRangeInRoot,
@@ -288,14 +288,14 @@ export function createOutlineSelectionRuntime(args: {
       if (
         !(
           selNow.type === "editing" &&
-          selNow.target === VALUE_TARGET &&
+          selNow.target === CONTENT_TEXT_TARGET &&
           sameLocation(selNow.location, itemFocus)
         )
       ) {
         core.focus({
           type: "editing",
           location: itemFocus,
-          target: VALUE_TARGET,
+          target: CONTENT_TEXT_TARGET,
         });
       }
       return;
@@ -306,13 +306,13 @@ export function createOutlineSelectionRuntime(args: {
     const selNow = core.selection();
     if (
       selNow.type === "editing" &&
-      selNow.target === VALUE_TARGET &&
+      selNow.target === CONTENT_TEXT_TARGET &&
       sameLocation(selNow.location, itemFocus)
     ) {
       return;
     }
     core.focus(
-      { type: "editing", location: itemFocus, target: VALUE_TARGET },
+      { type: "editing", location: itemFocus, target: CONTENT_TEXT_TARGET },
       collapsed && focusPos ? { caret: focusPos.offset } : undefined,
     );
   };
@@ -403,13 +403,13 @@ export function bindOutlineSelectionEvents(args: {
     const selNow = core.selection();
     if (
       selNow.type !== "editing" ||
-      selNow.target !== VALUE_TARGET ||
+      selNow.target !== CONTENT_TEXT_TARGET ||
       selNow.location.item !== targetItemId
     ) {
       core.focus({
         type: "editing",
         location: { item: targetItemId, portals },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       });
     }
   });
@@ -463,7 +463,7 @@ export function bindOutlineSelectionCleanupEffect(args: {
   } = args;
   effect(() => {
     const selNow: Selection = core.selection();
-    if (selNow.type !== "editing" || selNow.target !== VALUE_TARGET) {
+    if (selNow.type !== "editing" || selNow.target !== CONTENT_TEXT_TARGET) {
       clearValueRangeSelectedItems();
       return;
     }

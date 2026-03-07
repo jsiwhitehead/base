@@ -5,7 +5,7 @@ import type {
   ReaderForShape,
   ValueOrBlank,
 } from "../core";
-import { VALUE_TARGET, defineShape } from "../core";
+import { contentTarget, defineShape } from "../core";
 import type { Component, UiCore } from "../dom";
 import {
   bindItemFrame,
@@ -30,6 +30,7 @@ type SliderMountCtx = {
 type SliderReader = ReaderForShape<typeof sliderShape>;
 
 const DEFAULT_SLIDER_OPTS: SliderOpts = { min: 0, max: 100, step: 1 };
+const CONTENT_SLIDER_TARGET = contentTarget("slider");
 
 const nativeRangeKeys = new Set([
   "ArrowLeft",
@@ -122,7 +123,7 @@ function buildSliderBody({
 
     ctx.on(input, "pointerdown", (e: PointerEvent) => {
       core.focus(
-        { type: "editing", location, target: VALUE_TARGET },
+        { type: "editing", location, target: CONTENT_SLIDER_TARGET },
         { caret: 0 },
       );
       e.stopPropagation();
@@ -137,7 +138,9 @@ function buildSliderBody({
       commitValue(Number(input.value));
     });
 
-    ctx.target(location, VALUE_TARGET, () => input);
+    ctx.target(location, CONTENT_SLIDER_TARGET, () => input, {
+      primary: true,
+    });
 
     ctx.effect(() => {
       const currentValue = toNumberOr(reader.value(), opts.min);
@@ -164,7 +167,7 @@ export const sliderView = defineShapedView(
       switch (intent.type) {
         case "CONFIRM":
           if (selection.location.item !== id) return;
-          if (selection.target === VALUE_TARGET)
+          if (selection.target === CONTENT_SLIDER_TARGET)
             core.focus({ type: "item", location: selection.location });
           return;
         case "NAV":

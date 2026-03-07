@@ -8,7 +8,7 @@ import type {
   ViewShape,
   ViewName,
 } from "../core";
-import { ITEM_TARGET, VALUE_TARGET, parseKeyIntent } from "../core";
+import { ITEM_TARGET, parseKeyIntent } from "../core";
 
 import {
   domPointToTextOffset,
@@ -92,6 +92,7 @@ export function defineShapedView<S extends ViewShape>(
 
 type TargetBinding = {
   getEl: () => HTMLElement | null;
+  primary?: boolean;
   setCaret?: { set(pos: number): void; getLength(): number };
   getCaret?: () => number | undefined;
 };
@@ -102,6 +103,7 @@ type AttachTargetOpts = {
   location: Location;
   target: string;
   getEl: () => HTMLElement | null;
+  primary?: boolean;
   setCaret?: { set(pos: number): void; getLength(): number };
   getCaret?: () => number | undefined;
 };
@@ -172,6 +174,7 @@ function viewAtTarget(
 export type DomRuntime = {
   syncSelection(next: Selection, caret?: number): void;
   readCurrentCaret(): number | undefined;
+  primaryContentTarget(location: Location): string | null;
 
   attachTarget(opts: AttachTargetOpts): () => void;
 
@@ -219,6 +222,17 @@ export function createRuntime(opts: {
     const targetBindings = bindings.get(keyOf(location));
     if (!targetBindings) return null;
     return targetBindings.get(target)?.binding ?? null;
+  };
+
+  const primaryContentTarget = (location: Location): string | null => {
+    const targetBindings = bindings.get(keyOf(location));
+    if (!targetBindings) return null;
+    for (const [target, record] of targetBindings) {
+      if (!target.startsWith("content:")) continue;
+      if (!record.binding.primary) continue;
+      return target;
+    }
+    return null;
   };
 
   const resolveViewForLocationTarget = (
@@ -409,6 +423,7 @@ export function createRuntime(opts: {
     targetBindings.set(target.target, {
       binding: {
         getEl: target.getEl,
+        ...(target.primary !== undefined ? { primary: target.primary } : {}),
         ...(target.setCaret ? { setCaret: target.setCaret } : {}),
         ...(target.getCaret ? { getCaret: target.getCaret } : {}),
       },
@@ -518,7 +533,7 @@ export function createRuntime(opts: {
     }
     if (
       isExactRootLocation(selection.location) &&
-      selection.target !== VALUE_TARGET
+      !selection.target.startsWith("content:")
     ) {
       return rootOuterIntentHandler;
     }
@@ -539,6 +554,7 @@ export function createRuntime(opts: {
   return {
     syncSelection,
     readCurrentCaret,
+    primaryContentTarget,
     attachTarget,
     mountView,
     setRootOuterIntentHandler(handler) {
@@ -553,6 +569,7 @@ export function createRuntime(opts: {
 export type UiCore = Core & {
   attachTarget(opts: AttachTargetOpts): () => void;
   mountView(opts: MountViewOpts): Component;
+  primaryContentTarget(location: Location): string | null;
 };
 
 function createUiCore(core: Core, runtime: DomRuntime): UiCore {
@@ -563,6 +580,9 @@ function createUiCore(core: Core, runtime: DomRuntime): UiCore {
     },
     mountView(args) {
       return runtime.mountView(args);
+    },
+    primaryContentTarget(location) {
+      return runtime.primaryContentTarget(location);
     },
   };
 }

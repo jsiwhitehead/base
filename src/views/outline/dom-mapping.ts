@@ -1,4 +1,4 @@
-import { type Core, type ItemId } from "../../core";
+import { CONTENT_TEXT_TARGET, type Core, type ItemId } from "../../core";
 import {
   domPointToTextOffset,
   getCollapsedCaretRectInSurface,
@@ -25,7 +25,7 @@ function getOutlineValueElement(
   itemId: ItemId,
 ): HTMLElement | null {
   const rootValueEl = outlineRoot.querySelector<HTMLElement>(
-    `:scope > ${VALUE_SELECTOR}[data-target="value"]`,
+    `:scope > ${VALUE_SELECTOR}[data-target="${CONTENT_TEXT_TARGET}"]`,
   );
   const itemEl = outlineRoot.matches(itemSelectorById(itemId))
     ? outlineRoot
@@ -42,7 +42,7 @@ export function domPositionToModel(
   offset: number,
 ): ModelPosition | null {
   const rootValueEl = outlineRoot.querySelector<HTMLElement>(
-    `:scope > ${VALUE_SELECTOR}[data-target="value"]`,
+    `:scope > ${VALUE_SELECTOR}[data-target="${CONTENT_TEXT_TARGET}"]`,
   );
   let cur: Node | null = node instanceof Text ? node.parentNode : node;
 

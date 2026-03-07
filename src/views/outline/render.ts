@@ -1,10 +1,10 @@
 import { computed } from "@preact/signals-core";
 
 import {
+  CONTENT_TEXT_TARGET,
   ITEM_TARGET,
   isNumericLikeValue,
   sameLocation,
-  VALUE_TARGET,
 } from "../../core";
 import type { ItemId, Location } from "../../core";
 import type { Component, Ctx, UiCore } from "../../dom";
@@ -76,13 +76,14 @@ function buildOutlineValue(
   const { core, portals, discardPendingMutationRecords } = mountCtx;
   return createComponent(core, (ctx) => {
     const valueEl = el("span", "ui-outline-value");
-    valueEl.dataset.target = "value";
+    valueEl.dataset.target = CONTENT_TEXT_TARGET;
 
     ctx.target(
       { item: itemId, portals },
-      VALUE_TARGET,
+      CONTENT_TEXT_TARGET,
       () => (valueEl.isConnected ? valueEl : null),
       {
+        primary: true,
         getCaret: () => {
           const host = valueEl.closest("[contenteditable='true']");
           if (!(host instanceof HTMLElement)) return undefined;
@@ -159,7 +160,7 @@ function buildOutlineChild(
       }
       if (selection.type !== "editing") return "none";
 
-      if (selection.target === VALUE_TARGET) {
+      if (selection.target === CONTENT_TEXT_TARGET) {
         if (!valueSelectionCollapsed.value) {
           return valueRangeSelectedItemKeys.value.has(itemKey)
             ? "value"

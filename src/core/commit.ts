@@ -15,7 +15,7 @@ import type {
 import { CoreApiError } from "./model";
 import type { Connected, ItemId, ValueOrBlank } from "./read";
 import { entryIdFromItemId, itemIdOf, parseItemId } from "./read";
-import { VALUE_TARGET } from "./select";
+import { CONTENT_TEXT_TARGET } from "./select";
 import type { Selection, SelectionRepairAnchor } from "./select";
 import { enforceViewShapes } from "./shape";
 import type { ViewShape } from "./shape";
@@ -284,7 +284,7 @@ export function createCommitController(
     sel: Selection,
   ): TextHistoryGroupKey | null => {
     if (sel.type !== "editing") return null;
-    if (sel.target !== VALUE_TARGET) return null;
+    if (sel.target !== CONTENT_TEXT_TARGET) return null;
 
     const focusedEntryId = entryIdFromItemId(sel.location.item);
     if (focusedEntryId == null) return null;

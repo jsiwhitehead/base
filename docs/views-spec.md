@@ -78,7 +78,7 @@ Outline value body:
 
 ```text
 .ui-body.ui-outline
-  span.ui-outline-value                        (target: value)
+  span.ui-outline-value                        (target: content:text)
 ```
 
 Structural rules:
@@ -105,32 +105,19 @@ Notes:
 
 ### Location surfaces and targets
 
-Outline location surfaces:
+Outline surfaces:
 
-- **Frame item selection**: `ITEM_TARGET` on the item's `.ui-frame` (outer view).
-- **Inline edit focus**:
-  - `value` (body-owned)
-  - `conn:*` (header-owned)
-  - `label` (header-owned)
-
-Edit targets by item type:
-
-- Plain value leaf:
-  - `value`
-
-- Connected leaf:
-  - `conn:*` in `fieldsFromConn` order (see `docs/dom-runtime.md`)
-  - (optionally) `value` if the view supports showing it (usually no)
-
-- Label editing:
-  - `label`
+- `ITEM_TARGET` on the item's `.ui-frame`
+- `content:text` for plain value editing
+- `conn:*` for connected fields, in `fieldsFromConn` order
+- `label` for label editing
 
 Notes:
 
-- Outline defines a traversal space for `NAV` while editing.
+- Outline defines an edit traversal space for `NAV`.
 - Groups participate in navigation but not in edit traversal.
-- Non-outline child views are treated as atomic traversal stops at `ITEM_TARGET` and are not traversed recursively.
-- Even when child header/body are hosted inside `.ui-outline-child`, target ownership stays per `docs/dom-runtime.md`.
+- Non-outline child views are atomic traversal stops at `ITEM_TARGET`.
+- Target ownership still follows `docs/dom-runtime.md`, even when child header/body are hosted inside `.ui-outline-child`.
 
 ### Header visibility policy
 
@@ -154,9 +141,8 @@ Pointer hit routing inside `.ui-outline-child`:
 
 When a group is empty and item selection is on that group (`ITEM_TARGET`):
 
-- `TYPE "="` MUST convert the group to formula and focus `conn:expr` at caret start.
-- `TYPE` with any other character MUST convert the group to `value` with `""`, focus `value`, and type that character (replace behavior).
-- `CONFIRM` MUST convert the group to `value` with `""` and focus `value`.
+- `TYPE` with any other character MUST convert the group to `value` with `""`, focus `content:text`, and type that character (replace behavior).
+- `CONFIRM` MUST convert the group to `value` with `""` and focus `content:text`.
 
 #### Undo boundary policy
 
@@ -197,13 +183,13 @@ Continue to the adjacent leaf's edit target in the unified traversal. Backward m
 
 When the adjacent leaf is a non-outline embedded child view, traversal lands on that row's `ITEM_TARGET` (item selection). From that embedded item stop, boundary NAV back into an outline edit target keeps the standard caret rule: backward -> end, forward -> start.
 
-Enter from a plain value `value` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `value` targets on plain value items, never to `conn:*` fields.
-Shift+Enter from a plain value `value` target inserts a newline in place within the same item and keeps edit focus on that item.
-`Mod+Enter` from a plain value `value` target works like `Enter`, but when the focused item is the last child of an editable Outline group whose parent is not `rootId`, it inserts the split-off item after the parent instead. The current item keeps the text before the caret, the new parent-level item gets the text after the caret, and focus moves to the new item's `value` target with caret at start. Otherwise, it falls back to normal `Enter`.
+Enter from a plain value `content:text` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `content:text` targets on plain value items, never to `conn:*` fields.
+Shift+Enter from a plain value `content:text` target inserts a newline in place within the same item and keeps edit focus on that item.
+`Mod+Enter` from a plain value `content:text` target works like `Enter`, but when the focused item is the last child of an editable Outline group whose parent is not `rootId`, it inserts the split-off item after the parent instead. The current item keeps the text before the caret, the new parent-level item gets the text after the caret, and focus moves to the new item's `content:text` target with caret at start. Otherwise, it falls back to normal `Enter`.
 
 Delete at boundary from a `conn:*` target is a no-op.
 
-Delete at boundary from a `value` target is target-specific:
+Delete at boundary from a `content:text` target is target-specific:
 
 - If the current text is non-empty, boundary delete checks the adjacent edit stop in the delete direction. If that stop is a plain value item, Outline joins the two values at the boundary point and places the caret at the join boundary in the surviving item. Otherwise, no-op.
 - If the current text is empty, that DELETE intent removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
@@ -217,7 +203,7 @@ When the contenteditable selection spans multiple plain value items within the s
 - After remove, focus lands on: next sibling, then previous sibling, then parent.
 - Parent fallback is valid only if that parent survives the same commit.
 - If no live destination exists, Core repair MUST apply.
-- Structural removals triggered by DELETE (`ITEM_TARGET`, block selection, empty-`value`, and join removal of the absorbed neighbor) MUST prune newly-empty ancestor groups in the same commit.
+- Structural removals triggered by DELETE (`ITEM_TARGET`, block selection, empty-`content:text`, and join removal of the absorbed neighbor) MUST prune newly-empty ancestor groups in the same commit.
 - Pruning stops at `rootId`, readonly ancestors, non-group ancestors, or when an ancestor remains non-empty.
 
 ### Commands and state transitions
@@ -328,11 +314,11 @@ Table location and target modes:
 
 - **Cell edit focus**:
   - location refers to a cell item
-  - `value`
+  - `content:text`
 
 Rules:
 
-- Table MUST distinguish item selection from `value` edit focus.
+- Table MUST distinguish item selection from `content:text` edit focus.
 - Table MUST NOT implement outline-style multi-target edit traversal.
 - `NAV` and `TAB` are item-selection operations in table mode.
 - Row/cell item selection MUST be implemented as Core location surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
@@ -430,7 +416,7 @@ Slider body:
 
 ```text
 .ui-body.ui-slider
-  input[type="range"]                            (target: value)
+  input[type="range"]                            (target: content:slider)
   .ui-slider-value
 ```
 
@@ -440,7 +426,7 @@ Rules:
 
 - Slider uses:
   - `ITEM_TARGET` on the slider frame.
-  - `value` (`VALUE_TARGET`) on the `<input type="range">`.
+  - `content:slider` on the `<input type="range">`.
 - Keyboard semantics are interpreted at view level.
 
 ### View-specific behaviors
@@ -451,7 +437,7 @@ Arrow keys, Home, End, PageUp, and PageDown are owned by the native range input.
 
 Enter, Tab, and Escape are not consumed by the slider and bubble to the outer view, which handles them through its normal rules. TYPE and DELETE are no-ops.
 
-Pointerdown on the range input SHOULD focus `value` (`VALUE_TARGET`) before native slider interaction.
+Pointerdown on the range input SHOULD focus `content:slider` before native slider interaction.
 
 ### Commands and state transitions
 

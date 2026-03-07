@@ -1,9 +1,5 @@
-import type { Intent, ItemId, Location, Selection } from "../../core";
-import {
-  applyTypeToPrimaryTarget,
-  handleItemIntent,
-  VALUE_TARGET,
-} from "../../core";
+import type { Intent, ItemId, Location } from "../../core";
+import { CONTENT_TEXT_TARGET } from "../../core";
 import type { UiCore } from "../../dom";
 
 import {
@@ -45,36 +41,8 @@ function convertEmptyGroupToValueAndFocus(
 
   core.commit((t) => t.setValue(location.item, initialText));
   core.focus(
-    { type: "editing", location, target: VALUE_TARGET },
+    { type: "editing", location, target: CONTENT_TEXT_TARGET },
     { caret: initialText.length },
-  );
-  return true;
-}
-
-function handleOutlineItemTypeIntent(args: {
-  core: UiCore;
-  portals: readonly ItemId[];
-  sel: Extract<Selection, { type: "item" }>;
-  intent: Extract<Intent, { type: "TYPE" }>;
-}): boolean {
-  const { core, portals, sel, intent } = args;
-
-  const id = sel.head.item;
-  if (core.view(id) !== "outline") return false;
-
-  const item = core.item(id);
-  if (item.mode.type !== "plain") return false;
-  if (item.content.type !== "value") return false;
-
-  const applied = applyTypeToPrimaryTarget(core, id, intent.char);
-  if (!applied || applied.target !== VALUE_TARGET) return false;
-  core.focus(
-    {
-      type: "editing",
-      location: { item: id, portals },
-      target: applied.target,
-    },
-    { caret: applied.caret },
   );
   return true;
 }
@@ -89,7 +57,7 @@ export function createOutlineValueTabHandler(args: {
       : outlineCmd.indentInPlace(core, location);
     if (!nextFocus) return;
     core.focus(
-      { type: "editing", location: nextFocus, target: VALUE_TARGET },
+      { type: "editing", location: nextFocus, target: CONTENT_TEXT_TARGET },
       { caret },
     );
   };
@@ -173,30 +141,15 @@ export function createOutlineIntentHandler(args: {
         const id = sel.head.item;
         const item = core.item(id);
         if (item.mode.type === "readonly") return;
-        if (intent.char === "=" && handleItemIntent({ core, sel, intent })) {
-          return;
-        }
         if (convertEmptyGroupToValueAndFocus(core, location, intent.char)) {
           return;
         }
-        if (
-          handleOutlineItemTypeIntent({
-            core,
-            portals,
-            sel,
-            intent,
-          })
-        ) {
-          return;
-        }
-        handleItemIntent({ core, sel, intent });
         return;
       }
       case "CONFIRM": {
         if (convertEmptyGroupToValueAndFocus(core, location, "")) {
           return;
         }
-        if (handleItemIntent({ core, sel, intent })) return;
         if (
           location.item === viewRootId &&
           focusFirstChildIfAny(core, location)
@@ -209,7 +162,7 @@ export function createOutlineIntentHandler(args: {
           {
             type: "editing",
             location: { item: nextId, portals },
-            target: VALUE_TARGET,
+            target: CONTENT_TEXT_TARGET,
           },
           { caret: 0 },
         );

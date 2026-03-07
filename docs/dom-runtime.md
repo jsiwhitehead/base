@@ -32,7 +32,7 @@ Controls/editing helpers:
 - `buildTextField`: canonical shared text editor component.
 - `buildItemHeader`: canonical header subtree component.
 - `NavDirection`: shared item-navigation direction type.
-- `handleItemIntent`: shared item-selection `TYPE`/`CONFIRM` adaptor for views.
+- Core runs shared item-selection `TYPE`/`CONFIRM` handoff before view delegation.
 - `resolveFocusAfterRemove`: canonical post-remove destination helper.
 
 Contenteditable helpers:
@@ -180,6 +180,7 @@ Rules:
 
 - The target registration lifetime is bound to component disposal.
 - `getEl()` resolves the element Core should focus.
+- `opts.primary`, when `true`, marks this binding as the location's primary body target.
 - `opts.setCaret`, when provided, is used for caret/selection restore behavior.
 - `opts.getCaret`, when provided, MAY be called by runtime to capture caret during local repair-anchor capture. This is mainly for live `contenteditable` surfaces.
 
@@ -241,16 +242,12 @@ Intent routing:
 - Exact root item selection does not resolve through a mounted view; it routes to the root outer handler.
 - Missing bindings or mixed/cross-view item selection are invariant violations.
 
-### `handleItemIntent({ core, sel, intent })`
+### Shared item-selection handoff
 
-Behavior:
-
-- Handles item-selection `TYPE` and `CONFIRM` for **input-based edit targets** (`value`, `label`, `conn:*` when those targets are bound to text inputs).
-- For `TYPE`, applies the character to the item's primary target model-side (`applyTypeToPrimaryTarget`) and focuses the resulting editing target with the returned caret.
-- For `TYPE "="` on an empty plain value item, converts to formula and focuses `conn:expr`.
-- For `CONFIRM`, enters primary edit target with caret at end.
-- Returns `true` when handled, else `false`.
-- **contenteditable value surfaces do not use this helper for `TYPE`.** Views with a contenteditable `value` target handle `TYPE` model-side: commit the character directly (`t.setValue(id, char)`) and focus `VALUE_TARGET` at the new caret. This is the same pattern the empty-group case already uses.
+- Core runs this before view-specific intent delegation.
+- It resolves the primary target from registered body targets first, then header text targets.
+- `TYPE` only hands off when the primary target is `content:text`; it inserts the character and focuses that target.
+- `CONFIRM` enters the primary target with the caret at end.
 
 ### `resolveFocusAfterRemove(core, removedId, prefer, portals)`
 
@@ -342,7 +339,7 @@ Mirror rules:
 
 ### Field kind (`kind`)
 
-- `kind="isolated"` means the field consumes all keydowns locally (does not bubble), except Escape.
+- `kind="isolated"` means the field consumes all keydowns locally (does not bubble), except Escape and explicit Core-global modifier shortcuts.
 - `kind="traversable"` means the field yields arrow and delete-boundary keys at boundaries so the active view can handle navigation and structural edits.
 - `onExitToItem` MAY be provided for isolated fields. When Enter or Tab is pressed, the field commits, prevents default, and calls this callback.
 
@@ -352,10 +349,12 @@ Propagation-gating rules:
 - Yielded keydowns MUST NOT call `stopPropagation()` so they bubble to Core.
 - When yielding, the runtime MUST perform the listed commit/cancel behavior and call `preventDefault()` where specified.
 - Text fields MUST NOT stop propagation for Escape. Draft fields MAY cancel local edits, but Escape always bubbles as `NAV/out` for global/view NAV-out handling.
+- Text fields MUST NOT stop propagation for Core-global modifier shortcuts such as `Cmd/Ctrl+.`.
 
 Events that trigger commit/yield behavior:
 
 - `Escape`: Cancels the draft session in draft mode and MUST NOT call `preventDefault()`.
+- `Cmd/Ctrl+.`: MUST bubble unchanged to Core global routing.
 - `Tab`: Commits the draft and MUST call `preventDefault()`. For `traversable` fields it MUST bubble. For `isolated` fields it MUST NOT bubble.
 - `Enter`: Commits the draft and MUST call `preventDefault()`. For `isolated` fields it MUST NOT bubble. For `traversable` multiline fields, `metaKey`/`ctrlKey` allows newline and does not yield.
 - Arrow keys: MUST yield only at text boundaries. Left yields at absolute start, right yields at absolute end, up yields on the first line for `textarea` (always for single-line input), and down yields on the last line for `textarea` (always for single-line input). When yielding, the runtime MUST commit the draft and call `preventDefault()`.
@@ -400,7 +399,7 @@ Canonical produced structure:
 Rules:
 
 - Label text field uses target `LABEL_TARGET`.
-- Header root (`.ui-header`) MUST set `contenteditable="false"` when mounted in contenteditable-hosted views.
+- Header root (`.ui-header`) MUST set `contenteditable="false"` when mounted inside a `contenteditable="true"` editing surface.
 - The label text field MUST use `buildTextField` with `kind="isolated"` (consumes Tab/arrows/Enter/Delete locally; only Escape bubbles).
 - Connected rows render only when `item.mode.type === "connected"`.
 - Each connected field MUST use `connTarget(field.key)` as target.

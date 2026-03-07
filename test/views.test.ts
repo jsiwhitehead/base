@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { VALUE_TARGET } from "../src/core";
+import { CONTENT_TEXT_TARGET, contentTarget } from "../src/core";
 import { createDragController } from "../src/dom";
 
 import {
@@ -183,7 +183,7 @@ describe("views/table", () => {
     unmount();
   });
 
-  test("Enter from cell VALUE moves to same column next row item", async () => {
+  test("Enter from cell content:text moves to same column next row item", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -201,7 +201,7 @@ describe("views/table", () => {
       {
         type: "editing",
         location: { item: c11, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -448,6 +448,8 @@ describe("views/table", () => {
 });
 
 describe("views/slider", () => {
+  const CONTENT_SLIDER_TARGET = contentTarget("slider");
+
   test("renders range input and value readout", async () => {
     const { core, rootId } = makeCoreRuntime();
 
@@ -482,7 +484,7 @@ describe("views/slider", () => {
     unmount();
   });
 
-  test("pointerdown on input focuses VALUE_TARGET", async () => {
+  test("pointerdown on input focuses content:slider", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -509,7 +511,7 @@ describe("views/slider", () => {
     pointerDown(input);
     await flushDomEffects();
 
-    expectSel(core, { item: s, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: s, target: CONTENT_SLIDER_TARGET, portals: [] });
 
     unmount();
   });
@@ -573,7 +575,7 @@ describe("views/slider", () => {
     unmount();
   });
 
-  test("CONFIRM toggles VALUE_TARGET to ITEM_TARGET only when focused item is slider id", async () => {
+  test("CONFIRM toggles content:slider to ITEM_TARGET only when focused item is slider id", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -585,7 +587,7 @@ describe("views/slider", () => {
       {
         type: "editing",
         location: { item: s, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_SLIDER_TARGET,
       },
       { caret: 0 },
     );
@@ -605,7 +607,7 @@ describe("views/slider", () => {
       {
         type: "editing",
         location: { item: other, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_SLIDER_TARGET,
       },
       { caret: 0 },
     );
@@ -613,7 +615,11 @@ describe("views/slider", () => {
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
-    expectSel(core, { item: other, target: VALUE_TARGET, portals: [] });
+    expectSel(core, {
+      item: other,
+      target: CONTENT_SLIDER_TARGET,
+      portals: [],
+    });
 
     unmount();
   });

@@ -62,6 +62,9 @@ export function createUiCoreRuntime(args?: {
 
   let runtime: DomRuntime | null = null;
   const platform: CorePlatformHooks = {
+    primaryContentTarget(location) {
+      return runtime?.primaryContentTarget(location) ?? null;
+    },
     onSelectionChange(selection, caret) {
       runtime?.syncSelection(selection, caret);
     },

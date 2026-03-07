@@ -23,6 +23,11 @@ function preventDefaultEvent(e: Event): void {
   e.preventDefault?.();
 }
 
+function shouldYieldGlobalShortcut(e: KeyboardEvent): boolean {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return false;
+  return e.key === ".";
+}
+
 function textInput(multiline: boolean): TextInputElement {
   const inputEl = document.createElement(multiline ? "textarea" : "input") as
     | HTMLInputElement
@@ -186,6 +191,8 @@ export function buildTextField(
         cancelDraft();
         return;
       }
+
+      if (shouldYieldGlobalShortcut(e)) return;
 
       if (kind === "isolated") {
         if (e.key === "Enter" || e.key === "Tab") {

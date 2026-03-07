@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { ItemId } from "../src/core";
-import { VALUE_TARGET } from "../src/core";
+import { CONTENT_TEXT_TARGET, contentTarget } from "../src/core";
 import { createDragController, type UiCore } from "../src/dom";
 import {
   childrenOf,
@@ -49,7 +49,7 @@ function requireOutlineValueEl(root: ParentNode, id: ItemId): HTMLElement {
   ) as HTMLElement | null;
   if (itemEl) {
     const valueEl = itemEl.querySelector(
-      `.ui-outline-value[data-target="value"]`,
+      `.ui-outline-value[data-target="content:text"]`,
     ) as HTMLElement | null;
     if (!valueEl)
       throw new Error(`Missing outline value element for id=${String(id)}`);
@@ -61,7 +61,7 @@ function requireOutlineValueEl(root: ParentNode, id: ItemId): HTMLElement {
     throw new Error(`Missing outline value element for id=${String(id)}`);
 
   const rootValueEl = outlineRoot.querySelector(
-    ":scope > .ui-outline-value[data-target='value']",
+    ":scope > .ui-outline-value[data-target='content:text']",
   ) as HTMLElement | null;
   if (rootValueEl) return rootValueEl;
 
@@ -355,7 +355,7 @@ describe("outline/rendering", () => {
     ).toBe(true);
     expect(gutterEl).toBeTruthy();
     expect(gutterEl?.getAttribute("contenteditable")).toBe("false");
-    expect(valueEl.dataset.target).toBe("value");
+    expect(valueEl.dataset.target).toBe("content:text");
     expect(requireOutlineItemEl(document.body, a).isConnected).toBe(true);
 
     unmount();
@@ -397,7 +397,7 @@ describe("outline/rendering", () => {
 
     const itemEl = requireOutlineItemEl(document.body, a);
     const valueEl = itemEl.querySelector(
-      `.ui-outline-value[data-target="value"]`,
+      `.ui-outline-value[data-target="content:text"]`,
     ) as HTMLElement | null;
     const sliderValueEl = itemEl.querySelector(
       ".ui-slider-value",
@@ -441,7 +441,7 @@ describe("outline/rendering", () => {
     const directValue = Array.from(root.children).find(
       (child): child is HTMLElement =>
         child instanceof HTMLElement &&
-        child.matches(".ui-outline-value[data-target='value']"),
+        child.matches(".ui-outline-value[data-target='content:text']"),
     );
     expect(directValue).toBeTruthy();
     expect(root.children.length).toBe(1);
@@ -452,7 +452,7 @@ describe("outline/rendering", () => {
 });
 
 describe("outline/item-intents", () => {
-  test("Enter on empty group converts to value and enters VALUE", async () => {
+  test("Enter on empty group converts to value and enters content:text", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     core.focus({
@@ -467,7 +467,7 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
 
     expect(childrenOf(core, g)).toEqual([]);
-    expectSel(core, { item: g, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: g, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(valueOfId(core, g)).toBe("");
 
     unmount();
@@ -482,38 +482,13 @@ describe("outline/item-intents", () => {
       head: { item: a, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { unmount } = await mountOutline(core, rootId);
 
-    fireViewKey(domView, "x");
+    core.dispatch({ type: "TYPE", char: "x" });
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(valueOfId(core, a)).toBe("x");
-
-    unmount();
-  });
-
-  test('TYPE "=" from block uses formula conversion path', async () => {
-    const { core, rootId } = makeCoreRuntime();
-    const a = mkBlank(core, rootId, { label: "a", value: "" });
-    core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
-    });
-
-    const { domView, unmount } = await mountOutline(core, rootId);
-
-    fireViewKey(domView, "=");
-    await flushDomEffects();
-
-    const item = core.item(a);
-    expect(item.mode.type).toBe("connected");
-    const sel = core.selection();
-    expect(sel.type).toBe("editing");
-    if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
-    expect(sel.target).toBe("conn:expr");
 
     unmount();
   });
@@ -756,7 +731,7 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
-  test("ArrowRight from outline value enters embedded view as item selection, ArrowLeft returns to VALUE", async () => {
+  test("ArrowRight from outline content:text enters embedded view as item selection, ArrowLeft returns to content:text", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
     const slider = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -765,7 +740,7 @@ describe("outline/item-intents", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -780,7 +755,7 @@ describe("outline/item-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -796,7 +771,7 @@ describe("outline/item-intents", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -811,7 +786,7 @@ describe("outline/item-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -824,7 +799,7 @@ describe("outline/item-intents", () => {
       {
         type: "editing",
         location: { item: x, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -841,14 +816,14 @@ describe("outline/item-intents", () => {
     expect(nestedKids.length).toBe(1);
     const child = nestedKids[0]!;
     expect(valueOfId(core, child)).toBe("v");
-    expectSel(core, { item: child, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: child, target: CONTENT_TEXT_TARGET, portals: [] });
 
     const secondTab = dispatchKey(outlineRoot, "Tab", { shiftKey: true });
     await flushDomEffects();
     expect(secondTab.defaultPrevented).toBe(true);
     expect(core.item(x).content.type).toBe("value");
     expect(valueOfId(core, x)).toBe("v");
-    expectSel(core, { item: x, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: x, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -860,7 +835,7 @@ describe("outline/item-intents", () => {
       {
         type: "editing",
         location: { item: x, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -889,7 +864,7 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
-  test("Escape from VALUE_TARGET exits to same-item block", async () => {
+  test("Escape from CONTENT_TEXT_TARGET exits to same-item block", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "hello" });
@@ -897,7 +872,7 @@ describe("outline/item-intents", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -924,7 +899,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -943,13 +918,13 @@ describe("outline/contenteditable-beforeinput", () => {
     const b = kids[aIdx + 1]!;
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     core.undo();
     await flushDomEffects();
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
     ).toBe(2);
@@ -959,7 +934,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(childrenOf(core, rootId)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -973,7 +948,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -993,7 +968,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(rootKids[2]).toBe(z);
     const b = rootKids[1]!;
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1006,7 +981,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1026,7 +1001,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(rootKids[2]).toBe(z);
     const b = rootKids[1]!;
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1038,7 +1013,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1057,7 +1032,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const b = kids[aIdx + 1]!;
     expect(valueOfId(core, a)).toBe("h");
     expect(valueOfId(core, b)).toBe("o");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, b)),
     ).toBe(0);
@@ -1073,7 +1048,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1104,7 +1079,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(c).not.toBe(b);
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, c)).toBe("ld");
-    expectSel(core, { item: c, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: c, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1116,7 +1091,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1132,7 +1107,7 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("he\nllo");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1145,7 +1120,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1161,7 +1136,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(ev.defaultPrevented).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
     ).toBe(2);
@@ -1176,7 +1151,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1209,7 +1184,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: x, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1223,7 +1198,7 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a, z]);
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1237,7 +1212,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: b, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1252,19 +1227,19 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(ev.defaultPrevented).toBe(true);
     expect(childrenOf(core, g)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     core.undo();
     await flushDomEffects();
     expect(childrenOf(core, g)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("aa");
     expect(valueOfId(core, b)).toBe("bb");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("nested outline root: final leaf delete clears nested root to blank and repairs to parent location", async () => {
+  test("nested outline root: final leaf delete clears nested root and repairs to parent item selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const nestedRoot = mkGroup(core, rootId, { label: "nested" });
     const a = mkBlank(core, nestedRoot, { label: "a", value: "" });
@@ -1272,7 +1247,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1289,7 +1264,7 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expect(valueOfId(core, nestedRoot)).toBeNull();
-    expectSel(core, { item: nestedRoot, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: nestedRoot, portals: [] });
 
     unmount();
   });
@@ -1306,7 +1281,7 @@ describe("outline/contenteditable-beforeinput", () => {
       [...gEl.children].find(
         (child) =>
           child instanceof HTMLElement &&
-          child.matches(`.ui-outline-value[data-target="value"]`),
+          child.matches(`.ui-outline-value[data-target="content:text"]`),
       ) ?? null;
     expect(gValueEl).toBeNull();
 
@@ -1352,7 +1327,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1379,7 +1354,7 @@ describe("outline/contenteditable-beforeinput", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1407,7 +1382,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1427,7 +1402,7 @@ describe("outline/clipboard-drop", () => {
     expect(cut.defaultPrevented).toBe(true);
     expect(cut.textPlain).toBe("ell");
     expect(valueOfId(core, a)).toBe("ho");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1475,7 +1450,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1504,7 +1479,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1537,7 +1512,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1568,7 +1543,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1590,7 +1565,7 @@ describe("outline/clipboard-drop", () => {
 
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, b)).toBe("barllo");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, b)),
     ).toBe(3);
@@ -1605,7 +1580,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1625,7 +1600,7 @@ describe("outline/clipboard-drop", () => {
 
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, b)).toBe("barllo");
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, b)),
     ).toBe(3);
@@ -1640,7 +1615,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1667,7 +1642,7 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
     ).toBe(2);
@@ -1679,7 +1654,11 @@ describe("outline/clipboard-drop", () => {
     const redoneB = redoneKids[redoneAIdx + 1]!;
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, redoneB)).toBe("barllo");
-    expectSel(core, { item: redoneB, target: VALUE_TARGET, portals: [] });
+    expectSel(core, {
+      item: redoneB,
+      target: CONTENT_TEXT_TARGET,
+      portals: [],
+    });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, redoneB)),
     ).toBe(3);
@@ -1694,7 +1673,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1708,7 +1687,7 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(paste.defaultPrevented).toBe(true);
     expect(valueOfId(core, a)).toBe("hXo");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1720,7 +1699,7 @@ describe("outline/clipboard-drop", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1734,7 +1713,7 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(drop.defaultPrevented).toBe(true);
     expect(valueOfId(core, a)).toBe("hXo");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1747,7 +1726,7 @@ describe("outline/clipboard-drop", () => {
         {
           type: "editing",
           location: { item: a, portals: [] },
-          target: VALUE_TARGET,
+          target: CONTENT_TEXT_TARGET,
         },
         { caret: 1 },
       );
@@ -1801,7 +1780,7 @@ describe("outline/ime-mutation", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1834,7 +1813,7 @@ describe("outline/ime-mutation", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -1863,7 +1842,7 @@ describe("outline/ime-mutation", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1886,7 +1865,7 @@ describe("outline/ime-mutation", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -1936,7 +1915,7 @@ describe("outline/ime-mutation", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1979,7 +1958,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -1995,7 +1974,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: b, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -2007,7 +1986,7 @@ describe("outline/selection-cursor", () => {
     unmount();
   });
 
-  test("selectionchange maps contenteditable caret to focused VALUE_TARGET", async () => {
+  test("selectionchange maps contenteditable caret to focused CONTENT_TEXT_TARGET", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
 
@@ -2017,7 +1996,7 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -2033,7 +2012,7 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expectSel(core, { item: rootId, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: rootId, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -2045,7 +2024,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
@@ -2059,7 +2038,7 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expect(ev.defaultPrevented).toBe(true);
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(0);
 
     unmount();
@@ -2085,7 +2064,7 @@ describe("outline/selection-cursor", () => {
     dispatchPointerEvent(document, "pointerup", { pointerId: 7 });
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -2120,7 +2099,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -2137,7 +2116,7 @@ describe("outline/selection-cursor", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -2185,7 +2164,7 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expect(readContentEditableCaret(bValueEl)).toBe(2);
-    expectSel(core, { item: b, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       requireOutlineItemEl(document.body, a).classList.contains("is-selected"),
     ).toBe(false);
@@ -2227,7 +2206,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -2241,7 +2220,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 4 },
     );
@@ -2261,7 +2240,7 @@ describe("outline/selection-cursor", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
     );
@@ -2277,13 +2256,13 @@ describe("outline/selection-cursor", () => {
     core.undo();
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(4);
 
     core.redo();
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("helXlo");
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(4);
 
     unmount();
@@ -2322,7 +2301,7 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
     expect(cut.defaultPrevented).toBe(true);
 
-    expectSel(core, { item: a, target: VALUE_TARGET, portals: [] });
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     const sel = window.getSelection();
     expect(sel).toBeTruthy();
     expect(sel?.anchorNode).toBeTruthy();
@@ -2522,7 +2501,7 @@ describe("outline/vertical-navigation", () => {
       {
         type: "editing",
         location: { item: a, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
     );
@@ -2543,7 +2522,7 @@ describe("outline/vertical-navigation", () => {
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
     expect(sel.location.item).toBe(a);
-    expect(sel.target).toBe(VALUE_TARGET);
+    expect(sel.target).toBe(CONTENT_TEXT_TARGET);
 
     unmount();
   });
@@ -2591,7 +2570,7 @@ describe("outline/header-embedded", () => {
     unmount();
   });
 
-  test("connected item header focuses conn:expr and header interactions do not force VALUE", async () => {
+  test("connected item header focuses conn:expr and header interactions do not force content:text", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "calc", value: "x" });
     setFormula(core, a, "1+2");
@@ -2649,6 +2628,7 @@ describe("outline/header-embedded", () => {
   });
 
   test("embedded slider mounts in row and pointerdown keeps slider focus behavior", async () => {
+    const CONTENT_SLIDER_TARGET = contentTarget("slider");
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "slider", value: 5 });
     setView(core, a, "slider");
@@ -2673,7 +2653,7 @@ describe("outline/header-embedded", () => {
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
     expect(sel.location.item).toBe(a);
-    expect(sel.target).toBe(VALUE_TARGET);
+    expect(sel.target).toBe(CONTENT_SLIDER_TARGET);
     expect(document.activeElement).toBe(sliderInput);
 
     unmount();

@@ -6,8 +6,10 @@ import { entryIdFromItemId, itemIdOf } from "./read";
 
 export const LABEL_TARGET = "label" as const;
 export const ITEM_TARGET = "item" as const;
-export const VALUE_TARGET = "value" as const;
 export const connTarget: (key: string) => string = (key) => `conn:${key}`;
+export const contentTarget: (kind: string) => string = (kind) =>
+  `content:${kind}`;
+export const CONTENT_TEXT_TARGET = contentTarget("text");
 
 export type Location = { item: ItemId; portals: readonly ItemId[] };
 
@@ -185,22 +187,11 @@ export function createSelectionController(
     if (anchor) {
       const repairedLocation = resolveRepairAnchor(anchor);
       if (repairedLocation) {
-        if (anchor.caret !== undefined) {
-          setSelection(
-            {
-              type: "editing",
-              location: repairedLocation,
-              target: VALUE_TARGET,
-            },
-            anchor.caret,
-          );
-        } else {
-          setSelection({
-            type: "item",
-            anchor: repairedLocation,
-            head: repairedLocation,
-          });
-        }
+        setSelection({
+          type: "item",
+          anchor: repairedLocation,
+          head: repairedLocation,
+        });
         return;
       }
     }

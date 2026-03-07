@@ -7,7 +7,7 @@ import {
   CoreReadError,
   createCore,
   defineShape,
-  VALUE_TARGET,
+  CONTENT_TEXT_TARGET,
 } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
@@ -1044,7 +1044,7 @@ describe("core/history", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     core.commit((t) => t.setValue(x, 1));
@@ -1065,7 +1065,7 @@ describe("core/history", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     const realNow = Date.now;
@@ -1096,7 +1096,7 @@ describe("core/history", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     const realNow = Date.now;
@@ -1269,7 +1269,7 @@ describe("core/snapshot", () => {
     core.focus({
       type: "editing",
       location: { item: a, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     const beforeTree = snapshotState(core, rootId, {
@@ -1312,7 +1312,7 @@ describe("core/snapshot", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     const snap = core.exportSnapshot();
@@ -1348,13 +1348,13 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     expect(core.selection()).toEqual({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
   });
 
@@ -1450,7 +1450,7 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     setView(core, x, "slider");
@@ -1469,7 +1469,7 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
     setView(core, x, "slider");
     expectSel(core, { item: x, portals: [] });
@@ -1477,7 +1477,7 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
     setView(core, x, null);
     expectSel(core, { item: x, portals: [] });
@@ -1485,7 +1485,7 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
     core.undo();
 
@@ -1498,7 +1498,7 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
     core.undo();
 
@@ -1548,7 +1548,7 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     deliver({
@@ -1565,7 +1565,7 @@ describe("core/selection validity & repair", () => {
     expect(core.selection()).toEqual({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
 
     deliver({
@@ -1595,14 +1595,14 @@ describe("core/selection validity & repair", () => {
     core.focus({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
     setView(core, y, "slider");
 
     expect(core.selection()).toEqual({
       type: "editing",
       location: { item: x, portals: [] },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
     });
   });
 });
@@ -1658,7 +1658,7 @@ describe("core/determinism", () => {
       core.focus({
         type: "editing",
         location: { item: b, portals: [] },
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
       });
       core.undo();
       core.redo();

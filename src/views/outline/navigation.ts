@@ -1,6 +1,6 @@
 import {
+  CONTENT_TEXT_TARGET,
   sameLocation,
-  VALUE_TARGET,
   type Core,
   type Item,
   type ItemId,
@@ -148,7 +148,7 @@ function editTargetsForItem(core: Core, id: ItemId): string[] {
       : ["conn:from", "conn:where", "conn:orderBy"];
   }
   if (snap.mode.type === "plain" && snap.content.type === "value") {
-    return [VALUE_TARGET];
+    return [CONTENT_TEXT_TARGET];
   }
   return [];
 }
@@ -211,7 +211,7 @@ export function textLengthForTarget(
   target: string,
 ): number {
   const snap = core.item(id);
-  if (target === VALUE_TARGET) {
+  if (target === CONTENT_TEXT_TARGET) {
     return snap.content.type === "value"
       ? valueToText(snap.content.value).length
       : 0;

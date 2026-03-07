@@ -1,7 +1,7 @@
 import type { Tx } from "./commit";
 import type { Connected } from "./read";
 import type { Item, ItemId, ValueOrBlank } from "./read";
-import { connTarget, LABEL_TARGET, VALUE_TARGET } from "./select";
+import { CONTENT_TEXT_TARGET, LABEL_TARGET } from "./select";
 
 const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
@@ -47,30 +47,13 @@ export function fieldsFromConn(conn: Connected): ConnField[] {
   ];
 }
 
-export function editTargetsForItem(core: ReadCore, id: ItemId): string[] {
-  const snapshot = core.item(id);
-  if (snapshot.mode.type === "connected") {
-    return fieldsFromConn(snapshot.mode.conn).map((field) =>
-      connTarget(field.key),
-    );
-  }
-  if (snapshot.mode.type === "plain" && snapshot.content.type === "value") {
-    return [VALUE_TARGET];
-  }
-  return [];
-}
-
-export function primaryEditTarget(core: ReadCore, id: ItemId): string | null {
-  return editTargetsForItem(core, id)[0] ?? null;
-}
-
 export function getTextForTarget(
   core: ReadCore,
   id: ItemId,
   target: string,
 ): string {
   const snapshot = core.item(id);
-  if (target === VALUE_TARGET) {
+  if (target === CONTENT_TEXT_TARGET) {
     return snapshot.content.type === "value"
       ? String(snapshot.content.value ?? "")
       : "";
@@ -105,26 +88,16 @@ export function applyTypeToPrimaryTarget(
   core: EditCore,
   id: ItemId,
   char: string,
+  target: string | null,
 ): { target: string; caret: number } | null {
-  const target = primaryEditTarget(core, id);
   if (!target) return null;
   const caret = char.length;
 
-  if (target === VALUE_TARGET) {
+  if (target === CONTENT_TEXT_TARGET) {
     core.commit((t) => t.setValue(id, char));
     return { target, caret };
   }
-
-  if (!target.startsWith("conn:")) return null;
-
-  const key = target.slice("conn:".length);
-  const snapshot = core.item(id);
-  if (snapshot.mode.type !== "connected") return null;
-
-  const nextConn = patchConn(snapshot.mode.conn, key, char);
-  core.commit((t) => t.setConnected(id, nextConn));
-
-  return { target, caret };
+  return null;
 }
 
 export function indentItemInPlace(core: EditCore, id: ItemId): ItemId | null {

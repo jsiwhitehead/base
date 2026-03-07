@@ -42,6 +42,7 @@ export type Ctx = {
     target: string,
     getEl: () => HTMLElement | null,
     opts?: {
+      primary?: boolean;
       setCaret?: { set(pos: number): void; getLength(): number };
       getCaret?: () => number | undefined;
     },
@@ -283,6 +284,7 @@ export function createComponent(
           location,
           target,
           getEl,
+          ...(opts?.primary !== undefined ? { primary: opts.primary } : {}),
           ...(opts?.setCaret !== undefined ? { setCaret: opts.setCaret } : {}),
           ...(opts?.getCaret !== undefined ? { getCaret: opts.getCaret } : {}),
         }),

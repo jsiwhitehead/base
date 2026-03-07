@@ -99,7 +99,7 @@ Selection is structural state and is persisted and replayable.
 
 **`idle`** — nothing focused.
 
-**`editing`** — text edit mode. The browser cursor is inside the focused text target (`value`, `label`, or `conn:*`). The global intent dispatcher is suppressed while editing.
+**`editing`** — edit mode. The browser cursor is inside the focused target (`content:text`, another `content:*`, `label`, or `conn:*`). The global intent dispatcher is suppressed while editing.
 
 **`item`** — item-level range selection. One or more whole items selected as structural units, no text cursor. Used for bulk operations: delete, move, duplicate.
 
@@ -126,24 +126,23 @@ View-specific geometry, traversal scope, and edge behaviors are defined in `docs
 
 ### Target classification
 
-| Kind        | Targets           | `yieldNav` | In edit traversal | Behavior                                      |
-| ----------- | ----------------- | ---------- | ----------------- | --------------------------------------------- |
-| Item target | `ITEM_TARGET`     | n/a        | No                | Structural: navigate, enter edit, delete, tab |
-| Isolated    | `label`           | `false`    | No                | Self-contained text editing                   |
-| Traversable | `conn:*`, `value` | `true`     | Yes               | Text editing with boundary yielding           |
+| Kind             | Targets                           | `yieldNav` | Edit traversal | Behavior                                                |
+| ---------------- | --------------------------------- | ---------- | -------------- | ------------------------------------------------------- |
+| Item             | `ITEM_TARGET`                     | n/a        | No             | Structural selection: navigate, enter edit, delete, tab |
+| Isolated text    | `label`                           | `false`    | No             | Self-contained text editing                             |
+| Traversable text | `conn:*`, `content:text`          | `true`     | Yes            | Text editing with boundary yielding                     |
+| Opaque body      | `content:*` except `content:text` | View-owned | View-owned     | Non-text body editing surfaces                          |
 
 Item target is the outer shell for structural interaction. Traversable targets edit content in flow — they yield at text boundaries so the outer view handles traversal and structural actions. Isolated targets consume all input locally; exceptions: Escape bubbles to Core, Enter commits and exits.
 
 ### Edit target list
 
-| Item mode           | Edit targets                            |
-| ------------------- | --------------------------------------- |
-| Connected (formula) | `[conn:expr]`                           |
-| Connected (query)   | `[conn:from, conn:where, conn:orderBy]` |
-| Plain value         | `[value]`                               |
-| Readonly or group   | `[]`                                    |
+Primary target resolution:
 
-The **primary edit target** is the first in this list, or `null` if empty. Readonly items have an empty list — CONFIRM, TYPE, and DELETE are no-ops.
+1. A body target marked `primary: true` wins.
+2. Otherwise Core falls back to header text targets (`conn:*`, in field order).
+
+`label` is never primary. Printable-char handoff from item selection only applies when the primary target is `content:text`.
 
 ### Intent handler ownership
 
@@ -152,21 +151,18 @@ The **primary edit target** is the first in this list, or `null` if empty. Reado
 | `ITEM_TARGET` | Frame  | Outer view                                                  |
 | `label`       | Header | Self-contained                                              |
 | `conn:*`      | Header | Field yields at boundaries; outer view handles yielded keys |
-| `value`       | Body   | Item view mounts the field; outer view handles yielded keys |
+| `content:*`   | Body   | Item view mounts the field; outer view handles yielded keys |
 
 ### Behaviors from item selection
 
-| Intent    | Condition                  | Behavior                                                         |
-| --------- | -------------------------- | ---------------------------------------------------------------- |
-| CONFIRM   | Primary target exists      | Enter edit on primary target, caret at end                       |
-| CONFIRM   | No primary target          | No-op                                                            |
-| TYPE char | Primary target exists      | Enter edit, select all, insert char                              |
-| TYPE char | No primary target          | No-op                                                            |
-| TYPE `=`  | Item not a non-empty group | Convert to formula, focus `conn:expr` at start                   |
-| NAV       | Always                     | Move by view geometry; stay in item selection. Escape -> NAV/out |
-| TAB       | Always                     | View-specific structural action                                  |
-| DELETE    | Supports remove            | Remove item; focus next sibling, then previous, then parent      |
-| DELETE    | Supports clear             | Clear item to blank; stay on same item                           |
+| Intent      | Condition                        | Behavior                                                              |
+| ----------- | -------------------------------- | --------------------------------------------------------------------- |
+| `CONFIRM`   | Primary target exists            | Enter edit on the primary target, caret at end                        |
+| `TYPE char` | Primary target is `content:text` | Enter edit and insert the character                                   |
+| `NAV`       | Always                           | Move by view geometry and stay in item selection. Escape -> `NAV/out` |
+| `TAB`       | Always                           | View-specific structural action                                       |
+| `DELETE`    | Supports remove                  | Remove item; focus next sibling, then previous, then parent           |
+| `DELETE`    | Supports clear                   | Clear item to blank; stay on the same item                            |
 
 ### Behaviors from traversable targets
 
@@ -247,8 +243,8 @@ The invariants defined in this section are stable contracts. Changes to these in
 
 ### Ownership
 
-- Frame owns `ITEM_TARGET`. Header owns `label` and `conn:*`. Body owns `value` and body-specific targets.
-- Body MUST NOT own `label` or `conn:*`. Header MUST NOT own `value`.
+- Frame owns `ITEM_TARGET`. Header owns `label` and `conn:*`. Body owns `content:*` and body-specific targets.
+- Body MUST NOT own `label` or `conn:*`. Header MUST NOT own `content:*`.
 - A target MUST NOT have multiple owners.
 
 ### Tree integrity

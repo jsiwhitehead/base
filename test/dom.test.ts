@@ -1,13 +1,8 @@
 import { signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
-import type { Location, Intent, ItemId } from "../src/core";
-import {
-  LABEL_TARGET,
-  VALUE_TARGET,
-  connTarget,
-  handleItemIntent,
-} from "../src/core";
+import type { Location, ItemId } from "../src/core";
+import { LABEL_TARGET, CONTENT_TEXT_TARGET, connTarget } from "../src/core";
 import type { Component } from "../src/dom";
 import {
   bindItemFrame,
@@ -515,7 +510,7 @@ describe("bindItemFrame contract", () => {
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
       const value = el("span");
-      value.dataset.target = VALUE_TARGET;
+      value.dataset.target = CONTENT_TEXT_TARGET;
       value.contentEditable = "true";
       value.textContent = "hello";
       frame.append(value);
@@ -534,7 +529,7 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     const value = c.el.querySelector(
-      `[data-target="${VALUE_TARGET}"]`,
+      `[data-target="${CONTENT_TEXT_TARGET}"]`,
     ) as HTMLElement;
     pointerDown(value);
     await flushDomEffects();
@@ -556,7 +551,7 @@ describe("bindItemFrame contract", () => {
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
       const value = el("span");
-      value.dataset.target = VALUE_TARGET;
+      value.dataset.target = CONTENT_TEXT_TARGET;
       value.contentEditable = "true";
       value.textContent = "hello";
       frame.append(value);
@@ -575,7 +570,7 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     const value = c.el.querySelector(
-      `[data-target="${VALUE_TARGET}"]`,
+      `[data-target="${CONTENT_TEXT_TARGET}"]`,
     ) as HTMLElement;
     const textNode = value.firstChild as Text;
     const sel = window.getSelection();
@@ -649,7 +644,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -663,9 +658,9 @@ describe("buildTextField contract", () => {
 
     expect(c.el.classList.contains("ui-textfield")).toBe(true);
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     expect(inp.classList.contains("ui-textfield-input")).toBe(true);
-    expect(inp.dataset.target).toBe(VALUE_TARGET);
+    expect(inp.dataset.target).toBe(CONTENT_TEXT_TARGET);
     expect(inp.tabIndex).toBe(-1);
 
     unmount();
@@ -680,7 +675,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: true,
       autosize: true,
       commit: (t) => {
@@ -698,7 +693,7 @@ describe("buildTextField contract", () => {
     expect(mirror).toBeTruthy();
     expect(mirror.getAttribute("aria-hidden")).toBe("true");
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -723,7 +718,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -736,7 +731,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -764,7 +759,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -777,7 +772,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -801,7 +796,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -814,7 +809,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
 
     inp.focus();
     await flushDomEffects();
@@ -841,7 +836,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -853,7 +848,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -877,7 +872,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       kind: "traversable",
@@ -890,7 +885,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -919,7 +914,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -931,7 +926,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -960,7 +955,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -972,7 +967,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -1008,7 +1003,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -1020,7 +1015,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -1050,7 +1045,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -1062,7 +1057,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -1086,7 +1081,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       commit: (t) => {
@@ -1098,7 +1093,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -1130,7 +1125,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       kind: "traversable",
@@ -1144,7 +1139,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -1186,7 +1181,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       kind: "isolated",
@@ -1201,7 +1196,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
 
     inp.focus();
     await flushDomEffects();
@@ -1249,7 +1244,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: false,
       autosize: false,
       kind: "traversable",
@@ -1263,7 +1258,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     inp.focus();
     await flushDomEffects();
 
@@ -1306,7 +1301,7 @@ describe("buildTextField contract", () => {
 
     const c = buildTextField(core, {
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       multiline: true,
       autosize: false,
       kind: "traversable",
@@ -1320,7 +1315,7 @@ describe("buildTextField contract", () => {
     const unmount = mount(c);
     await flushDomEffects();
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     expect(inp instanceof HTMLTextAreaElement).toBe(true);
 
     inp.focus();
@@ -1479,7 +1474,7 @@ describe("mountHeader contract", () => {
 });
 
 describe("smoke: item TYPE intent model-apply path", () => {
-  test("TYPE moves to primary edit target and types a character", async () => {
+  test("TYPE dispatch moves to primary edit target and types a character", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     const location: Location = { item: id, portals: [] };
@@ -1492,7 +1487,7 @@ describe("smoke: item TYPE intent model-apply path", () => {
 
       const field = buildTextField(core, {
         location,
-        target: VALUE_TARGET,
+        target: CONTENT_TEXT_TARGET,
         multiline: false,
         autosize: false,
         commit: (t) => {
@@ -1509,6 +1504,9 @@ describe("smoke: item TYPE intent model-apply path", () => {
       });
 
       ctx.mount(frame, field);
+      ctx.target(location, CONTENT_TEXT_TARGET, () => field.focusEl, {
+        primary: true,
+      });
       host.append(frame);
       return host;
     });
@@ -1523,15 +1521,7 @@ describe("smoke: item TYPE intent model-apply path", () => {
     });
     await flushDomEffects();
 
-    const selection = core.selection();
-    expect(selection.type).toBe("item");
-    if (selection.type !== "item") throw new Error("Expected item selection");
-    const ok = handleItemIntent({
-      core,
-      sel: selection,
-      intent: { type: "TYPE", char: "a" } as Extract<Intent, { type: "TYPE" }>,
-    });
-    expect(ok).toBe(true);
+    core.dispatch({ type: "TYPE", char: "a" });
 
     await flushDomEffects();
     await flushDomEffects();
@@ -1540,9 +1530,9 @@ describe("smoke: item TYPE intent model-apply path", () => {
     expect(sel1.type).toBe("editing");
     if (sel1.type !== "editing") throw new Error("Expected editing selection");
     expect(sel1.location).toEqual(location);
-    expect(sel1.target).toBe(VALUE_TARGET);
+    expect(sel1.target).toBe(CONTENT_TEXT_TARGET);
 
-    const inp = requireTargetInput(c.el, VALUE_TARGET);
+    const inp = requireTargetInput(c.el, CONTENT_TEXT_TARGET);
     expect(inp.value).toBe("a");
 
     unmount();
@@ -1586,6 +1576,49 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     expect(core.item(id).content).toEqual({ type: "value", value: "two" });
   });
 
+  test("global Cmd+. focuses the label from an active text field", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const id = mkBlank(core, rootId, { label: "label" });
+    setFormula(core, id, "value");
+
+    const mounted = core.mountView({
+      id: rootId,
+      portals: [],
+      view: "outline",
+    });
+    const unmount = mount(mounted);
+    await flushDomEffects();
+
+    core.focus({
+      type: "editing",
+      location: { item: id, portals: [] },
+      target: connTarget("expr"),
+    });
+    await flushDomEffects();
+
+    const exprInp = requireTargetInput(mounted.el, connTarget("expr"));
+    expect(document.activeElement).toBe(exprInp);
+
+    const editLabel = dispatchKey(exprInp, ".", { metaKey: true });
+    expect(editLabel.defaultPrevented).toBe(true);
+
+    await flushDomEffects();
+    await flushDomEffects();
+
+    const labelInp = requireTargetInput(mounted.el, LABEL_TARGET);
+    expect(document.activeElement).toBe(labelInp);
+
+    const selection = core.selection();
+    expect(selection.type).toBe("editing");
+    if (selection.type !== "editing") throw new Error("Expected editing");
+    expect(selection.location).toEqual({ item: id, portals: [] });
+    expect(selection.target).toBe(LABEL_TARGET);
+    expect(labelInp.selectionStart).toBe(labelInp.value.length);
+    expect(labelInp.selectionEnd).toBe(labelInp.value.length);
+
+    unmount();
+  });
+
   test("edit with exact target binding focuses correct element", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
@@ -1596,11 +1629,11 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
 
     const cleanValue = core.attachTarget({
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       getEl: () => valueEl,
     });
 
-    core.focus({ type: "editing", location, target: VALUE_TARGET });
+    core.focus({ type: "editing", location, target: CONTENT_TEXT_TARGET });
     await flushDomEffects();
     expect(document.activeElement).toBe(valueEl);
 
@@ -1618,19 +1651,19 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
 
     const c1 = core.attachTarget({
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       getEl: () => first,
     });
-    core.focus({ type: "editing", location, target: VALUE_TARGET });
+    core.focus({ type: "editing", location, target: CONTENT_TEXT_TARGET });
     await flushDomEffects();
     expect(document.activeElement).toBe(first);
 
     const c2 = core.attachTarget({
       location,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       getEl: () => second,
     });
-    core.focus({ type: "editing", location, target: VALUE_TARGET });
+    core.focus({ type: "editing", location, target: CONTENT_TEXT_TARGET });
     await flushDomEffects();
     expect(document.activeElement).toBe(second);
 

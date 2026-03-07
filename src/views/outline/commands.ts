@@ -1,6 +1,6 @@
 import {
   indentItemInPlace,
-  VALUE_TARGET,
+  CONTENT_TEXT_TARGET,
   type Core,
   type ItemId,
   type Location,
@@ -483,7 +483,7 @@ export function deleteSingleItemRange(
   core.focus({
     type: "editing",
     location: { item: start.itemId, portals },
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
   });
   placeCursor(start.itemId, start.offset);
   return true;
@@ -522,7 +522,7 @@ export function deleteMultiItemRange(
   core.focus({
     type: "editing",
     location: { item: start.itemId, portals },
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
   });
   placeCursor(start.itemId, start.offset);
   return true;

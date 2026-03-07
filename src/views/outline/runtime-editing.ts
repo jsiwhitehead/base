@@ -1,7 +1,8 @@
 import type { Signal } from "@preact/signals-core";
 
 import {
-  VALUE_TARGET,
+  CONTENT_TEXT_TARGET,
+  parseKeyIntent,
   type Core,
   type ItemId,
   type Location,
@@ -84,7 +85,7 @@ function adjacentOutlineValueItem(
 ): ItemId | null {
   const points = navPoints.filter(
     (p): p is Extract<NavPoint, { type: "editing" }> =>
-      p.type === "editing" && p.target === VALUE_TARGET,
+      p.type === "editing" && p.target === CONTENT_TEXT_TARGET,
   );
   const idx = points.findIndex((p) => p.location.item === fromId);
   if (idx < 0) return null;
@@ -102,7 +103,7 @@ function moveVerticalAcrossOutlineValue(
   dir: "up" | "down",
 ): boolean {
   const modelSel = core.selection();
-  if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET)
+  if (modelSel.type !== "editing" || modelSel.target !== CONTENT_TEXT_TARGET)
     return false;
   const boundaryRect = getCaretBoundaryRect(
     root,
@@ -135,7 +136,7 @@ function moveVerticalAcrossOutlineValue(
   if (pos && pos.itemId === targetId) {
     applyEditingResult({
       location: targetLoc,
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       caret: pos.offset,
       reveal: { offset: pos.offset, defer: false },
     });
@@ -148,7 +149,7 @@ function moveVerticalAcrossOutlineValue(
       : 0;
   applyEditingResult({
     location: targetLoc,
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
     caret: fallbackOffset,
     reveal: { offset: fallbackOffset, defer: false },
   });
@@ -190,7 +191,10 @@ function handleArrowHorizontal(
   let atValueBoundaryWithNoNavMove = false;
   const resolveMovedPoint = (): ReturnType<typeof moveNavPoint> => {
     const modelSel = core.selection();
-    if (modelSel.type === "editing" && modelSel.target === VALUE_TARGET) {
+    if (
+      modelSel.type === "editing" &&
+      modelSel.target === CONTENT_TEXT_TARGET
+    ) {
       const caretOffset = valueCaretOffset(root, modelSel.location.item, true);
       if (caretOffset == null) return null;
       const snap = core.item(modelSel.location.item);
@@ -201,7 +205,11 @@ function handleArrowHorizontal(
       if (!atBoundary) return null;
       const moved = moveNavPoint(
         navPoints,
-        { type: "editing", location: modelSel.location, target: VALUE_TARGET },
+        {
+          type: "editing",
+          location: modelSel.location,
+          target: CONTENT_TEXT_TARGET,
+        },
         dir,
       );
       if (!moved) atValueBoundaryWithNoNavMove = true;
@@ -255,7 +263,7 @@ function handleArrowHorizontal(
     location: moved.point.location,
     target: moved.point.target,
     ...(caret !== undefined ? { caret } : {}),
-    ...(moved.point.target === VALUE_TARGET
+    ...(moved.point.target === CONTENT_TEXT_TARGET
       ? { reveal: { offset: caret ?? 0 } }
       : {}),
   });
@@ -273,7 +281,7 @@ function handleArrowVertical(
   dir: "up" | "down",
 ): boolean {
   const modelSel = core.selection();
-  if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET)
+  if (modelSel.type !== "editing" || modelSel.target !== CONTENT_TEXT_TARGET)
     return false;
   if (!getDomSelectionPointsInRoot(root)?.isCollapsed) return false;
   const caretRect = getCollapsedCaretRect(root, modelSel.location.item);
@@ -329,7 +337,7 @@ function handleInsertLineBreakBeforeInput(
   ctx.core.commit((t) => t.setValue(rangePos.start.itemId, nextText));
   ctx.applyEditingResult({
     location: { item: rangePos.start.itemId, portals: ctx.portals },
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
     caret: nextCaret,
     reveal: { offset: nextCaret },
   });
@@ -373,7 +381,7 @@ function handleInsertParagraphBeforeInput(
   if (!newId) return;
   ctx.applyEditingResult({
     location: { item: newId, portals: ctx.portals },
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
     caret: 0,
     reveal: { offset: 0, defer: false },
   });
@@ -411,7 +419,7 @@ function handleDeleteBeforeInput(
   }
   ctx.applyEditingResult({
     location: { item: startPos.itemId, portals: ctx.portals },
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
     caret: startPos.offset,
     reveal: { offset: startPos.offset, defer: false },
   });
@@ -441,7 +449,7 @@ function handleBoundaryDeleteBeforeInput(
     const modelSel = ctx.core.selection();
     if (modelSel.type !== "editing") return;
     if (
-      modelSel.target === VALUE_TARGET &&
+      modelSel.target === CONTENT_TEXT_TARGET &&
       snap.mode.type === "plain" &&
       snap.content.type === "value" &&
       text.length === 0
@@ -476,7 +484,7 @@ function handleBoundaryDeleteBeforeInput(
         location: nextStop.point.location,
         target: nextStop.point.target,
         ...(caret !== undefined ? { caret } : {}),
-        ...(nextStop.point.target === VALUE_TARGET
+        ...(nextStop.point.target === CONTENT_TEXT_TARGET
           ? { reveal: { offset: caret ?? 0 } }
           : {}),
       });
@@ -494,7 +502,7 @@ function handleBoundaryDeleteBeforeInput(
     if (
       !adjacentStop ||
       adjacentStop.point.type !== "editing" ||
-      adjacentStop.point.target !== VALUE_TARGET
+      adjacentStop.point.target !== CONTENT_TEXT_TARGET
     ) {
       return;
     }
@@ -511,7 +519,7 @@ function handleBoundaryDeleteBeforeInput(
     if (!joined) return;
     ctx.applyEditingResult({
       location: { item: joined.id, portals: ctx.portals },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       caret: joined.caret,
       reveal: { offset: joined.caret },
     });
@@ -575,7 +583,7 @@ function handleInsertReplacementTextBeforeInput(
   }
   ctx.applyEditingResult({
     location: { item: startPos.itemId, portals: ctx.portals },
-    target: VALUE_TARGET,
+    target: CONTENT_TEXT_TARGET,
     caret: nextCaret,
     reveal: { offset: nextCaret, defer: false },
   });
@@ -630,7 +638,7 @@ function insertText(
   const applyValueEditingResult = (itemId: ItemId, caret: number): void => {
     ctx.applyEditingResult({
       location: { item: itemId, portals: ctx.portals },
-      target: VALUE_TARGET,
+      target: CONTENT_TEXT_TARGET,
       caret,
       reveal: { offset: caret, defer: false },
     });
@@ -795,14 +803,14 @@ export function createOutlineEditingRuntime(args: {
 
   const applyEditingResult: ApplyEditingResult = (args): void => {
     const { location, target, caret, reveal } = args;
-    if (target !== VALUE_TARGET || caret !== undefined) {
+    if (target !== CONTENT_TEXT_TARGET || caret !== undefined) {
       clearValueRangeSelectedItems();
     }
     core.focus(
       { type: "editing", location, target },
       caret !== undefined ? { caret } : undefined,
     );
-    if (target !== VALUE_TARGET || !reveal) return;
+    if (target !== CONTENT_TEXT_TARGET || !reveal) return;
     const run = (): void => {
       setCursorAndReveal(location.item, reveal.offset);
     };
@@ -1156,10 +1164,25 @@ function bindOutlineKeydownEvents(args: {
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "Shift") {
         clearStickyCaretX();
       }
+      const globalIntent = parseKeyIntent({
+        key: e.key,
+        ctrlKey: !!e.ctrlKey,
+        metaKey: !!e.metaKey,
+        altKey: !!e.altKey,
+        shiftKey: !!e.shiftKey,
+      });
+      if (globalIntent?.type === "EDIT_LABEL") {
+        e.preventDefault();
+        core.dispatch(globalIntent);
+        return;
+      }
       const isMod = e.metaKey || e.ctrlKey;
       if (isMod && e.key.toLowerCase() === "a" && !e.altKey) {
         const modelSel = core.selection();
-        if (modelSel.type !== "editing" || modelSel.target !== VALUE_TARGET) {
+        if (
+          modelSel.type !== "editing" ||
+          modelSel.target !== CONTENT_TEXT_TARGET
+        ) {
           return;
         }
 
@@ -1167,7 +1190,10 @@ function bindOutlineKeydownEvents(args: {
         let firstItemId: ItemId | undefined;
         let lastItemId: ItemId | undefined;
         for (const point of editCtx.navPoints.value) {
-          if (point.type !== "editing" || point.target !== VALUE_TARGET) {
+          if (
+            point.type !== "editing" ||
+            point.target !== CONTENT_TEXT_TARGET
+          ) {
             continue;
           }
           const itemId = point.location.item;
@@ -1187,14 +1213,14 @@ function bindOutlineKeydownEvents(args: {
         core.focus({
           type: "editing",
           location: { item: lastItemId, portals },
-          target: VALUE_TARGET,
+          target: CONTENT_TEXT_TARGET,
         });
 
         const anchorDom = modelPositionToDom(root, firstItemId, 0);
         const focusDom = modelPositionToDom(
           root,
           lastItemId,
-          textLengthForTarget(core, lastItemId, VALUE_TARGET),
+          textLengthForTarget(core, lastItemId, CONTENT_TEXT_TARGET),
         );
         if (anchorDom && focusDom) {
           suppressSelectionSync.suppressForTurn(true);
@@ -1320,7 +1346,7 @@ function bindOutlineKeydownEvents(args: {
         editCtx.suppressMutationSync.suppressForTurn(true);
         editCtx.applyEditingResult({
           location: { item: nextId, portals },
-          target: VALUE_TARGET,
+          target: CONTENT_TEXT_TARGET,
           caret: 0,
           reveal: { offset: 0, defer: false },
         });

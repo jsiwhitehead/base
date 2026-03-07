@@ -136,6 +136,9 @@ function intentFromKey(
     if (key.toLowerCase() === "y") {
       return { type: "HISTORY", action: "redo" };
     }
+    if (key === ".") {
+      return { type: "EDIT_LABEL" };
+    }
   }
   if (key === "Backspace") return { type: "DELETE", dir: "backward" };
   if (key === "Delete") return { type: "DELETE", dir: "forward" };
