@@ -196,9 +196,7 @@ function buildOutlineChild(
     ctx.slot(itemEl, () => {
       const view = childView.value;
       if (view === "outline") return buildOutlineItem(mountCtx, itemId);
-      const childPortals = childUsesPortal.value
-        ? [...portals, itemId]
-        : portals;
+      const childPortals = childUsesPortal.value ? [...portals, itemId] : portals;
       const mounted = core.mountView({
         id: itemId,
         portals: childPortals,

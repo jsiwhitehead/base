@@ -113,8 +113,7 @@ function buildSliderBody({
     input.step = String(opts.step);
     input.tabIndex = -1;
 
-    const valueEl = el("div", "ui-slider-value");
-    root.append(input, valueEl);
+    root.append(input);
 
     const commitValue = (next: number) => {
       if (!Number.isFinite(next)) return;
@@ -148,7 +147,6 @@ function buildSliderBody({
       const valueText = formatNumberForStep(snapped, opts.step);
 
       if (input.value !== valueText) input.value = valueText;
-      if (valueEl.textContent !== valueText) valueEl.textContent = valueText;
     });
 
     return root;

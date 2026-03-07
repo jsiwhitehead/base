@@ -399,17 +399,12 @@ describe("outline/rendering", () => {
     const valueEl = itemEl.querySelector(
       `.ui-outline-value[data-target="content:text"]`,
     ) as HTMLElement | null;
-    const sliderValueEl = itemEl.querySelector(
-      ".ui-slider-value",
-    ) as HTMLElement | null;
     const sliderInput = itemEl.querySelector(
       "input[type='range']",
     ) as HTMLInputElement | null;
 
-    expect(sliderValueEl).toBeTruthy();
     expect(sliderInput).toBeTruthy();
     expect(valueEl).toBeNull();
-    expect(itemEl.contains(sliderValueEl!)).toBe(true);
 
     unmount();
   });

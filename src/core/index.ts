@@ -379,10 +379,7 @@ export function createCore(opts: CreateCoreOptions): {
   const reader = <S extends ViewShape>(
     id: ItemId,
     shape: S,
-  ): ReaderForShape<S> => {
-    read.item(id);
-    return createShapeReader(read, id, shape);
-  };
+  ): ReaderForShape<S> => createShapeReader(read, id, shape);
 
   const locate = (id: ItemId): LocateResult | null => {
     const ref = parseItemId(id);

@@ -450,7 +450,7 @@ describe("views/table", () => {
 describe("views/slider", () => {
   const CONTENT_SLIDER_TARGET = contentTarget("slider");
 
-  test("renders range input and value readout", async () => {
+  test("renders range input", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -475,11 +475,6 @@ describe("views/slider", () => {
       'input[type="range"]',
     ) as HTMLInputElement | null;
     expect(input).toBeTruthy();
-
-    const valueEl = document.body.querySelector(
-      ".ui-slider-value",
-    ) as HTMLElement | null;
-    expect(valueEl).toBeTruthy();
 
     unmount();
   });

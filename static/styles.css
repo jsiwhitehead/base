@@ -738,12 +738,4 @@
     flex: 1;
     min-width: 0;
   }
-
-  .ui-slider-value {
-    font-size: var(--ui-size-meta);
-    line-height: var(--ui-leading-meta);
-    font-weight: var(--ui-weight-strong);
-    color: var(--ui-color-muted);
-    white-space: nowrap;
-  }
 }

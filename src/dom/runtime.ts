@@ -1,5 +1,3 @@
-import { untracked } from "@preact/signals-core";
-
 import type {
   Core,
   Location,
@@ -499,7 +497,6 @@ export function createRuntime(opts: {
     const id = mountOpts.id;
     const location: Location = { item: id, portals: mountOpts.portals };
     const core = opts.getCore();
-    untracked(() => core.item(id));
 
     const factory = views[mountOpts.view] ?? views.outline;
     if (!factory) {
