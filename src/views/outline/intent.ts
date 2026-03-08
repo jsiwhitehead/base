@@ -29,7 +29,7 @@ function focusFirstChildIfAny(core: UiCore, location: Location): boolean {
   return true;
 }
 
-function convertEmptyGroupToValueAndFocus(
+function createFirstChildAndFocus(
   core: UiCore,
   location: Location,
   initialText: string,
@@ -39,12 +39,32 @@ function convertEmptyGroupToValueAndFocus(
   if (item.content.type !== "group") return false;
   if (item.content.children.length !== 0) return false;
 
-  core.commit((t) => t.setValue(location.item, initialText));
+  const childId = outlineCmd.createFirstChild(core, location, initialText);
+  if (!childId) return false;
   core.focus(
-    { type: "editing", location, target: CONTENT_TEXT_TARGET },
+    {
+      type: "editing",
+      location: { item: childId, portals: location.portals },
+      target: CONTENT_TEXT_TARGET,
+    },
     { caret: initialText.length },
   );
   return true;
+}
+
+function focusInsertedItem(
+  core: UiCore,
+  itemId: ItemId,
+  portals: readonly ItemId[],
+): void {
+  core.focus(
+    {
+      type: "editing",
+      location: { item: itemId, portals },
+      target: CONTENT_TEXT_TARGET,
+    },
+    { caret: 0 },
+  );
 }
 
 export function createOutlineValueTabHandler(args: {
@@ -72,13 +92,22 @@ export function createOutlineIntentHandler(args: {
 
   return (intent: Intent): void => {
     const selection = core.selection();
-    if (selection.type !== "item") return;
+    if (
+      selection.type !== "item" &&
+      !(selection.type === "editing" && intent.type === "INSERT")
+    ) {
+      return;
+    }
     const sel = selection;
 
-    const location: Location = sel.head;
-    const selectedItems = blockSelectionItems(core, viewRootId, sel, portals);
+    const location: Location = sel.type === "item" ? sel.head : sel.location;
+    const selectedItems =
+      sel.type === "item"
+        ? blockSelectionItems(core, viewRootId, sel, portals)
+        : [];
 
     if (intent.type === "DELETE") {
+      if (sel.type !== "item") return;
       if (selectedItems.length > 1) {
         const lastId = selectedItems[selectedItems.length - 1]!;
         const blockPlan = planBlockRemoval(core, viewRootId, selectedItems);
@@ -116,6 +145,7 @@ export function createOutlineIntentHandler(args: {
 
     switch (intent.type) {
       case "TAB": {
+        if (sel.type !== "item") return;
         const nextFocus = intent.shift
           ? outlineCmd.outdentInPlace(core, location)
           : outlineCmd.indentInPlace(core, location);
@@ -124,6 +154,7 @@ export function createOutlineIntentHandler(args: {
         return;
       }
       case "NAV": {
+        if (sel.type !== "item") return;
         const dir = intent.dir === "out" ? "left" : intent.dir;
         const fromId = sel.head.item;
         let nextId: ItemId | null = null;
@@ -138,34 +169,35 @@ export function createOutlineIntentHandler(args: {
         return;
       }
       case "TYPE": {
+        if (sel.type !== "item") return;
         const id = sel.head.item;
         const item = core.item(id);
         if (item.mode.type === "readonly") return;
-        if (convertEmptyGroupToValueAndFocus(core, location, intent.char)) {
+        if (createFirstChildAndFocus(core, location, intent.char)) {
           return;
         }
         return;
       }
       case "CONFIRM": {
-        if (convertEmptyGroupToValueAndFocus(core, location, "")) {
+        if (sel.type !== "item") return;
+        if (createFirstChildAndFocus(core, location, "")) {
           return;
         }
-        if (
-          location.item === viewRootId &&
-          focusFirstChildIfAny(core, location)
-        ) {
+        if (focusFirstChildIfAny(core, location)) {
           return;
         }
-        const nextId = outlineCmd.insertSibling(core, location, "after");
-        if (!nextId) return;
-        core.focus(
-          {
-            type: "editing",
-            location: { item: nextId, portals },
-            target: CONTENT_TEXT_TARGET,
-          },
-          { caret: 0 },
+        return;
+      }
+      case "INSERT": {
+        const nextId = outlineCmd.insertForScope(
+          core,
+          viewRootId,
+          location,
+          intent.scope,
         );
+        if (!nextId) return;
+        focusInsertedItem(core, nextId, portals);
+        return;
       }
     }
   };

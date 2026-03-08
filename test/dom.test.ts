@@ -1740,23 +1740,30 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     c1();
   });
 
-  test("mountView throws for invalid or missing item ids", () => {
+  test("mountView with invalid or missing outline ids returns an inert view shell", async () => {
     const { core } = makeCoreRuntime();
 
-    expect(() =>
-      core.mountView({
-        id: "not-an-id" as ItemId,
-        portals: [],
-        view: "outline",
-      }),
-    ).toThrow();
-    expect(() =>
-      core.mountView({
-        id: "999999:" as ItemId,
-        portals: [],
-        view: "outline",
-      }),
-    ).toThrow();
+    const invalidMounted = core.mountView({
+      id: "not-an-id" as ItemId,
+      portals: [],
+      view: "outline",
+    });
+    const invalidUnmount = mount(invalidMounted);
+    await flushDomEffects();
+    expect(invalidMounted.el.classList.contains("ui-body")).toBe(true);
+    expect(invalidMounted.el.classList.contains("ui-outline")).toBe(true);
+    invalidUnmount();
+
+    const missingMounted = core.mountView({
+      id: "999999:" as ItemId,
+      portals: [],
+      view: "outline",
+    });
+    const missingUnmount = mount(missingMounted);
+    await flushDomEffects();
+    expect(missingMounted.el.classList.contains("ui-body")).toBe(true);
+    expect(missingMounted.el.classList.contains("ui-outline")).toBe(true);
+    missingUnmount();
   });
 
   test("mountView falls back to outline when resolved view factory is missing", () => {

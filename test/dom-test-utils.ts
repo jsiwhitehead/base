@@ -101,6 +101,27 @@ export async function mountView(args: {
   core: UiCore;
   id: ItemId;
   location: Location;
+}): Promise<{ root: HTMLElement; unmount: () => void }> {
+  const { view, core, id, location } = args;
+  const mounted = core.mountView({
+    id,
+    portals: location.portals,
+    view,
+  });
+  document.body.replaceChildren(mounted.el);
+  const unmount = (): void => {
+    mounted.dispose();
+    document.body.replaceChildren();
+  };
+  await flushDomEffects();
+  return { root: mounted.el, unmount };
+}
+
+export async function mountLocalView(args: {
+  view: Extract<ViewName, "outline" | "table" | "slider">;
+  core: UiCore;
+  id: ItemId;
+  location: Location;
 }): Promise<{ domView: DomView; unmount: () => void }> {
   const { view, core, id, location } = args;
   const domView = viewFactories[view]({ core, id, location });
@@ -117,6 +138,12 @@ function intentFromKey(
   key: string,
   opts: Partial<KeyboardEventInit> = {},
 ): Intent | null {
+  if ((opts.metaKey || opts.ctrlKey) && !opts.altKey && key === "Enter") {
+    return {
+      type: "INSERT",
+      scope: opts.shiftKey ? "after-parent" : "sibling",
+    };
+  }
   if (key === "Escape") {
     return {
       type: "NAV",

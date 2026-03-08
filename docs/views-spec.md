@@ -59,6 +59,7 @@ Rules:
 - Navigation is hierarchical and depth-first over visible items.
 - Editing remains inline in the outline context.
 - Outline defines an edit traversal space across leaf edit targets.
+- `Enter` on item selection goes inward; structural insertion uses modified Enter shortcuts.
 
 ### Body DOM shape
 
@@ -183,9 +184,19 @@ Continue to the adjacent leaf's edit target in the unified traversal. Backward m
 
 When the adjacent leaf is a non-outline embedded child view, traversal lands on that row's `ITEM_TARGET` (item selection). From that embedded item stop, boundary NAV back into an outline edit target keeps the standard caret rule: backward -> end, forward -> start.
 
-Enter from a plain value `content:text` target performs a split at caret before advancing — the text after the caret becomes a new sibling item, and its `value` becomes the next edit stop with caret at start. Split only applies to `content:text` targets on plain value items, never to `conn:*` fields.
-Shift+Enter from a plain value `content:text` target inserts a newline in place within the same item and keeps edit focus on that item.
-`Mod+Enter` from a plain value `content:text` target works like `Enter`, but when the focused item is the last child of an editable Outline group whose parent is not `rootId`, it inserts the split-off item after the parent instead. The current item keeps the text before the caret, the new parent-level item gets the text after the caret, and focus moves to the new item's `content:text` target with caret at start. Otherwise, it falls back to normal `Enter`.
+`Enter` from a plain value `content:text` target splits at caret and focuses the new sibling item's `content:text` target at caret `0`. This split behavior applies only to plain value `content:text` targets, never to `conn:*` fields.
+`Shift+Enter` from a plain value `content:text` target inserts a newline in place and keeps edit focus on the same item.
+`Mod+Enter` inserts a new plain sibling after the focused item and focuses its `content:text` target at caret `0`.
+`Mod+Shift+Enter` inserts a new plain item after the parent only when the focused item is the last child of a non-root group; otherwise it is a no-op. Focus moves to the new item's `content:text` target at caret `0`.
+These structural intents are always handled by Outline, even when focus is on an embedded child view's `content:*` target.
+
+#### Item-selection Enter behavior
+
+`Enter` from item selection goes inward:
+
+- Plain value or embedded leaf item: focus the primary edit target if present.
+- Non-empty group: focus the first child at `ITEM_TARGET`.
+- Empty group: create the first child and focus its `content:text` target with caret at start.
 
 Delete at boundary from a `conn:*` target is a no-op.
 
@@ -213,10 +224,9 @@ Outline-local commands:
 - `setLabel(id, text)`
 - `setText(id, text)`
 - `commitConnField(id, key, text)`
-- `convertEmptyGroupToValue(id)`
-- `insertSibling(sel, side)`
+- `createFirstChild(location, initialText?)`
+- `insertForScope(rootId, location, scope)`
 - `splitAt(sel, caretStart, caretEnd)`
-- `splitAfterParent(sel, caretStart, caretEnd)`
 - `joinValues(leftId, rightId)`
 - `removeAndPruneAncestors(rootId, id)`
 - `changeNesting(sel, dir)`
@@ -435,7 +445,7 @@ Slider is only ever used as an item view, never as an outer view. Its body is a 
 
 Arrow keys, Home, End, PageUp, and PageDown are owned by the native range input. The input's `keydown` listener calls `stopPropagation()` for these keys so they never reach the runtime's global handler. The view does not interpret NAV intents.
 
-Enter, Tab, and Escape are not consumed by the slider and bubble to the outer view, which handles them through its normal rules. TYPE and DELETE are no-ops.
+`Enter` and `Shift+Enter` are local no-ops. Structural `INSERT` is handled by the containing outer view. `Tab` and `Escape` bubble to the outer view.
 
 Pointerdown on the range input SHOULD focus `content:slider` before native slider interaction.
 

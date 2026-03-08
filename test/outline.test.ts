@@ -15,6 +15,7 @@ import {
   makeCoreRuntime,
   mkBlank,
   mkGroup,
+  mountLocalView,
   mountView,
   pointerDown,
   requireEl,
@@ -289,11 +290,31 @@ async function mountOutline(
     portals: [],
   },
 ): Promise<{
-  domView: Awaited<ReturnType<typeof mountView>>["domView"];
   unmount: Awaited<ReturnType<typeof mountView>>["unmount"];
   root: HTMLElement;
 }> {
   const mounted = await mountView({
+    view: "outline",
+    core,
+    id: rootId,
+    location,
+  });
+  return { ...mounted, root: requireOutlineRoot(document.body) };
+}
+
+async function mountLocalOutline(
+  core: UiCore,
+  rootId: ItemId,
+  location: { item: ItemId; portals: readonly ItemId[] } = {
+    item: rootId,
+    portals: [],
+  },
+): Promise<{
+  domView: Awaited<ReturnType<typeof mountLocalView>>["domView"];
+  unmount: Awaited<ReturnType<typeof mountLocalView>>["unmount"];
+  root: HTMLElement;
+}> {
+  const mounted = await mountLocalView({
     view: "outline",
     core,
     id: rootId,
@@ -447,7 +468,7 @@ describe("outline/rendering", () => {
 });
 
 describe("outline/item-intents", () => {
-  test("Enter on empty group converts to value and enters content:text", async () => {
+  test("Enter on empty group creates first child and enters content:text", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     core.focus({
@@ -456,14 +477,143 @@ describe("outline/item-intents", () => {
       head: { item: g, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
 
-    expect(childrenOf(core, g)).toEqual([]);
-    expectSel(core, { item: g, target: CONTENT_TEXT_TARGET, portals: [] });
-    expect(valueOfId(core, g)).toBe("");
+    const kids = childrenOf(core, g);
+    expect(kids.length).toBe(1);
+    expectSel(core, {
+      item: kids[0]!,
+      target: CONTENT_TEXT_TARGET,
+      portals: [],
+    });
+    expect(valueOfId(core, kids[0]!)).toBe(null);
+
+    unmount();
+  });
+
+  test("Enter on non-empty group focuses first child item", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "x" });
+    mkBlank(core, g, { label: "b", value: "y" });
+    core.focus({
+      type: "item",
+      anchor: { item: g, portals: [] },
+      head: { item: g, portals: [] },
+    });
+
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
+
+    fireViewKey(domView, "Enter");
+    await flushDomEffects();
+
+    expectSel(core, { item: a, portals: [] });
+
+    unmount();
+  });
+
+  test("Cmd+Enter on item selection inserts sibling in same parent", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "x" });
+    const z = mkBlank(core, rootId, { label: "z", value: "tail" });
+    core.focus({
+      type: "item",
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
+    });
+
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
+
+    fireViewKey(domView, "Enter", { metaKey: true });
+    await flushDomEffects();
+
+    const gKids = childrenOf(core, g);
+    expect(gKids).toEqual([a, gKids[1]!]);
+    expect(childrenOf(core, rootId)).toEqual([g, z]);
+    expect(valueOfId(core, gKids[1]!)).toBe(null);
+    expectSel(core, {
+      item: gKids[1]!,
+      target: CONTENT_TEXT_TARGET,
+      portals: [],
+    });
+
+    unmount();
+  });
+
+  test("Cmd+Shift+Enter on last child inserts after parent", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    mkBlank(core, g, { label: "a", value: "x" });
+    const b = mkBlank(core, g, { label: "b", value: "y" });
+    const z = mkBlank(core, rootId, { label: "z", value: "tail" });
+    core.focus({
+      type: "item",
+      anchor: { item: b, portals: [] },
+      head: { item: b, portals: [] },
+    });
+
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
+
+    fireViewKey(domView, "Enter", { metaKey: true, shiftKey: true });
+    await flushDomEffects();
+
+    const rootKids = childrenOf(core, rootId);
+    expect(rootKids[0]).toBe(g);
+    expect(rootKids[2]).toBe(z);
+    const inserted = rootKids[1]!;
+    expect(valueOfId(core, inserted)).toBe(null);
+    expectSel(core, {
+      item: inserted,
+      target: CONTENT_TEXT_TARGET,
+      portals: [],
+    });
+
+    unmount();
+  });
+
+  test("Cmd+Shift+Enter on non-last child is a no-op", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "x" });
+    const b = mkBlank(core, g, { label: "b", value: "y" });
+    core.focus({
+      type: "item",
+      anchor: { item: a, portals: [] },
+      head: { item: a, portals: [] },
+    });
+
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
+
+    fireViewKey(domView, "Enter", { metaKey: true, shiftKey: true });
+    await flushDomEffects();
+
+    expect(childrenOf(core, g)).toEqual([a, b]);
+    expectSel(core, { item: a, portals: [] });
+
+    unmount();
+  });
+
+  test("Enter on embedded leaf item selection enters primary control target", async () => {
+    const CONTENT_SLIDER_TARGET = contentTarget("slider");
+    const { core, rootId } = makeCoreRuntime();
+    const s = mkBlank(core, rootId, { label: "s", value: 5 });
+    setView(core, s, "slider");
+    core.focus({
+      type: "item",
+      anchor: { item: s, portals: [] },
+      head: { item: s, portals: [] },
+    });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    core.dispatch({ type: "CONFIRM" });
+    await flushDomEffects();
+
+    expectSel(core, { item: s, target: CONTENT_SLIDER_TARGET, portals: [] });
 
     unmount();
   });
@@ -500,7 +650,7 @@ describe("outline/item-intents", () => {
       head: { item: g, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "ArrowRight");
     await flushDomEffects();
@@ -530,7 +680,7 @@ describe("outline/item-intents", () => {
       head: { item: a, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "ArrowUp");
     await flushDomEffects();
@@ -560,7 +710,7 @@ describe("outline/item-intents", () => {
       head: { item: b, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -581,7 +731,7 @@ describe("outline/item-intents", () => {
       head: { item: b, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -604,7 +754,7 @@ describe("outline/item-intents", () => {
       head: { item: x, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -628,7 +778,7 @@ describe("outline/item-intents", () => {
       head: { item: x, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -648,7 +798,7 @@ describe("outline/item-intents", () => {
       head: { item: a, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -671,7 +821,7 @@ describe("outline/item-intents", () => {
       head: { item: y, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -694,7 +844,7 @@ describe("outline/item-intents", () => {
       head: { item: c, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -715,7 +865,7 @@ describe("outline/item-intents", () => {
       head: { item: c, portals: [] },
     });
 
-    const { domView, unmount } = await mountOutline(core, rootId);
+    const { domView, unmount } = await mountLocalOutline(core, rootId);
 
     fireViewKey(domView, "Delete");
     await flushDomEffects();
@@ -886,6 +1036,87 @@ describe("outline/item-intents", () => {
   });
 });
 
+describe("outline/embedded-routing", () => {
+  test("Cmd+Enter from embedded control editing inserts sibling in same parent", async () => {
+    const CONTENT_SLIDER_TARGET = contentTarget("slider");
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const s = mkBlank(core, g, { label: "s", value: 5 });
+    mkBlank(core, rootId, { label: "z", value: "tail" });
+    setView(core, s, "slider");
+    core.focus(
+      {
+        type: "editing",
+        location: { item: s, portals: [] },
+        target: CONTENT_SLIDER_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const sliderInput = requireOutlineItemEl(document.body, s).querySelector(
+      "input[type='range']",
+    ) as HTMLInputElement | null;
+    expect(sliderInput).toBeTruthy();
+
+    dispatchKey(sliderInput!, "Enter", { metaKey: true });
+    await flushDomEffects();
+
+    const gKids = childrenOf(core, g);
+    const inserted = gKids[1]!;
+    expect(valueOfId(core, inserted)).toBe(null);
+    expectSel(core, {
+      item: inserted,
+      target: CONTENT_TEXT_TARGET,
+      portals: [],
+    });
+
+    unmount();
+  });
+
+  test("Cmd+Shift+Enter from embedded control editing inserts after parent at valid edge", async () => {
+    const CONTENT_SLIDER_TARGET = contentTarget("slider");
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    mkBlank(core, g, { label: "a", value: "x" });
+    const s = mkBlank(core, g, { label: "s", value: 5 });
+    const z = mkBlank(core, rootId, { label: "z", value: "tail" });
+    setView(core, s, "slider");
+    core.focus(
+      {
+        type: "editing",
+        location: { item: s, portals: [] },
+        target: CONTENT_SLIDER_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const sliderInput = requireOutlineItemEl(document.body, s).querySelector(
+      "input[type='range']",
+    ) as HTMLInputElement | null;
+    expect(sliderInput).toBeTruthy();
+
+    dispatchKey(sliderInput!, "Enter", { metaKey: true, shiftKey: true });
+    await flushDomEffects();
+
+    const rootKids = childrenOf(core, rootId);
+    expect(rootKids[0]).toBe(g);
+    expect(rootKids[2]).toBe(z);
+    const inserted = rootKids[1]!;
+    expect(valueOfId(core, inserted)).toBe(null);
+    expectSel(core, {
+      item: inserted,
+      target: CONTENT_TEXT_TARGET,
+      portals: [],
+    });
+
+    unmount();
+  });
+});
+
 describe("outline/contenteditable-beforeinput", () => {
   test("beforeinput insertParagraph splits item at selection", async () => {
     const { core, rootId } = makeCoreRuntime();
@@ -934,7 +1165,7 @@ describe("outline/contenteditable-beforeinput", () => {
     unmount();
   });
 
-  test("Mod+Enter splits text into a new parent-level item", async () => {
+  test("Cmd+Enter inserts a blank sibling item from text editing", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "hello" });
@@ -956,21 +1187,23 @@ describe("outline/contenteditable-beforeinput", () => {
     await flushDomEffects();
 
     expect(ev.defaultPrevented).toBe(true);
-    expect(valueOfId(core, a)).toBe("he");
+    expect(valueOfId(core, a)).toBe("hello");
 
-    const rootKids = childrenOf(core, rootId);
-    expect(rootKids[0]).toBe(g);
-    expect(rootKids[2]).toBe(z);
-    const b = rootKids[1]!;
-    expect(valueOfId(core, b)).toBe("llo");
+    const gKids = childrenOf(core, g);
+    expect(gKids[0]).toBe(a);
+    expect(gKids[2]).toBeUndefined();
+    expect(childrenOf(core, rootId)).toEqual([g, z]);
+    const b = gKids[1]!;
+    expect(valueOfId(core, b)).toBe(null);
     expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("Mod+Enter falls back to normal Enter when parent-level split is invalid", async () => {
+  test("Cmd+Shift+Enter inserts after parent from text editing at valid edge", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "hello" });
     const z = mkBlank(core, rootId, { label: "z", value: "tail" });
     core.focus(
       {
@@ -985,18 +1218,53 @@ describe("outline/contenteditable-beforeinput", () => {
 
     const aValueEl = requireOutlineValueEl(document.body, a);
     setContentEditableSelection(aValueEl, 2);
-    const ev = dispatchKey(aValueEl, "Enter", { metaKey: true });
+    const ev = dispatchKey(aValueEl, "Enter", {
+      metaKey: true,
+      shiftKey: true,
+    });
     await flushDomEffects();
 
     expect(ev.defaultPrevented).toBe(true);
-    expect(valueOfId(core, a)).toBe("he");
+    expect(valueOfId(core, a)).toBe("hello");
 
     const rootKids = childrenOf(core, rootId);
-    expect(rootKids[0]).toBe(a);
+    expect(rootKids[0]).toBe(g);
     expect(rootKids[2]).toBe(z);
     const b = rootKids[1]!;
-    expect(valueOfId(core, b)).toBe("llo");
+    expect(valueOfId(core, b)).toBe(null);
     expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("Cmd+Shift+Enter from text editing is a no-op when not at last child", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const g = mkGroup(core, rootId, { label: "g" });
+    const a = mkBlank(core, g, { label: "a", value: "hello" });
+    const b = mkBlank(core, g, { label: "b", value: "tail" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const aValueEl = requireOutlineValueEl(document.body, a);
+    setContentEditableSelection(aValueEl, 2);
+    const ev = dispatchKey(aValueEl, "Enter", {
+      metaKey: true,
+      shiftKey: true,
+    });
+    await flushDomEffects();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(childrenOf(core, g)).toEqual([a, b]);
+    expect(valueOfId(core, a)).toBe("hello");
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });

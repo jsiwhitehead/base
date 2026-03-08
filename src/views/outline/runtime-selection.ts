@@ -90,13 +90,35 @@ function classifyOutlinePointerZone(
   return "unknown";
 }
 
+function isPointerEditingTarget(targetEl: Element | null): boolean {
+  const target = targetEl?.closest<HTMLElement>("[data-target]");
+  return !!(
+    target?.matches("[contenteditable='true']") ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement
+  );
+}
+
+function resolveOutlinePointerItemId(
+  target: EventTarget | null,
+  zones: readonly OutlinePointerZone[],
+): ItemId | null {
+  const targetEl = resolveEventTargetElement(target);
+  if (!targetEl) return null;
+  if (isPointerEditingTarget(targetEl)) return null;
+  const zone = classifyOutlinePointerZone(targetEl);
+  if (!zones.includes(zone)) return null;
+  return targetEl.closest<HTMLElement>(ITEM_SELECTOR)?.dataset.id ?? null;
+}
+
 export function resolveValuePointerItemId(
   target: EventTarget | null,
 ): ItemId | null {
-  const targetEl = resolveEventTargetElement(target);
-  const zone = classifyOutlinePointerZone(targetEl);
-  if (zone !== "value" && zone !== "shell") return null;
-  return targetEl?.closest<HTMLElement>(ITEM_SELECTOR)?.dataset.id ?? null;
+  return resolveOutlinePointerItemId(target, ["value", "shell"]);
+}
+
+function resolveItemPointerItemId(target: EventTarget | null): ItemId | null {
+  return resolveOutlinePointerItemId(target, ["header", "shell"]);
 }
 
 export function isOutlineValueEditEvent(
@@ -398,20 +420,31 @@ export function bindOutlineSelectionEvents(args: {
   on(root, "pointerdown", (e: PointerEvent): void => {
     if ((e.button ?? 0) !== 0) return;
     const targetItemId = resolveValuePointerItemId(e.target);
-    if (!targetItemId) return;
-    pointer.beginPointerSelection(e.pointerId, "value");
-    const selNow = core.selection();
-    if (
-      selNow.type !== "editing" ||
-      selNow.target !== CONTENT_TEXT_TARGET ||
-      selNow.location.item !== targetItemId
-    ) {
-      core.focus({
-        type: "editing",
-        location: { item: targetItemId, portals },
-        target: CONTENT_TEXT_TARGET,
-      });
+    if (targetItemId) {
+      pointer.beginPointerSelection(e.pointerId, "value");
+      const selNow = core.selection();
+      if (
+        selNow.type !== "editing" ||
+        selNow.target !== CONTENT_TEXT_TARGET ||
+        selNow.location.item !== targetItemId
+      ) {
+        core.focus({
+          type: "editing",
+          location: { item: targetItemId, portals },
+          target: CONTENT_TEXT_TARGET,
+        });
+      }
+      return;
     }
+
+    const itemTargetId = resolveItemPointerItemId(e.target);
+    if (!itemTargetId) return;
+    pointer.beginPointerSelection(e.pointerId, "item");
+    core.focus({
+      type: "item",
+      location: { item: itemTargetId, portals },
+    });
+    e.stopPropagation();
   });
 
   on(document, "pointerup", (e: PointerEvent): void => {

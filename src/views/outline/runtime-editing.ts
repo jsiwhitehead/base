@@ -1176,6 +1176,28 @@ function bindOutlineKeydownEvents(args: {
         core.dispatch(globalIntent);
         return;
       }
+      if (globalIntent?.type === "INSERT") {
+        e.preventDefault();
+        e.stopPropagation();
+        const modelSel = core.selection();
+        if (modelSel.type !== "editing") return;
+        const nextId = outlineCmd.insertForScope(
+          core,
+          rootId,
+          modelSel.location,
+          globalIntent.scope,
+        );
+        if (!nextId) return;
+        clearStickyCaretX();
+        editCtx.suppressMutationSync.suppressForTurn(true);
+        editCtx.applyEditingResult({
+          location: { item: nextId, portals },
+          target: CONTENT_TEXT_TARGET,
+          caret: 0,
+          reveal: { offset: 0, defer: false },
+        });
+        return;
+      }
       const isMod = e.metaKey || e.ctrlKey;
       if (isMod && e.key.toLowerCase() === "a" && !e.altKey) {
         const modelSel = core.selection();
@@ -1294,63 +1316,6 @@ function bindOutlineKeydownEvents(args: {
         ) {
           return;
         }
-      }
-      if (e.key === "Enter" && isMod && !e.altKey && !e.shiftKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        const range = getDomRangeInRoot(root);
-        if (!range) return;
-        const rangePos = getMappedRange(range, (point) =>
-          domPositionToModel(root, point.node, point.offset),
-        );
-        if (!rangePos) return;
-        if (core.selection().type !== "editing") return;
-
-        const caretStart = rangePos.start.offset;
-        let caretEnd = caretStart;
-        const multiItem =
-          !range.collapsed && rangePos.start.itemId !== rangePos.end.itemId;
-        if (multiItem) {
-          editCtx.suppressMutationSync.suppressForTurn(true);
-          if (
-            !deleteMultiItemRange(
-              core,
-              portals,
-              rangePos.start,
-              rangePos.end,
-              editCtx.setCursorAndReveal,
-            )
-          ) {
-            return;
-          }
-        } else if (!range.collapsed) {
-          caretEnd = rangePos.end.offset;
-        }
-
-        const nextId =
-          outlineCmd.splitAfterParent(
-            core,
-            rootId,
-            { item: rangePos.start.itemId, portals },
-            caretStart,
-            caretEnd,
-          ) ??
-          outlineCmd.splitAt(
-            core,
-            { item: rangePos.start.itemId, portals },
-            caretStart,
-            caretEnd,
-          );
-        if (!nextId) return;
-        clearStickyCaretX();
-        editCtx.suppressMutationSync.suppressForTurn(true);
-        editCtx.applyEditingResult({
-          location: { item: nextId, portals },
-          target: CONTENT_TEXT_TARGET,
-          caret: 0,
-          reveal: { offset: 0, defer: false },
-        });
-        return;
       }
       if (e.key === "Tab") {
         clearStickyCaretX();

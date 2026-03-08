@@ -72,8 +72,8 @@ export function createUiCoreRuntime(args?: {
     readCurrentCaret() {
       return runtime?.readCurrentCaret();
     },
-    resolveIntentHandler(selection) {
-      return runtime?.resolveIntentHandler(selection) ?? null;
+    handleIntent(selection, intent) {
+      runtime?.handleIntent(selection, intent);
     },
   };
 

@@ -56,6 +56,7 @@ export type NavDirection = "left" | "right" | "up" | "down" | "out";
 export type Intent =
   | { type: "NAV"; dir: NavDirection; mode: "step" | "jump" }
   | { type: "CONFIRM"; caret?: number }
+  | { type: "INSERT"; scope: "after-parent" | "sibling" }
   | { type: "TAB"; shift: boolean; caret?: number }
   | { type: "HISTORY"; action: "undo" | "redo" }
   | { type: "EDIT_LABEL" }
@@ -75,6 +76,12 @@ export function parseKeyIntent(input: KeyIntentInput): Intent | null {
   const key = input.key.toLowerCase();
 
   if (isMod && !input.altKey) {
+    if (input.key === "Enter") {
+      return {
+        type: "INSERT",
+        scope: input.shiftKey ? "after-parent" : "sibling",
+      };
+    }
     if (key === "z") {
       return {
         type: "HISTORY",
@@ -216,9 +223,7 @@ type CorePlatformHooks = {
   primaryContentTarget?: (location: Location) => string | null;
   onSelectionChange?: (selection: Selection, caret?: number) => void;
   readCurrentCaret?: () => number | undefined;
-  resolveIntentHandler?: (
-    selection: Selection,
-  ) => ((intent: Intent) => void) | null;
+  handleIntent?: (selection: Selection, intent: Intent) => void;
 };
 
 export type { CorePlatformHooks };
@@ -463,7 +468,7 @@ export function createCore(opts: CreateCoreOptions): {
       }
     }
 
-    opts.platform?.resolveIntentHandler?.(sel)?.(intent);
+    opts.platform?.handleIntent?.(sel, intent);
   };
 
   core = {

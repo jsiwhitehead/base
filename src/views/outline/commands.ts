@@ -212,6 +212,54 @@ export function removeBlockSelection(
   });
 }
 
+function insertSibling(
+  core: Core,
+  location: Location,
+  side: "before" | "after",
+): ItemId | null {
+  const loc = core.locate(location.item);
+  if (!loc) return null;
+
+  const { parentId, index: idx } = loc;
+  const at = side === "before" ? idx : idx + 1;
+
+  let id!: ItemId;
+  core.commit((t) => {
+    id = t.insertChild(parentId, { at });
+  });
+
+  return id;
+}
+
+function insertAfterParentIfEdge(
+  core: Core,
+  rootId: ItemId,
+  location: Location,
+): ItemId | null {
+  const childLoc = core.locate(location.item);
+  if (!childLoc) return null;
+  if (childLoc.index !== childLoc.siblings.length - 1) return null;
+
+  const parentLoc = core.locate(childLoc.parentId);
+  if (!parentLoc) return null;
+  if (childLoc.parentId === rootId) return null;
+
+  const parentSnap = core.item(childLoc.parentId);
+  if (
+    parentSnap.mode.type === "readonly" ||
+    parentSnap.mode.type === "connected"
+  ) {
+    return null;
+  }
+
+  let nextId!: ItemId;
+  core.commit((t) => {
+    nextId = t.insertChild(parentLoc.parentId, { at: parentLoc.index + 1 });
+  });
+
+  return nextId;
+}
+
 export const outlineCmd = {
   removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, id);
@@ -229,23 +277,33 @@ export const outlineCmd = {
     });
   },
 
-  insertSibling(
+  createFirstChild(
     core: Core,
     location: Location,
-    side: "before" | "after",
+    initialText = "",
   ): ItemId | null {
-    const loc = core.locate(location.item);
-    if (!loc) return null;
-
-    const { parentId, index: idx } = loc;
-    const at = side === "before" ? idx : idx + 1;
+    const item = core.item(location.item);
+    if (item.mode.type === "readonly") return null;
+    if (item.content.type !== "group") return null;
 
     let id!: ItemId;
     core.commit((t) => {
-      id = t.insertChild(parentId, { at });
+      id = t.insertChild(location.item, { at: 0 });
+      if (initialText) t.setValue(id, initialText);
     });
 
     return id;
+  },
+
+  insertForScope(
+    core: Core,
+    rootId: ItemId,
+    location: Location,
+    scope: "sibling" | "after-parent",
+  ): ItemId | null {
+    return scope === "after-parent"
+      ? insertAfterParentIfEdge(core, rootId, location)
+      : insertSibling(core, location, "after");
   },
 
   splitAt(
@@ -263,7 +321,7 @@ export const outlineCmd = {
     const { parentId, index: idx } = loc;
 
     if (!(snap.mode.type === "plain" && snap.content.type === "value")) {
-      return outlineCmd.insertSibling(core, location, "after");
+      return insertSibling(core, location, "after");
     }
 
     const curText = valueToText(snap.content.value);

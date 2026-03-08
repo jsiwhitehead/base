@@ -7,13 +7,7 @@ import type {
 } from "../core";
 import { contentTarget, defineShape } from "../core";
 import type { Component, UiCore } from "../dom";
-import {
-  bindItemFrame,
-  createComponent,
-  defineShapedView,
-  el,
-  setBodyClasses,
-} from "../dom";
+import { createComponent, defineShapedView, el, setBodyClasses } from "../dom";
 
 const sliderShape = defineShape({ type: "value" });
 
@@ -104,7 +98,6 @@ function buildSliderBody({
   return createComponent(core, (ctx) => {
     const root = el("div");
     setBodyClasses(root, "slider");
-    bindItemFrame(ctx, { core, location }, root);
 
     const input = document.createElement("input");
     input.type = "range";
@@ -158,26 +151,8 @@ export const sliderView = defineShapedView(
   ({ core, id, reader, location }) => {
     const opts = DEFAULT_SLIDER_OPTS;
 
-    const onIntent = (intent: Intent): void => {
-      const selection = core.selection();
-      if (selection.type !== "editing") return;
-
-      switch (intent.type) {
-        case "CONFIRM":
-          if (selection.location.item !== id) return;
-          if (selection.target === CONTENT_SLIDER_TARGET)
-            core.focus({ type: "item", location: selection.location });
-          return;
-        case "NAV":
-        case "TAB":
-        case "TYPE":
-        case "DELETE":
-          return;
-      }
-    };
-
     const bodyRoot = buildSliderBody({ core, id, reader, opts, location });
 
-    return { onIntent, bodyRoot };
+    return { onIntent: (_intent: Intent): void => {}, bodyRoot };
   },
 );

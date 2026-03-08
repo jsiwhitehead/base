@@ -485,6 +485,7 @@ export const tableView = defineShapedView(
           }
           return;
         }
+        case "INSERT":
         case "TYPE":
           return;
         case "DELETE": {

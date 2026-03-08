@@ -160,28 +160,35 @@ Primary target resolution:
 | Intent      | Condition                        | Behavior                                                              |
 | ----------- | -------------------------------- | --------------------------------------------------------------------- |
 | `CONFIRM`   | Primary target exists            | Enter edit on the primary target, caret at end                        |
+| `CONFIRM`   | No primary target                | View-specific inward behavior                                         |
 | `TYPE char` | Primary target is `content:text` | Enter edit and insert the character                                   |
+| `TYPE char` | Otherwise                        | View-specific or no-op                                                |
+| `INSERT`    | `scope="sibling"`                | View-specific structural insert at the current level                  |
+| `INSERT`    | `scope="after-parent"`           | View-specific structural insert after the parent, if valid            |
 | `NAV`       | Always                           | Move by view geometry and stay in item selection. Escape -> `NAV/out` |
 | `TAB`       | Always                           | View-specific structural action                                       |
-| `DELETE`    | Supports remove                  | Remove item; focus next sibling, then previous, then parent           |
-| `DELETE`    | Supports clear                   | Clear item to blank; stay on the same item                            |
+| `DELETE`    | View defines item deletion       | Remove or clear according to view rules; repair selection appropriately |
 
 ### Behaviors from traversable targets
 
-Normal typing, cursor movement, and selection are handled natively. At a text boundary on a navigation or structural key: field commits, calls `preventDefault`, and lets the event bubble. The outer view handles the yielded key.
+Normal typing, cursor movement, and selection are handled natively. At a text boundary on a navigation or structural key, the field commits, calls `preventDefault`, and yields to the outer view.
 
-**NAV at boundary** — collapses to backward (left/up) or forward (right/down). Multiline fields yield only on the first or last line.
+**NAV at boundary** — collapses to backward (`left`/`up`) or forward (`right`/`down`). Multiline fields yield only on the first or last line.
 
 1. _Intra-item_: move to adjacent edit target in the list. Backward -> caret at end; forward -> caret at start.
 2. _Inter-item_: at the edge of the item's edit targets, behavior is view-specific.
 
-**Enter** — commit and advance one edit stop forward. Same two-step resolution as boundary NAV.
+**Enter** — local/default behavior for the focused target. Traversable text targets MAY commit and yield to the outer view as part of that local behavior.
 
-**Tab** — commits and bubbles; outer view performs its standard structural action.
+**Shift+Enter** — local alternate Enter behavior for the focused target.
 
-**Delete at boundary** — Backspace at start or Delete at end commits and yields; the outer view decides whether that DELETE intent removes, clears, joins, or no-ops.
+**Always-structural intents** — intents such as `INSERT` always route to the containing outer view, even from a body-owned `content:*` target. Embedded item views do not own these intents.
 
-**Escape** — always bubbles to Core. Draft fields cancel draft first, then NAV/out.
+**Tab** — commits and yields; the outer view performs its standard structural action.
+
+**Delete at boundary** — Backspace at start or Delete at end commits and yields. The outer view decides whether `DELETE` removes, clears, joins, or no-ops.
+
+**Escape** — always bubbles to Core. Draft fields cancel draft first, then `NAV/out`.
 
 ### Edit model
 

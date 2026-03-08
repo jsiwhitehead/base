@@ -12,6 +12,7 @@ import {
   flushDomEffects,
   installCapturedWindowHandlers,
   makeCoreRuntime,
+  mountLocalView,
   mountView,
   mkBlank,
   mkGroup,
@@ -76,7 +77,7 @@ describe("views/table", () => {
       head: { item: r1, portals: [] },
     });
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
@@ -119,7 +120,7 @@ describe("views/table", () => {
       head: { item: c11, portals: [] },
     });
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
@@ -165,7 +166,7 @@ describe("views/table", () => {
       head: { item: c11, portals: [] },
     });
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
@@ -206,7 +207,7 @@ describe("views/table", () => {
       { caret: 1 },
     );
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
@@ -233,7 +234,7 @@ describe("views/table", () => {
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
@@ -283,7 +284,7 @@ describe("views/table", () => {
       head: { item: firstRow, portals: [] },
     });
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
@@ -469,7 +470,8 @@ describe("views/slider", () => {
       location: { item: s, portals: [] },
     });
 
-    requireFrameEl(document.body, s);
+    const body = document.body.querySelector(".ui-body.ui-slider");
+    expect(body).toBeTruthy();
 
     const input = document.body.querySelector(
       'input[type="range"]',
@@ -570,13 +572,11 @@ describe("views/slider", () => {
     unmount();
   });
 
-  test("CONFIRM toggles content:slider to ITEM_TARGET only when focused item is slider id", async () => {
+  test("CONFIRM on content:slider is a local no-op", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
-
-    const other = mkBlank(core, rootId, { label: "o", value: 1 });
 
     core.focus(
       {
@@ -587,7 +587,7 @@ describe("views/slider", () => {
       { caret: 0 },
     );
 
-    const { domView, unmount } = await mountView({
+    const { domView, unmount } = await mountLocalView({
       view: "slider",
       core,
       id: s,
@@ -596,22 +596,8 @@ describe("views/slider", () => {
 
     fireViewKey(domView, "Enter");
     await flushDomEffects();
-    expectSel(core, { item: s, portals: [] });
-
-    core.focus(
-      {
-        type: "editing",
-        location: { item: other, portals: [] },
-        target: CONTENT_SLIDER_TARGET,
-      },
-      { caret: 0 },
-    );
-    await flushDomEffects();
-
-    fireViewKey(domView, "Enter");
-    await flushDomEffects();
     expectSel(core, {
-      item: other,
+      item: s,
       target: CONTENT_SLIDER_TARGET,
       portals: [],
     });

@@ -183,7 +183,7 @@ export type DomRuntime = {
 
   installGlobalListeners(win?: Window): () => void;
 
-  resolveIntentHandler(selection: Selection): ((intent: Intent) => void) | null;
+  handleIntent(selection: Selection, intent: Intent): void;
 
   dispose(): void;
 };
@@ -524,13 +524,24 @@ export function createRuntime(opts: {
 
   const resolveIntentHandler = (
     selection: Selection,
+    intent: Intent,
   ): ((intent: Intent) => void) | null => {
     if (selection.type === "idle") return null;
+
     if (selection.type === "item") {
       const view = resolveItemSelectionView(selection);
-      if (!view) return rootOuterIntentHandler;
-      return view.onIntent ?? null;
+      return view?.onIntent ?? rootOuterIntentHandler;
     }
+
+    if (intent.type === "INSERT") {
+      const view = resolveItemSelectionView({
+        type: "item",
+        anchor: selection.location,
+        head: selection.location,
+      });
+      return view?.onIntent ?? rootOuterIntentHandler;
+    }
+
     if (
       isExactRootLocation(selection.location) &&
       !selection.target.startsWith("content:")
@@ -561,7 +572,9 @@ export function createRuntime(opts: {
       rootOuterIntentHandler = handler;
     },
     installGlobalListeners,
-    resolveIntentHandler,
+    handleIntent(selection, intent) {
+      resolveIntentHandler(selection, intent)?.(intent);
+    },
     dispose,
   };
 }
