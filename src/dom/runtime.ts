@@ -16,7 +16,9 @@ import {
 } from "./contenteditable";
 
 type RuntimeEffect =
-  | { type: "FOCUS"; location: Location; target: string; caret?: number }
+  | { type: "FOCUS_TARGET"; location: Location; target: string; caret?: number }
+  | { type: "FOCUS_STRUCTURAL"; el: HTMLElement }
+  | { type: "CLEAR_DOM_SELECTION" }
   | { type: "CLEAR_FOCUS" };
 
 type ViewHandle = { root: HTMLElement; onIntent: (intent: Intent) => void };
@@ -131,31 +133,6 @@ function assertNever(_exhaustive: never, message: string): never {
   throw new Error(message);
 }
 
-function normalizeEffectsForSelection(
-  sel: Selection,
-  effects: RuntimeEffect[],
-  caret?: number,
-): RuntimeEffect[] {
-  const hasClear = effects.some((e) => e.type === "CLEAR_FOCUS");
-  const hasFocus = effects.some((e) => e.type === "FOCUS");
-
-  if (sel.type === "idle" || sel.type === "item")
-    return hasClear ? effects : [...effects, { type: "CLEAR_FOCUS" }];
-
-  if (hasClear) return effects;
-  if (hasFocus) return effects;
-
-  return [
-    ...effects,
-    {
-      type: "FOCUS",
-      location: sel.location,
-      target: sel.target,
-      ...(caret !== undefined ? { caret } : {}),
-    },
-  ];
-}
-
 function viewAtTarget(
   viewRoots: WeakMap<HTMLElement, ViewHandle>,
   target: EventTarget | null,
@@ -169,6 +146,14 @@ function viewAtTarget(
     if (hit) return hit;
   }
   return null;
+}
+
+function ensureProgrammaticFocus(el: HTMLElement): void {
+  if (el.matches("input, textarea, button, select, a[href], [tabindex]")) {
+    return;
+  }
+  if (el.isContentEditable) return;
+  el.tabIndex = -1;
 }
 
 export type DomRuntime = {
@@ -239,19 +224,30 @@ export function createRuntime(opts: {
     location: Location,
     target: string,
   ): ViewHandle | null => {
-    const fromBinding = (binding: TargetBinding | null): ViewHandle | null => {
-      const el = binding?.getEl() ?? null;
-      if (!el) return null;
-      return viewAtTarget(viewRoots, el);
-    };
-
-    return fromBinding(resolveBinding(location, target));
+    const el = resolveBinding(location, target)?.getEl() ?? null;
+    if (!el) return null;
+    return viewAtTarget(viewRoots, el);
   };
 
   const isExactRootLocation = (location: Location): boolean =>
     location.item === opts.rootId && location.portals.length === 0;
 
-  const resolveItemSelectionView = (
+  const resolveStructuralFocusEl = (
+    sel: Extract<Selection, { type: "item" }>,
+  ): HTMLElement | null => {
+    const exactRoot =
+      isExactRootLocation(sel.anchor) && isExactRootLocation(sel.head);
+
+    if (exactRoot) {
+      const rootItemTarget = resolveBinding(sel.head, ITEM_TARGET)?.getEl();
+      if (rootItemTarget) return rootItemTarget;
+      return mountedViewsByLocation.get(keyOf(sel.head))?.root ?? null;
+    }
+
+    return resolveBinding(sel.head, ITEM_TARGET)?.getEl() ?? null;
+  };
+
+  const resolveItemSelectionOwnerView = (
     selection: Extract<Selection, { type: "item" }>,
   ): ViewHandle | null => {
     const anchorIsRoot = isExactRootLocation(selection.anchor);
@@ -292,9 +288,9 @@ export function createRuntime(opts: {
     return headView;
   };
 
-  const applyDomFocus = (
+  const applyTargetFocus = (
     sel: Selection,
-    locationEff: Extract<RuntimeEffect, { type: "FOCUS" }>,
+    locationEff: Extract<RuntimeEffect, { type: "FOCUS_TARGET" }>,
   ): void => {
     if (sel.type !== "editing") return;
 
@@ -342,12 +338,80 @@ export function createRuntime(opts: {
     targetEl.setSelectionRange(targetEl.value.length, targetEl.value.length);
   };
 
+  const applyStructuralFocus = (
+    eff: Extract<RuntimeEffect, { type: "FOCUS_STRUCTURAL" }>,
+  ): void => {
+    const focusEl = eff.el;
+    if (!focusEl.isConnected) return;
+    ensureProgrammaticFocus(focusEl);
+
+    if (document.activeElement !== focusEl) {
+      focusEl.focus({ preventScroll: true });
+    }
+  };
+
+  const clearDocumentSelection = (): void => {
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const planEditingSelectionEffects = (
+    sel: Extract<Selection, { type: "editing" }>,
+    caret?: number,
+  ): RuntimeEffect[] => [
+    {
+      type: "FOCUS_TARGET",
+      location: sel.location,
+      target: sel.target,
+      ...(caret !== undefined ? { caret } : {}),
+    },
+  ];
+
+  const planItemSelectionEffects = (
+    sel: Extract<Selection, { type: "item" }>,
+  ): RuntimeEffect[] => {
+    const focusEl = resolveStructuralFocusEl(sel);
+    return focusEl
+      ? [
+          { type: "CLEAR_DOM_SELECTION" },
+          { type: "FOCUS_STRUCTURAL", el: focusEl },
+        ]
+      : [{ type: "CLEAR_DOM_SELECTION" }, { type: "CLEAR_FOCUS" }];
+  };
+
+  const planIdleSelectionEffects = (): RuntimeEffect[] => [
+    { type: "CLEAR_DOM_SELECTION" },
+    { type: "CLEAR_FOCUS" },
+  ];
+
+  const planDomEffectsForSelection = (
+    sel: Selection,
+    caret?: number,
+  ): RuntimeEffect[] => {
+    switch (sel.type) {
+      case "editing":
+        return planEditingSelectionEffects(sel, caret);
+      case "item":
+        return planItemSelectionEffects(sel);
+      case "idle":
+        return planIdleSelectionEffects();
+      default:
+        return assertNever(sel, "Unhandled selection for DOM effect planning");
+    }
+  };
+
   const applyDomEffects = (sel: Selection, effects: RuntimeEffect[]): void => {
     for (const eff of effects) {
       switch (eff.type) {
-        case "FOCUS":
-          applyDomFocus(sel, eff);
+        case "FOCUS_TARGET":
+          applyTargetFocus(sel, eff);
           break;
+        case "FOCUS_STRUCTURAL":
+          applyStructuralFocus(eff);
+          break;
+        case "CLEAR_DOM_SELECTION": {
+          clearDocumentSelection();
+          break;
+        }
         case "CLEAR_FOCUS": {
           const active = document.activeElement;
           if (active instanceof HTMLElement) active.blur();
@@ -377,16 +441,8 @@ export function createRuntime(opts: {
     });
   };
 
-  const enqueueDomEffects = (
-    sel: Selection,
-    effects: RuntimeEffect[],
-    caret?: number,
-  ): void => {
-    scheduleEffects(sel, normalizeEffectsForSelection(sel, effects, caret));
-  };
-
   const syncSelection = (next: Selection, caret?: number): void => {
-    enqueueDomEffects(next, [], caret);
+    scheduleEffects(next, planDomEffectsForSelection(next, caret));
   };
 
   const readCurrentCaret = (): number | undefined => {
@@ -455,7 +511,8 @@ export function createRuntime(opts: {
   };
 
   const dispatchKeyDown = (e: KeyboardEvent) => {
-    if ((e.target as HTMLElement | null)?.isContentEditable) return;
+    const targetEl = e.target as HTMLElement | null;
+    if (targetEl?.matches("[contenteditable='true']")) return;
 
     const intent = parseKeyIntent({
       key: e.key,
@@ -506,6 +563,7 @@ export function createRuntime(opts: {
     }
 
     const view = factory({ core, id, location });
+    ensureProgrammaticFocus(view.root);
 
     const unreg = registerViewRoot({
       location,
@@ -522,37 +580,51 @@ export function createRuntime(opts: {
     };
   };
 
-  const resolveIntentHandler = (
-    selection: Selection,
-    intent: Intent,
+  const resolveItemIntentHandler = (
+    selection: Extract<Selection, { type: "item" }>,
+  ): ((intent: Intent) => void) | null =>
+    resolveItemSelectionOwnerView(selection)?.onIntent ?? rootOuterIntentHandler;
+
+  const resolveStructuralIntentHandler = (
+    selection: Extract<Selection, { type: "editing" }>,
+  ): ((intent: Intent) => void) | null =>
+    resolveItemIntentHandler({
+      type: "item",
+      anchor: selection.location,
+      head: selection.location,
+    });
+
+  const resolveEditingIntentHandler = (
+    selection: Extract<Selection, { type: "editing" }>,
   ): ((intent: Intent) => void) | null => {
-    if (selection.type === "idle") return null;
-
-    if (selection.type === "item") {
-      const view = resolveItemSelectionView(selection);
-      return view?.onIntent ?? rootOuterIntentHandler;
-    }
-
-    if (intent.type === "INSERT") {
-      const view = resolveItemSelectionView({
-        type: "item",
-        anchor: selection.location,
-        head: selection.location,
-      });
-      return view?.onIntent ?? rootOuterIntentHandler;
-    }
-
     if (
       isExactRootLocation(selection.location) &&
       !selection.target.startsWith("content:")
     ) {
       return rootOuterIntentHandler;
     }
-    const view = resolveViewForLocationTarget(
-      selection.location,
-      selection.target,
+    return (
+      resolveViewForLocationTarget(selection.location, selection.target)?.onIntent ??
+      null
     );
-    return view?.onIntent ?? null;
+  };
+
+  const resolveIntentHandler = (
+    selection: Selection,
+    intent: Intent,
+  ): ((intent: Intent) => void) | null => {
+    switch (selection.type) {
+      case "idle":
+        return null;
+      case "item":
+        return resolveItemIntentHandler(selection);
+      case "editing":
+        return intent.type === "INSERT"
+          ? resolveStructuralIntentHandler(selection)
+          : resolveEditingIntentHandler(selection);
+      default:
+        return assertNever(selection, "Unhandled selection for intent routing");
+    }
   };
 
   const dispose = (): void => {

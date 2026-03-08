@@ -137,6 +137,12 @@ View-specific geometry, traversal scope, and edge behaviors are defined in `docs
 
 Item target is the outer shell for structural interaction. Traversable targets edit content in flow — they yield at text boundaries so the outer view handles traversal and structural actions. Isolated targets consume all input locally; exceptions: Escape bubbles to Core, Enter commits and exits.
 
+DOM focus follows selection mode:
+
+- Editing selection focuses the active edit target.
+- Item selection focuses the owning structural `ITEM_TARGET` surface.
+- Idle clears DOM document selection and DOM focus.
+
 ### Edit target list
 
 Primary target resolution:
@@ -157,16 +163,16 @@ Primary target resolution:
 
 ### Behaviors from item selection
 
-| Intent      | Condition                        | Behavior                                                              |
-| ----------- | -------------------------------- | --------------------------------------------------------------------- |
-| `CONFIRM`   | Primary target exists            | Enter edit on the primary target, caret at end                        |
-| `CONFIRM`   | No primary target                | View-specific inward behavior                                         |
-| `TYPE char` | Primary target is `content:text` | Enter edit and insert the character                                   |
-| `TYPE char` | Otherwise                        | View-specific or no-op                                                |
-| `INSERT`    | `scope="sibling"`                | View-specific structural insert at the current level                  |
-| `INSERT`    | `scope="after-parent"`           | View-specific structural insert after the parent, if valid            |
-| `NAV`       | Always                           | Move by view geometry and stay in item selection. Escape -> `NAV/out` |
-| `TAB`       | Always                           | View-specific structural action                                       |
+| Intent      | Condition                        | Behavior                                                                |
+| ----------- | -------------------------------- | ----------------------------------------------------------------------- |
+| `CONFIRM`   | Primary target exists            | Enter edit on the primary target, caret at end                          |
+| `CONFIRM`   | No primary target                | View-specific inward behavior                                           |
+| `TYPE char` | Primary target is `content:text` | Enter edit and insert the character                                     |
+| `TYPE char` | Otherwise                        | View-specific or no-op                                                  |
+| `INSERT`    | `scope="sibling"`                | View-specific structural insert at the current level                    |
+| `INSERT`    | `scope="after-parent"`           | View-specific structural insert after the parent, if valid              |
+| `NAV`       | Always                           | Move by view geometry and stay in item selection. Escape -> `NAV/out`   |
+| `TAB`       | Always                           | View-specific structural action                                         |
 | `DELETE`    | View defines item deletion       | Remove or clear according to view rules; repair selection appropriately |
 
 ### Behaviors from traversable targets

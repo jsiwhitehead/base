@@ -41,11 +41,24 @@ describe("system/bootstrap & lifecycle", () => {
 
     const main = document.body.querySelector(".ui-main") as HTMLElement | null;
     expect(main).toBeTruthy();
-    expect(document.activeElement).not.toBe(main);
     expectSel(core, { item: rootId, portals: [] });
 
     unmount();
     expect(document.body.querySelector(".ui-main")).toBeNull();
+  });
+
+  test("root item selection focuses the root shell", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const unmount = mountAppShell(core, rootId);
+    core.focus({ type: "item", location: { item: rootId, portals: [] } });
+    await flushDomEffects();
+
+    const main = document.body.querySelector(".ui-main") as HTMLElement | null;
+    expect(main).toBeTruthy();
+    expect(document.activeElement).toBe(main);
+
+    unmount();
   });
 });
 

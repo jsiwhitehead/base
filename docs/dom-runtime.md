@@ -69,6 +69,9 @@ Rules:
 - `dom/` owns DOM listeners, target bindings, mounted-view tracking, and DOM focus/caret effects.
 - `dom/` MUST NOT own canonical state or canonical selection; Core remains the source of truth.
 - Runtime selection/focus behavior MUST be driven by Core selection updates (for example via `runtime.syncSelection(...)`).
+- Editing selection MUST focus the bound edit target.
+- Item selection MUST clear any active DOM document selection from `contenteditable` surfaces first, then focus the owning structural `ITEM_TARGET` surface (or the root shell for exact root item selection).
+- Idle MUST clear DOM text selection and DOM focus.
 - View mounting and target binding are `UiCore`/runtime responsibilities, not pure `Core` API responsibilities.
 - Runtime code MUST treat `ItemId` as opaque (see `docs/core-api.md`).
 

@@ -1031,6 +1031,9 @@ describe("outline/item-intents", () => {
 
     expect(ev.defaultPrevented).toBe(true);
     expectSel(core, { item: a, portals: [] });
+    expect(document.activeElement).toBe(requireOutlineItemEl(document.body, a));
+    const domSel = window.getSelection();
+    expect(domSel?.rangeCount ?? 0).toBe(0);
 
     unmount();
   });
@@ -2886,6 +2889,27 @@ describe("outline/header-embedded", () => {
     if (sel.type !== "editing") throw new Error("Expected editing selection");
     expect(sel.location.item).toBe(a);
     expect(sel.target.startsWith("conn:")).toBe(true);
+
+    unmount();
+  });
+
+  test("non-control header click keeps item selection on the frame", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    mkBlank(core, rootId, { label: "a", value: "x" });
+    const b = mkBlank(core, rootId, { label: "calc", value: "y" });
+    setFormula(core, b, "1+2");
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const itemEl = requireOutlineItemEl(document.body, b);
+    const headerEl = itemEl.querySelector(".ui-header") as HTMLElement | null;
+    expect(headerEl).toBeTruthy();
+
+    pointerDown(headerEl!);
+    await flushDomEffects();
+
+    expectSel(core, { item: b, portals: [] });
+    expect(document.activeElement).toBe(itemEl);
 
     unmount();
   });

@@ -267,6 +267,8 @@ Plain-text value surfaces SHOULD always contain at least one caret-host node (fo
 
 **Location/blur lifecycle with embedded controls.** Embedded controls within `contenteditable="false"` zones steal DOM focus when clicked — the item is still logically focused. The runtime must distinguish focus leaving the editor host entirely from focus moving to an embedded control within it. Save the last known selection on `blur` and restore it on `focus`; browsers do not reliably restore cursor position, and without this the cursor resets to position 0.
 
+**Exiting `contenteditable` requires explicit selection clear.** Moving DOM focus away from a `contenteditable` surface does not reliably clear the browser's document selection. When text editing exits to structural/item selection, clear the DOM document selection before or while focusing the structural owner, or a stale caret/range may remain visible in the old surface.
+
 **Decorations and overlays.** Visual adornments must not be interleaved with the editing root DOM. Two approaches, both driven reactively from model signals:
 
 - **Node decorations** — CSS classes or attributes on existing item elements driven by reactive state updates. Correct for per-item state: selected, focused, collapsed, error.

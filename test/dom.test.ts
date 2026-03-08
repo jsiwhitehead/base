@@ -29,6 +29,7 @@ import {
   mkBlank,
   mkGroup,
   pointerDown,
+  requireFrameEl,
   queryTargetInput,
   requireTargetInput,
   setFormula,
@@ -1707,6 +1708,26 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     expect(document.activeElement).toBe(valueEl);
 
     cleanValue();
+  });
+
+  test("item selection focuses the bound structural item target", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "v" });
+
+    const mounted = core.mountView({
+      id: rootId,
+      portals: [],
+      view: "outline",
+    });
+    const unmount = mount(mounted);
+    await flushDomEffects();
+
+    core.focus({ type: "item", location: { item: x, portals: [] } });
+    await flushDomEffects();
+
+    expect(document.activeElement).toBe(requireFrameEl(document.body, x));
+
+    unmount();
   });
 
   test("new binding for same (location, target) replaces previous binding", async () => {
