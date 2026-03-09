@@ -73,11 +73,7 @@ export function bindItemFrame(
       if (sel?.rangeCount) {
         const start = sel.getRangeAt(0).startContainer;
         const startEl = start instanceof Element ? start : start.parentElement;
-        if (
-          startEl &&
-          frameEl.contains(startEl) &&
-          isEditingTarget(startEl)
-        ) {
+        if (startEl && frameEl.contains(startEl) && isEditingTarget(startEl)) {
           e.stopPropagation();
           return;
         }

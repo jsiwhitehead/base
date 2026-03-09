@@ -385,9 +385,7 @@ export function createCommitController(
     return { delta: result.delta, undoOps: [...result.undoOps] };
   };
 
-  const applyExactLocal = (
-    txn: Transaction,
-  ): { freshUndo: Transaction } => {
+  const applyExactLocal = (txn: Transaction): { freshUndo: Transaction } => {
     const anchor = opts.captureRepairAnchor();
     let delta = emptyApply;
     let undoOps: Op[] = [];

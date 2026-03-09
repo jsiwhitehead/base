@@ -26,17 +26,6 @@ type SliderReader = ReaderForShape<typeof sliderShape>;
 const DEFAULT_SLIDER_OPTS: SliderOpts = { min: 0, max: 100, step: 1 };
 const CONTENT_SLIDER_TARGET = contentTarget("slider");
 
-const nativeRangeKeys = new Set([
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-]);
-
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
 
@@ -119,10 +108,6 @@ function buildSliderBody({
         { caret: 0 },
       );
       e.stopPropagation();
-    });
-
-    ctx.on(input, "keydown", (e: KeyboardEvent) => {
-      if (nativeRangeKeys.has(e.key)) e.stopPropagation();
     });
 
     ctx.on(input, "input", (event: Event) => {

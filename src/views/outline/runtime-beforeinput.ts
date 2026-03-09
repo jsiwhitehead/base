@@ -7,14 +7,9 @@ import {
 } from "../../dom";
 import type { Ctx } from "../../dom";
 
-import {
-  deleteMultiItemRange,
-  deleteSingleItemRange,
-  outlineCmd,
-} from "./commands";
+import { deleteMultiItemRange, deleteSingleItemRange } from "./commands";
 import {
   isPlainValueItem,
-  moveStop,
   valueToText,
   type ModelPosition,
 } from "./navigation";
@@ -23,7 +18,6 @@ import {
   itemSelectorById,
   VALUE_SELECTOR,
 } from "./dom-mapping";
-import { applyStopMove } from "./runtime-navigation";
 import type { InputCtx } from "./runtime-input";
 
 function deleteSelection(
@@ -101,36 +95,12 @@ function handleInsertParagraphBeforeInput(
   );
   if (!rangePos) return;
   if (ctx.core.selection().type !== "editing") return;
-
-  const caretStart = rangePos.start.offset;
-  let caretEnd = caretStart;
-  const multiItem =
-    !range.collapsed && rangePos.start.itemId !== rangePos.end.itemId;
-  if (multiItem) {
-    ctx.suppressMutationSync.suppressForTurn(true);
-    if (
-      !deleteMultiItemRange(
-        ctx.core,
-        ctx.portals,
-        rangePos.start,
-        rangePos.end,
-        ctx.setCursorAndScrollIntoView,
-      )
-    ) {
-      return;
-    }
-  } else if (!range.collapsed) {
-    caretEnd = rangePos.end.offset;
-  }
-
-  const splitLoc = { item: rangePos.start.itemId, portals: ctx.portals };
-  const newId = outlineCmd.splitAt(ctx.core, splitLoc, caretStart, caretEnd);
-  if (!newId) return;
-  ctx.applyEditingResult({
-    location: { item: newId, portals: ctx.portals },
-    target: CONTENT_TEXT_TARGET,
-    caret: 0,
-    scrollIntoView: { offset: 0, defer: false },
+  ctx.core.dispatch({
+    type: "ENTER",
+    range: {
+      start: rangePos.start,
+      end: rangePos.end,
+    },
   });
 }
 
@@ -193,62 +163,8 @@ function handleBoundaryDeleteBeforeInput(
       dir === "backward" ? pos.offset === 0 : pos.offset === text.length;
     if (!atBoundary) return;
     e.preventDefault();
-    const modelSel = ctx.core.selection();
-    if (modelSel.type !== "editing") return;
-    if (
-      modelSel.target === CONTENT_TEXT_TARGET &&
-      snap.mode.type === "plain" &&
-      snap.content.type === "value" &&
-      text.length === 0
-    ) {
-      const nextStop = moveStop(
-        ctx.stops.value,
-        {
-          type: "editing",
-          location: modelSel.location,
-          target: modelSel.target,
-        },
-        dir,
-      );
-      ctx.suppressMutationSync.suppressForTurn(true);
-      outlineCmd.removeAndPruneAncestors(ctx.core, ctx.rootId, pos.itemId);
-      if (!nextStop) return;
-      applyStopMove(ctx.core, ctx.applyEditingResult, nextStop);
-      return;
-    }
-    const adjacentStop = moveStop(
-      ctx.stops.value,
-      {
-        type: "editing",
-        location: modelSel.location,
-        target: modelSel.target,
-      },
-      dir,
-    );
-    if (
-      !adjacentStop ||
-      adjacentStop.stop.type !== "editing" ||
-      adjacentStop.stop.target !== CONTENT_TEXT_TARGET
-    ) {
-      return;
-    }
-    const joined = outlineCmd.joinValues(
-      ctx.core,
-      ctx.rootId,
-      dir === "backward"
-        ? adjacentStop.stop.location.item
-        : modelSel.location.item,
-      dir === "backward"
-        ? modelSel.location.item
-        : adjacentStop.stop.location.item,
-    );
-    if (!joined) return;
-    ctx.applyEditingResult({
-      location: { item: joined.id, portals: ctx.portals },
-      target: CONTENT_TEXT_TARGET,
-      caret: joined.caret,
-      scrollIntoView: { offset: joined.caret },
-    });
+    if (ctx.core.selection().type !== "editing") return;
+    ctx.core.dispatch({ type: "DELETE", dir });
     return;
   }
 

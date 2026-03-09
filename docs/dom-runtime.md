@@ -24,7 +24,6 @@ Controls/editing helpers:
 
 - `mountHeader`: canonical shared header subtree mount helper.
 - `NavDirection`: shared item-navigation direction type.
-- Core runs shared item-selection `TYPE`/`CONFIRM` handoff before view delegation.
 
 Contenteditable helpers:
 

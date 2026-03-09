@@ -2,7 +2,7 @@ import type { Signal } from "@preact/signals-core";
 
 import {
   CONTENT_TEXT_TARGET,
-  parseKeyIntent,
+  parseGlobalKeyIntent,
   type Core,
   type ItemId,
   type Location,
@@ -22,10 +22,12 @@ import type { Ctx, SuppressionFlag, UiCore } from "../../dom";
 import {
   deleteMultiItemRange,
   deleteSingleItemRange,
-  removeBlockSelection,
-  outlineCmd,
   readSelectionText,
 } from "./commands";
+import {
+  isHorizontalEditingBoundary,
+  isVerticalEditingBoundary,
+} from "./editing-structural";
 import {
   extendBlockSelectionByArrow,
   isPlainValueItem,
@@ -484,26 +486,15 @@ function bindOutlineKeydownEvents(args: {
           core.focus({ type: "item", anchor: sel.anchor, head: next });
           return;
         }
-        if (
-          !e.shiftKey &&
-          !e.altKey &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          (e.key === "Backspace" || e.key === "Delete")
-        ) {
-          e.preventDefault();
-          removeBlockSelection(core, rootId, sel, portals);
-          return;
-        }
       }
-      const globalIntent = parseKeyIntent({
+      const globalIntent = parseGlobalKeyIntent({
         key: e.key,
         ctrlKey: !!e.ctrlKey,
         metaKey: !!e.metaKey,
         altKey: !!e.altKey,
         shiftKey: !!e.shiftKey,
       });
-      if (globalIntent?.type === "EDIT_LABEL") {
+      if (globalIntent?.type === "LABEL") {
         e.preventDefault();
         core.dispatch(globalIntent);
         return;
@@ -511,22 +502,7 @@ function bindOutlineKeydownEvents(args: {
       if (globalIntent?.type === "INSERT") {
         e.preventDefault();
         e.stopPropagation();
-        const modelSel = core.selection();
-        if (modelSel.type !== "editing") return;
-        const nextId = outlineCmd.insertForScope(
-          core,
-          rootId,
-          modelSel.location,
-          globalIntent.scope,
-        );
-        if (!nextId) return;
-        inputCtx.suppressMutationSync.suppressForTurn(true);
-        inputCtx.applyEditingResult({
-          location: { item: nextId, portals },
-          target: CONTENT_TEXT_TARGET,
-          caret: 0,
-          scrollIntoView: { offset: 0, defer: false },
-        });
+        core.dispatch(globalIntent);
         return;
       }
       const isMod = e.metaKey || e.ctrlKey;
@@ -608,7 +584,15 @@ function bindOutlineKeydownEvents(args: {
         !e.altKey &&
         !isMod
       ) {
-        const dir = e.key === "ArrowLeft" ? "backward" : ("forward" as const);
+        const dir = e.key === "ArrowLeft" ? "left" : "right";
+        if (isHorizontalEditingBoundary(core, root, dir)) {
+          e.preventDefault();
+          resetStickyCaretX();
+          core.dispatch({ type: "NAV", dir });
+          return;
+        }
+        const moveDir =
+          e.key === "ArrowLeft" ? "backward" : ("forward" as const);
         if (
           handleArrowHorizontal(
             core,
@@ -617,7 +601,7 @@ function bindOutlineKeydownEvents(args: {
             resetStickyCaretX,
             applyNavigationEditingResult,
             e,
-            dir,
+            moveDir,
           )
         ) {
           return;
@@ -630,6 +614,15 @@ function bindOutlineKeydownEvents(args: {
         !isMod
       ) {
         const dir = e.key === "ArrowUp" ? "up" : "down";
+        if (isVerticalEditingBoundary(core, root, dir)) {
+          e.preventDefault();
+          resetStickyCaretX();
+          core.dispatch({
+            type: "NAV",
+            dir,
+          });
+          return;
+        }
         if (
           handleArrowVertical(
             core,
@@ -646,19 +639,19 @@ function bindOutlineKeydownEvents(args: {
         }
       }
       if (e.key === "Tab") {
-        e.preventDefault();
-        e.stopPropagation();
         const modelSel = core.selection();
         if (modelSel.type !== "editing") return;
         const caretOffset = valueCaretOffset(root, modelSel.location.item) ?? 0;
         resetStickyCaretX();
         inputCtx.suppressMutationSync.suppressForTurn(true);
+        e.preventDefault();
+        e.stopPropagation();
         onValueTab(modelSel.location, e.shiftKey, caretOffset);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        core.dispatch({ type: "NAV", dir: "out", mode: "step" });
+        core.dispatch({ type: "NAV", dir: "out" });
       }
     }),
   );

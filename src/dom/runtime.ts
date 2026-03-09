@@ -9,7 +9,7 @@ import type {
   ViewShape,
   ViewName,
 } from "../core";
-import { ITEM_TARGET, parseKeyIntent } from "../core";
+import { ITEM_TARGET, parseGlobalKeyIntent } from "../core";
 
 import {
   domPointToTextOffset,
@@ -174,7 +174,7 @@ export type DomRuntime = {
   mountView(opts: MountViewOpts): Component;
   setRootOuterIntentHandler(handler: (intent: Intent) => void): void;
 
-  installGlobalListeners(win?: Window): () => void;
+  installRootKeyBoundary(target: HTMLElement): () => void;
 
   handleIntent(selection: Selection, intent: Intent): void;
 
@@ -521,11 +521,11 @@ export function createRuntime(opts: {
     };
   };
 
-  const dispatchKeyDown = (e: KeyboardEvent) => {
+  const dispatchGlobalKeyIntent = (e: KeyboardEvent) => {
     const targetEl = e.target as HTMLElement | null;
     if (targetEl?.matches("[contenteditable='true']")) return;
 
-    const intent = parseKeyIntent({
+    const intent = parseGlobalKeyIntent({
       key: e.key,
       ctrlKey: !!e.ctrlKey,
       metaKey: !!e.metaKey,
@@ -533,31 +533,28 @@ export function createRuntime(opts: {
       shiftKey: !!e.shiftKey,
     });
     if (!intent) return;
+    const selection = opts.getSelection();
+    if (
+      selection.type === "editing" &&
+      (intent.type === "ENTER" || intent.type === "TYPE")
+    ) {
+      return;
+    }
 
     e.preventDefault();
-
-    if (intent.type === "CONFIRM" || intent.type === "TAB") {
-      const active = document.activeElement;
-      if (
-        active instanceof HTMLInputElement ||
-        active instanceof HTMLTextAreaElement
-      ) {
-        intent.caret = active.selectionEnd ?? active.selectionStart ?? 0;
-      }
-    }
 
     opts.dispatchIntent(intent);
   };
 
-  const installGlobalListeners = (win: Window = window): (() => void) => {
+  const installRootKeyBoundary = (target: HTMLElement): (() => void) => {
     const onKeyDown = (e: KeyboardEvent) => {
-      dispatchKeyDown(e);
+      dispatchGlobalKeyIntent(e);
     };
 
-    win.addEventListener("keydown", onKeyDown);
+    target.addEventListener("keydown", onKeyDown);
 
     return () => {
-      win.removeEventListener("keydown", onKeyDown);
+      target.removeEventListener("keydown", onKeyDown);
     };
   };
 
@@ -576,6 +573,13 @@ export function createRuntime(opts: {
     const view = factory({ core, id, location });
     ensureProgrammaticFocus(view.root);
 
+    const onViewKeyDown = (e: KeyboardEvent): void => {
+      e.stopPropagation();
+      if (e.defaultPrevented) return;
+      dispatchGlobalKeyIntent(e);
+    };
+    view.root.addEventListener("keydown", onViewKeyDown);
+
     const unreg = registerViewRoot({
       location,
       root: view.root,
@@ -585,40 +589,11 @@ export function createRuntime(opts: {
     return {
       el: view.root,
       dispose() {
+        view.root.removeEventListener("keydown", onViewKeyDown);
         unreg();
         view.dispose();
       },
     };
-  };
-
-  const resolveItemIntentHandler = (
-    selection: Extract<Selection, { type: "item" }>,
-  ): ((intent: Intent) => void) | null =>
-    resolveItemSelectionOwnerView(selection)?.onIntent ??
-    rootOuterIntentHandler;
-
-  const resolveStructuralIntentHandler = (
-    selection: Extract<Selection, { type: "editing" }>,
-  ): ((intent: Intent) => void) | null =>
-    resolveItemIntentHandler({
-      type: "item",
-      anchor: selection.location,
-      head: selection.location,
-    });
-
-  const resolveEditingIntentHandler = (
-    selection: Extract<Selection, { type: "editing" }>,
-  ): ((intent: Intent) => void) | null => {
-    if (
-      isExactRootLocation(selection.location) &&
-      !selection.target.startsWith("content:")
-    ) {
-      return rootOuterIntentHandler;
-    }
-    return (
-      resolveViewForLocationTarget(selection.location, selection.target)
-        ?.onIntent ?? null
-    );
   };
 
   const hasTarget = (location: Location, target: string): boolean =>
@@ -626,20 +601,22 @@ export function createRuntime(opts: {
 
   const resolveIntentHandler = (
     selection: Selection,
-    intent: Intent,
   ): ((intent: Intent) => void) | null => {
-    switch (selection.type) {
-      case "idle":
-        return null;
-      case "item":
-        return resolveItemIntentHandler(selection);
-      case "editing":
-        return intent.type === "INSERT" || intent.type === "EDIT_LABEL"
-          ? resolveStructuralIntentHandler(selection)
-          : resolveEditingIntentHandler(selection);
-      default:
-        return assertNever(selection, "Unhandled selection for intent routing");
-    }
+    if (selection.type === "idle") return null;
+
+    const itemSelection =
+      selection.type === "item"
+        ? selection
+        : {
+            type: "item" as const,
+            anchor: selection.location,
+            head: selection.location,
+          };
+
+    return (
+      resolveItemSelectionOwnerView(itemSelection)?.onIntent ??
+      rootOuterIntentHandler
+    );
   };
 
   const dispose = (): void => {
@@ -659,9 +636,9 @@ export function createRuntime(opts: {
     setRootOuterIntentHandler(handler) {
       rootOuterIntentHandler = handler;
     },
-    installGlobalListeners,
+    installRootKeyBoundary,
     handleIntent(selection, intent) {
-      resolveIntentHandler(selection, intent)?.(intent);
+      resolveIntentHandler(selection)?.(intent);
     },
     dispose,
   };

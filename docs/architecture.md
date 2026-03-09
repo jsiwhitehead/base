@@ -162,17 +162,17 @@ DOM focus follows selection mode:
 
 ### Behaviors from item selection
 
-| Intent      | Condition                        | Behavior                                                                |
-| ----------- | -------------------------------- | ----------------------------------------------------------------------- |
-| `CONFIRM`   | Primary target exists            | Enter edit on the primary target, caret at end                          |
-| `CONFIRM`   | No primary target                | View-specific inward behavior                                           |
-| `TYPE char` | Primary target is `content:text` | Enter edit and insert the character                                     |
-| `TYPE char` | Otherwise                        | View-specific or no-op                                                  |
-| `INSERT`    | `scope="sibling"`                | View-specific structural insert at the current level                    |
-| `INSERT`    | `scope="after-parent"`           | View-specific structural insert after the parent, if valid              |
-| `NAV`       | Always                           | Move by view geometry and stay in item selection. Escape -> `NAV/out`   |
-| `TAB`       | Always                           | View-specific structural action                                         |
-| `DELETE`    | View defines item deletion       | Remove or clear according to view rules; repair selection appropriately |
+| Intent      | Condition                        | Behavior                                              |
+| ----------- | -------------------------------- | ----------------------------------------------------- |
+| `ENTER`     | Primary target exists            | Enter edit on the primary target, caret at end        |
+| `ENTER`     | No primary target                | No-op at Core level                                   |
+| `TYPE char` | Primary target is `content:text` | Enter edit and insert the character                   |
+| `TYPE char` | Otherwise                        | No-op at Core level                                   |
+| `INSERT`    | `scope="sibling"`                | View-defined insert at the current level              |
+| `INSERT`    | `scope="after-parent"`           | View-defined insert after the parent, if valid        |
+| `NAV/out`   | Always                           | Move outward by shared selection rules                |
+| `NAV`       | Directional item navigation      | Local/view-owned by default                           |
+| `DELETE`    | Item deletion/clear              | Local/view-owned by default; repair selection locally |
 
 ### Behaviors from traversable targets
 
@@ -281,11 +281,11 @@ The invariants defined in this section are stable contracts. Changes to these in
 
 ### Routing and interaction
 
-- DOM runtime owns the global `keydown` listener (bubble phase).
-- Intent parsing uses `parseKeyIntent` — not ad-hoc key parsing in views or runtime.
-- Core handles global intents first; non-global view intents are routed to the active view handler.
-- DOM runtime calls `preventDefault()` before dispatching a parsed intent.
-- Native editors handle keydown locally and call `stopPropagation()`. Controls MAY yield keys by not calling `stopPropagation()`.
+- DOM runtime installs key boundaries on the root shell and each mounted view root.
+- Default key export at those boundaries uses `parseGlobalKeyIntent`; local views do not rely on boundary parsing for view-owned keys.
+- Core handles the shared/default intents it owns first; anything not consumed by Core is routed to the active structural/outer view.
+- Runtime calls `preventDefault()` before dispatching a parsed global intent.
+- Local editors and controls handle local keys directly. If they need structural/outer behavior, they dispatch an intent explicitly rather than relying on DOM bubbling.
 
 ### Pointer and propagation
 

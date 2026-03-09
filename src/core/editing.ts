@@ -1,7 +1,7 @@
 import type { Tx } from "./commit";
 import type { Connected } from "./read";
 import type { Item, ItemId, ValueOrBlank } from "./read";
-import { connTarget, CONTENT_TEXT_TARGET } from "./select";
+import { connTarget } from "./select";
 
 const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
@@ -41,22 +41,6 @@ export function patchConn(
   if (key === "where") return { ...conn, where: text };
   if (key === "orderBy") return { ...conn, orderBy: text };
   return conn;
-}
-
-export function applyTypeToPrimaryTarget(
-  core: EditCore,
-  id: ItemId,
-  char: string,
-  target: string | null,
-): { target: string; caret: number } | null {
-  if (!target) return null;
-  const caret = char.length;
-
-  if (target === CONTENT_TEXT_TARGET) {
-    core.commit((t) => t.setValue(id, char));
-    return { target, caret };
-  }
-  return null;
 }
 
 export function indentItemInPlace(core: EditCore, id: ItemId): ItemId | null {

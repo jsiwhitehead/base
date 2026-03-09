@@ -46,11 +46,6 @@ function stopControlEvent(e: KeyboardEvent): void {
   e.stopImmediatePropagation?.();
 }
 
-function shouldYieldGlobalShortcut(e: KeyboardEvent): boolean {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey) return false;
-  return e.key === ".";
-}
-
 function textInput(multiline: boolean): TextInputElement {
   const inputEl = document.createElement(multiline ? "textarea" : "input") as
     | HTMLInputElement
@@ -219,8 +214,6 @@ function buildTextField(
         cancelDraft();
         return;
       }
-
-      if (shouldYieldGlobalShortcut(e)) return;
 
       if (opts.onControl) {
         if (e.key === "Tab") {
@@ -490,7 +483,14 @@ export function mountHeader(
 ): void {
   const { core, host, location, id, visibility = "auto" } = args;
   if (visibility === "always") {
-    ctx.mount(host, buildHeader(core, { location, id, ...(args.onCommitLabel ? { onCommitLabel: args.onCommitLabel } : {}) }));
+    ctx.mount(
+      host,
+      buildHeader(core, {
+        location,
+        id,
+        ...(args.onCommitLabel ? { onCommitLabel: args.onCommitLabel } : {}),
+      }),
+    );
     return;
   }
 
@@ -508,6 +508,10 @@ export function mountHeader(
 
   ctx.slot(host, () => {
     if (!shouldShowHeader.value) return null;
-    return buildHeader(core, { location, id, ...(args.onCommitLabel ? { onCommitLabel: args.onCommitLabel } : {}) });
+    return buildHeader(core, {
+      location,
+      id,
+      ...(args.onCommitLabel ? { onCommitLabel: args.onCommitLabel } : {}),
+    });
   });
 }

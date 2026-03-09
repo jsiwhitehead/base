@@ -1,6 +1,6 @@
 import { computed } from "@preact/signals-core";
 
-import type { ItemId, Location } from "../../core";
+import type { ItemId, Location, Selection } from "../../core";
 import type { Component, UiCore } from "../../dom";
 import { createComponent, createSuppressionFlag } from "../../dom";
 
@@ -8,7 +8,13 @@ import {
   createOutlineInputRuntime,
   createOutlineMutationSync,
 } from "./runtime-input";
-import { collectStops } from "./navigation";
+import {
+  collectStops,
+  firstChild,
+  nextSibling,
+  parentOf,
+  prevSibling,
+} from "./navigation";
 import { buildOutlineItem, type OutlineMountCtx } from "./render";
 export type {
   OutlineSelectionEditingControls,
@@ -61,11 +67,61 @@ function createOutlineRuntimeState(): {
   };
 }
 
+function samePortals(a: readonly ItemId[], b: readonly ItemId[]): boolean {
+  return a.length === b.length && a.every((id, idx) => id === b[idx]);
+}
+
+function isItemSelectionOwnedByThisOutline(
+  selection: Selection,
+  portals: readonly ItemId[],
+): selection is Extract<Selection, { type: "item" }> {
+  return (
+    selection.type === "item" &&
+    samePortals(selection.anchor.portals, portals) &&
+    samePortals(selection.head.portals, portals)
+  );
+}
+
+function isSingleItemSelectionInThisOutline(
+  selection: Selection,
+  portals: readonly ItemId[],
+): selection is Extract<Selection, { type: "item" }> {
+  return (
+    isItemSelectionOwnedByThisOutline(selection, portals) &&
+    selection.anchor.item === selection.head.item
+  );
+}
+
+export function handleOutlineItemNav(args: {
+  core: UiCore;
+  viewRootId: ItemId;
+  portals: readonly ItemId[];
+  location: Location;
+  dir: "left" | "right" | "up" | "down";
+}): void {
+  const { core, viewRootId, portals, location, dir } = args;
+  const fromId = location.item;
+  let nextId: ItemId | null = null;
+  if (dir === "left") nextId = parentOf(core, viewRootId, fromId);
+  else if (dir === "right")
+    nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
+  else if (dir === "up") nextId = prevSibling(core, fromId);
+  else if (dir === "down") nextId = nextSibling(core, fromId);
+  if (!nextId) return;
+  core.focus({ type: "item", location: { item: nextId, portals } });
+}
+
 export function buildOutlineRoot(
   core: UiCore,
   viewRootId: ItemId,
   portals: readonly ItemId[],
   onValueTab: (location: Location, shift: boolean, caret: number) => void,
+  onItemTab: (location: Location, shift: boolean) => void,
+  onItemDelete: (selection: Extract<Selection, { type: "item" }>) => void,
+  onItemNav: (
+    location: Location,
+    dir: "left" | "right" | "up" | "down",
+  ) => void,
 ): Component {
   return createComponent(core, (ctx) => {
     const stops = computed(() => collectStops(core, viewRootId, portals));
@@ -137,17 +193,69 @@ export function buildOutlineRoot(
       isComposing: () => isComposing,
     });
     mutationSync.bind(ctx.effect);
-    inputRuntime.bind({
-      on: ctx.on,
-      getCompositionEndedAt,
-      setCompositionEndedAt,
-      getStickyCaretX,
-      setStickyCaretX,
-      resetStickyCaretX,
-      onValueTab,
-      setIsComposing: (next) => {
-        isComposing = next;
-      },
+      inputRuntime.bind({
+        on: ctx.on,
+        getCompositionEndedAt,
+        setCompositionEndedAt,
+        getStickyCaretX,
+        setStickyCaretX,
+        resetStickyCaretX,
+        onValueTab,
+        setIsComposing: (next) => {
+          isComposing = next;
+        },
+    });
+
+    ctx.on(root, "keydown", (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.key !== "Tab") return;
+      const selection = core.selection();
+      if (!isSingleItemSelectionInThisOutline(selection, portals)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onItemTab(selection.head, e.shiftKey);
+    });
+
+    ctx.on(root, "keydown", (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const selection = core.selection();
+
+      if (
+        isItemSelectionOwnedByThisOutline(selection, portals) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        (e.key === "Backspace" || e.key === "Delete")
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        onItemDelete(selection);
+        return;
+      }
+
+      if (
+        isSingleItemSelectionInThisOutline(selection, portals) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        (e.key === "ArrowLeft" ||
+          e.key === "ArrowRight" ||
+          e.key === "ArrowUp" ||
+          e.key === "ArrowDown")
+      ) {
+        const dir =
+          e.key === "ArrowLeft"
+            ? "left"
+            : e.key === "ArrowRight"
+              ? "right"
+              : e.key === "ArrowUp"
+                ? "up"
+                : "down";
+        e.preventDefault();
+        e.stopPropagation();
+        onItemNav(selection.head, dir);
+      }
     });
 
     return root;

@@ -404,16 +404,19 @@ core.view(id): ViewName
 
 Rules:
 
-- Core owns semantic intent parsing (`parseKeyIntent`) and dispatch.
-- DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
-- Global history intents (`Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`) MUST be handled by Core before view delegation. Global keydown paths SHOULD route them through `parseKeyIntent`; contenteditable surfaces MAY handle them in their editing pipeline (`docs/content-editable.md`).
-- Global edit shortcuts parsed by Core include `Cmd/Ctrl+.` -> focus `LABEL_TARGET` when that target exists locally; otherwise Core MAY delegate the intent to the active view.
-- Core handles `NAV/out` before any active-view delegation.
-- Core routes other non-global intents through `handleIntent(selection, intent)` when provided.
-- Editors and controls decide which key events bubble to Core.
+- Core owns semantic intent dispatch.
+- DOM/runtime owns root/view key boundaries and default global-intent parsing (`parseGlobalKeyIntent`) (`docs/dom-runtime.md`).
+- Core handles the shared/default intents it owns before any view routing, including:
+  - history (`Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`)
+  - `LABEL`
+  - `NAV/out`
+  - item-selection `ENTER`
+  - item-selection `TYPE`
+- Semantic intents not consumed by Core are routed by runtime to the active structural/outer view.
+- Editors and controls own non-global keys locally and MAY explicitly dispatch semantic intents to Core when they need structural/outer-view behavior.
 - Native text editors (`input`, `textarea`, `contenteditable`) SHOULD handle local text edits first.
 - Core MAY still handle explicit global commands while focus is in a native text editor.
-- View behavior MUST remain intent-driven (semantic), not raw-key driven.
+- View behavior SHOULD remain semantic where it crosses view boundaries; local key handling may remain raw-key driven inside the owning view/control.
 
 ### View shapes
 
@@ -609,7 +612,7 @@ Constant exports:
 
 Function exports:
 
-- `parseKeyIntent`
+- `parseGlobalKeyIntent`
 - `defineShape`
 - `primaryHeaderTargetForConn`
 - `isNumericLikeValue`

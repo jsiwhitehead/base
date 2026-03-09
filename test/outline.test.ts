@@ -15,9 +15,9 @@ import {
   childrenOf,
   dispatchKey,
   dispatchPointerEvent,
+  dispatchViewIntentKey,
   expectSel,
   expectSnapshotSame,
-  fireViewKey,
   flushDomEffects,
   installCapturedWindowHandlers,
   makeCoreRuntime,
@@ -128,7 +128,7 @@ function dispatchBeforeInput(
   target: Element,
   inputType: string,
   init: Partial<InputEventInit> & { isComposing?: boolean } = {},
-): { defaultPrevented: boolean } {
+): boolean {
   const { isComposing, ...eventInit } = init;
   const ev = new InputEvent("beforeinput", {
     bubbles: true,
@@ -159,7 +159,7 @@ function dispatchBeforeInput(
     },
   });
   target.dispatchEvent(ev);
-  return { defaultPrevented: ev.defaultPrevented };
+  return ev.defaultPrevented;
 }
 
 type MockTransfer = {
@@ -216,7 +216,7 @@ function dispatchDropText(
   target: Element,
   textPlain: string,
   init: Partial<Pick<PointerEventInit, "clientX" | "clientY">> = {},
-): { defaultPrevented: boolean } {
+): boolean {
   const ev = new Event("drop", {
     bubbles: true,
     cancelable: true,
@@ -235,7 +235,7 @@ function dispatchDropText(
     configurable: true,
   });
   target.dispatchEvent(ev);
-  return { defaultPrevented: ev.defaultPrevented };
+  return ev.defaultPrevented;
 }
 
 function dispatchDragStart(target: Element): {
@@ -488,7 +488,7 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Enter");
+    dispatchViewIntentKey(domView, "Enter");
     await flushDomEffects();
 
     const kids = childrenOf(core, g);
@@ -516,7 +516,7 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Enter");
+    dispatchViewIntentKey(domView, "Enter");
     await flushDomEffects();
 
     expectSel(core, { item: a, portals: [] });
@@ -537,7 +537,7 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Enter", { metaKey: true });
+    dispatchViewIntentKey(domView, "Enter", { metaKey: true });
     await flushDomEffects();
 
     const gKids = childrenOf(core, g);
@@ -567,7 +567,10 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Enter", { metaKey: true, shiftKey: true });
+    dispatchViewIntentKey(domView, "Enter", {
+      metaKey: true,
+      shiftKey: true,
+    });
     await flushDomEffects();
 
     const rootKids = childrenOf(core, rootId);
@@ -597,7 +600,10 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Enter", { metaKey: true, shiftKey: true });
+    dispatchViewIntentKey(domView, "Enter", {
+      metaKey: true,
+      shiftKey: true,
+    });
     await flushDomEffects();
 
     expect(childrenOf(core, g)).toEqual([a, b]);
@@ -619,7 +625,7 @@ describe("outline/item-intents", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    core.dispatch({ type: "CONFIRM" });
+    core.dispatch({ type: "ENTER" });
     await flushDomEffects();
 
     expectSel(core, { item: s, target: CONTENT_SLIDER_TARGET, portals: [] });
@@ -661,20 +667,24 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "ArrowRight");
+    let key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: a, portals: [] });
 
-    fireViewKey(domView, "ArrowRight");
+    key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: b, portals: [] });
 
-    fireViewKey(domView, "ArrowRight");
+    key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: b, portals: [] });
 
-    fireViewKey(domView, "ArrowLeft");
+    key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: g, portals: [] });
 
     unmount();
@@ -691,8 +701,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "ArrowUp");
+    let key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: a, portals: [] });
 
     core.focus({
@@ -701,8 +712,9 @@ describe("outline/item-intents", () => {
       head: { item: rootId, portals: [] },
     });
     await flushDomEffects();
-    fireViewKey(domView, "ArrowLeft");
+    key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: rootId, portals: [] });
 
     unmount();
@@ -721,8 +733,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, c]);
     expectSel(core, { item: c, portals: [] });
@@ -742,8 +755,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a]);
     expectSel(core, { item: a, portals: [] });
@@ -765,8 +779,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, z]);
     expectSel(core, { item: z, portals: [] });
@@ -789,8 +804,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, z]);
     expectSel(core, { item: z, portals: [] });
@@ -809,8 +825,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(valueOfId(core, rootId)).toBeNull();
     expectSel(core, { item: rootId, portals: [] });
@@ -832,8 +849,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, g)).toEqual([x, z]);
     expectSel(core, { item: z, portals: [] });
@@ -855,8 +873,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expectSel(core, { item: d, portals: [] });
 
@@ -876,8 +895,9 @@ describe("outline/item-intents", () => {
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
 
-    fireViewKey(domView, "Delete");
+    const key = dispatchKey(domView.root, "Delete");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a]);
     expectSel(core, { item: a, portals: [] });
@@ -885,7 +905,7 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
-  test("ArrowRight from outline content:text enters embedded view as item selection, ArrowLeft returns to content:text", async () => {
+  test("ArrowRight from outline content:text enters embedded view as item selection, ArrowLeft goes to parent item", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
     const slider = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -907,14 +927,14 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
     expectSel(core, { item: slider, portals: [] });
 
-    dispatchKey(outlineRoot, "ArrowLeft");
+    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { item: rootId, portals: [] });
 
     unmount();
   });
 
-  test("ArrowRight/ArrowLeft boundary traversal uses item stop for embedded table rows", async () => {
+  test("ArrowRight/ArrowLeft boundary traversal uses item stop for embedded table rows, with ArrowLeft going to parent item", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
     const tableId = mkGroup(core, rootId, { label: "t" });
@@ -938,9 +958,9 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
     expectSel(core, { item: tableId, portals: [] });
 
-    dispatchKey(outlineRoot, "ArrowLeft");
+    dispatchKey(requireOutlineItemEl(document.body, tableId), "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { item: rootId, portals: [] });
 
     unmount();
   });
@@ -972,7 +992,7 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
     expectSel(core, { item: b, portals: [] });
 
-    core.dispatch({ type: "CONFIRM" });
+    core.dispatch({ type: "ENTER" });
     await flushDomEffects();
     expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
@@ -1034,7 +1054,7 @@ describe("outline/item-intents", () => {
     const outlineRoot = requireOutlineRoot(document.body);
     const firstTab = dispatchKey(outlineRoot, "Tab");
     await flushDomEffects();
-    expect(firstTab.defaultPrevented).toBe(true);
+    expect(firstTab).toBe(true);
 
     expect(core.item(x).content.type).toBe("group");
     const nestedKids = childrenOf(core, x);
@@ -1045,8 +1065,35 @@ describe("outline/item-intents", () => {
 
     const secondTab = dispatchKey(outlineRoot, "Tab", { shiftKey: true });
     await flushDomEffects();
-    expect(secondTab.defaultPrevented).toBe(true);
+    expect(secondTab).toBe(true);
     expect(core.item(x).content.type).toBe("value");
+    expect(valueOfId(core, x)).toBe("v");
+    expectSel(core, { item: x, target: CONTENT_TEXT_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("Shift+Tab on the mounted outline root item is a local no-op", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const x = mkBlank(core, rootId, { label: "x", value: "v" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: x, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { root, unmount } = await mountOutline(core, x, {
+      item: x,
+      portals: [],
+    });
+
+    const ev = dispatchKey(root, "Tab", { shiftKey: true });
+    await flushDomEffects();
+
+    expect(ev).toBe(true);
     expect(valueOfId(core, x)).toBe("v");
     expectSel(core, { item: x, target: CONTENT_TEXT_TARGET, portals: [] });
 
@@ -1076,7 +1123,7 @@ describe("outline/item-intents", () => {
 
     const tab = dispatchKey(outlineRoot, "Tab");
     await flushDomEffects();
-    expect(tab.defaultPrevented).toBe(true);
+    expect(tab).toBe(true);
     expect(core.item(x).content.type).toBe("group");
 
     core.undo();
@@ -1109,7 +1156,7 @@ describe("outline/item-intents", () => {
     const ev = dispatchKey(requireOutlineRoot(document.body), "Escape");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expectSel(core, { item: a, portals: [] });
     expect(document.activeElement).toBe(requireOutlineItemEl(document.body, a));
     const domSel = window.getSelection();
@@ -1198,7 +1245,7 @@ describe("outline/item-intents", () => {
 
     const ev = dispatchKey(valueEl, "Tab");
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(stickyResets).toBe(1);
     expect(onValueTabCalls).toEqual([[{ item, portals: [] }, false, 0]]);
 
@@ -1307,7 +1354,7 @@ describe("outline/contenteditable-beforeinput", () => {
     setContentEditableSelection(aValueEl, 2);
     const ev = dispatchBeforeInput(outlineRoot, "insertParagraph");
     await flushDomEffects();
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
 
     const kids = childrenOf(core, rootId);
     const aIdx = kids.indexOf(a);
@@ -1356,7 +1403,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const ev = dispatchKey(aValueEl, "Enter", { metaKey: true });
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(valueOfId(core, a)).toBe("hello");
 
     const gKids = childrenOf(core, g);
@@ -1394,7 +1441,7 @@ describe("outline/contenteditable-beforeinput", () => {
     });
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(valueOfId(core, a)).toBe("hello");
 
     const rootKids = childrenOf(core, rootId);
@@ -1431,7 +1478,7 @@ describe("outline/contenteditable-beforeinput", () => {
     });
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(childrenOf(core, g)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("hello");
     expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
@@ -1458,7 +1505,7 @@ describe("outline/contenteditable-beforeinput", () => {
     setContentEditableSelection(aValueEl, 1, 4);
     const ev = dispatchBeforeInput(outlineRoot, "insertParagraph");
     await flushDomEffects();
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
 
     const kids = childrenOf(core, rootId);
     const aIdx = kids.indexOf(a);
@@ -1503,7 +1550,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const outlineRoot = requireOutlineRoot(document.body);
     const ev = dispatchBeforeInput(outlineRoot, "insertParagraph");
     await flushDomEffects();
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
 
     const kids = childrenOf(core, rootId);
     expect(kids.length).toBe(2);
@@ -1536,7 +1583,7 @@ describe("outline/contenteditable-beforeinput", () => {
     setContentEditableSelection(aValueEl, 2);
     const ev = dispatchBeforeInput(outlineRoot, "insertLineBreak");
     await flushDomEffects();
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("he\nllo");
@@ -1566,7 +1613,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const ev = dispatchBeforeInput(outlineRoot, "deleteContentForward");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
     expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
@@ -1596,11 +1643,11 @@ describe("outline/contenteditable-beforeinput", () => {
     const ev = dispatchBeforeInput(outlineRoot, "deleteContentBackward");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(valueOfId(core, rootId)).toBeNull();
     expectSel(core, { item: rootId, portals: [] });
 
-    dispatchKey(outlineRoot, "Tab");
+    dispatchKey(outlineRoot, "Tab", { shiftKey: true });
     await flushDomEffects();
     expectSel(core, { item: rootId, portals: [] });
 
@@ -1629,7 +1676,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const ev = dispatchBeforeInput(outlineRoot, "deleteContentBackward");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a, z]);
     expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
@@ -1657,7 +1704,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const ev = dispatchBeforeInput(outlineRoot, "deleteContentBackward");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(childrenOf(core, g)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
     expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
@@ -1695,7 +1742,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const ev = dispatchBeforeInput(outlineRoot, "deleteContentBackward");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(valueOfId(core, nestedRoot)).toBeNull();
     expectSel(core, { item: nestedRoot, portals: [] });
 
@@ -1741,12 +1788,8 @@ describe("outline/contenteditable-beforeinput", () => {
     const { unmount } = await mountOutline(core, rootId);
 
     const root = requireOutlineRoot(document.body);
-    expect(dispatchBeforeInput(root, "historyUndo").defaultPrevented).toBe(
-      true,
-    );
-    expect(dispatchBeforeInput(root, "historyRedo").defaultPrevented).toBe(
-      true,
-    );
+    expect(dispatchBeforeInput(root, "historyUndo")).toBe(true);
+    expect(dispatchBeforeInput(root, "historyRedo")).toBe(true);
     expect(undoCalls.length).toBe(1);
     expect(redoCalls.length).toBe(1);
 
@@ -1775,7 +1818,7 @@ describe("outline/contenteditable-beforeinput", () => {
     });
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(false);
+    expect(ev).toBe(false);
 
     unmount();
   });
@@ -1799,7 +1842,7 @@ describe("outline/contenteditable-beforeinput", () => {
     setContentEditableSelection(valueEl, 1);
 
     const drop = dispatchDropText(root, "Z");
-    expect(drop.defaultPrevented).toBe(true);
+    expect(drop).toBe(true);
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("aZb");
 
@@ -1932,7 +1975,7 @@ describe("outline/clipboard-drop", () => {
     setContentEditableSelection(valueEl, 2);
     const drop = dispatchDropText(root, "Y");
     await flushDomEffects();
-    expect(drop.defaultPrevented).toBe(true);
+    expect(drop).toBe(true);
     expect(valueOfId(core, a)).toBe("aXYb");
 
     unmount();
@@ -1963,7 +2006,7 @@ describe("outline/clipboard-drop", () => {
     const drop = dispatchDropText(root, dragStart.textPlain);
     await flushDomEffects();
 
-    expect(drop.defaultPrevented).toBe(true);
+    expect(drop).toBe(true);
     expect(valueOfId(core, a)).toBe("helloell");
 
     unmount();
@@ -2025,7 +2068,7 @@ describe("outline/clipboard-drop", () => {
 
     const drop = dispatchDropText(root, "foo\nbar");
     await flushDomEffects();
-    expect(drop.defaultPrevented).toBe(true);
+    expect(drop).toBe(true);
 
     const kids = childrenOf(core, rootId);
     const aIdx = kids.indexOf(a);
@@ -2144,7 +2187,7 @@ describe("outline/clipboard-drop", () => {
 
     const drop = dispatchDropText(root, "X");
     await flushDomEffects();
-    expect(drop.defaultPrevented).toBe(true);
+    expect(drop).toBe(true);
     expect(valueOfId(core, a)).toBe("hXo");
     expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
@@ -2179,7 +2222,7 @@ describe("outline/clipboard-drop", () => {
           dispatchClipboardEvent(root, "paste", { textPlain: "X" })
             .defaultPrevented,
         ).toBe(true);
-      else expect(dispatchDropText(root, "X").defaultPrevented).toBe(true);
+      else expect(dispatchDropText(root, "X")).toBe(true);
       await flushDomEffects();
       expect(valueOfId(core, a)).toBe("a0Xb");
 
@@ -2261,7 +2304,7 @@ describe("outline/ime-mutation", () => {
     const ev = dispatchKey(root, "Enter");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("hello");
 
@@ -2551,7 +2594,7 @@ describe("outline/selection-cursor", () => {
     const ev = dispatchKey(root, "ArrowLeft");
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(0);
 
@@ -2969,7 +3012,7 @@ describe("outline/block-selection", () => {
 
     const ev = dispatchKey(requireOutlineRoot(document.body), "Delete");
     await flushDomEffects();
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([c]);
 
@@ -2999,7 +3042,7 @@ describe("outline/block-selection", () => {
 
     const ev = dispatchKey(requireOutlineRoot(document.body), "Delete");
     await flushDomEffects();
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, z]);
 
@@ -3158,8 +3201,8 @@ describe("outline/vertical-navigation", () => {
     const down = dispatchKey(root, "ArrowDown");
     await flushDomEffects();
 
-    expect(up.defaultPrevented).toBe(false);
-    expect(down.defaultPrevented).toBe(false);
+    expect(up).toBe(false);
+    expect(down).toBe(false);
 
     const sel = core.selection();
     expect(sel.type).toBe("editing");
@@ -3218,7 +3261,7 @@ describe("outline/vertical-navigation", () => {
     const ev = dispatchKey(root, "ArrowDown", { shiftKey: true });
     await flushDomEffects();
 
-    expect(ev.defaultPrevented).toBe(true);
+    expect(ev).toBe(true);
     expectItemRangeSel(core, {
       anchor: { item: a, portals: [] },
       head: { item: b, portals: [] },
@@ -3334,7 +3377,7 @@ describe("outline/header-embedded", () => {
     const tab = dispatchKey(fromInput, "Tab");
     await flushDomEffects();
 
-    expect(tab.defaultPrevented).toBe(true);
+    expect(tab).toBe(true);
     expect(core.selection().type).toBe("editing");
     const sel = core.selection();
     if (sel.type !== "editing") throw new Error("Expected editing selection");
@@ -3372,7 +3415,7 @@ describe("outline/header-embedded", () => {
     const tab = dispatchKey(orderByInput, "Tab");
     await flushDomEffects();
 
-    expect(tab.defaultPrevented).toBe(true);
+    expect(tab).toBe(true);
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
@@ -3409,7 +3452,7 @@ describe("outline/header-embedded", () => {
     const enter = dispatchKey(labelInput, "Enter");
     await flushDomEffects();
 
-    expect(enter.defaultPrevented).toBe(true);
+    expect(enter).toBe(true);
     expectSel(core, { item: a, portals: [] });
     expect(core.item(a).label).toBe("renamed");
 
@@ -3435,7 +3478,7 @@ describe("outline/header-embedded", () => {
     const escape = dispatchKey(labelInput, "Escape");
     await flushDomEffects();
 
-    expect(escape.defaultPrevented).toBe(true);
+    expect(escape).toBe(true);
     expectSel(core, { item: a, portals: [] });
     expect(core.item(a).label).toBe("name");
 
@@ -3461,7 +3504,7 @@ describe("outline/header-embedded", () => {
     const tab = dispatchKey(labelInput, "Tab");
     await flushDomEffects();
 
-    expect(tab.defaultPrevented).toBe(true);
+    expect(tab).toBe(true);
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");

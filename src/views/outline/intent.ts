@@ -10,12 +10,12 @@ import {
   resolveFocusAfterOutlineRemove,
 } from "./commands";
 import {
-  blockSelectionItems,
-  firstChild,
-  nextSibling,
-  parentOf,
-  prevSibling,
-} from "./navigation";
+  handleOutlineEditingEnter,
+  handleOutlineEditingDelete,
+  handleOutlineEditingNav,
+} from "./editing-structural";
+import { blockSelectionItems } from "./navigation";
+import { handleOutlineItemNav } from "./runtime";
 
 function focusFirstChildIfAny(core: UiCore, location: Location): boolean {
   const item = core.item(location.item);
@@ -67,20 +67,95 @@ function focusInsertedItem(
   );
 }
 
+function nextOutlineTabFocus(
+  core: UiCore,
+  location: Location,
+  shift: boolean,
+): Location | null {
+  return shift
+    ? outlineCmd.outdentInPlace(core, location)
+    : outlineCmd.indentInPlace(core, location);
+}
+
 export function createOutlineValueTabHandler(args: {
   core: UiCore;
+  viewRootId: ItemId;
 }): (location: Location, shift: boolean, caret: number) => void {
-  const { core } = args;
+  const { core, viewRootId } = args;
   return (location: Location, shift: boolean, caret: number): void => {
-    const nextFocus = shift
-      ? outlineCmd.outdentInPlace(core, location)
-      : outlineCmd.indentInPlace(core, location);
+    if (shift && location.item === viewRootId) return;
+    const nextFocus = nextOutlineTabFocus(core, location, shift);
     if (!nextFocus) return;
     core.focus(
       { type: "editing", location: nextFocus, target: CONTENT_TEXT_TARGET },
       { caret },
     );
   };
+}
+
+export function createOutlineItemTabHandler(args: {
+  core: UiCore;
+}): (location: Location, shift: boolean) => void {
+  const { core } = args;
+  return (location, shift) => {
+    const nextFocus = nextOutlineTabFocus(core, location, shift);
+    if (!nextFocus) return;
+    core.focus({ type: "item", location: nextFocus });
+  };
+}
+
+function handleOutlineType(
+  core: UiCore,
+  location: Location,
+  char: string,
+): void {
+  const item = core.item(location.item);
+  if (item.mode.type === "readonly") return;
+  createFirstChildAndFocus(core, location, char);
+}
+
+export function handleOutlineItemDelete(args: {
+  core: UiCore;
+  viewRootId: ItemId;
+  portals: readonly ItemId[];
+  selection: Extract<ReturnType<UiCore["selection"]>, { type: "item" }>;
+}): void {
+  const { core, viewRootId, portals, selection } = args;
+  const selectedItems = blockSelectionItems(core, viewRootId, selection, portals);
+
+  if (selectedItems.length > 1) {
+    const lastId = selectedItems[selectedItems.length - 1]!;
+    const blockPlan = planBlockRemoval(core, viewRootId, selectedItems);
+    const nextFocus = resolveFocusAfterOutlineRemove(
+      core,
+      viewRootId,
+      lastId,
+      "next",
+      portals,
+      blockPlan.removedIds,
+    );
+    removeBlockSelection(core, viewRootId, selection, portals, blockPlan);
+    if (nextFocus) core.focus({ type: "item", location: nextFocus });
+    return;
+  }
+
+  const id = selection.head.item;
+  if (!core.locate(id)) return;
+  if (core.item(id).mode.type === "readonly") return;
+  const removedIds = new Set<ItemId>([
+    id,
+    ...computePruneAncestorsForRemoval(core, viewRootId, id),
+  ]);
+  const nextFocus = resolveFocusAfterOutlineRemove(
+    core,
+    viewRootId,
+    id,
+    "next",
+    portals,
+    removedIds,
+  );
+  outlineCmd.removeAndPruneAncestors(core, viewRootId, id);
+  if (nextFocus) core.focus({ type: "item", location: nextFocus });
 }
 
 export function createOutlineIntentHandler(args: {
@@ -92,94 +167,62 @@ export function createOutlineIntentHandler(args: {
 
   return (intent: Intent): void => {
     const selection = core.selection();
-    if (
-      selection.type !== "item" &&
-      !(selection.type === "editing" && (intent.type === "INSERT" || intent.type === "EDIT_LABEL"))
-    ) {
-      return;
-    }
+    if (selection.type === "idle") return;
     const sel = selection;
 
     const location: Location = sel.type === "item" ? sel.head : sel.location;
-    const selectedItems =
-      sel.type === "item"
-        ? blockSelectionItems(core, viewRootId, sel, portals)
-        : [];
 
     if (intent.type === "DELETE") {
-      if (sel.type !== "item") return;
-      if (selectedItems.length > 1) {
-        const lastId = selectedItems[selectedItems.length - 1]!;
-        const blockPlan = planBlockRemoval(core, viewRootId, selectedItems);
-        const nextFocus = resolveFocusAfterOutlineRemove(
+      if (sel.type === "editing") {
+        handleOutlineEditingDelete({
           core,
           viewRootId,
-          lastId,
-          "next",
+          location,
           portals,
-          blockPlan.removedIds,
-        );
-        removeBlockSelection(core, viewRootId, sel, portals, blockPlan);
-        if (nextFocus) core.focus({ type: "item", location: nextFocus });
+          dir: intent.dir,
+        });
         return;
       }
-      const id = sel.head.item;
-      if (!core.locate(id)) return;
-      if (core.item(id).mode.type === "readonly") return;
-      const removedIds = new Set<ItemId>([
-        id,
-        ...computePruneAncestorsForRemoval(core, viewRootId, id),
-      ]);
-      const nextFocus = resolveFocusAfterOutlineRemove(
+      handleOutlineItemDelete({
         core,
         viewRootId,
-        id,
-        "next",
         portals,
-        removedIds,
-      );
-      outlineCmd.removeAndPruneAncestors(core, viewRootId, id);
-      if (nextFocus) core.focus({ type: "item", location: nextFocus });
+        selection: sel,
+      });
       return;
     }
 
     switch (intent.type) {
-      case "TAB": {
-        if (sel.type !== "item") return;
-        const nextFocus = intent.shift
-          ? outlineCmd.outdentInPlace(core, location)
-          : outlineCmd.indentInPlace(core, location);
-        if (!nextFocus) return;
-        core.focus({ type: "item", location: nextFocus });
-        return;
-      }
       case "NAV": {
-        if (sel.type !== "item") return;
-        const dir = intent.dir === "out" ? "left" : intent.dir;
-        const fromId = sel.head.item;
-        let nextId: ItemId | null = null;
-        if (dir === "left") nextId = parentOf(core, viewRootId, fromId);
-        else if (dir === "right")
-          nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
-        else if (dir === "up") nextId = prevSibling(core, fromId);
-        else if (dir === "down") nextId = nextSibling(core, fromId);
-        if (!nextId) return;
-        const nextFocus = { item: nextId, portals };
-        core.focus({ type: "item", location: nextFocus });
+        if (sel.type === "editing") {
+          handleOutlineEditingNav({
+            core,
+            viewRootId,
+            location,
+            portals,
+            dir: intent.dir,
+          });
+          return;
+        }
+        handleOutlineItemNav({
+          core,
+          viewRootId,
+          portals,
+          location,
+          dir: intent.dir === "out" ? "left" : intent.dir,
+        });
         return;
       }
       case "TYPE": {
         if (sel.type !== "item") return;
-        const id = sel.head.item;
-        const item = core.item(id);
-        if (item.mode.type === "readonly") return;
-        if (createFirstChildAndFocus(core, location, intent.char)) {
-          return;
-        }
+        handleOutlineType(core, location, intent.char);
         return;
       }
-      case "CONFIRM": {
-        if (sel.type !== "item") return;
+      case "ENTER": {
+        if (sel.type === "editing") {
+          handleOutlineEditingEnter({ core, location, intent, portals });
+          return;
+        }
         if (createFirstChildAndFocus(core, location, "")) {
           return;
         }
@@ -188,7 +231,7 @@ export function createOutlineIntentHandler(args: {
         }
         return;
       }
-      case "EDIT_LABEL": {
+      case "LABEL": {
         core.focus(
           { type: "editing", location, target: LABEL_TARGET },
           { caret: "end" },

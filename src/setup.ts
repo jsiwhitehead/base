@@ -121,7 +121,6 @@ export function createApp(opts: CreateAppOpts): App {
 
   const debug = showDebugPanel ? createDebugState() : null;
   const core = debug ? instrumentCore(uiCore, debug) : uiCore;
-  const uninstallGlobal = runtime.installGlobalListeners(window);
 
   core.commit((t) => {
     t.setView(rootId, rootView);
@@ -156,6 +155,7 @@ export function createApp(opts: CreateAppOpts): App {
   }
 
   hostEl.replaceChildren(root);
+  const uninstallGlobal = runtime.installRootKeyBoundary(main);
   main.focus();
 
   const onDocumentPointerDown = (event: PointerEvent): void => {

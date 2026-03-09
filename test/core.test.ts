@@ -1567,7 +1567,7 @@ describe("core/selection validity & repair", () => {
       head: { item: b, portals: [] },
     });
 
-    core.dispatch({ type: "NAV", dir: "out", mode: "step" });
+    core.dispatch({ type: "NAV", dir: "out" });
 
     expect(core.selection()).toEqual({
       type: "item",

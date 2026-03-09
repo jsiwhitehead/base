@@ -8,7 +8,6 @@ import {
   dispatchPointerEvent,
   dispatchKey,
   expectSel,
-  fireViewKey,
   flushDomEffects,
   installCapturedWindowHandlers,
   makeCoreRuntime,
@@ -84,16 +83,19 @@ describe("views/table", () => {
       location: { item: tableId, portals: [] },
     });
 
-    fireViewKey(domView, "ArrowDown");
+    let key = dispatchKey(domView.root, "ArrowDown");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: r2, portals: [] });
 
-    fireViewKey(domView, "ArrowUp");
+    key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: r1, portals: [] });
 
-    fireViewKey(domView, "ArrowRight");
+    key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: c11, portals: [] });
 
     unmount();
@@ -127,20 +129,24 @@ describe("views/table", () => {
       location: { item: tableId, portals: [] },
     });
 
-    fireViewKey(domView, "ArrowRight");
+    let key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: c12, portals: [] });
 
-    fireViewKey(domView, "ArrowDown");
+    key = dispatchKey(domView.root, "ArrowDown");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: c22, portals: [] });
 
-    fireViewKey(domView, "ArrowLeft");
+    key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: c21, portals: [] });
 
-    fireViewKey(domView, "ArrowLeft");
+    key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: r2, portals: [] });
 
     unmount();
@@ -173,30 +179,30 @@ describe("views/table", () => {
       location: { item: tableId, portals: [] },
     });
 
-    fireViewKey(domView, "Tab");
+    const tab1 = dispatchKey(domView.root, "Tab");
     await flushDomEffects();
+    expect(tab1).toBe(true);
     expectSel(core, { item: c12, portals: [] });
 
-    fireViewKey(domView, "Tab");
+    const tab2 = dispatchKey(domView.root, "Tab");
     await flushDomEffects();
+    expect(tab2).toBe(true);
     expectSel(core, { item: c21, portals: [] });
 
     unmount();
   });
 
-  test("Enter from cell content:text moves to same column next row item", async () => {
+  test("Enter from cell content:text keeps the current editing target", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
     const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    mkGroup(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
     mkBlank(core, r1, { label: "c2", value: "b" });
-
-    const c21 = childrenOf(core, r2)[0]!;
 
     core.focus(
       {
@@ -207,17 +213,34 @@ describe("views/table", () => {
       { caret: 1 },
     );
 
-    const { domView, unmount } = await mountLocalView({
+    const { unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
       location: { item: tableId, portals: [] },
     });
 
-    fireViewKey(domView, "Enter");
+    const c11Frame = requireFrameEl(document.body, c11);
+    const valueEl = c11Frame.querySelector(
+      ".ui-outline-value[data-target='content:text']",
+    ) as HTMLElement | null;
+    if (!valueEl) throw new Error("Missing embedded outline value element");
+
+    const sel = window.getSelection();
+    const textNode = [...valueEl.childNodes].find(
+      (n): n is Text => n.nodeType === Node.TEXT_NODE,
+    );
+    if (!sel || !textNode) throw new Error("Missing text selection target");
+    const range = document.createRange();
+    range.setStart(textNode, 1);
+    range.setEnd(textNode, 1);
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    dispatchKey(valueEl, "Enter");
     await flushDomEffects();
 
-    expectSel(core, { item: c21, portals: [] });
+    expectSel(core, { item: c11, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -248,8 +271,9 @@ describe("views/table", () => {
     });
     await flushDomEffects();
 
-    fireViewKey(domView, "Backspace");
+    let key = dispatchKey(domView.root, "Backspace");
     await flushDomEffects();
+    expect(key).toBe(true);
     expect(valueOfId(core, c11)).toBe(null);
 
     core.focus({
@@ -259,8 +283,9 @@ describe("views/table", () => {
     });
     await flushDomEffects();
 
-    fireViewKey(domView, "Backspace");
+    key = dispatchKey(domView.root, "Backspace");
     await flushDomEffects();
+    expect(key).toBe(true);
 
     expect(childrenOf(core, tableId).includes(r2)).toBe(false);
 
@@ -291,8 +316,9 @@ describe("views/table", () => {
       location: { item: tableId, portals: [] },
     });
 
-    fireViewKey(domView, "ArrowUp");
+    let key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: firstRow, portals: [] });
 
     const firstCell = childrenOf(core, firstRow)[0]!;
@@ -303,8 +329,9 @@ describe("views/table", () => {
     });
     await flushDomEffects();
 
-    fireViewKey(domView, "ArrowUp");
+    key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
+    expect(key).toBe(true);
     expectSel(core, { item: firstCell, portals: [] });
 
     unmount();
@@ -549,7 +576,7 @@ describe("views/slider", () => {
     unmount();
   });
 
-  test("native range keys do not bubble", async () => {
+  test("native range keys remain local to the range input", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -573,10 +600,13 @@ describe("views/slider", () => {
     ) as HTMLInputElement;
     expect(input).toBeTruthy();
 
-    expect(dispatchKey(input, "ArrowLeft").bubbled).toBe(0);
-    expect(dispatchKey(input, "ArrowRight").bubbled).toBe(0);
-    expect(dispatchKey(input, "ArrowUp").bubbled).toBe(0);
-    expect(dispatchKey(input, "ArrowDown").bubbled).toBe(0);
+    dispatchKey(input, "ArrowLeft");
+    dispatchKey(input, "ArrowRight");
+    dispatchKey(input, "ArrowUp");
+    dispatchKey(input, "ArrowDown");
+    await flushDomEffects();
+
+    expectSel(core, { item: s, portals: [] });
 
     unmount();
   });
@@ -608,7 +638,7 @@ describe("views/slider", () => {
     unmount();
   });
 
-  test("CONFIRM on content:slider is a local no-op", async () => {
+  test("ENTER on content:slider is a local no-op", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -623,15 +653,21 @@ describe("views/slider", () => {
       { caret: 0 },
     );
 
-    const { domView, unmount } = await mountLocalView({
+    const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
       location: { item: s, portals: [] },
     });
 
-    fireViewKey(domView, "Enter");
+    const input = document.body.querySelector(
+      'input[type="range"]',
+    ) as HTMLInputElement | null;
+    if (!input) throw new Error("Missing slider input");
+
+    const enter = dispatchKey(input, "Enter");
     await flushDomEffects();
+    expect(enter).toBe(false);
     expectSel(core, {
       item: s,
       target: CONTENT_SLIDER_TARGET,

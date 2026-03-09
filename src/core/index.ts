@@ -45,22 +45,26 @@ import type {
   ViewShape,
 } from "./shape";
 import { createShapeReader, defineShape, isShapeCompatible } from "./shape";
-import {
-  applyTypeToPrimaryTarget,
-  primaryHeaderTargetForConn,
-} from "./editing";
+import { primaryHeaderTargetForConn } from "./editing";
+import { CONTENT_TEXT_TARGET } from "./select";
 
 export type NavDirection = "left" | "right" | "up" | "down" | "out";
 
+export type IntentRangePoint = { itemId: ItemId; offset: number };
+
+export type EnterIntentRange = {
+  start: IntentRangePoint;
+  end: IntentRangePoint;
+};
+
 export type Intent =
-  | { type: "NAV"; dir: NavDirection; mode: "step" | "jump" }
-  | { type: "CONFIRM"; caret?: number }
-  | { type: "INSERT"; scope: "after-parent" | "sibling" }
-  | { type: "TAB"; shift: boolean; caret?: number }
-  | { type: "HISTORY"; action: "undo" | "redo" }
-  | { type: "EDIT_LABEL" }
   | { type: "TYPE"; char: string }
-  | { type: "DELETE"; dir: "backward" | "forward" };
+  | { type: "ENTER"; range?: EnterIntentRange | undefined }
+  | { type: "NAV"; dir: NavDirection }
+  | { type: "DELETE"; dir: "backward" | "forward" }
+  | { type: "INSERT"; scope: "after-parent" | "sibling" }
+  | { type: "LABEL" }
+  | { type: "HISTORY"; action: "undo" | "redo" };
 
 export type KeyIntentInput = {
   key: string;
@@ -70,7 +74,7 @@ export type KeyIntentInput = {
   shiftKey: boolean;
 };
 
-export function parseKeyIntent(input: KeyIntentInput): Intent | null {
+export function parseGlobalKeyIntent(input: KeyIntentInput): Intent | null {
   const isMod = input.metaKey || input.ctrlKey;
   const key = input.key.toLowerCase();
 
@@ -91,7 +95,7 @@ export function parseKeyIntent(input: KeyIntentInput): Intent | null {
       return { type: "HISTORY", action: "redo" };
     }
     if (key === ".") {
-      return { type: "EDIT_LABEL" };
+      return { type: "LABEL" };
     }
   }
 
@@ -99,37 +103,9 @@ export function parseKeyIntent(input: KeyIntentInput): Intent | null {
     return {
       type: "NAV",
       dir: "out",
-      mode: isMod ? "jump" : "step",
     };
   }
-  if (input.key === "Tab") return { type: "TAB", shift: !!input.shiftKey };
-  if (input.key === "Enter") return { type: "CONFIRM" };
-
-  if (input.key === "Backspace") return { type: "DELETE", dir: "backward" };
-  if (input.key === "Delete") return { type: "DELETE", dir: "forward" };
-
-  let dir: "left" | "right" | "up" | "down" | null = null;
-  switch (input.key) {
-    case "ArrowLeft":
-      dir = "left";
-      break;
-    case "ArrowRight":
-      dir = "right";
-      break;
-    case "ArrowUp":
-      dir = "up";
-      break;
-    case "ArrowDown":
-      dir = "down";
-      break;
-  }
-  if (dir) {
-    return {
-      type: "NAV",
-      dir,
-      mode: isMod ? "jump" : "step",
-    };
-  }
+  if (input.key === "Enter") return { type: "ENTER" };
 
   if (
     !(input.ctrlKey || input.metaKey || input.altKey) &&
@@ -420,10 +396,13 @@ export function createCore(opts: CreateCoreOptions): {
       return;
     }
 
-    if (intent.type === "EDIT_LABEL") {
+    if (intent.type === "LABEL") {
       if (!location) return;
       if (opts.platform?.hasTarget?.(location, LABEL_TARGET) ?? true) {
-        focus({ type: "editing", location, target: LABEL_TARGET }, { caret: "end" });
+        focus(
+          { type: "editing", location, target: LABEL_TARGET },
+          { caret: "end" },
+        );
       } else {
         opts.platform?.handleIntent?.(sel, intent);
       }
@@ -441,23 +420,16 @@ export function createCore(opts: CreateCoreOptions): {
     if (sel.type === "item" && location) {
       const primaryTarget = resolvePrimaryTarget(core, opts.platform, location);
 
-      if (intent.type === "TYPE") {
-        const applied = applyTypeToPrimaryTarget(
-          core,
-          location.item,
-          intent.char,
-          primaryTarget,
+      if (intent.type === "TYPE" && primaryTarget === CONTENT_TEXT_TARGET) {
+        core.commit((t) => t.setValue(location.item, intent.char));
+        core.focus(
+          { type: "editing", location, target: primaryTarget },
+          { caret: intent.char.length },
         );
-        if (applied) {
-          core.focus(
-            { type: "editing", location, target: applied.target },
-            { caret: applied.caret },
-          );
-          return;
-        }
+        return;
       }
 
-      if (intent.type === "CONFIRM" && primaryTarget) {
+      if (intent.type === "ENTER" && primaryTarget) {
         core.focus(
           { type: "editing", location, target: primaryTarget },
           { caret: "end" },
@@ -532,7 +504,6 @@ export {
 } from "./select";
 export { sameLocation };
 export {
-  applyTypeToPrimaryTarget,
   indentItemInPlace,
   isNumericLikeValue,
   patchConn,

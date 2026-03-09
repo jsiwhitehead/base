@@ -42,6 +42,13 @@ type TableMountCtx = {
   signals: TableSignals;
 };
 
+type CellPosition = {
+  rowId: ItemId;
+  rowIdx: number;
+  rowReader: RowReader;
+  colIdx: number;
+};
+
 function isRowItemSel(
   core: UiCore,
   sel: Extract<Selection, { type: "item" }>,
@@ -57,10 +64,9 @@ function isCellSel(
   rows: readonly ItemId[],
   sel: Extract<Selection, { type: "item" }>,
 ): boolean {
-  const rowId = core.locate(sel.anchor.item)?.parentId;
-  if (!rowId || rowId === tableId) return false;
-  if (!rows.includes(rowId)) return false;
-  return reader.child(rowId).childIds().includes(sel.anchor.item);
+  return (
+    resolveCellPosition(core, reader, tableId, rows, sel.anchor.item) !== null
+  );
 }
 
 function isCellValueSel(
@@ -71,14 +77,32 @@ function isCellValueSel(
   sel: Extract<Selection, { type: "editing" }>,
 ): boolean {
   if (sel.target !== CONTENT_TEXT_TARGET) return false;
-  const rowId = core.locate(sel.location.item)?.parentId;
-  if (!rowId || rowId === tableId) return false;
-  if (!rows.includes(rowId)) return false;
-  return reader.child(rowId).childIds().includes(sel.location.item);
+  return (
+    resolveCellPosition(core, reader, tableId, rows, sel.location.item) !== null
+  );
 }
 
 function cellColIdx(rowReader: RowReader, cellId: ItemId): number {
   return rowReader.childIds().indexOf(cellId);
+}
+
+function resolveCellPosition(
+  core: UiCore,
+  reader: TableReader,
+  tableId: ItemId,
+  rows: readonly ItemId[],
+  cellId: ItemId,
+): CellPosition | null {
+  const rowId = core.locate(cellId)?.parentId;
+  if (!rowId || rowId === tableId) return null;
+  const rowIdx = rows.indexOf(rowId);
+  if (rowIdx < 0) return null;
+
+  const rowReader = reader.child(rowId);
+  const colIdx = cellColIdx(rowReader, cellId);
+  if (colIdx < 0) return null;
+
+  return { rowId, rowIdx, rowReader, colIdx };
 }
 
 function resolveFocusAfterRemove(
@@ -138,17 +162,15 @@ const plan = {
     }
 
     if (!isCellSel(core, reader, tableId, rows, sel)) return null;
-
-    const rowId = core.locate(sel.anchor.item)?.parentId;
-    if (!rowId) return null;
-    const cellId = sel.anchor.item;
-    const rowReader = reader.child(rowId);
-
-    const rowIdx = rows.indexOf(rowId);
-    if (rowIdx < 0) return null;
-
-    const colIdx = cellColIdx(rowReader, cellId);
-    if (colIdx < 0) return null;
+    const position = resolveCellPosition(
+      core,
+      reader,
+      tableId,
+      rows,
+      sel.anchor.item,
+    );
+    if (!position) return null;
+    const { rowReader, rowIdx, colIdx, rowId } = position;
 
     if (dir === "left") {
       if (colIdx === 0) return { item: rowId, portals };
@@ -197,17 +219,15 @@ const plan = {
     }
 
     if (!isCellSel(core, reader, tableId, rows, sel)) return null;
-
-    const rowId = core.locate(sel.anchor.item)?.parentId;
-    if (!rowId) return null;
-    const cellId = sel.anchor.item;
-    const rowReader = reader.child(rowId);
-
-    const rowIdx = rows.indexOf(rowId);
-    if (rowIdx < 0) return null;
-
-    const colIdx = cellColIdx(rowReader, cellId);
-    if (colIdx < 0) return null;
+    const position = resolveCellPosition(
+      core,
+      reader,
+      tableId,
+      rows,
+      sel.anchor.item,
+    );
+    if (!position) return null;
+    const { rowReader, rowIdx, colIdx } = position;
 
     const nextCol = colIdx + dir;
 
@@ -237,20 +257,20 @@ const plan = {
   enterMove(
     core: UiCore,
     reader: TableReader,
+    tableId: ItemId,
     portals: readonly ItemId[],
     rows: readonly ItemId[],
     sel: Extract<Selection, { type: "editing" }>,
   ): Location | null {
-    const rowId = core.locate(sel.location.item)?.parentId;
-    if (!rowId) return null;
-    const cellId = sel.location.item;
-    const rowReader = reader.child(rowId);
-
-    const rowIdx = rows.indexOf(rowId);
-    if (rowIdx < 0) return null;
-
-    const colIdx = cellColIdx(rowReader, cellId);
-    if (colIdx < 0) return null;
+    const position = resolveCellPosition(
+      core,
+      reader,
+      tableId,
+      rows,
+      sel.location.item,
+    );
+    if (!position) return null;
+    const { rowIdx, colIdx } = position;
 
     const nextRow = rows[rowIdx + 1] ?? null;
     if (!nextRow) return null;
@@ -285,6 +305,11 @@ const cmd = {
   },
 } as const;
 
+function focusItem(core: UiCore, location: Location | null): void {
+  if (!location) return;
+  core.focus({ type: "item", location });
+}
+
 function buildHeader(mountCtx: TableMountCtx): Component {
   const { core, portals, reader, signals } = mountCtx;
 
@@ -307,7 +332,10 @@ function buildHeader(mountCtx: TableMountCtx): Component {
             id: cellId,
             visibility: "always",
             onCommitLabel: (text) => {
-              const colIdx = cellColIdx(reader.child(signals.schemaRowId.value), cellId);
+              const colIdx = cellColIdx(
+                reader.child(signals.schemaRowId.value),
+                cellId,
+              );
               core.commit((t) => {
                 t.setLabel(cellId, text);
                 for (const rowId of signals.rows.value) {
@@ -412,44 +440,129 @@ export const tableView = defineShapedView(
       const rowId = core.locate(cellId)?.parentId;
       if (!rowId) return null;
       const colIdx = cellColIdx(tableReader.child(rowId), cellId);
-      return tableReader.child(signals.schemaRowId.value).childIds()[colIdx] ?? null;
+      return (
+        tableReader.child(signals.schemaRowId.value).childIds()[colIdx] ?? null
+      );
     };
 
-    const focusSchemaLabel = (cellId: ItemId): boolean => {
+    const focusSchemaLabel = (cellId: ItemId): void => {
       const target = schemaCell(cellId);
-      if (!target) return false;
+      if (!target) return;
       core.focus(
-        { type: "editing", location: { item: target, portals: rootPortals }, target: LABEL_TARGET },
+        {
+          type: "editing",
+          location: { item: target, portals: rootPortals },
+          target: LABEL_TARGET,
+        },
         { caret: "end" },
       );
-      return true;
+    };
+
+    const handleItemNav = (
+      selection: Extract<Selection, { type: "item" }>,
+      dir: NavDirection,
+    ): void => {
+      if (dir === "left" && isRowItemSel(core, selection, tableId)) {
+        core.focus({
+          type: "item",
+          location: { item: tableId, portals: rootPortals },
+        });
+        return;
+      }
+
+      const rows = signals.rows.value;
+      const colCount = signals.colCount.value;
+      const nextFocus = plan.navMove(
+        core,
+        tableReader,
+        tableId,
+        rootPortals,
+        rows,
+        colCount,
+        selection,
+        dir,
+      );
+      focusItem(core, nextFocus);
+    };
+
+    const handleItemDelete = (
+      selection: Extract<Selection, { type: "item" }>,
+      dir: "backward" | "forward",
+    ): void => {
+      if (isRowItemSel(core, selection, tableId)) {
+        const rows = signals.rows.value;
+        const removingTable = rows.length === 1;
+        const removeId = removingTable ? tableId : selection.anchor.item;
+        const nextFocus = resolveFocusAfterRemove(
+          core,
+          removeId,
+          dir === "backward" ? "prev" : "next",
+          rootPortals,
+        );
+        core.commit((t) => t.remove(removeId));
+        if (nextFocus) {
+          core.focus({ type: "item", location: nextFocus });
+        } else {
+          core.focus({ type: "idle" });
+        }
+        return;
+      }
+      const rows = signals.rows.value;
+      if (!isCellSel(core, tableReader, tableId, rows, selection)) return;
+      core.commit((t) => t.setValue(selection.anchor.item, null));
     };
 
     const onIntent = (intent: Intent): void => {
       const selection = core.selection();
 
       if (selection.type === "editing") {
-        if (intent.type === "CONFIRM") {
+        if (intent.type === "ENTER") {
           const rows = signals.rows.value;
           if (isCellValueSel(core, tableReader, tableId, rows, selection)) {
             const next = plan.enterMove(
               core,
               tableReader,
+              tableId,
               rootPortals,
               rows,
               selection,
             );
-            if (next) {
-              core.focus({ type: "item", location: next });
-            } else {
-              core.focus({ type: "item", location: selection.location });
-            }
+            focusItem(core, next ?? selection.location);
             return;
           }
           core.focus({ type: "item", location: selection.location });
           return;
         }
-        if (intent.type === "EDIT_LABEL") {
+        if (intent.type === "NAV") {
+          const rows = signals.rows.value;
+          if (!isCellValueSel(core, tableReader, tableId, rows, selection)) {
+            return;
+          }
+          const colCount = signals.colCount.value;
+          const nextFocus = plan.navMove(
+            core,
+            tableReader,
+            tableId,
+            rootPortals,
+            rows,
+            colCount,
+            {
+              type: "item",
+              anchor: selection.location,
+              head: selection.location,
+            },
+            intent.dir,
+          );
+          focusItem(core, nextFocus);
+          return;
+        }
+        if (intent.type === "DELETE") {
+          const rows = signals.rows.value;
+          if (isCellValueSel(core, tableReader, tableId, rows, selection)) {
+            return;
+          }
+        }
+        if (intent.type === "LABEL") {
           const rows = signals.rows.value;
           if (isCellValueSel(core, tableReader, tableId, rows, selection)) {
             focusSchemaLabel(selection.location.item);
@@ -463,48 +576,10 @@ export const tableView = defineShapedView(
 
       switch (intent.type) {
         case "NAV": {
-          if (intent.dir === "left" && isRowItemSel(core, selection, tableId)) {
-            core.focus({
-              type: "item",
-              location: { item: tableId, portals: rootPortals },
-            });
-            return;
-          }
-
-          const rows = signals.rows.value;
-          const colCount = signals.colCount.value;
-          const nextFocus = plan.navMove(
-            core,
-            tableReader,
-            tableId,
-            rootPortals,
-            rows,
-            colCount,
-            selection,
-            intent.dir,
-          );
-          if (!nextFocus) return;
-          core.focus({ type: "item", location: nextFocus });
+          handleItemNav(selection, intent.dir);
           return;
         }
-        case "TAB": {
-          const rows = signals.rows.value;
-          const colCount = signals.colCount.value;
-          const nextFocus = plan.tabMove(
-            core,
-            tableReader,
-            tableId,
-            rootPortals,
-            rows,
-            colCount,
-            selection,
-            intent.shift,
-          );
-          if (!nextFocus) return;
-          core.focus({ type: "item", location: nextFocus });
-          return;
-        }
-        case "CONFIRM": {
+        case "ENTER": {
           const rows = signals.rows.value;
           if (isRowItemSel(core, selection, tableId)) {
             const newId = cmd.addRowAfter(
@@ -521,7 +596,7 @@ export const tableView = defineShapedView(
           }
           return;
         }
-        case "EDIT_LABEL": {
+        case "LABEL": {
           const rows = signals.rows.value;
           if (isCellSel(core, tableReader, tableId, rows, selection)) {
             focusSchemaLabel(selection.anchor.item);
@@ -532,27 +607,7 @@ export const tableView = defineShapedView(
         case "TYPE":
           return;
         case "DELETE": {
-          if (isRowItemSel(core, selection, tableId)) {
-            const rows = signals.rows.value;
-            const removingTable = rows.length === 1;
-            const removeId = removingTable ? tableId : selection.anchor.item;
-            const nextFocus = resolveFocusAfterRemove(
-              core,
-              removeId,
-              "next",
-              rootPortals,
-            );
-            core.commit((t) => t.remove(removeId));
-            if (nextFocus) {
-              core.focus({ type: "item", location: nextFocus });
-            } else {
-              core.focus({ type: "idle" });
-            }
-            return;
-          }
-          const rows = signals.rows.value;
-          if (!isCellSel(core, tableReader, tableId, rows, selection)) return;
-          cmd.clearCell(core, selection.anchor.item);
+          handleItemDelete(selection, intent.dir);
           return;
         }
       }
@@ -561,6 +616,78 @@ export const tableView = defineShapedView(
     const bodyRoot = createComponent(core, (ctx) => {
       const root = el("div");
       setBodyClasses(root, "table");
+
+      ctx.on(root, "keydown", (e: KeyboardEvent) => {
+        if (e.defaultPrevented) return;
+        const selection = core.selection();
+        if (selection.type !== "item") return;
+
+        const rows = signals.rows.value;
+        if (
+          !isRowItemSel(core, selection, tableId) &&
+          !isCellSel(core, tableReader, tableId, rows, selection)
+        ) {
+          return;
+        }
+
+        if (
+          !e.shiftKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          (e.key === "ArrowLeft" ||
+            e.key === "ArrowRight" ||
+            e.key === "ArrowUp" ||
+            e.key === "ArrowDown")
+        ) {
+          const dir =
+            e.key === "ArrowLeft"
+              ? "left"
+              : e.key === "ArrowRight"
+                ? "right"
+                : e.key === "ArrowUp"
+                  ? "up"
+                  : "down";
+          e.preventDefault();
+          e.stopPropagation();
+          handleItemNav(selection, dir);
+          return;
+        }
+
+        if (
+          !e.shiftKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          (e.key === "Backspace" || e.key === "Delete")
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleItemDelete(
+            selection,
+            e.key === "Backspace" ? "backward" : "forward",
+          );
+          return;
+        }
+
+        if (e.key !== "Tab") return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const nextFocus = plan.tabMove(
+          core,
+          tableReader,
+          tableId,
+          rootPortals,
+          rows,
+          signals.colCount.value,
+          selection,
+          e.shiftKey,
+        );
+        if (!nextFocus) return;
+        focusItem(core, nextFocus);
+      });
 
       const inner = el("div", "ui-table-inner");
       root.append(inner);

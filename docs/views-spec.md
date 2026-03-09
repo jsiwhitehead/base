@@ -133,7 +133,7 @@ Pointer hit routing inside `.ui-outline-child`:
 When a group is empty and item selection is on that group (`ITEM_TARGET`):
 
 - `TYPE` with any other character MUST convert the group to `value` with `""`, focus `content:text`, and type that character (replace behavior).
-- `CONFIRM` MUST convert the group to `value` with `""` and focus `content:text`.
+- `ENTER` MUST convert the group to `value` with `""` and focus `content:text`.
 
 #### Undo boundary policy
 
@@ -326,8 +326,8 @@ Table location and target modes:
 Rules:
 
 - Table MUST distinguish item selection from `content:text` edit focus.
-- Table MUST NOT implement outline-style multi-target edit traversal.
-- `NAV` and `TAB` are item-selection operations in table mode.
+- Table MUST keep embedded outline editing local unless the embedded editor explicitly yields structural behavior.
+- Directional `NAV` and `DELETE` are local item-selection operations in table mode. `Tab` is handled locally by the table view.
 - Row/cell item selection MUST be implemented as Core location surfaces backed by stable `.ui-table-row` and `.ui-table-cell` wrappers, not raw DOM focus.
 
 ### Schema row behavior
@@ -354,7 +354,7 @@ Grid over rows and cells. Row headers occupy column 0. Column headers occupy row
 
 #### Tab action
 
-Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows. From row `ITEM_TARGET`, Tab enters the first cell and Shift+Tab is a no-op. Tab from edit focus commits and performs the same cell-to-cell movement, landing at item selection on the destination.
+Move right (Tab) or left (Shift+Tab) across cells, wrapping across rows, from table-owned item selection. From row `ITEM_TARGET`, Tab enters the first cell and Shift+Tab is a no-op. Tab from embedded edit focus remains local to the embedded editor unless that editor explicitly yields structural behavior.
 
 #### Edit traversal scope
 
@@ -362,9 +362,9 @@ Scoped to a single item. The traversal moves through that item's edit targets on
 
 #### Inter-item edge behavior
 
-Enter commits and moves to the same-column cell in the next row at item selection. If there is no next row, no-op. Boundary NAV at the edge of an item's edit targets is a no-op.
+Plain `Enter` inside the embedded cell outline stays local to the embedded outline view by default. The containing table only acts on explicit structural intents yielded from the embedded editor. Boundary `NAV` and boundary `DELETE` MAY be yielded to the containing table, but are not part of the default global boundary path.
 
-All table operations that cross items — NAV, Tab, and Enter — land at item selection on the destination. Edit is always entered explicitly via CONFIRM or TYPE.
+Table-owned cross-item operations (item-selection `NAV`, item-selection `DELETE`, and local item-level `Tab`) land at item selection on the destination. Edit is entered explicitly via `ENTER` or `TYPE`, or remains inside the embedded cell view when that view keeps local ownership.
 
 #### DELETE policy
 
@@ -415,7 +415,7 @@ Rules:
 
 - Presents a range input and formatted numeric readout.
 - Arrow-key nudging is handled natively by the range input, not by view intents.
-- The range input stops propagation for native keys so the runtime never sees them.
+- Native range keys are not exported by the default global key boundary.
 
 ### Body DOM shape
 
@@ -434,15 +434,15 @@ Rules:
 - Slider uses:
   - `ITEM_TARGET` on the slider frame.
   - `content:slider` on the `<input type="range">`.
-- Keyboard semantics are interpreted at view level.
+- Keyboard behavior is primarily native to the range input.
 
 ### View-specific behaviors
 
 Slider is only ever used as an item view, never as an outer view. Its body is a range input rather than a text field.
 
-Arrow keys, Home, End, PageUp, and PageDown are owned by the native range input. The input's `keydown` listener calls `stopPropagation()` for these keys so they never reach the runtime's global handler. The view does not interpret NAV intents.
+Arrow keys, Home, End, PageUp, and PageDown are owned by the native range input.
 
-`Enter` and `Shift+Enter` are local no-ops. Structural `INSERT` is handled by the containing outer view. `Tab` and `Escape` bubble to the outer view.
+`Enter` and `Shift+Enter` are local no-ops while editing `content:slider`. `Tab` is local.
 
 Pointerdown on the range input SHOULD focus `content:slider` before native slider interaction.
 

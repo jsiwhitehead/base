@@ -898,27 +898,31 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("global Cmd+Z and Cmd+Shift+Z route through core history", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "one" });
+    const rootBoundary = document.body.lastElementChild as HTMLElement | null;
+    if (!rootBoundary) throw new Error("Missing root boundary");
 
     core.commit((t) => {
       t.setValue(id, "two");
     });
     expect(core.item(id).content).toEqual({ type: "value", value: "two" });
 
-    const undo = dispatchKey(document.body, "z", { metaKey: true });
-    expect(undo.defaultPrevented).toBe(true);
+    const undo = dispatchKey(rootBoundary, "z", { metaKey: true });
+    expect(undo).toBe(true);
     expect(core.item(id).content).toEqual({ type: "value", value: "one" });
 
-    const redo = dispatchKey(document.body, "z", {
+    const redo = dispatchKey(rootBoundary, "z", {
       metaKey: true,
       shiftKey: true,
     });
-    expect(redo.defaultPrevented).toBe(true);
+    expect(redo).toBe(true);
     expect(core.item(id).content).toEqual({ type: "value", value: "two" });
   });
 
   test("global Ctrl+Y redoes through core history", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "one" });
+    const rootBoundary = document.body.lastElementChild as HTMLElement | null;
+    if (!rootBoundary) throw new Error("Missing root boundary");
 
     core.commit((t) => {
       t.setValue(id, "two");
@@ -926,12 +930,12 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     core.undo();
     expect(core.item(id).content).toEqual({ type: "value", value: "one" });
 
-    const redo = dispatchKey(document.body, "y", { ctrlKey: true });
-    expect(redo.defaultPrevented).toBe(true);
+    const redo = dispatchKey(rootBoundary, "y", { ctrlKey: true });
+    expect(redo).toBe(true);
     expect(core.item(id).content).toEqual({ type: "value", value: "two" });
   });
 
-  test("global Cmd+. focuses the label from an active text field", async () => {
+  test("Cmd+. stays local inside an active text field", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "label" });
     setFormula(core, id, "value");
@@ -955,21 +959,20 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     expect(document.activeElement).toBe(exprInp);
 
     const editLabel = dispatchKey(exprInp, ".", { metaKey: true });
-    expect(editLabel.defaultPrevented).toBe(true);
+    expect(editLabel).toBe(false);
 
     await flushDomEffects();
     await flushDomEffects();
 
-    const labelInp = requireTargetInput(mounted.el, LABEL_TARGET);
-    expect(document.activeElement).toBe(labelInp);
+    expect(document.activeElement).toBe(exprInp);
 
     const selection = core.selection();
     expect(selection.type).toBe("editing");
     if (selection.type !== "editing") throw new Error("Expected editing");
     expect(selection.location).toEqual({ item: id, portals: [] });
-    expect(selection.target).toBe(LABEL_TARGET);
-    expect(labelInp.selectionStart).toBe(labelInp.value.length);
-    expect(labelInp.selectionEnd).toBe(labelInp.value.length);
+    expect(selection.target).toBe(connTarget("expr"));
+    expect(exprInp.selectionStart).toBe(exprInp.value.length);
+    expect(exprInp.selectionEnd).toBe(exprInp.value.length);
 
     unmount();
   });
@@ -1014,7 +1017,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     if (!active) throw new Error("Expected active element");
 
     const editLabel = dispatchKey(active, ".", { metaKey: true });
-    expect(editLabel.defaultPrevented).toBe(true);
+    expect(editLabel).toBe(true);
 
     await flushDomEffects();
     await flushDomEffects();

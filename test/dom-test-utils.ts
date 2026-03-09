@@ -79,7 +79,9 @@ export function makeCoreRuntime(args?: {
     views: args?.views ?? viewRegistrations,
     ...(args?.collab ? { collab: args.collab } : {}),
   });
-  const uninstallGlobal = runtime.installGlobalListeners(window);
+  const rootBoundary = document.createElement("div");
+  document.body.append(rootBoundary);
+  const uninstallGlobal = runtime.installRootKeyBoundary(rootBoundary);
 
   cleanups.push(() => {
     uninstallGlobal();
@@ -148,11 +150,9 @@ function intentFromKey(
     return {
       type: "NAV",
       dir: "out",
-      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
     };
   }
-  if (key === "Tab") return { type: "TAB", shift: !!opts.shiftKey };
-  if (key === "Enter") return { type: "CONFIRM" };
+  if (key === "Enter") return { type: "ENTER" };
   if ((opts.metaKey || opts.ctrlKey) && !opts.altKey) {
     if (key.toLowerCase() === "z") {
       return {
@@ -164,31 +164,9 @@ function intentFromKey(
       return { type: "HISTORY", action: "redo" };
     }
     if (key === ".") {
-      return { type: "EDIT_LABEL" };
+      return { type: "LABEL" };
     }
   }
-  if (key === "Backspace") return { type: "DELETE", dir: "backward" };
-  if (key === "Delete") return { type: "DELETE", dir: "forward" };
-
-  const dir =
-    key === "ArrowLeft"
-      ? "left"
-      : key === "ArrowRight"
-        ? "right"
-        : key === "ArrowUp"
-          ? "up"
-          : key === "ArrowDown"
-            ? "down"
-            : null;
-
-  if (dir) {
-    return {
-      type: "NAV",
-      dir,
-      mode: opts.metaKey || opts.ctrlKey ? "jump" : "step",
-    };
-  }
-
   if (!opts.ctrlKey && !opts.metaKey && !opts.altKey && key.length === 1) {
     return { type: "TYPE", char: key };
   }
@@ -196,7 +174,7 @@ function intentFromKey(
   return null;
 }
 
-export function fireViewKey(
+export function dispatchViewIntentKey(
   view: DomView,
   key: string,
   opts?: Partial<KeyboardEventInit>,
@@ -304,13 +282,7 @@ export function dispatchKey(
   target: Element,
   key: string,
   opts: Partial<KeyboardEventInit> = {},
-): { defaultPrevented: boolean; bubbled: number } {
-  let bubbled = 0;
-  const onBubble = () => {
-    bubbled += 1;
-  };
-  window.addEventListener("keydown", onBubble);
-
+): boolean {
   const ev = new KeyboardEvent("keydown", {
     key,
     bubbles: true,
@@ -319,9 +291,7 @@ export function dispatchKey(
   });
 
   target.dispatchEvent(ev);
-  window.removeEventListener("keydown", onBubble);
-
-  return { defaultPrevented: ev.defaultPrevented, bubbled };
+  return ev.defaultPrevented;
 }
 
 export async function flushDomEffects(turns = 2): Promise<void> {

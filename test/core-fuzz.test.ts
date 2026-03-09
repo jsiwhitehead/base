@@ -116,14 +116,12 @@ function randomValue(rng: Rng): true | number | string | null {
 
 function randomIntent(rng: Rng): Intent {
   const intents: Intent[] = [
-    { type: "NAV", dir: "left", mode: "step" },
-    { type: "NAV", dir: "right", mode: "step" },
-    { type: "NAV", dir: "up", mode: "jump" },
-    { type: "NAV", dir: "down", mode: "jump" },
-    { type: "NAV", dir: "out", mode: "step" },
-    { type: "TAB", shift: false },
-    { type: "TAB", shift: true },
-    { type: "CONFIRM" },
+    { type: "NAV", dir: "left" },
+    { type: "NAV", dir: "right" },
+    { type: "NAV", dir: "up" },
+    { type: "NAV", dir: "down" },
+    { type: "NAV", dir: "out" },
+    { type: "ENTER" },
     { type: "DELETE", dir: "backward" },
     { type: "DELETE", dir: "forward" },
     { type: "TYPE", char: "x" },
@@ -992,7 +990,7 @@ describe("core fuzz/selection heavy", () => {
       core.focus({ type: "item", location: { item: id, portals: [] } });
 
       if (rng.chance(0.6)) {
-        core.dispatch({ type: "CONFIRM", caret: rng.int(5) });
+        core.dispatch({ type: "ENTER" });
       }
       core.dispatch(randomIntent(rng));
       if (rng.chance(0.5)) core.dispatch(randomIntent(rng));

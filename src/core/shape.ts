@@ -327,7 +327,9 @@ export function enforceViewShapes(
     if (a.type !== b.type) return false;
     if (isFormulaContent(a) && isFormulaContent(b)) return a.expr === b.expr;
     if (isQueryContent(a) && isQueryContent(b))
-      return a.from === b.from && a.where === b.where && a.orderBy === b.orderBy;
+      return (
+        a.from === b.from && a.where === b.where && a.orderBy === b.orderBy
+      );
     return true;
   };
 
@@ -370,8 +372,6 @@ export function enforceViewShapes(
       childGroupIds[0]!;
     const schema = childSlotSchema(leaderChildGroupId);
 
-    // Pre-compute which leader-cell columns carry formula/query content so we
-    // can propagate them to followers inside the per-follower loop below.
     const leaderFormulaCols = new Map<number, EntryContent>();
     const leaderCells = model.childIdsOf(leaderChildGroupId);
     for (let i = 0; i < leaderCells.length; i += 1) {
@@ -451,17 +451,16 @@ export function enforceViewShapes(
         out.push(model.ops.remove(cid));
       }
 
-      // Content sync: propagate formula/query content from the leader cell at
-      // each column to the aligned follower cell at the same column.
-      // Use desiredIds (the final aligned positions) rather than the original
-      // child list so we never target an excess cell that is being removed.
       for (const [colIdx, leaderContent] of leaderFormulaCols) {
         const followerCellId = desiredIds[colIdx];
         if (!followerCellId) continue;
         if (model.hasEntry(followerCellId)) {
           const followerContent = model.peekEntry(followerCellId).content;
-          // Cannot patch a non-empty group to a non-group content type.
-          if (isGroupContent(followerContent) && followerContent.childIds.length > 0) continue;
+          if (
+            isGroupContent(followerContent) &&
+            followerContent.childIds.length > 0
+          )
+            continue;
           if (contentMatches(followerContent, leaderContent)) continue;
         }
         out.push(model.ops.patch(followerCellId, { content: leaderContent }));
