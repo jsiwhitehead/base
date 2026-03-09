@@ -881,7 +881,7 @@ describe("core/view shapes & rules", () => {
     assertCoreInvariants(core, rootId);
   });
 
-  test("shape sync across table rows propagates by label (add/reorder/remove)", () => {
+  test("shape sync across table rows propagates ordered labeled slots", () => {
     const { core, rootId } = makeCoreForTest();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -906,6 +906,115 @@ describe("core/view shapes & rules", () => {
     expect(groupLabels(core, rowA)).toEqual(["name"]);
     expect(groupLabels(core, rowB)).toEqual(["name"]);
     expect(groupLabels(core, rowC)).toEqual(["name"]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("shape sync across table rows propagates unlabeled slot count and order", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    mkBlank(core, rowA, { value: "a0" });
+    mkBlank(core, rowA, { value: "a1" });
+
+    expect(groupLabels(core, rowA)).toEqual(["", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["", ""]);
+
+    core.commit((t) => {
+      const inserted = t.insertChild(rowB, { at: 1 });
+      t.setValue(inserted, "b1");
+    });
+
+    expect(groupLabels(core, rowA)).toEqual(["", "", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["", "", ""]);
+
+    core.commit((t) => t.remove(childrenOf(core, rowA)[2]!));
+
+    expect(groupLabels(core, rowA)).toEqual(["", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["", ""]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("shape sync across table rows propagates mixed labeled and unlabeled slots", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    mkBlank(core, rowA, { label: "name", value: "alice" });
+    mkBlank(core, rowA, { value: 10 });
+    mkBlank(core, rowA, { label: "score", value: 5 });
+
+    expect(groupLabels(core, rowA)).toEqual(["name", "", "score"]);
+    expect(groupLabels(core, rowB)).toEqual(["name", "", "score"]);
+
+    core.commit((t) => t.move(childrenOf(core, rowB)[2]!, rowB, { at: 0 }));
+
+    expect(groupLabels(core, rowA)).toEqual(["score", "name", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["score", "name", ""]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("shape sync across table rows propagates formula/query content by aligned column", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    const aFormula = mkBlank(core, rowA, { label: "calc", value: 1 });
+    const aQuery = mkBlank(core, rowA, { label: "lookup", value: 2 });
+
+    core.commit((t) => {
+      t.setConnected(aFormula, { type: "formula", expr: "1 + 2" });
+      t.setConnected(aQuery, {
+        type: "query",
+        from: "rowA",
+        where: "",
+        orderBy: "",
+      });
+    });
+
+    const [bFormula, bQuery] = childrenOf(core, rowB);
+    expect(core.item(bFormula!).mode).toEqual({
+      type: "connected",
+      conn: { type: "formula", expr: "1 + 2" },
+    });
+    expect(core.item(bQuery!).mode).toEqual({
+      type: "connected",
+      conn: { type: "query", from: "rowA", where: "", orderBy: "" },
+    });
+
+    core.commit((t) => {
+      t.setConnected(aFormula, {
+        type: "query",
+        from: "rowB",
+        where: "",
+        orderBy: "",
+      });
+      t.setConnected(aQuery, { type: "formula", expr: "3 + 4" });
+    });
+
+    expect(core.item(bFormula!).mode).toEqual({
+      type: "connected",
+      conn: { type: "query", from: "rowB", where: "", orderBy: "" },
+    });
+    expect(core.item(bQuery!).mode).toEqual({
+      type: "connected",
+      conn: { type: "formula", expr: "3 + 4" },
+    });
 
     assertCoreInvariants(core, rootId);
   });
@@ -982,6 +1091,30 @@ describe("core/view shapes & rules", () => {
     core.redo();
     expect(groupLabels(core, rowA)).toEqual(["y"]);
     expect(groupLabels(core, rowB)).toEqual(["y"]);
+
+    assertCoreInvariants(core, rootId);
+  });
+
+  test("shape sync split from a touched row propagates a new unlabeled slot", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const rowA = mkGroup(core, tableId, { label: "rowA" });
+    const rowB = mkGroup(core, tableId, { label: "rowB" });
+
+    mkBlank(core, rowA, { label: "name", value: "alice" });
+
+    core.commit((t) => {
+      const inserted = t.insertChild(rowB, { at: 1 });
+      t.setValue(inserted, "extra");
+    });
+
+    expect(groupLabels(core, rowA)).toEqual(["name", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["name", ""]);
+    expect(childrenOf(core, rowA)).toHaveLength(2);
+    expect(childrenOf(core, rowB)).toHaveLength(2);
 
     assertCoreInvariants(core, rootId);
   });

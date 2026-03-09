@@ -335,9 +335,9 @@ Rules:
 Rules:
 
 - Schema row SHOULD resolve as `rows[0] ?? null`.
-- `colCount` SHOULD follow `schemaRow.children.length` when schema row exists.
-- Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
-- Schema header cells SHOULD use `mountHeader` to preserve shared header target semantics (see `docs/dom-runtime.md`).
+- When schema row exists, `colCount` SHOULD follow `schemaRow.children.length`.
+- Row alignment comes from Core `alignChildren`: rows converge to one ordered slot sequence, with slots that may be labeled or unlabeled.
+- Schema header cells SHOULD mount the shared `.ui-header` contract via `mountHeader` in table-header context so label and `conn:*` target behavior stays consistent with other views (see `docs/dom-runtime.md`).
 
 ### View-specific behaviors
 

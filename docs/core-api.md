@@ -358,6 +358,7 @@ type CorePlatformHooks = {
   primaryContentTarget?: (location: Location) => string | null;
   onSelectionChange?: (selection: Selection, caret?: number | "end") => void;
   readCurrentCaret?: () => number | undefined;
+  hasTarget?: (location: Location, target: string) => boolean;
   handleIntent?: (selection: Selection, intent: Intent) => void;
 };
 ```
@@ -367,9 +368,9 @@ Rules:
 - Core MUST remain headless and MUST NOT depend on DOM APIs directly.
 - Platform callbacks MUST be optional so Core can run headless in tests/non-DOM contexts.
 - `primaryContentTarget` lets runtime/view registration expose the current primary body target for an item location.
-- `onSelectionChange` synchronizes platform focus from Core selection. For `core.focus(...)` with editing selection, it receives `opts.caret` as the second argument when provided. For non-editing selection, no caret is forwarded.
-- Platform/runtime code is responsible for resolving semantic caret hints such as `"end"` to a concrete DOM position.
-- `readCurrentCaret` allows runtime-owned surfaces to provide the current caret offset during local repair-anchor capture (`commit`, `undo`, `redo`, and in-pipeline local apply). This is mainly for live surfaces such as `contenteditable`. The value is optional and MUST NOT be stored in `Selection`.
+- `onSelectionChange` synchronizes platform focus from Core selection. For `core.focus(...)` with editing selection, it receives `opts.caret` as the second argument when provided; platform/runtime code is responsible for resolving semantic caret hints such as `"end"` to a concrete DOM position.
+- `readCurrentCaret` lets runtime-owned surfaces provide the current caret offset during local repair-anchor capture (`commit`, `undo`, `redo`, and in-pipeline local apply). This is mainly for live surfaces such as `contenteditable`. The value is optional and MUST NOT be stored in `Selection`.
+- `hasTarget` lets runtime/view registration report whether a semantic `(location, target)` currently has a concrete bound surface. Core MAY use this to avoid focusing a nonexistent local target and instead delegate the intent to the active view via `handleIntent`.
 - `handleIntent` allows Core to delegate non-global intents to runtime-resolved mounted views.
 - Selection validity in Core MUST remain model-only and MUST NOT depend on runtime view/binding state.
 
@@ -406,7 +407,7 @@ Rules:
 - Core owns semantic intent parsing (`parseKeyIntent`) and dispatch.
 - DOM/runtime owns DOM `keydown` listener installation and `KeyboardEvent` capture (`docs/dom-runtime.md`).
 - Global history intents (`Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`) MUST be handled by Core before view delegation. Global keydown paths SHOULD route them through `parseKeyIntent`; contenteditable surfaces MAY handle them in their editing pipeline (`docs/content-editable.md`).
-- Global edit shortcuts parsed by Core include `Cmd/Ctrl+.` -> focus `LABEL_TARGET`.
+- Global edit shortcuts parsed by Core include `Cmd/Ctrl+.` -> focus `LABEL_TARGET` when that target exists locally; otherwise Core MAY delegate the intent to the active view.
 - Core handles `NAV/out` before any active-view delegation.
 - Core routes other non-global intents through `handleIntent(selection, intent)` when provided.
 - Editors and controls decide which key events bubble to Core.
@@ -440,7 +441,7 @@ Shape meanings:
 - `type`: required node shape for the item. `"value"` means value-content (blank/scalar) and excludes issue/group results.
 - `children`: required shape for direct children of a constrained group (group shapes only).
 - `nonEmpty`: constrained group MUST have at least one direct child (group shapes only).
-- `alignChildren`: direct child groups MUST share the same labeled child set and order by label (group shapes only, and only valid when `children` is a group shape).
+- `alignChildren`: direct child groups MUST share one ordered child-slot sequence, with slots that may be labeled or unlabeled (group shapes only, and only valid when `children` is a group shape).
 - Child view locking is inferred from `children`: if `children.type !== "any"`, direct children MUST have their stored view cleared to `null`.
 - Nested shapes MUST be enforced recursively by applying `children` at each matching group node.
 
@@ -452,7 +453,9 @@ Enforcement rules:
 - Rule order per pass MUST be: content coercion -> non-empty enforcement -> children coercion -> child alignment (`alignChildren`).
 - If a shape requirement cannot be satisfied without destroying children (non-empty group requiring `"value"`), Core MUST clear the item's stored view to `null` instead.
 - If `nonEmpty` is set and the constrained group is empty, enforcement MUST create one direct child.
-- Label alignment MUST elect a leader child group, then create missing labeled children, reorder mismatched labeled children, and remove excess labeled children in other child groups.
+- Child alignment MUST elect one leader child group, preferring a touched child group when available, then reconcile every other child group to that leader's ordered slot sequence.
+- During child alignment, labeled slots match by normalized label, unlabeled slots match by anonymous slot order, missing slots are created, mismatched order is repaired, and excess slots are removed.
+- During child alignment, formula/query content in the leader's aligned slots MUST propagate to follower slots at the same column when that patch is valid.
 - Coercion ops MUST be captured for undo/redo.
 - Failure to converge within the implementation pass bound MUST be treated as an invariant failure.
 

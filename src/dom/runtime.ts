@@ -167,6 +167,7 @@ export type DomRuntime = {
   syncSelection(next: Selection, caret?: CaretPlacement): void;
   readCurrentCaret(): number | undefined;
   primaryContentTarget(location: Location): string | null;
+  hasTarget(location: Location, target: string): boolean;
 
   attachTarget(opts: AttachTargetOpts): () => void;
 
@@ -620,6 +621,9 @@ export function createRuntime(opts: {
     );
   };
 
+  const hasTarget = (location: Location, target: string): boolean =>
+    resolveBinding(location, target) !== null;
+
   const resolveIntentHandler = (
     selection: Selection,
     intent: Intent,
@@ -630,7 +634,7 @@ export function createRuntime(opts: {
       case "item":
         return resolveItemIntentHandler(selection);
       case "editing":
-        return intent.type === "INSERT"
+        return intent.type === "INSERT" || intent.type === "EDIT_LABEL"
           ? resolveStructuralIntentHandler(selection)
           : resolveEditingIntentHandler(selection);
       default:
@@ -649,6 +653,7 @@ export function createRuntime(opts: {
     syncSelection,
     readCurrentCaret,
     primaryContentTarget,
+    hasTarget,
     attachTarget,
     mountView,
     setRootOuterIntentHandler(handler) {

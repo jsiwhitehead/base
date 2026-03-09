@@ -63,15 +63,24 @@ export function bindItemFrame(
     if (e.defaultPrevented) return;
     if ((e.button ?? 0) !== 0) return;
     const targetEl = resolveEventTargetElement(e.target);
-    if (isInNestedContentEditable(targetEl)) return;
-    if (isEditingTarget(targetEl)) return;
+    if (isInNestedContentEditable(targetEl) || isEditingTarget(targetEl)) {
+      e.stopPropagation();
+      return;
+    }
 
     if (targetEl === frameEl) {
       const sel = window.getSelection();
       if (sel?.rangeCount) {
         const start = sel.getRangeAt(0).startContainer;
         const startEl = start instanceof Element ? start : start.parentElement;
-        if (isEditingTarget(startEl)) return;
+        if (
+          startEl &&
+          frameEl.contains(startEl) &&
+          isEditingTarget(startEl)
+        ) {
+          e.stopPropagation();
+          return;
+        }
       }
     }
     spec.core.focus({ type: "item", location: spec.location });

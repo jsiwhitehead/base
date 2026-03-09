@@ -1,8 +1,19 @@
 import { CoreInvariantError } from "../dev";
-import type { EntryId, Model, Op, ViewName } from "./model";
-import { isGroupContent, makeBlankEntry, normalizeLabel } from "./model";
+import type { EntryContent, EntryId, Model, Op, ViewName } from "./model";
+import {
+  isFormulaContent,
+  isGroupContent,
+  isQueryContent,
+  makeBlankEntry,
+  normalizeLabel,
+} from "./model";
 import { CoreReadError } from "./read";
 import type { ItemId, ReadApi } from "./read";
+
+type ChildSlotSchema = {
+  label: string | null;
+  normalizedLabel: string | null;
+};
 
 export type ViewShape = { type: "any" } | { type: "value" } | GroupViewShape;
 
@@ -145,13 +156,17 @@ export function isShapeCompatible(
   id: ItemId,
   shape: ViewShape,
 ): boolean {
-  const normalizedChildLabelSchema = (groupId: ItemId): string[] => {
+  const childSlotSchema = (groupId: ItemId): ChildSlotSchema[] => {
     const group = read.item(groupId);
     if (group.content.type !== "group") return [];
-    const out: string[] = [];
+    const out: ChildSlotSchema[] = [];
     for (const childId of group.content.children) {
-      const label = normalizeLabel(read.item(childId).label ?? "");
-      if (label) out.push(label);
+      const rawLabel = read.item(childId).label ?? null;
+      const normalizedLabel = normalizeLabel(rawLabel ?? "");
+      out.push({
+        label: rawLabel,
+        normalizedLabel: normalizedLabel || null,
+      });
     }
     return out;
   };
@@ -167,14 +182,16 @@ export function isShapeCompatible(
     const childGroupIds = item.content.children;
     const leaderChildGroupId = childGroupIds[0] ?? null;
     if (!leaderChildGroupId) return true;
-    const schema = normalizedChildLabelSchema(leaderChildGroupId);
+    const schema = childSlotSchema(leaderChildGroupId);
 
     for (let i = 1; i < childGroupIds.length; i += 1) {
       const childGroupId = childGroupIds[i]!;
-      const labels = normalizedChildLabelSchema(childGroupId);
-      if (labels.length !== schema.length) return false;
+      const slots = childSlotSchema(childGroupId);
+      if (slots.length !== schema.length) return false;
       for (let j = 0; j < schema.length; j += 1) {
-        if (labels[j] !== schema[j]) return false;
+        if (slots[j]!.normalizedLabel !== schema[j]!.normalizedLabel) {
+          return false;
+        }
       }
     }
   }
@@ -237,11 +254,15 @@ export function enforceViewShapes(
     return out;
   };
 
-  const normalizedChildLabelSchema = (groupId: EntryId): string[] => {
-    const schema: string[] = [];
+  const childSlotSchema = (groupId: EntryId): ChildSlotSchema[] => {
+    const schema: ChildSlotSchema[] = [];
     for (const cid of childIdsOfGroup(groupId)) {
-      const label = normalizeLabel(model.peekEntry(cid).label);
-      if (label) schema.push(label);
+      const rawLabel = model.peekEntry(cid).label;
+      const normalizedLabel = normalizeLabel(rawLabel);
+      schema.push({
+        label: rawLabel,
+        normalizedLabel: normalizedLabel || null,
+      });
     }
     return schema;
   };
@@ -302,11 +323,18 @@ export function enforceViewShapes(
     }
   };
 
+  const contentMatches = (a: EntryContent, b: EntryContent): boolean => {
+    if (a.type !== b.type) return false;
+    if (isFormulaContent(a) && isFormulaContent(b)) return a.expr === b.expr;
+    if (isQueryContent(a) && isQueryContent(b))
+      return a.from === b.from && a.where === b.where && a.orderBy === b.orderBy;
+    return true;
+  };
+
   const enqueueAlignChildrenOps = (groupId: EntryId, out: Op[]): void => {
-    const childGroupIds = childIdsOfGroup(groupId).filter((childGroupId) => {
-      if (!model.hasEntry(childGroupId)) return false;
-      return isGroupContent(model.peekEntry(childGroupId).content);
-    });
+    const childGroupIds = childIdsOfGroup(groupId).filter((childGroupId) =>
+      isGroupContent(model.peekEntry(childGroupId).content),
+    );
     if (childGroupIds.length < 2) return;
     const childGroupIdSet = new Set(childGroupIds);
 
@@ -340,47 +368,77 @@ export function enforceViewShapes(
       touchedChildGroup ??
       childGroupWithChildren ??
       childGroupIds[0]!;
-    const schema = normalizedChildLabelSchema(leaderChildGroupId);
-    const schemaSet = new Set(schema);
+    const schema = childSlotSchema(leaderChildGroupId);
+
+    // Pre-compute which leader-cell columns carry formula/query content so we
+    // can propagate them to followers inside the per-follower loop below.
+    const leaderFormulaCols = new Map<number, EntryContent>();
+    const leaderCells = model.childIdsOf(leaderChildGroupId);
+    for (let i = 0; i < leaderCells.length; i += 1) {
+      const cellId = leaderCells[i]!;
+      if (!model.hasEntry(cellId)) continue;
+      const content = model.peekEntry(cellId).content;
+      if (isFormulaContent(content) || isQueryContent(content)) {
+        leaderFormulaCols.set(i, content);
+      }
+    }
 
     for (const childGroupId of childGroupIds) {
       if (childGroupId === leaderChildGroupId) continue;
-      if (!model.hasEntry(childGroupId)) continue;
-      if (!isGroupContent(model.peekEntry(childGroupId).content)) continue;
 
       const childIds = model.childIdsOf(childGroupId);
       const byLabel = new Map<string, EntryId>();
-      const indexOf = new Map<EntryId, number>();
+      const unlabeled: EntryId[] = [];
+      const desiredIds: EntryId[] = [];
+      const matched = new Set<EntryId>();
 
-      for (let i = 0; i < childIds.length; i += 1) {
-        const cid = childIds[i]!;
-        indexOf.set(cid, i);
+      for (const cid of childIds) {
         if (!model.hasEntry(cid)) continue;
         const label = normalizeLabel(model.peekEntry(cid).label);
         if (label) byLabel.set(label, cid);
+        else unlabeled.push(cid);
       }
 
+      let nextUnlabeledIdx = 0;
+
       for (let i = 0; i < schema.length; i += 1) {
-        const label = schema[i]!;
-        const existing = byLabel.get(label);
-        if (existing != null) {
-          if (indexOf.get(existing) !== i) {
-            out.push(
-              model.ops.move({
-                childId: existing,
-                toParentId: childGroupId,
-                toIndex: i,
-              }),
-            );
+        const slot = schema[i]!;
+        let matchId: EntryId | null = null;
+
+        if (slot.normalizedLabel) {
+          const labeledMatch = byLabel.get(slot.normalizedLabel);
+          if (labeledMatch != null && !matched.has(labeledMatch)) {
+            matchId = labeledMatch;
           }
-          continue;
+        } else {
+          while (nextUnlabeledIdx < unlabeled.length) {
+            const unlabeledId = unlabeled[nextUnlabeledIdx++]!;
+            if (matched.has(unlabeledId)) continue;
+            matchId = unlabeledId;
+            break;
+          }
         }
 
-        const newId = model.createId();
-        out.push(model.ops.create({ ...makeBlankEntry(newId), label }));
+        if (matchId == null) {
+          matchId = model.createId();
+          out.push(
+            model.ops.create({
+              ...makeBlankEntry(matchId),
+              ...(slot.label != null ? { label: slot.label } : {}),
+            }),
+          );
+        }
+
+        matched.add(matchId);
+        desiredIds.push(matchId);
+      }
+
+      for (let i = 0; i < desiredIds.length; i += 1) {
+        const childId = desiredIds[i]!;
+        if (childIds[i] === childId) continue;
         out.push(
           model.ops.move({
-            childId: newId,
+            childId,
             toParentId: childGroupId,
             toIndex: i,
           }),
@@ -389,8 +447,24 @@ export function enforceViewShapes(
 
       for (const cid of childIds) {
         if (!model.hasEntry(cid)) continue;
-        const label = normalizeLabel(model.peekEntry(cid).label);
-        if (label && !schemaSet.has(label)) out.push(model.ops.remove(cid));
+        if (matched.has(cid)) continue;
+        out.push(model.ops.remove(cid));
+      }
+
+      // Content sync: propagate formula/query content from the leader cell at
+      // each column to the aligned follower cell at the same column.
+      // Use desiredIds (the final aligned positions) rather than the original
+      // child list so we never target an excess cell that is being removed.
+      for (const [colIdx, leaderContent] of leaderFormulaCols) {
+        const followerCellId = desiredIds[colIdx];
+        if (!followerCellId) continue;
+        if (model.hasEntry(followerCellId)) {
+          const followerContent = model.peekEntry(followerCellId).content;
+          // Cannot patch a non-empty group to a non-group content type.
+          if (isGroupContent(followerContent) && followerContent.childIds.length > 0) continue;
+          if (contentMatches(followerContent, leaderContent)) continue;
+        }
+        out.push(model.ops.patch(followerCellId, { content: leaderContent }));
       }
     }
   };

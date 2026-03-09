@@ -206,10 +206,7 @@ Rules:
 - Sets `data-id = location.item`.
 - If `tabindex` is absent, sets `tabIndex = -1`.
 - Registers `ITEM_TARGET` on `frameEl` via `ctx.target`.
-- On `pointerdown`, MUST focus Core on `ITEM_TARGET` for the same item location.
-- On `pointerdown`, MUST NOT set caret.
-- On `pointerdown`, MUST call `stopPropagation()`.
-- Pointerdown handling MUST apply only when the event reaches the frame (that is, it was not already handled/stopped by an inner control).
+- On `pointerdown`, when the event reaches the frame, `bindItemFrame` MUST own the hit: it MUST call `stopPropagation()`, MUST NOT set caret, and MUST either focus Core on `ITEM_TARGET` for the same item location or preserve active nested editing.
 - MUST reactively toggle `.is-selected` and `.is-item-selected` as selection state changes.
 - MUST reactively toggle `.is-issue`.
 

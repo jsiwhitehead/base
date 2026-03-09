@@ -310,6 +310,42 @@ describe("views/table", () => {
     unmount();
   });
 
+  test("pointerdown on a cell shell from embedded outline editing lands on the cell item", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const c11 = mkBlank(core, r1, { label: "c1", value: "alpha" });
+    const c12 = mkBlank(core, r1, { label: "c2", value: "beta" });
+
+    const { unmount } = await mountView({
+      view: "table",
+      core,
+      id: tableId,
+      location: { item: tableId, portals: [] },
+    });
+
+    core.focus(
+      {
+        type: "editing",
+        location: { item: c11, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 1 },
+    );
+    await flushDomEffects();
+
+    const c12Frame = requireFrameEl(document.body, c12);
+    pointerDown(c12Frame);
+    await flushDomEffects();
+
+    expectSel(core, { item: c12, portals: [] });
+
+    unmount();
+  });
+
   test("slot replace moves the cell and clears the source slot", async () => {
     const { core, rootId } = makeCoreRuntime();
 

@@ -229,7 +229,7 @@ For a given initial state and ordered sequence of committed transactions, the re
 
 ### Post-commit normalization
 
-After every transaction, the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected in the same undo unit (type coercion, `nonEmpty` enforcement, `alignChildren` sync).
+After every transaction, the core pipeline runs shape enforcement on touched entries. View-tagged items that no longer conform to their registered shape are corrected in the same undo unit (type coercion, `nonEmpty` enforcement, ordered-slot `alignChildren` sync).
 
 If a transaction patches `view` on the item currently in editing selection, selection is snapped to item selection at the same location before structural repair runs.
 
@@ -289,7 +289,7 @@ The invariants defined in this section are stable contracts. Changes to these in
 
 ### Pointer and propagation
 
-- Frame `pointerdown` focuses `ITEM_TARGET` and stops propagation. Captures caret when the hit surface is text-editing content.
+- When a frame owns `pointerdown`, it MUST stop propagation and either focus `ITEM_TARGET` or preserve the current editing selection. It captures caret only when the hit surface is text-editing content.
 - Editors and controls focus their own target and stop propagation.
 
 ### Runtime boundary

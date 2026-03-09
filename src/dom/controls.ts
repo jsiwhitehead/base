@@ -361,6 +361,7 @@ function buildHeader(
   args: {
     location: Location;
     id: ItemId;
+    onCommitLabel?: (text: string) => void;
   },
 ): Component {
   const { location, id } = args;
@@ -400,7 +401,11 @@ function buildHeader(
           const item = core.item(id);
           if (item.mode.type === "readonly") return;
           if ((item.label ?? "") === text) return;
-          core.commit((t) => t.setLabel(id, text));
+          if (args.onCommitLabel) {
+            args.onCommitLabel(text);
+          } else {
+            core.commit((t) => t.setLabel(id, text));
+          }
         },
         getState: () => {
           const snap = core.item(id);
@@ -480,11 +485,12 @@ export function mountHeader(
     location: Location;
     id: ItemId;
     visibility?: "auto" | "always";
+    onCommitLabel?: (text: string) => void;
   },
 ): void {
   const { core, host, location, id, visibility = "auto" } = args;
   if (visibility === "always") {
-    ctx.mount(host, buildHeader(core, { location, id }));
+    ctx.mount(host, buildHeader(core, { location, id, ...(args.onCommitLabel ? { onCommitLabel: args.onCommitLabel } : {}) }));
     return;
   }
 
@@ -502,6 +508,6 @@ export function mountHeader(
 
   ctx.slot(host, () => {
     if (!shouldShowHeader.value) return null;
-    return buildHeader(core, { location, id });
+    return buildHeader(core, { location, id, ...(args.onCommitLabel ? { onCommitLabel: args.onCommitLabel } : {}) });
   });
 }

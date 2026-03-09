@@ -7,7 +7,7 @@ import type {
   ReaderForShape,
   Selection,
 } from "../core";
-import { defineShape, CONTENT_TEXT_TARGET } from "../core";
+import { defineShape, CONTENT_TEXT_TARGET, LABEL_TARGET } from "../core";
 import type { Component, NavDirection, UiCore } from "../dom";
 import {
   bindItemFrame,
@@ -306,6 +306,17 @@ function buildHeader(mountCtx: TableMountCtx): Component {
             location,
             id: cellId,
             visibility: "always",
+            onCommitLabel: (text) => {
+              const colIdx = cellColIdx(reader.child(signals.schemaRowId.value), cellId);
+              core.commit((t) => {
+                t.setLabel(cellId, text);
+                for (const rowId of signals.rows.value) {
+                  if (rowId === signals.schemaRowId.value) continue;
+                  const rowCellId = reader.child(rowId).childIds()[colIdx];
+                  if (rowCellId) t.setLabel(rowCellId, text);
+                }
+              });
+            },
           });
 
           return col;
@@ -345,6 +356,7 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
     bindItemFrame(ctx, { core, location: { item: rowId, portals } }, row);
 
     const headerCell = el("div", "ui-table-cell ui-table-first");
+    headerCell.dataset.drag = "reorder";
     row.append(headerCell);
     mountHeader(ctx, {
       core,
@@ -396,6 +408,23 @@ export const tableView = defineShapedView(
       colCount: colCountSignal,
     };
 
+    const schemaCell = (cellId: ItemId): ItemId | null => {
+      const rowId = core.locate(cellId)?.parentId;
+      if (!rowId) return null;
+      const colIdx = cellColIdx(tableReader.child(rowId), cellId);
+      return tableReader.child(signals.schemaRowId.value).childIds()[colIdx] ?? null;
+    };
+
+    const focusSchemaLabel = (cellId: ItemId): boolean => {
+      const target = schemaCell(cellId);
+      if (!target) return false;
+      core.focus(
+        { type: "editing", location: { item: target, portals: rootPortals }, target: LABEL_TARGET },
+        { caret: "end" },
+      );
+      return true;
+    };
+
     const onIntent = (intent: Intent): void => {
       const selection = core.selection();
 
@@ -418,6 +447,13 @@ export const tableView = defineShapedView(
             return;
           }
           core.focus({ type: "item", location: selection.location });
+          return;
+        }
+        if (intent.type === "EDIT_LABEL") {
+          const rows = signals.rows.value;
+          if (isCellValueSel(core, tableReader, tableId, rows, selection)) {
+            focusSchemaLabel(selection.location.item);
+          }
           return;
         }
         return;
@@ -482,6 +518,13 @@ export const tableView = defineShapedView(
               location: { item: newId, portals: rootPortals },
             });
             return;
+          }
+          return;
+        }
+        case "EDIT_LABEL": {
+          const rows = signals.rows.value;
+          if (isCellSel(core, tableReader, tableId, rows, selection)) {
+            focusSchemaLabel(selection.anchor.item);
           }
           return;
         }

@@ -125,7 +125,6 @@ export type TransactionMeta = {
   source?: "user" | "remote" | "rule" | "undo" | "redo" | string;
   origin?: string;
   seq?: number;
-  expanded?: true;
 };
 
 export type Transaction = {

@@ -1,5 +1,5 @@
 import type { Intent, ItemId, Location } from "../../core";
-import { CONTENT_TEXT_TARGET } from "../../core";
+import { CONTENT_TEXT_TARGET, LABEL_TARGET } from "../../core";
 import type { UiCore } from "../../dom";
 
 import {
@@ -94,7 +94,7 @@ export function createOutlineIntentHandler(args: {
     const selection = core.selection();
     if (
       selection.type !== "item" &&
-      !(selection.type === "editing" && intent.type === "INSERT")
+      !(selection.type === "editing" && (intent.type === "INSERT" || intent.type === "EDIT_LABEL"))
     ) {
       return;
     }
@@ -186,6 +186,13 @@ export function createOutlineIntentHandler(args: {
         if (focusFirstChildIfAny(core, location)) {
           return;
         }
+        return;
+      }
+      case "EDIT_LABEL": {
+        core.focus(
+          { type: "editing", location, target: LABEL_TARGET },
+          { caret: "end" },
+        );
         return;
       }
       case "INSERT": {

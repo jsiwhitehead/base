@@ -75,6 +75,9 @@ export function createUiCoreRuntime(args?: {
     handleIntent(selection, intent) {
       runtime?.handleIntent(selection, intent);
     },
+    hasTarget(location, target) {
+      return runtime?.hasTarget(location, target) ?? false;
+    },
   };
 
   const { core: pureCore, rootId } = createCore({

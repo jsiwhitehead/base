@@ -223,6 +223,7 @@ type CorePlatformHooks = {
   onSelectionChange?: (selection: Selection, caret?: CaretPlacement) => void;
   readCurrentCaret?: () => number | undefined;
   handleIntent?: (selection: Selection, intent: Intent) => void;
+  hasTarget?: (location: Location, target: string) => boolean;
 };
 
 export type { CorePlatformHooks };
@@ -421,10 +422,11 @@ export function createCore(opts: CreateCoreOptions): {
 
     if (intent.type === "EDIT_LABEL") {
       if (!location) return;
-      focus(
-        { type: "editing", location, target: LABEL_TARGET },
-        { caret: "end" },
-      );
+      if (opts.platform?.hasTarget?.(location, LABEL_TARGET) ?? true) {
+        focus({ type: "editing", location, target: LABEL_TARGET }, { caret: "end" });
+      } else {
+        opts.platform?.handleIntent?.(sel, intent);
+      }
       return;
     }
 

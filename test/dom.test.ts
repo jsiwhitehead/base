@@ -23,6 +23,7 @@ import { buildToolbar } from "../src/toolbar";
 import { viewRegistrations } from "../src/views";
 
 import {
+  childrenOf,
   dispatchKey,
   flushDomEffects,
   makeCoreRuntime,
@@ -633,21 +634,25 @@ describe("bindItemFrame contract", () => {
     unmount();
   });
 
-  test("pointerdown on frame shell does not force item focus while CE selection is active", async () => {
+  test("pointerdown on frame shell preserves CE selection ownership and does not bubble to parent", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
     const location: Location = { item: id, portals: [] };
+    const parentSaw = spy();
 
     const c = createComponent(core, (ctx) => {
+      const host = el("div");
       const frame = el("div");
       const value = el("span");
       value.dataset.target = CONTENT_TEXT_TARGET;
       value.contentEditable = "true";
       value.textContent = "hello";
       frame.append(value);
+      host.append(frame);
+      host.addEventListener("pointerdown", () => parentSaw.fn());
       bindItemFrame(ctx, { core, location }, frame);
-      return frame;
+      return host;
     });
 
     const unmount = mount(c);
@@ -672,7 +677,7 @@ describe("bindItemFrame contract", () => {
     sel.removeAllRanges();
     sel.addRange(range);
 
-    const frame = c.el as HTMLElement;
+    const frame = c.el.querySelector(".ui-frame") as HTMLElement;
     pointerDown(frame);
     await flushDomEffects();
 
@@ -680,6 +685,7 @@ describe("bindItemFrame contract", () => {
     expect(selection.type).toBe("item");
     if (selection.type !== "item") throw new Error("Expected item selection");
     expect(selection.head.item).toBe(other);
+    expect(parentSaw.count()).toBe(0);
 
     unmount();
   });
@@ -964,6 +970,66 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     expect(selection.target).toBe(LABEL_TARGET);
     expect(labelInp.selectionStart).toBe(labelInp.value.length);
     expect(labelInp.selectionEnd).toBe(labelInp.value.length);
+
+    unmount();
+  });
+
+  test("global Cmd+. falls back to the active view when the current item has no label target", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const row1 = mkGroup(core, tableId, { label: "r1" });
+    const row2 = mkGroup(core, tableId, { label: "r2" });
+
+    mkBlank(core, row1, { label: "name", value: "alice" });
+    mkBlank(core, row1, { label: "score", value: 1 });
+    const cell = childrenOf(core, row2)[1]!;
+    const schemaRow = childrenOf(core, tableId)[0]!;
+    const schemaCell = childrenOf(core, schemaRow)[1]!;
+
+    core.commit((t) => t.setValue(cell, 2));
+
+    const mounted = core.mountView({
+      id: tableId,
+      portals: [],
+      view: "table",
+    });
+    const unmount = mount(mounted);
+    await flushDomEffects();
+
+    core.focus(
+      {
+        type: "editing",
+        location: { item: cell, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: "end" },
+    );
+    await flushDomEffects();
+
+    const active = document.activeElement as HTMLElement | null;
+    expect(active).toBeTruthy();
+    if (!active) throw new Error("Expected active element");
+
+    const editLabel = dispatchKey(active, ".", { metaKey: true });
+    expect(editLabel.defaultPrevented).toBe(true);
+
+    await flushDomEffects();
+    await flushDomEffects();
+
+    const selection = core.selection();
+    expect(selection.type).toBe("editing");
+    if (selection.type !== "editing") throw new Error("Expected editing");
+    expect(selection.location).toEqual({ item: schemaCell, portals: [] });
+    expect(selection.target).toBe(LABEL_TARGET);
+
+    const labelInp = document.activeElement as HTMLInputElement | null;
+    expect(labelInp?.dataset.target).toBe(LABEL_TARGET);
+    expect(labelInp?.value).toBe("score");
+    expect(labelInp?.selectionStart).toBe(labelInp?.value.length);
+    expect(labelInp?.selectionEnd).toBe(labelInp?.value.length);
 
     unmount();
   });

@@ -54,7 +54,7 @@ type TextHistoryGroupKey = {
 };
 type HistorySelectionSnapshot = { selection: Selection; caret?: number };
 type UndoHistoryEntry = {
-  user: Transaction;
+  forward: Transaction;
   inverse: Transaction;
   before: HistorySelectionSnapshot;
   groupedAt: number;
@@ -78,15 +78,20 @@ type ApplyLocalOptions = {
   startNextId?: EntryId;
   nextIdAfterCommit?: EntryId;
 };
-type PipelineCapture = {
+type RawApplyCapture = {
   undoOps: Op[];
-  historyForwardOps: Op[];
   userUndoOps: Op[] | null;
+  forwardOps: Op[];
 };
 type ApplyLocalResult = {
-  historyForward: Transaction;
+  forward: Transaction;
   freshUndo: Transaction;
   userUndoOps: Op[];
+};
+type ShapeRuleApplyResult = {
+  delta: ApplyDelta;
+  undoOps: Op[];
+  forwardOps: Op[];
 };
 type CommitPlanner = {
   tx: Tx;
@@ -205,23 +210,37 @@ export function createCommitController(
     touched: Array.from(new Set([...a.touched, ...b.touched])),
   });
 
+  const rollbackOps = (undoOps: readonly Op[]): void => {
+    if (!undoOps.length) return;
+    try {
+      currentModel.apply(
+        currentModel.ops.transaction(undoOps, { source: "undo" }),
+      );
+    } catch {}
+  };
+
   const applyShapeRuleOps = (
     touchedIds: readonly EntryId[],
-    undoSegments: Op[][],
-    historyForwardOps?: Op[],
-  ): ApplyDelta => {
+  ): ShapeRuleApplyResult => {
     let merged = emptyApply;
+    let undoOps: Op[] = [];
+    const forwardOps: Op[] = [];
 
     const model = currentModel;
-    enforceViewShapes(model, opts.shapes, touchedIds, (shapeOps) => {
-      const txn = model.ops.transaction(shapeOps, { source: "rule" });
-      const result = model.apply(txn);
-      undoSegments.unshift([...result.undoOps]);
-      historyForwardOps?.push(...txn.ops);
-      merged = mergeApply(merged, result.delta);
-    });
+    try {
+      enforceViewShapes(model, opts.shapes, touchedIds, (shapeOps) => {
+        const txn = model.ops.transaction(shapeOps, { source: "rule" });
+        const result = model.apply(txn);
+        undoOps = [...result.undoOps, ...undoOps];
+        forwardOps.push(...txn.ops);
+        merged = mergeApply(merged, result.delta);
+      });
+    } catch (err) {
+      rollbackOps(undoOps);
+      throw err;
+    }
 
-    return merged;
+    return { delta: merged, undoOps, forwardOps };
   };
 
   const coerceEditingIfViewChanged = (txn: Transaction): void => {
@@ -333,9 +352,9 @@ export function createCommitController(
     prev: UndoHistoryEntry,
     next: UndoHistoryEntry,
   ): UndoHistoryEntry => ({
-    user: {
-      ops: [...prev.user.ops, ...next.user.ops],
-      ...(next.user.meta ? { meta: next.user.meta } : {}),
+    forward: {
+      ops: [...prev.forward.ops, ...next.forward.ops],
+      ...(next.forward.meta ? { meta: next.forward.meta } : {}),
     },
     inverse: {
       ops: [...next.inverse.ops, ...prev.inverse.ops],
@@ -359,93 +378,86 @@ export function createCommitController(
     ];
   };
 
-  const applyRemotePipeline = (
+  const applyExactTransaction = (
     txn: Transaction,
-    undoSegments: Op[][],
-  ): ApplyDelta => {
-    const modelResult = currentModel.apply(txn);
-    undoSegments.unshift([...modelResult.undoOps]);
-
-    const shapeRuleDelta = applyShapeRuleOps(
-      modelResult.delta.touched,
-      undoSegments,
-    );
-    const delta = mergeApply(modelResult.delta, shapeRuleDelta);
-
-    normalizeSelectionAfterApply(txn, { type: "remote" });
-
-    return delta;
+  ): { delta: ApplyDelta; undoOps: Op[] } => {
+    const result = currentModel.apply(txn);
+    return { delta: result.delta, undoOps: [...result.undoOps] };
   };
 
-  const applyLocalPipeline = (
+  const applyExactLocal = (
     txn: Transaction,
-    undoSegments: Op[][],
-    historyForwardOps: Op[],
-  ): { delta: ApplyDelta; userUndoOps: Op[] } => {
+  ): { freshUndo: Transaction } => {
     const anchor = opts.captureRepairAnchor();
-
-    const userResult = currentModel.apply(txn);
-    const userUndoOps = [...userResult.undoOps];
-    historyForwardOps.push(...txn.ops);
-    undoSegments.unshift(userUndoOps);
-
-    const shapeRuleDelta = applyShapeRuleOps(
-      userResult.delta.touched,
-      undoSegments,
-      historyForwardOps,
-    );
-    const delta = mergeApply(userResult.delta, shapeRuleDelta);
-
-    normalizeSelectionAfterApply(txn, { type: "local", anchor });
-
-    return { delta, userUndoOps };
-  };
-
-  const rollbackUndoSegments = (undoSegments: readonly Op[][]): void => {
-    const rollbackUndoOps = undoSegments.flat();
-    if (!rollbackUndoOps.length) return;
-    try {
-      currentModel.apply(
-        currentModel.ops.transaction(rollbackUndoOps, { source: "undo" }),
-      );
-    } catch {}
-  };
-
-  const applyLocalTxn = (txn: Transaction): PipelineCapture => {
     let delta = emptyApply;
-    const undoSegments: Op[][] = [];
-    const historyForwardOps: Op[] = [];
-    let userUndoOps: Op[] | null = null;
+    let undoOps: Op[] = [];
 
     try {
       batch(() => {
-        const localApplied = applyLocalPipeline(
-          txn,
-          undoSegments,
-          historyForwardOps,
-        );
-        userUndoOps = localApplied.userUndoOps;
-        delta = localApplied.delta;
+        const applied = applyExactTransaction(txn);
+        delta = applied.delta;
+        undoOps = applied.undoOps;
+        normalizeSelectionAfterApply(txn, { type: "local", anchor });
         opts.clearCachesForRemovedEntries(delta.removed);
       });
     } catch (err) {
-      rollbackUndoSegments(undoSegments);
+      rollbackOps(undoOps);
       throw err;
     }
-    const undoOps = undoSegments.flat();
-    return { undoOps, historyForwardOps, userUndoOps };
+
+    return {
+      freshUndo: currentModel.ops.transaction(undoOps, { source: "undo" }),
+    };
   };
 
-  const applyRemoteTxn = (txn: Transaction): void => {
-    let final = emptyApply;
-    const undoSegments: Op[][] = [];
+  const applyRawLocal = (txn: Transaction): RawApplyCapture => {
+    const anchor = opts.captureRepairAnchor();
+    let delta = emptyApply;
+    let undoOps: Op[] = [];
+    let userUndoOps: Op[] | null = null;
+    let forwardOps: Op[] = [];
+
     try {
       batch(() => {
-        final = mergeApply(final, applyRemotePipeline(txn, undoSegments));
-        opts.clearCachesForRemovedEntries(final.removed);
+        const userApplied = applyExactTransaction(txn);
+        userUndoOps = userApplied.undoOps;
+        undoOps = userApplied.undoOps;
+        forwardOps = [...txn.ops];
+
+        const shapeRules = applyShapeRuleOps(userApplied.delta.touched);
+        delta = mergeApply(userApplied.delta, shapeRules.delta);
+        undoOps = [...shapeRules.undoOps, ...userApplied.undoOps];
+        forwardOps.push(...shapeRules.forwardOps);
+
+        normalizeSelectionAfterApply(txn, { type: "local", anchor });
+        opts.clearCachesForRemovedEntries(delta.removed);
       });
     } catch (err) {
-      rollbackUndoSegments(undoSegments);
+      rollbackOps(undoOps);
+      throw err;
+    }
+
+    return { undoOps, userUndoOps, forwardOps };
+  };
+
+  const applyRawRemote = (txn: Transaction): void => {
+    let undoOps: Op[] = [];
+    let delta = emptyApply;
+
+    try {
+      batch(() => {
+        const userApplied = applyExactTransaction(txn);
+        undoOps = userApplied.undoOps;
+
+        const shapeRules = applyShapeRuleOps(userApplied.delta.touched);
+        delta = mergeApply(userApplied.delta, shapeRules.delta);
+        undoOps = [...shapeRules.undoOps, ...userApplied.undoOps];
+
+        normalizeSelectionAfterApply(txn, { type: "remote" });
+        opts.clearCachesForRemovedEntries(delta.removed);
+      });
+    } catch (err) {
+      rollbackOps(undoOps);
       throw err;
     }
   };
@@ -479,15 +491,15 @@ export function createCommitController(
     const stagedNextId = startNextId != null && nextIdAfterCommit != null;
     if (stagedNextId) model.setNextId(nextIdAfterCommit);
 
-    let capture: PipelineCapture = {
+    let capture: RawApplyCapture = {
       undoOps: [],
-      historyForwardOps: [],
       userUndoOps: null,
+      forwardOps: [],
     };
 
     try {
       applyAtomically(() => {
-        capture = applyLocalTxn(stamped);
+        capture = applyRawLocal(stamped);
       });
     } catch (err) {
       if (stagedNextId) model.setNextId(startNextId);
@@ -501,14 +513,11 @@ export function createCommitController(
       opts.collab?.origin != null
         ? { ...(stamped.meta ?? {}), seq: ++localSeq }
         : (stamped.meta ?? {});
-    const historyForward = model.ops.transaction(
-      capture.historyForwardOps,
-      committedMeta,
-    );
+    const forward = model.ops.transaction(capture.forwardOps, committedMeta);
     const outbound = model.ops.transaction(stamped.ops, committedMeta);
     sendLocalTxn(outbound);
     return {
-      historyForward,
+      forward,
       freshUndo,
       userUndoOps: capture.userUndoOps ?? [],
     };
@@ -526,7 +535,7 @@ export function createCommitController(
     const meta = { ...(txn.meta ?? {}), source: "remote" as const };
     const model = currentModel;
     applyAtomically(() => {
-      applyRemoteTxn(model.ops.transaction(txn.ops, meta));
+      applyRawRemote(model.ops.transaction(txn.ops, meta));
     });
   };
 
@@ -685,13 +694,13 @@ export function createCommitController(
 
     const txn = currentModel.ops.transaction(planner.ops, { source: "user" });
     const nextIdAfterCommit = planner.getNextIdAfterCommit();
-    const { historyForward, freshUndo, userUndoOps } = applyLocal(txn, {
+    const { forward, freshUndo, userUndoOps } = applyLocal(txn, {
       ...(nextIdAfterCommit !== startNextId
         ? { startNextId, nextIdAfterCommit }
         : {}),
     });
     pushOrCoalesceUndoEntry({
-      user: historyForward,
+      forward,
       inverse: freshUndo,
       before: captureSelectionSnapshot(
         planner.userHistoryCtx.selection,
@@ -718,7 +727,7 @@ export function createCommitController(
       selBeforeUndo,
       caretBeforeUndo,
     );
-    const { freshUndo } = applyLocal(last.inverse);
+    const { freshUndo } = applyExactLocal(last.inverse);
     if (!patchesViewOnSelection(last.inverse, last.before)) {
       opts.restoreSelectionIfValid(last.before);
     }
@@ -734,10 +743,11 @@ export function createCommitController(
     const redone = redoStack.at(-1) ?? null;
     if (!redone) return;
 
-    const replay = currentModel.ops.transaction(redone.user.ops, {
+    const replay = currentModel.ops.transaction(redone.forward.ops, {
+      ...(redone.forward.meta ?? {}),
       source: "redo",
     });
-    const { historyForward, freshUndo } = applyLocal(replay);
+    const { freshUndo } = applyExactLocal(replay);
     if (!patchesViewOnSelection(replay, redone.redoSnapshot)) {
       opts.restoreSelectionIfValid(redone.redoSnapshot);
     }
@@ -745,7 +755,7 @@ export function createCommitController(
     undoHistory.value = [
       ...undoHistory.value,
       {
-        user: historyForward,
+        forward: replay,
         inverse: freshUndo,
         before: redone.before,
         groupedAt: redone.groupedAt,

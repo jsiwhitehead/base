@@ -20,6 +20,16 @@ function seedDemo(app: App): void {
     return id;
   };
 
+  const mkGroup = (parentId: ItemId, label: string): ItemId => {
+    let id: ItemId = "";
+    core.commit((t) => {
+      id = t.insertChild(parentId);
+      t.setLabel(id, label);
+      t.setGroup(id);
+    });
+    return id;
+  };
+
   const mkFormula = (parentId: ItemId, label: string, expr: string): ItemId => {
     let id: ItemId = "";
     core.commit((t) => {
@@ -49,18 +59,16 @@ function seedDemo(app: App): void {
     return id;
   };
 
-  // mkValue(rootId, "x", 10);
-  // mkValue(rootId, "y", 2);
   mkValue(rootId, "", "hello");
   mkValue(rootId, "", "world");
-  // const table = mkGroup(rootId, "table");
-  // const row1 = mkGroup(table, "r1");
-  // mkValue(row1, "item", "Apples");
-  // mkValue(row1, "qty", 3);
-  // const row2 = mkGroup(table, "r2");
-  // mkValue(row2, "item", "Oranges");
-  // mkValue(row2, "qty", 5);
-  // core.commit((t) => t.setView(table, "table"));
+  const table = mkGroup(rootId, "table");
+  const row1 = mkGroup(table, "r1");
+  mkValue(row1, "item", "Apples");
+  mkValue(row1, "qty", 3);
+  const row2 = mkGroup(table, "r2");
+  mkValue(row2, "item", "Oranges");
+  mkValue(row2, "qty", 5);
+  core.commit((t) => t.setView(table, "table"));
 
   void mkFormula;
   void mkQuery;
