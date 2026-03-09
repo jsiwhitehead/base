@@ -1,8 +1,16 @@
+import { effect, signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
-import type { ItemId } from "../src/core";
+import type { ItemId, Selection } from "../src/core";
 import { CONTENT_TEXT_TARGET, contentTarget } from "../src/core";
-import { createDragController, type UiCore } from "../src/dom";
+import {
+  createDragController,
+  createSuppressionFlag,
+  type Ctx,
+  type UiCore,
+} from "../src/dom";
+import { createOutlineInputRuntime } from "../src/views/outline/runtime-input";
+import { bindOutlineSelectionCleanupEffect } from "../src/views/outline/runtime-selection";
 import {
   childrenOf,
   dispatchKey,
@@ -22,6 +30,7 @@ import {
   requireFrameEl,
   requireTargetInput,
   setFormula,
+  setQuery,
   setView,
   snapshotEl,
   valueOfId,
@@ -936,6 +945,77 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
+  test("ArrowRight from outline content:text lands on connected item stop, not conn field", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "ab" });
+    const formula = mkBlank(core, rootId, { label: "f", value: "x" });
+    const b = mkBlank(core, rootId, { label: "b", value: "cd" });
+    setFormula(core, formula, "1+2");
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const outlineRoot = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 2);
+
+    dispatchKey(outlineRoot, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { item: formula, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { item: b, portals: [] });
+
+    core.dispatch({ type: "CONFIRM" });
+    await flushDomEffects();
+    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("query parent is an item stop even when it exposes child leaves", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const rows = mkGroup(core, rootId, { label: "rows" });
+    mkBlank(core, rows, { label: "r1", value: "one" });
+    mkBlank(core, rows, { label: "r2", value: "two" });
+    const a = mkBlank(core, rootId, { label: "a", value: "ab" });
+    const query = mkBlank(core, rootId, { label: "q", value: "x" });
+    setQuery(core, query, { from: "rows" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 2 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const outlineRoot = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 2);
+
+    dispatchKey(outlineRoot, "ArrowRight");
+    await flushDomEffects();
+    expectSel(core, { item: query, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, query), "ArrowRight");
+    await flushDomEffects();
+    const sel = core.selection();
+    expect(sel.type).toBe("item");
+    if (sel.type !== "item") throw new Error("Expected item selection");
+    const firstChild = childrenOf(core, query)[0];
+    if (!firstChild) throw new Error("Expected query child");
+    expect(sel.head.item).toBe(firstChild);
+
+    unmount();
+  });
+
   test("Tab/Shift+Tab keydown uses in-place body transforms", async () => {
     const { core, rootId } = makeCoreRuntime();
     const g = mkGroup(core, rootId, { label: "g" });
@@ -1036,6 +1116,93 @@ describe("outline/item-intents", () => {
     expect(domSel?.rangeCount ?? 0).toBe(0);
 
     unmount();
+  });
+
+  test("Tab keydown resets sticky caret before applying the body transform", () => {
+    const { core, rootId } = makeCoreRuntime();
+    const item = mkBlank(core, rootId, { label: "x", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const root = document.createElement("div");
+    root.className = "ui-body ui-outline";
+    root.setAttribute("contenteditable", "true");
+    const itemEl = document.createElement("div");
+    itemEl.className = "ui-frame ui-outline-child";
+    itemEl.dataset.id = item;
+    const valueEl = document.createElement("span");
+    valueEl.className = "ui-outline-value";
+    valueEl.dataset.target = CONTENT_TEXT_TARGET;
+    valueEl.textContent = "hello";
+    itemEl.append(valueEl);
+    root.append(itemEl);
+    document.body.replaceChildren(root);
+    setContentEditableSelection(valueEl, 0);
+
+    let stickyResets = 0;
+    const onValueTabCalls: Array<
+      [{ item: ItemId; portals: readonly ItemId[] }, boolean, number]
+    > = [];
+    const runtime = createOutlineInputRuntime({
+      core,
+      rootId,
+      portals: [],
+      root,
+      stops: signal([]),
+      resetStickyCaretX: () => {
+        stickyResets += 1;
+      },
+      discardPendingMutationRecords: () => {},
+      suppressMutationSync: createSuppressionFlag(false),
+      suppressHistoryKeydown: createSuppressionFlag<"undo" | "redo" | null>(
+        null,
+      ),
+      selection: {
+        suppressSelectionSync: createSuppressionFlag(false),
+        clearValueRangeSelectedItems: () => {},
+        setValueSelectionRangeState: () => {},
+      },
+    });
+    const disposers: Array<() => void> = [];
+    const on: Ctx["on"] = (
+      target: EventTarget,
+      type: string,
+      handler: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) => {
+      target.addEventListener(type, handler as EventListener, options);
+      disposers.push(() => {
+        target.removeEventListener(type, handler as EventListener, options);
+      });
+    };
+    runtime.bind({
+      on,
+      getCompositionEndedAt: () => 0,
+      setCompositionEndedAt: () => {},
+      getStickyCaretX: () => 45,
+      setStickyCaretX: () => {},
+      resetStickyCaretX: () => {
+        stickyResets += 1;
+      },
+      onValueTab: (location, shift, caret) => {
+        onValueTabCalls.push([location, shift, caret]);
+      },
+      setIsComposing: () => {},
+    });
+
+    const ev = dispatchKey(valueEl, "Tab");
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(stickyResets).toBe(1);
+    expect(onValueTabCalls).toEqual([[{ item, portals: [] }, false, 0]]);
+
+    for (const dispose of disposers) dispose();
   });
 });
 
@@ -2283,6 +2450,87 @@ describe("outline/selection-cursor", () => {
     unmount();
   });
 
+  test("selection cleanup clears sticky caret when selection leaves content:text", () => {
+    const item = "a" as ItemId;
+    const selection = signal<Selection>({
+      type: "editing",
+      location: { item, portals: [] },
+      target: CONTENT_TEXT_TARGET,
+    });
+    const valueSelectionCollapsed = signal(true);
+    let stickyClears = 0;
+    let rangeClears = 0;
+    const disposers: Array<() => void> = [];
+
+    bindOutlineSelectionCleanupEffect({
+      effect: (fn) => {
+        disposers.push(effect(fn));
+      },
+      core: { selection: () => selection.value } as UiCore,
+      valueSelectionCollapsed,
+      resetStickyCaretX: () => {
+        stickyClears += 1;
+      },
+      clearValueRangeSelectedItems: () => {
+        rangeClears += 1;
+      },
+    });
+
+    stickyClears = 0;
+    rangeClears = 0;
+    selection.value = {
+      type: "item",
+      anchor: { item, portals: [] },
+      head: { item, portals: [] },
+    };
+
+    expect(stickyClears).toBe(1);
+    expect(rangeClears).toBe(1);
+
+    for (const dispose of disposers) dispose();
+  });
+
+  test("selection cleanup clears sticky caret for non-collapsed content:text selection", () => {
+    const item = "a" as ItemId;
+    const selection = signal<Selection>({
+      type: "editing",
+      location: { item, portals: [] },
+      target: CONTENT_TEXT_TARGET,
+    });
+    const valueSelectionCollapsed = signal(true);
+    let stickyClears = 0;
+    let rangeClears = 0;
+    const disposers: Array<() => void> = [];
+
+    bindOutlineSelectionCleanupEffect({
+      effect: (fn) => {
+        disposers.push(effect(fn));
+      },
+      core: { selection: () => selection.value } as UiCore,
+      valueSelectionCollapsed,
+      resetStickyCaretX: () => {
+        stickyClears += 1;
+      },
+      clearValueRangeSelectedItems: () => {
+        rangeClears += 1;
+      },
+    });
+
+    stickyClears = 0;
+    rangeClears = 0;
+    valueSelectionCollapsed.value = false;
+
+    expect(stickyClears).toBe(1);
+    expect(rangeClears).toBe(0);
+
+    valueSelectionCollapsed.value = true;
+
+    expect(stickyClears).toBe(1);
+    expect(rangeClears).toBe(1);
+
+    for (const dispose of disposers) dispose();
+  });
+
   test("ArrowLeft at start of first value stays editing with caret preserved", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
@@ -2760,6 +3008,135 @@ describe("outline/block-selection", () => {
 });
 
 describe("outline/vertical-navigation", () => {
+  test("ArrowUp from content:text lands on connected item stop and then continues structurally", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const top = mkBlank(core, rootId, { label: "top", value: "zz" });
+    const formula = mkBlank(core, rootId, { label: "f", value: "x" });
+    const a = mkBlank(core, rootId, { label: "a", value: "a\nb" });
+    setFormula(core, formula, "1+2");
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 0);
+
+    dispatchKey(root, "ArrowUp");
+    await flushDomEffects();
+
+    expectSel(core, { item: formula, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowDown");
+    await flushDomEffects();
+
+    expectSel(core, { item: a, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, a), "ArrowUp");
+    await flushDomEffects();
+
+    expectSel(core, { item: formula, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowUp");
+    await flushDomEffects();
+
+    expectSel(core, { item: top, portals: [] });
+
+    unmount();
+  });
+
+  test("ArrowUp from content:text lands on embedded item stop and then continues structurally", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const slider = mkBlank(core, rootId, { label: "s", value: 5 });
+    const a = mkBlank(core, rootId, { label: "a", value: "a\nb" });
+    const top = mkBlank(core, rootId, { label: "top", value: "zz" });
+    setView(core, slider, "slider");
+    core.commit((tx) => {
+      tx.move(top, rootId, { at: 0 });
+      tx.move(slider, rootId, { at: 1 });
+      tx.move(a, rootId, { at: 2 });
+    });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 0);
+
+    dispatchKey(root, "ArrowUp");
+    await flushDomEffects();
+
+    expectSel(core, { item: slider, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowDown");
+    await flushDomEffects();
+
+    expectSel(core, { item: a, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, a), "ArrowUp");
+    await flushDomEffects();
+
+    expectSel(core, { item: slider, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowUp");
+    await flushDomEffects();
+
+    expectSel(core, { item: top, portals: [] });
+
+    unmount();
+  });
+
+  test("ArrowDown from connected item stop lands on the following plain value row", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const formula = mkBlank(core, rootId, { label: "f", value: "x" });
+    const a = mkBlank(core, rootId, { label: "a", value: "a\nb" });
+    setFormula(core, formula, "1+2");
+    core.focus({ type: "item", location: { item: formula, portals: [] } });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowDown");
+    await flushDomEffects();
+
+    expectSel(core, { item: a, portals: [] });
+
+    unmount();
+  });
+
+  test("ArrowDown from embedded item stop lands on the following plain value row", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const top = mkBlank(core, rootId, { label: "top", value: "zz" });
+    const slider = mkBlank(core, rootId, { label: "s", value: 5 });
+    const a = mkBlank(core, rootId, { label: "a", value: "a\nb" });
+    setView(core, slider, "slider");
+    core.commit((tx) => {
+      tx.move(top, rootId, { at: 0 });
+      tx.move(slider, rootId, { at: 1 });
+      tx.move(a, rootId, { at: 2 });
+    });
+    core.focus({ type: "item", location: { item: slider, portals: [] } });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowDown");
+    await flushDomEffects();
+
+    expectSel(core, { item: a, portals: [] });
+
+    unmount();
+  });
+
   test("ArrowUp/ArrowDown with non-collapsed contenteditable selection are left to native behavior", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
@@ -2793,6 +3170,37 @@ describe("outline/vertical-navigation", () => {
     unmount();
   });
 
+  test("vertical mixed-stop traversal works the same inside nested groups", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const group = mkGroup(core, rootId, { label: "g" });
+    const top = mkBlank(core, group, { label: "top", value: "zz" });
+    const formula = mkBlank(core, group, { label: "f", value: "x" });
+    const a = mkBlank(core, group, { label: "a", value: "a\nb" });
+    setFormula(core, formula, "1+2");
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    setContentEditableSelection(requireOutlineValueEl(document.body, a), 0);
+
+    dispatchKey(root, "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { item: formula, portals: [] });
+
+    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowUp");
+    await flushDomEffects();
+    expectSel(core, { item: top, portals: [] });
+
+    unmount();
+  });
+
   test("vertical navigation does not interfere with block Shift+Arrow selection extension", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
@@ -2817,6 +3225,46 @@ describe("outline/vertical-navigation", () => {
     });
 
     unmount();
+  });
+
+  test("applyEditingResult resets sticky caret while navigation application preserves it", () => {
+    const { core, rootId } = makeCoreRuntime();
+    const item = mkBlank(core, rootId, { label: "x", value: "hello" });
+    let stickyResets = 0;
+    const runtime = createOutlineInputRuntime({
+      core,
+      rootId,
+      portals: [],
+      root: document.createElement("div"),
+      stops: signal([]),
+      resetStickyCaretX: () => {
+        stickyResets += 1;
+      },
+      discardPendingMutationRecords: () => {},
+      suppressMutationSync: createSuppressionFlag(false),
+      suppressHistoryKeydown: createSuppressionFlag<"undo" | "redo" | null>(
+        null,
+      ),
+      selection: {
+        suppressSelectionSync: createSuppressionFlag(false),
+        clearValueRangeSelectedItems: () => {},
+        setValueSelectionRangeState: () => {},
+      },
+    });
+
+    runtime.applyNavigationEditingResult({
+      location: { item, portals: [] },
+      target: CONTENT_TEXT_TARGET,
+      caret: 1,
+    });
+    expect(stickyResets).toBe(0);
+
+    runtime.applyEditingResult({
+      location: { item, portals: [] },
+      target: CONTENT_TEXT_TARGET,
+      caret: 0,
+    });
+    expect(stickyResets).toBe(1);
   });
 });
 
@@ -2866,29 +3314,160 @@ describe("outline/header-embedded", () => {
     unmount();
   });
 
-  test("conn header Tab does not trigger outline nesting", async () => {
+  test("conn header Tab commits and cycles through connection fields", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const a = mkBlank(core, rootId, { label: "calc", value: "x" });
-    setFormula(core, a, "1+2");
+    const a = mkBlank(core, rootId, { label: "query", value: "x" });
+    setQuery(core, a, { from: "rows", where: "ok", orderBy: "label" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const beforeKids = [...childrenOf(core, rootId)];
     const itemEl = requireOutlineItemEl(document.body, a);
-    const exprInput = requireTargetInput(itemEl, "conn:expr");
-    pointerDown(exprInput);
-    exprInput.focus();
+    const fromInput = requireTargetInput(itemEl, "conn:from");
+    pointerDown(fromInput);
+    fromInput.focus();
     await flushDomEffects();
 
-    dispatchKey(exprInput, "Tab");
+    fromInput.value = "next-rows";
+    fromInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await flushDomEffects();
 
-    expect(childrenOf(core, rootId)).toEqual(beforeKids);
+    const tab = dispatchKey(fromInput, "Tab");
+    await flushDomEffects();
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(core.selection().type).toBe("editing");
+    const sel = core.selection();
+    if (sel.type !== "editing") throw new Error("Expected editing selection");
+    expect(sel.location.item).toBe(a);
+    expect(sel.target).toBe("conn:where");
+    const connected = core.item(a);
+    expect(connected.mode.type).toBe("connected");
+    if (connected.mode.type !== "connected")
+      throw new Error("Expected connected mode");
+    expect(connected.mode.conn.type).toBe("query");
+    if (connected.mode.conn.type !== "query")
+      throw new Error("Expected query conn");
+    expect(connected.mode.conn.from).toBe("next-rows");
+
+    unmount();
+  });
+
+  test("conn header Tab at the last field commits and no-ops", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "query", value: "x" });
+    setQuery(core, a, { from: "rows", where: "", orderBy: "old" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const itemEl = requireOutlineItemEl(document.body, a);
+    const orderByInput = requireTargetInput(itemEl, "conn:orderBy");
+    pointerDown(orderByInput);
+    orderByInput.focus();
+    await flushDomEffects();
+
+    orderByInput.value = "new-order";
+    orderByInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await flushDomEffects();
+
+    const tab = dispatchKey(orderByInput, "Tab");
+    await flushDomEffects();
+
+    expect(tab.defaultPrevented).toBe(true);
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
     expect(sel.location.item).toBe(a);
-    expect(sel.target.startsWith("conn:")).toBe(true);
+    expect(sel.target).toBe("conn:orderBy");
+    const connected = core.item(a);
+    expect(connected.mode.type).toBe("connected");
+    if (connected.mode.type !== "connected")
+      throw new Error("Expected connected mode");
+    expect(connected.mode.conn.type).toBe("query");
+    if (connected.mode.conn.type !== "query")
+      throw new Error("Expected query conn");
+    expect(connected.mode.conn.orderBy).toBe("new-order");
+
+    unmount();
+  });
+
+  test("label Enter commits and exits to same-item item selection", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "name", value: "x" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const itemEl = requireOutlineItemEl(document.body, a);
+    const labelInput = requireTargetInput(itemEl, "label");
+    pointerDown(labelInput);
+    labelInput.focus();
+    await flushDomEffects();
+
+    labelInput.value = "renamed";
+    labelInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await flushDomEffects();
+
+    const enter = dispatchKey(labelInput, "Enter");
+    await flushDomEffects();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expectSel(core, { item: a, portals: [] });
+    expect(core.item(a).label).toBe("renamed");
+
+    unmount();
+  });
+
+  test("label Escape cancels and exits to same-item item selection", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "name", value: "x" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const itemEl = requireOutlineItemEl(document.body, a);
+    const labelInput = requireTargetInput(itemEl, "label");
+    pointerDown(labelInput);
+    labelInput.focus();
+    await flushDomEffects();
+
+    labelInput.value = "discarded";
+    labelInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await flushDomEffects();
+
+    const escape = dispatchKey(labelInput, "Escape");
+    await flushDomEffects();
+
+    expect(escape.defaultPrevented).toBe(true);
+    expectSel(core, { item: a, portals: [] });
+    expect(core.item(a).label).toBe("name");
+
+    unmount();
+  });
+
+  test("label Tab commits and no-ops in place", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "name", value: "x" });
+
+    const { unmount } = await mountOutline(core, rootId);
+
+    const itemEl = requireOutlineItemEl(document.body, a);
+    const labelInput = requireTargetInput(itemEl, "label");
+    pointerDown(labelInput);
+    labelInput.focus();
+    await flushDomEffects();
+
+    labelInput.value = "tabbed";
+    labelInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await flushDomEffects();
+
+    const tab = dispatchKey(labelInput, "Tab");
+    await flushDomEffects();
+
+    expect(tab.defaultPrevented).toBe(true);
+    const sel = core.selection();
+    expect(sel.type).toBe("editing");
+    if (sel.type !== "editing") throw new Error("Expected editing selection");
+    expect(sel.location.item).toBe(a);
+    expect(sel.target).toBe("label");
+    expect(core.item(a).label).toBe("tabbed");
 
     unmount();
   });

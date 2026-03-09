@@ -11,11 +11,11 @@ import {
 
 export type ModelPosition = { itemId: ItemId; offset: number };
 
-export type NavPoint =
+export type OutlineStop =
   | { type: "editing"; location: Location; target: string }
   | { type: "item"; location: Location };
 
-type NavMove = { point: NavPoint; edge: "start" | "end" | null };
+export type StopMove = { stop: OutlineStop; edge: "start" | "end" | null };
 
 export function valueToText(v: ValueOrBlank): string {
   return v == null ? "" : String(v);
@@ -134,45 +134,42 @@ export function extendBlockSelectionByArrow(
     : (locations[headIdx + 1] ?? null);
 }
 
-function isEditLeaf(core: Core, id: ItemId): boolean {
-  if (core.view(id) !== "outline") return true;
-  return core.item(id).content.type !== "group";
+function stopForItem(
+  core: Core,
+  location: Location,
+  item: Item,
+): OutlineStop | null {
+  if (core.view(location.item) !== "outline") {
+    return { type: "item", location };
+  }
+  if (item.mode.type === "connected") {
+    return { type: "item", location };
+  }
+  if (item.mode.type === "plain" && item.content.type === "value") {
+    return { type: "editing", location, target: CONTENT_TEXT_TARGET };
+  }
+  return null;
 }
 
-function editTargetsForItem(core: Core, id: ItemId): string[] {
-  const snap = core.item(id);
-  if (snap.mode.type === "readonly") return [];
-  if (snap.mode.type === "connected") {
-    return snap.mode.conn.type === "formula"
-      ? ["conn:expr"]
-      : ["conn:from", "conn:where", "conn:orderBy"];
-  }
-  if (snap.mode.type === "plain" && snap.content.type === "value") {
-    return [CONTENT_TEXT_TARGET];
-  }
-  return [];
-}
-
-export function collectNavPoints(
+export function collectStops(
   core: Core,
   rootId: ItemId,
   portals: readonly ItemId[],
-): NavPoint[] {
-  const out: NavPoint[] = [];
+): OutlineStop[] {
+  const out: OutlineStop[] = [];
   const walk = (id: ItemId): void => {
     const snap = core.item(id);
+    const location = { item: id, portals };
+    const stop = stopForItem(core, location, snap);
+
+    if (stop) {
+      out.push(stop);
+      return;
+    }
+
     if (core.view(id) === "outline" && snap.content.type === "group") {
       for (const childId of snap.content.children) walk(childId);
       return;
-    }
-    if (!isEditLeaf(core, id)) return;
-    const location = { item: id, portals };
-    if (core.view(id) !== "outline") {
-      out.push({ type: "item", location });
-      return;
-    }
-    for (const target of editTargetsForItem(core, id)) {
-      out.push({ type: "editing", location, target });
     }
   };
 
@@ -185,12 +182,12 @@ export function collectNavPoints(
   return out;
 }
 
-export function moveNavPoint(
-  points: readonly NavPoint[],
-  current: NavPoint,
+export function moveStop(
+  stops: readonly OutlineStop[],
+  current: OutlineStop,
   dir: "backward" | "forward",
-): NavMove | null {
-  const idx = points.findIndex(
+): StopMove | null {
+  const idx = stops.findIndex(
     (p) =>
       p.type === current.type &&
       sameLocation(p.location, current.location) &&
@@ -199,10 +196,10 @@ export function moveNavPoint(
         : true),
   );
   if (idx < 0) return null;
-  const next = points[dir === "backward" ? idx - 1 : idx + 1];
+  const next = stops[dir === "backward" ? idx - 1 : idx + 1];
   if (!next) return null;
-  if (next.type === "item") return { point: next, edge: null };
-  return { point: next, edge: dir === "backward" ? "end" : "start" };
+  if (next.type === "item") return { stop: next, edge: null };
+  return { stop: next, edge: dir === "backward" ? "end" : "start" };
 }
 
 export function textLengthForTarget(

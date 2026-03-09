@@ -334,6 +334,7 @@ Rules:
 - `core.focus` is the canonical selection write API.
 - Editing focus requires an explicit `target`.
 - `opts.caret` is valid only with editing focus, is forwarded ephemerally to `onSelectionChange`, and MUST NOT be stored in `Selection`.
+- `opts.caret` MAY be a numeric offset or `"end"`. Core MUST treat `"end"` as a focus hint and MUST NOT resolve it by reading target text directly.
 - Location validity is model-only: `location.item` MUST exist, and every `location.portals` entry MUST exist and be connected.
 - Item focus supports both explicit ranges (`anchor` + `head`) and collapsed shorthand (`location`, equivalent to `anchor=head=location`).
 - Item ranges remain valid while both endpoints are valid.
@@ -355,7 +356,7 @@ Rules:
 ```ts
 type CorePlatformHooks = {
   primaryContentTarget?: (location: Location) => string | null;
-  onSelectionChange?: (selection: Selection, caret?: number) => void;
+  onSelectionChange?: (selection: Selection, caret?: number | "end") => void;
   readCurrentCaret?: () => number | undefined;
   handleIntent?: (selection: Selection, intent: Intent) => void;
 };
@@ -367,6 +368,7 @@ Rules:
 - Platform callbacks MUST be optional so Core can run headless in tests/non-DOM contexts.
 - `primaryContentTarget` lets runtime/view registration expose the current primary body target for an item location.
 - `onSelectionChange` synchronizes platform focus from Core selection. For `core.focus(...)` with editing selection, it receives `opts.caret` as the second argument when provided. For non-editing selection, no caret is forwarded.
+- Platform/runtime code is responsible for resolving semantic caret hints such as `"end"` to a concrete DOM position.
 - `readCurrentCaret` allows runtime-owned surfaces to provide the current caret offset during local repair-anchor capture (`commit`, `undo`, `redo`, and in-pipeline local apply). This is mainly for live surfaces such as `contenteditable`. The value is optional and MUST NOT be stored in `Selection`.
 - `handleIntent` allows Core to delegate non-global intents to runtime-resolved mounted views.
 - Selection validity in Core MUST remain model-only and MUST NOT depend on runtime view/binding state.
@@ -499,19 +501,19 @@ Rules:
 
 ## Helper functions
 
-### `fieldsFromConn(conn)`
+### `primaryHeaderTargetForConn(conn)`
 
 ```ts
-fieldsFromConn(conn: Connected): { key: string; label: string; multiline: boolean; text: string }[]
+primaryHeaderTargetForConn(conn: Connected): string | null
 ```
 
-Returns the ordered list of editable fields for a connected item.
+Returns the fallback primary header target for a connected item.
 
 Rules:
 
-- For `formula`: returns one field with key `"expr"`.
-- For `query`: returns fields `"from"`, `"where"`, `"orderBy"` in that order.
-- Field order MUST be canonical and stable.
+- For `formula`: returns `conn:expr`.
+- For `query`: returns `conn:from`.
+- The result MUST be stable and MUST NOT encode full header render/order policy.
 
 ### `patchConn(conn, key, text)`
 
@@ -526,21 +528,6 @@ Rules:
 - For `formula`, only `key === "expr"` updates the object.
 - For `query`, recognized keys are `"from"`, `"where"`, and `"orderBy"`.
 - For unknown keys, returns the original object unchanged.
-
-### `getTextForTarget(core, id, target)`
-
-```ts
-getTextForTarget(core: Core, id: ItemId, target: string): string
-```
-
-Returns the current text for a given item and target.
-
-Rules:
-
-- For `CONTENT_TEXT_TARGET`: returns the item's value as a string, or `""` if blank or non-value.
-- For `LABEL_TARGET`: returns the item's label, or `""` if absent.
-- For `conn:*` targets: returns the matching connected field text, or `""` if not found.
-- Other `content:*` targets are opaque to this helper and return `""`.
 
 ### `isNumericLikeValue(value)`
 
@@ -621,6 +608,5 @@ Function exports:
 
 - `parseKeyIntent`
 - `defineShape`
-- `fieldsFromConn`
-- `getTextForTarget`
+- `primaryHeaderTargetForConn`
 - `isNumericLikeValue`

@@ -1,12 +1,7 @@
 import { computed } from "@preact/signals-core";
 
-import type { Location, ItemId } from "../core";
-import {
-  LABEL_TARGET,
-  connTarget,
-  fieldsFromConn,
-  sameLocation,
-} from "../core";
+import type { Connected, Location, ItemId } from "../core";
+import { LABEL_TARGET, connTarget, sameLocation } from "../core";
 import { createComponent, type Ctx, el } from "./component";
 import type { Component, UiCore } from "./runtime";
 import { patchConn } from "../core";
@@ -17,10 +12,38 @@ type FocusComponent<E extends HTMLElement = HTMLElement> = Component & {
   focusEl: E;
 };
 
-export type TextFieldKind = "isolated" | "traversable";
+type ConnField = {
+  key: string;
+  label: string;
+  multiline: boolean;
+  text: string;
+};
+
+function fieldsFromConn(conn: Connected): ConnField[] {
+  if (conn.type === "formula") {
+    return [
+      { key: "expr", label: "=", multiline: false, text: conn.expr ?? "" },
+    ];
+  }
+  return [
+    { key: "from", label: "~", multiline: false, text: conn.from ?? "" },
+    { key: "where", label: "where:", multiline: false, text: conn.where ?? "" },
+    {
+      key: "orderBy",
+      label: "orderBy:",
+      multiline: false,
+      text: conn.orderBy ?? "",
+    },
+  ];
+}
 
 function preventDefaultEvent(e: Event): void {
   e.preventDefault?.();
+}
+
+function stopControlEvent(e: KeyboardEvent): void {
+  e.stopPropagation();
+  e.stopImmediatePropagation?.();
 }
 
 function shouldYieldGlobalShortcut(e: KeyboardEvent): boolean {
@@ -62,6 +85,11 @@ function syncValue(inp: TextInputElement, next: string): void {
 
 type TextFieldState = { text: string; readOnly: boolean };
 
+type TextFieldControl =
+  | { type: "enter" }
+  | { type: "escape" }
+  | { type: "tab"; shift: boolean };
+
 type TextFieldOpts = {
   location: Location;
   target: string;
@@ -69,17 +97,15 @@ type TextFieldOpts = {
   autosize?: boolean;
   className?: string;
   inputClassName?: string;
-  kind?: TextFieldKind;
-  onExitToItem?: () => void;
+  onControl?: (control: TextFieldControl) => void;
   commit: (text: string) => void;
   getState: () => TextFieldState;
 };
 
-export function buildTextField(
+function buildTextField(
   core: UiCore,
   opts: TextFieldOpts,
 ): FocusComponent<TextInputElement> {
-  const kind: TextFieldKind = opts.kind ?? "traversable";
   const autosize = opts.autosize ?? false;
 
   let focusEl!: TextInputElement;
@@ -179,92 +205,41 @@ export function buildTextField(
       wrap.classList.remove("is-stale");
     };
 
-    const yieldCommit = (e: KeyboardEvent): void => {
-      commitDraft();
-      preventDefaultEvent(e);
-    };
-
     ctx.on(inp, "keydown", (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
 
       if (e.key === "Escape") {
+        if (opts.onControl) {
+          cancelDraft();
+          preventDefaultEvent(e);
+          stopControlEvent(e);
+          opts.onControl?.({ type: "escape" });
+          return;
+        }
         cancelDraft();
         return;
       }
 
       if (shouldYieldGlobalShortcut(e)) return;
 
-      if (kind === "isolated") {
-        if (e.key === "Enter" || e.key === "Tab") {
+      if (opts.onControl) {
+        if (e.key === "Tab") {
           commitDraft();
           preventDefaultEvent(e);
-          opts.onExitToItem?.();
-        }
-        e.stopPropagation();
-        return;
-      }
-
-      if (e.key === "Tab") {
-        yieldCommit(e);
-        return;
-      }
-
-      if (e.key === "Enter") {
-        if (inp instanceof HTMLTextAreaElement) {
-          if (e.shiftKey) {
-            e.stopPropagation();
-            return;
-          }
-          if (e.metaKey || e.ctrlKey) {
-            preventDefaultEvent(e);
-            e.stopPropagation();
-            return;
-          }
-        }
-        yieldCommit(e);
-        return;
-      }
-
-      const start = inp.selectionStart ?? 0;
-      const end = inp.selectionEnd ?? start;
-      const hasSel = start !== end;
-      const len = inp.value.length;
-
-      const dir =
-        e.key === "ArrowLeft"
-          ? "left"
-          : e.key === "ArrowRight"
-            ? "right"
-            : e.key === "ArrowUp"
-              ? "up"
-              : e.key === "ArrowDown"
-                ? "down"
-                : null;
-
-      if (dir) {
-        const shouldYield =
-          (dir === "left" && !hasSel && start === 0) ||
-          (dir === "right" && !hasSel && end === len);
-
-        if (shouldYield) {
-          yieldCommit(e);
+          stopControlEvent(e);
+          opts.onControl?.({ type: "tab", shift: !!e.shiftKey });
           return;
         }
-
-        e.stopPropagation();
+        if (e.key === "Enter") {
+          commitDraft();
+          preventDefaultEvent(e);
+          stopControlEvent(e);
+          opts.onControl?.({ type: "enter" });
+          return;
+        }
+        stopControlEvent(e);
         return;
       }
-
-      if (e.key === "Backspace" && !hasSel && start === 0) {
-        yieldCommit(e);
-        return;
-      }
-
-      if (e.key === "Delete" && !hasSel && end === len) {
-        yieldCommit(e);
-        return;
-      }
-
       e.stopPropagation();
     });
 
@@ -348,6 +323,39 @@ export function buildTextField(
   return { ...c, focusEl };
 }
 
+function handleHeaderControl(
+  core: UiCore,
+  args: {
+    id: ItemId;
+    location: Location;
+    fields: readonly ConnField[];
+    fieldKey: string | null;
+    control: TextFieldControl;
+  },
+): void {
+  const { location, fields, fieldKey, control } = args;
+  if (control.type === "enter" || control.type === "escape") {
+    core.focus({ type: "item", location });
+    return;
+  }
+
+  if (fieldKey == null) return;
+
+  const idx = fields.findIndex((field) => field.key === fieldKey);
+  if (idx < 0) return;
+  const nextField = control.shift ? fields[idx - 1] : fields[idx + 1];
+  if (!nextField) return;
+
+  core.focus(
+    {
+      type: "editing",
+      location,
+      target: connTarget(nextField.key),
+    },
+    { caret: "end" },
+  );
+}
+
 function buildHeader(
   core: UiCore,
   args: {
@@ -379,9 +387,14 @@ function buildHeader(
         target: LABEL_TARGET,
         multiline: false,
         autosize: true,
-        kind: "isolated",
-        onExitToItem: () => {
-          core.focus({ type: "item", location });
+        onControl: (control) => {
+          handleHeaderControl(core, {
+            id,
+            location,
+            fields: [],
+            fieldKey: null,
+            control,
+          });
         },
         commit: (text) => {
           const item = core.item(id);
@@ -426,7 +439,15 @@ function buildHeader(
               target: connTarget(key),
               multiline: fieldSignal.value?.multiline ?? true,
               autosize: true,
-              kind: "traversable",
+              onControl: (control) => {
+                handleHeaderControl(core, {
+                  id,
+                  location,
+                  fields: fieldsSignal.value,
+                  fieldKey: key,
+                  control,
+                });
+              },
               commit: (text) => {
                 const item = core.item(id);
                 if (item.mode.type !== "connected") return;

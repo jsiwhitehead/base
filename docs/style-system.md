@@ -326,9 +326,8 @@ Rules:
 
 - Widget-like targets (`label`, `conn:*`, buttons, toggles, sliders) SHOULD use a local ring/halo.
 - Control rings MUST remain local and compatible with issue palette overrides.
-- Editor targets (for example `value`) SHOULD rely on caret/selection, not heavy rings.
-- Editors MUST NOT receive block-level wash/highlight when active.
-- In the default DOM structure, header-owned targets (`label`, `conn:*`) are treated as controls, and body-owned targets (`value`) are treated as editors.
+- Text-edit targets such as `content:text` SHOULD rely on caret/selection, not heavy rings or block-level wash.
+- In the default DOM structure, header-owned targets (`label`, `conn:*`) are controls and body-owned text-edit targets (`content:text`) are editors.
 
 ### Cursor semantics
 

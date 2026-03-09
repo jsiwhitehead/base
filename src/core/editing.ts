@@ -1,23 +1,16 @@
 import type { Tx } from "./commit";
 import type { Connected } from "./read";
 import type { Item, ItemId, ValueOrBlank } from "./read";
-import { CONTENT_TEXT_TARGET, LABEL_TARGET } from "./select";
+import { connTarget, CONTENT_TEXT_TARGET } from "./select";
 
 const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
-type ReadCore = { item(id: ItemId): Item };
-type EditCore = ReadCore & {
+type EditCore = {
+  item(id: ItemId): Item;
   commit(run: (t: Tx) => void): void;
   locate(
     id: ItemId,
   ): { parentId: ItemId; index: number; siblings: readonly ItemId[] } | null;
-};
-
-type ConnField = {
-  key: string;
-  label: string;
-  multiline: boolean;
-  text: string;
 };
 
 export function isNumericLikeValue(value: ValueOrBlank): boolean {
@@ -29,44 +22,10 @@ export function isNumericLikeValue(value: ValueOrBlank): boolean {
   return Number.isFinite(Number(text));
 }
 
-export function fieldsFromConn(conn: Connected): ConnField[] {
-  if (conn.type === "formula") {
-    return [
-      { key: "expr", label: "=", multiline: false, text: conn.expr ?? "" },
-    ];
-  }
-  return [
-    { key: "from", label: "~", multiline: false, text: conn.from ?? "" },
-    { key: "where", label: "where:", multiline: false, text: conn.where ?? "" },
-    {
-      key: "orderBy",
-      label: "orderBy:",
-      multiline: false,
-      text: conn.orderBy ?? "",
-    },
-  ];
-}
-
-export function getTextForTarget(
-  core: ReadCore,
-  id: ItemId,
-  target: string,
-): string {
-  const snapshot = core.item(id);
-  if (target === CONTENT_TEXT_TARGET) {
-    return snapshot.content.type === "value"
-      ? String(snapshot.content.value ?? "")
-      : "";
-  }
-  if (target === LABEL_TARGET) return snapshot.label ?? "";
-  if (!target.startsWith("conn:") || snapshot.mode.type !== "connected") {
-    return "";
-  }
-  const key = target.slice("conn:".length);
-  return (
-    fieldsFromConn(snapshot.mode.conn).find((field) => field.key === key)
-      ?.text ?? ""
-  );
+export function primaryHeaderTargetForConn(conn: Connected): string | null {
+  if (conn.type === "formula") return connTarget("expr");
+  if (conn.type === "query") return connTarget("from");
+  return null;
 }
 
 export function patchConn(

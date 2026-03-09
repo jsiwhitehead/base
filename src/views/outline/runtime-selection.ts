@@ -130,10 +130,7 @@ export function isOutlineValueEditEvent(
   return classifyOutlinePointerZone(targetEl) === "value";
 }
 
-export function createOutlinePointerRuntime(args: {
-  clearStickyCaretX: () => void;
-}): OutlinePointerRuntime {
-  const { clearStickyCaretX } = args;
+export function createOutlinePointerRuntime(): OutlinePointerRuntime {
   let isPointerSelecting = false;
   let activePointerId: number | null = null;
   let sawSelectionChangeThisPointer = false;
@@ -172,7 +169,6 @@ export function createOutlinePointerRuntime(args: {
       activePointerId = pointerId;
       sawSelectionChangeThisPointer = false;
       pointerIntent = intent;
-      clearStickyCaretX();
     },
     getSawSelectionChangeThisPointer: (): boolean =>
       sawSelectionChangeThisPointer,
@@ -194,9 +190,9 @@ export function createOutlineSelectionRuntime(args: {
   rootId: ItemId;
   portals: readonly ItemId[];
   getRoot: () => HTMLElement | null;
-  clearStickyCaretX: () => void;
+  resetStickyCaretX: () => void;
 }): OutlineSelectionRuntime {
-  const { core, rootId, portals, getRoot, clearStickyCaretX } = args;
+  const { core, rootId, portals, getRoot, resetStickyCaretX } = args;
   const selectedItemKeys = computed(() => {
     const sel = core.selection();
     if (sel.type !== "item") return new Set<string>();
@@ -241,7 +237,7 @@ export function createOutlineSelectionRuntime(args: {
 
   const suppressSelectionChangeFromGutter = createSuppressionFlag(false);
   const suppressSelectionSync = createSuppressionFlag(false);
-  const pointer = createOutlinePointerRuntime({ clearStickyCaretX });
+  const pointer = createOutlinePointerRuntime();
 
   const onGutterPointerDown = (
     itemId: ItemId,
@@ -361,7 +357,6 @@ export function createOutlineSelectionRuntime(args: {
         core,
         root,
         portals,
-        clearStickyCaretX,
         clearValueRangeSelectedItems,
         reconcileDomSelectionToModel: (allowNonCollapsedPointerDefer) => {
           if (isComposing()) return;
@@ -373,6 +368,7 @@ export function createOutlineSelectionRuntime(args: {
         effect,
         core,
         valueSelectionCollapsed,
+        resetStickyCaretX,
         clearValueRangeSelectedItems,
       });
     },
@@ -384,7 +380,6 @@ export function bindOutlineSelectionEvents(args: {
   core: UiCore;
   root: HTMLElement;
   portals: readonly ItemId[];
-  clearStickyCaretX: () => void;
   clearValueRangeSelectedItems: () => void;
   reconcileDomSelectionToModel: (
     allowNonCollapsedPointerDefer: boolean,
@@ -396,15 +391,11 @@ export function bindOutlineSelectionEvents(args: {
     core,
     root,
     portals,
-    clearStickyCaretX,
     clearValueRangeSelectedItems,
     reconcileDomSelectionToModel,
     pointer,
   } = args;
 
-  on(root, "focus", (): void => {
-    clearStickyCaretX();
-  });
   on(root, "blur", (e: FocusEvent): void => {
     const next = e.relatedTarget;
     if (!(next instanceof Node) || !root.contains(next)) {
@@ -412,9 +403,6 @@ export function bindOutlineSelectionEvents(args: {
       pointer.invalidatePointerFinalize();
       clearValueRangeSelectedItems();
     }
-  });
-  on(root, "focusout", (): void => {
-    clearStickyCaretX();
   });
 
   on(root, "pointerdown", (e: PointerEvent): void => {
@@ -486,20 +474,27 @@ export function bindOutlineSelectionCleanupEffect(args: {
   effect: Ctx["effect"];
   core: UiCore;
   valueSelectionCollapsed: Signal<boolean>;
+  resetStickyCaretX: () => void;
   clearValueRangeSelectedItems: () => void;
 }): void {
   const {
     effect,
     core,
     valueSelectionCollapsed,
+    resetStickyCaretX,
     clearValueRangeSelectedItems,
   } = args;
   effect(() => {
     const selNow: Selection = core.selection();
     if (selNow.type !== "editing" || selNow.target !== CONTENT_TEXT_TARGET) {
+      resetStickyCaretX();
       clearValueRangeSelectedItems();
       return;
     }
-    if (valueSelectionCollapsed.value) clearValueRangeSelectedItems();
+    if (!valueSelectionCollapsed.value) {
+      resetStickyCaretX();
+      return;
+    }
+    clearValueRangeSelectedItems();
   });
 }

@@ -26,7 +26,8 @@ export type Selection =
   | { type: "editing"; location: Location; target: string }
   | { type: "item"; anchor: Location; head: Location };
 
-export type FocusOpts = { caret?: number };
+export type CaretPlacement = number | "end";
+export type FocusOpts = { caret?: CaretPlacement };
 type ItemFocusSelectionInput =
   | Extract<Selection, { type: "item" }>
   | { type: "item"; location: Location };
@@ -43,7 +44,7 @@ export type SelectionRepairAnchor = {
 export type SelectionController = {
   selection(): Selection;
   peekSelection(): Selection;
-  setSelection(next: Selection, caret?: number): void;
+  setSelection(next: Selection, caret?: CaretPlacement): void;
   isValidSelection(sel: Selection): boolean;
   focus(
     next: Extract<Selection, { type: "editing" }>,
@@ -61,7 +62,7 @@ type SelectionControllerOptions = {
   model: Model;
   rootLocation: Location;
   readCurrentCaret?: () => number | undefined;
-  onSelectionChange?: (selection: Selection, caret?: number) => void;
+  onSelectionChange?: (selection: Selection, caret?: CaretPlacement) => void;
 };
 
 export function createSelectionController(
@@ -93,7 +94,7 @@ export function createSelectionController(
     return isValidLocation(sel.anchor) && isValidLocation(sel.head);
   };
 
-  const setSelection = (next: Selection, caret?: number): void => {
+  const setSelection = (next: Selection, caret?: CaretPlacement): void => {
     if (!isValidSelection(next)) return;
 
     selectionSignal.value = next;

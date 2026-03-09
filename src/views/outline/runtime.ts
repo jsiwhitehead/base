@@ -5,11 +5,10 @@ import type { Component, UiCore } from "../../dom";
 import { createComponent, createSuppressionFlag } from "../../dom";
 
 import {
-  createOutlineEditingRuntime,
+  createOutlineInputRuntime,
   createOutlineMutationSync,
-  type InputState,
-} from "./runtime-editing";
-import { collectNavPoints } from "./navigation";
+} from "./runtime-input";
+import { collectStops } from "./navigation";
 import { buildOutlineItem, type OutlineMountCtx } from "./render";
 export type {
   OutlineSelectionEditingControls,
@@ -25,11 +24,11 @@ export {
 } from "./runtime-selection";
 import { createOutlineSelectionRuntime } from "./runtime-selection";
 
-export type { ApplyEditingResult, InputState } from "./runtime-editing";
+export type { ApplyEditingResult } from "./runtime-navigation";
 export {
-  createOutlineEditingRuntime,
+  createOutlineInputRuntime,
   createOutlineMutationSync,
-} from "./runtime-editing";
+} from "./runtime-input";
 
 function configureOutlineRootElement(root: HTMLElement): void {
   root.contentEditable = "true";
@@ -38,18 +37,26 @@ function configureOutlineRootElement(root: HTMLElement): void {
   root.setAttribute("autocapitalize", "off");
 }
 
-function createOutlineInputState(): {
-  state: InputState;
-  clearStickyCaretX: () => void;
+function createOutlineRuntimeState(): {
+  getCompositionEndedAt: () => number;
+  setCompositionEndedAt: (next: number) => void;
+  getStickyCaretX: () => number | null;
+  setStickyCaretX: (next: number) => void;
+  resetStickyCaretX: () => void;
 } {
-  const state: InputState = {
-    compositionEndedAt: 0,
-    stickyCaretX: null,
-  };
+  let compositionEndedAt = 0;
+  let stickyCaretX: number | null = null;
   return {
-    state,
-    clearStickyCaretX: (): void => {
-      state.stickyCaretX = null;
+    getCompositionEndedAt: (): number => compositionEndedAt,
+    setCompositionEndedAt: (next: number): void => {
+      compositionEndedAt = next;
+    },
+    getStickyCaretX: (): number | null => stickyCaretX,
+    setStickyCaretX: (next: number): void => {
+      stickyCaretX = next;
+    },
+    resetStickyCaretX: (): void => {
+      stickyCaretX = null;
     },
   };
 }
@@ -61,15 +68,19 @@ export function buildOutlineRoot(
   onValueTab: (location: Location, shift: boolean, caret: number) => void,
 ): Component {
   return createComponent(core, (ctx) => {
-    const navPoints = computed(() =>
-      collectNavPoints(core, viewRootId, portals),
-    );
+    const stops = computed(() => collectStops(core, viewRootId, portals));
     const suppressMutationSync = createSuppressionFlag(false);
     const suppressHistoryKeydown = createSuppressionFlag<
       "undo" | "redo" | null
     >(null);
     let isComposing = false;
-    const { state, clearStickyCaretX } = createOutlineInputState();
+    const {
+      getCompositionEndedAt,
+      setCompositionEndedAt,
+      getStickyCaretX,
+      setStickyCaretX,
+      resetStickyCaretX,
+    } = createOutlineRuntimeState();
 
     let rootRef: HTMLElement | null = null;
     const selectionRuntime = createOutlineSelectionRuntime({
@@ -77,7 +88,7 @@ export function buildOutlineRoot(
       rootId: viewRootId,
       portals,
       getRoot: () => rootRef,
-      clearStickyCaretX,
+      resetStickyCaretX,
     });
 
     let mutationSync: ReturnType<typeof createOutlineMutationSync> | null =
@@ -106,12 +117,13 @@ export function buildOutlineRoot(
       isComposing: () => isComposing,
     });
 
-    const editingRuntime = createOutlineEditingRuntime({
+    const inputRuntime = createOutlineInputRuntime({
       core,
       rootId: viewRootId,
       portals,
       root,
-      navPoints,
+      stops,
+      resetStickyCaretX,
       discardPendingMutationRecords,
       suppressMutationSync,
       suppressHistoryKeydown,
@@ -125,14 +137,17 @@ export function buildOutlineRoot(
       isComposing: () => isComposing,
     });
     mutationSync.bind(ctx.effect);
-    editingRuntime.bind({
+    inputRuntime.bind({
       on: ctx.on,
-      state,
+      getCompositionEndedAt,
+      setCompositionEndedAt,
+      getStickyCaretX,
+      setStickyCaretX,
+      resetStickyCaretX,
       onValueTab,
       setIsComposing: (next) => {
         isComposing = next;
       },
-      clearStickyCaretX,
     });
 
     return root;

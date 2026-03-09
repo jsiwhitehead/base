@@ -1,7 +1,7 @@
 export { createComponent, el, resolveEventTargetElement } from "./component";
 export type { Ctx } from "./component";
 export { bindItemFrame, setBodyClasses } from "./frame";
-export { buildTextField, mountHeader } from "./controls";
+export { mountHeader } from "./controls";
 export {
   createSuppressionFlag,
   getCollapsedCaretRectInSurface,

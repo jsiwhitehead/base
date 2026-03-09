@@ -61,6 +61,17 @@ function normalizeNewlines(text: string): string {
   return text.replace(/\r\n?/g, "\n");
 }
 
+function isUsableCaretRect(rect: DOMRect | null | undefined): rect is DOMRect {
+  if (!rect) return false;
+  return rect.width > 0 || rect.height > 0;
+}
+
+function caretRectFromSurface(surfaceEl: HTMLElement): DOMRect | null {
+  const surfaceRect = surfaceEl.getBoundingClientRect();
+  if (!(surfaceRect.width > 0 || surfaceRect.height > 0)) return null;
+  return new DOMRect(surfaceRect.left, surfaceRect.top, 0, surfaceRect.height);
+}
+
 function isSentinelBreak(node: Node): boolean {
   return (
     node instanceof HTMLBRElement &&
@@ -428,7 +439,11 @@ export function getCollapsedCaretRectInSurface(
   const rect =
     range.getClientRects()[0] ??
     range.getBoundingClientRect() ??
-    surfaceEl.getBoundingClientRect();
+    caretRectFromSurface(surfaceEl);
+  if (!isUsableCaretRect(rect)) {
+    const fallback = caretRectFromSurface(surfaceEl);
+    return fallback ? { rect: fallback, surfaceEl } : null;
+  }
   return rect ? { rect, surfaceEl } : null;
 }
 

@@ -149,16 +149,12 @@ Model -> DOM rendering is the default write path; imperative DOM writes are for 
 
 ### Selection origin tags (recommended pattern)
 
-Mature editors often model selection origin metadata for policy decisions:
-
 - `pointer` — pointerdown/drag/click lifecycle
 - `keyboard` — key navigation/edit operations
 - `composition` — IME phase
-- `programmatic` — model-driven focus repair/reveal
+- `programmatic` — model-driven focus repair/scroll
 
 Origins are ephemeral pipeline metadata and do not need to be persisted in canonical selection state.
-
-Why this matters:
 
 - Pointer-origin selection changes should tolerate temporary expanded DOM ranges.
 - Programmatic updates should enable stronger suppression of echo `selectionchange`.
@@ -311,11 +307,11 @@ Shared DOM helpers MAY also expose collapsed-caret rect and mapped selection sna
 
 ## Arrow key navigation
 
-The browser gives correct natural caret movement within a single item — wrapped lines, bidirectional text, ligatures, OS text services. This must not be replaced with manual movement. The browser falls apart only at item boundaries and around `contenteditable="false"` zones. The approach: let the browser handle everything it can, intercept only at the points where it would go wrong.
+Arrow movement should stay native inside a text surface so wrapped-line movement, bidirectional text, ligatures, and OS text services keep working. Intercept only at boundaries or when traversal must cross view-owned structure.
 
 ### Left/Right — intercept at boundaries
 
-Detected deterministically in `keydown`, before the browser acts:
+Left/Right stays native until the caret reaches a text boundary. At that point the editor intercepts in `keydown`:
 
 ```
 ArrowLeft  + caretOffset === 0                   -> preventDefault + jump to end of previous item
@@ -323,11 +319,9 @@ ArrowRight + caretOffset === modelText.length    -> preventDefault + jump to sta
 otherwise                                         -> let browser handle
 ```
 
-"Previous/next item" is pre-order tree traversal — leaf items in document order, skipping container items without a value surface.
-
 ### Up/Down — hybrid approach
 
-Up/Down movement is purely visual. The browser computes "one line height up/down" — correct for wrapped text, must be preserved. The editor intercepts only when the cursor is on the first or last visual line, detected from text line rects:
+Up/Down stays native while the caret can still move within the current text surface. The editor intercepts only at the first or last visual line:
 
 ```
 cursorRect = collapsed caret rect
@@ -340,22 +334,21 @@ tol = 1px
 isFirstLine = cursorRect.top <= firstTop + tol
 isLastLine  = cursorRect.bottom >= lastBottom - tol
 
-ArrowUp   + isFirstLine -> preventDefault + jump to previous item's last line
-ArrowDown + isLastLine  -> preventDefault + jump to next item's first line
+ArrowUp   + isFirstLine -> preventDefault + jump to the previous view-defined destination
+ArrowDown + isLastLine  -> preventDefault + jump to the next view-defined destination
 otherwise               -> let browser handle
 ```
 
-Single-line items: both flags are always true. For multi-line items, the implementation also checks logical line index from newline-separated model text; boundary is signalled only when the caret is on the first (`up`) or last (`down`) logical line, not merely at a visual edge.
+For a single-line surface, both flags are true. For a multi-line surface, the implementation also checks logical line index from newline-separated model text, so boundary is signalled only when the caret is on the first (`up`) or last (`down`) logical line.
 
 ### Sticky column
 
-When jumping to an adjacent item vertically, the cursor should land at the nearest horizontal position — not at offset 0 or end. The **sticky column** pattern used by all mature text editors:
+When vertical traversal enters another text surface, the caret should land at the nearest horizontal position. Use the standard sticky-column pattern:
 
 - Record the cursor's X coordinate when Up/Down is first pressed.
-- Use `document.caretRangeFromPoint(stickyX, targetY)` (Chrome/Safari) / `document.caretPositionFromPoint(x, y)` (Firefox) to find the nearest text position in the target item at that X.
-- Reset when the user types, presses Left/Right, or takes any non-vertical action.
-
-`caretRangeFromPoint` is the key API: given screen coordinates it returns the nearest text position without requiring any font metric knowledge.
+- Use `document.caretRangeFromPoint(stickyX, targetY)` (Chrome/Safari) / `document.caretPositionFromPoint(x, y)` (Firefox) to find the nearest text position in the destination text surface at that X.
+- If a collapsed caret rect in an empty surface is degenerate, normalize it to a start-of-surface caret rect before seeding sticky column.
+- Reset when the current vertical text-navigation session is broken.
 
 ### What not to do
 
@@ -412,7 +405,7 @@ This keeps pointer drag selection stable and avoids item/editing thrash.
 | ------------------------------------------------------------ | -------------------------------------------------------- |
 | `pointerdown` in value surface                               | Allow default                                            |
 | `pointerdown` on structural chrome in contenteditable root   | `preventDefault()`                                       |
-| `pointerdown` in input/textarea controls                     | Allow default caret/selection behavior                   |
+| `pointerdown` in local text controls                         | Allow default caret/selection behavior                   |
 | `dragstart` in contenteditable value surface                 | Allow default drag start, but override payload as needed |
 | `drop` in contenteditable value surface (model-owned insert) | `preventDefault()`                                       |
 
@@ -444,7 +437,7 @@ For `::selection` suppression, both background and foreground color should be se
 
 `background` alone is insufficient in some browsers because selected text color may still be inverted.
 
-Inputs and textareas inside embedded zones manage their own selection independently (`selectionStart`/`selectionEnd`), so parent `::selection` suppression does not control input-internal highlight.
+Local text controls inside embedded zones manage their own selection, so parent `::selection` suppression does not affect their internal highlight.
 
 For inline atomic non-editable nodes inside the editable flow, range-inclusion should be represented explicitly by selection state (for example via a model-driven class), rather than relying on browser text-selection paint.
 

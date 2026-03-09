@@ -128,14 +128,15 @@ View-specific geometry, traversal scope, and edge behaviors are defined in `docs
 
 ### Target classification
 
-| Kind             | Targets                           | `yieldNav` | Edit traversal | Behavior                                                |
-| ---------------- | --------------------------------- | ---------- | -------------- | ------------------------------------------------------- |
-| Item             | `ITEM_TARGET`                     | n/a        | No             | Structural selection: navigate, enter edit, delete, tab |
-| Isolated text    | `label`                           | `false`    | No             | Self-contained text editing                             |
-| Traversable text | `conn:*`, `content:text`          | `true`     | Yes            | Text editing with boundary yielding                     |
-| Opaque body      | `content:*` except `content:text` | View-owned | View-owned     | Non-text body editing surfaces                          |
+| Kind              | Targets                           | `yieldNav` | Edit traversal | Role                                    |
+| ----------------- | --------------------------------- | ---------- | -------------- | --------------------------------------- |
+| Item              | `ITEM_TARGET`                     | n/a        | No             | Structural item selection               |
+| Isolated text     | `label`                           | `false`    | No             | Local header text field                 |
+| Traversable text  | `content:text`                    | `true`     | Yes            | Inline text editing with boundary yield |
+| Structured header | `conn:*`                          | `false`    | No             | Local header fields with explicit Tab   |
+| Opaque body       | `content:*` except `content:text` | View-owned | View-owned     | Non-text body controls                  |
 
-Item target is the outer shell for structural interaction. Traversable targets edit content in flow — they yield at text boundaries so the outer view handles traversal and structural actions. Isolated targets consume all input locally; exceptions: Escape bubbles to Core, Enter commits and exits.
+`ITEM_TARGET` is the structural shell. Traversable targets edit in flow and yield at text boundaries. Header targets are explicit-entry local controls and stay out of linear edit traversal.
 
 DOM focus follows selection mode:
 
@@ -143,23 +144,21 @@ DOM focus follows selection mode:
 - Item selection focuses the owning structural `ITEM_TARGET` surface.
 - Idle clears DOM document selection and DOM focus.
 
-### Edit target list
+### Primary target resolution
 
-Primary target resolution:
+1. A body target marked `primary: true`.
+2. Otherwise, the connected mode's primary header target (`conn:*`), as resolved by Core.
 
-1. A body target marked `primary: true` wins.
-2. Otherwise Core falls back to header text targets (`conn:*`, in field order).
-
-`label` is never primary. Printable-char handoff from item selection only applies when the primary target is `content:text`.
+`label` is never primary. Printable-char handoff from item selection only applies to `content:text`.
 
 ### Intent handler ownership
 
-| Target        | Owner  | Handler                                                     |
-| ------------- | ------ | ----------------------------------------------------------- |
-| `ITEM_TARGET` | Frame  | Outer view                                                  |
-| `label`       | Header | Self-contained                                              |
-| `conn:*`      | Header | Field yields at boundaries; outer view handles yielded keys |
-| `content:*`   | Body   | Item view mounts the field; outer view handles yielded keys |
+| Target        | Owner  | Handler                                    |
+| ------------- | ------ | ------------------------------------------ |
+| `ITEM_TARGET` | Frame  | Outer view                                 |
+| `label`       | Header | Local control                              |
+| `conn:*`      | Header | Local control                              |
+| `content:*`   | Body   | Body view; outer view handles yielded keys |
 
 ### Behaviors from item selection
 
@@ -181,30 +180,33 @@ Normal typing, cursor movement, and selection are handled natively. At a text bo
 
 **NAV at boundary** — collapses to backward (`left`/`up`) or forward (`right`/`down`). Multiline fields yield only on the first or last line.
 
-1. _Intra-item_: move to adjacent edit target in the list. Backward -> caret at end; forward -> caret at start.
-2. _Inter-item_: at the edge of the item's edit targets, behavior is view-specific.
+1. Native text motion stays local while the browser can still move the caret within the current text surface.
+2. At a boundary, navigation moves to the adjacent stop in the view's traversal model. In Outline, each visible item contributes at most one stop. Backward lands at the end of an edit stop; forward lands at the start; atomic stops land at item selection.
 
 **Enter** — local/default behavior for the focused target. Traversable text targets MAY commit and yield to the outer view as part of that local behavior.
 
 **Shift+Enter** — local alternate Enter behavior for the focused target.
 
+### Behaviors from structured header targets
+
+Structured header targets such as `conn:*` are explicit-entry local controls.
+
+- Text-editing keys stay local/native.
+- `Tab` / `Shift+Tab` commit and move within the canonical shared-header field order when another field exists; otherwise they commit and no-op.
+- `Enter` commits and exits to same-item item selection.
+- `Escape` cancels and exits to same-item item selection.
+
 **Always-structural intents** — intents such as `INSERT` always route to the containing outer view, even from a body-owned `content:*` target. Embedded item views do not own these intents.
-
-**Tab** — commits and yields; the outer view performs its standard structural action.
-
-**Delete at boundary** — Backspace at start or Delete at end commits and yields. The outer view decides whether `DELETE` removes, clears, joins, or no-ops.
-
-**Escape** — always bubbles to Core. Draft fields cancel draft first, then `NAV/out`.
 
 ### Edit model
 
-For shared input-based fields (`buildTextField`), the edit model is draft-only:
+Shared input-based header/local fields use draft-only editing:
 
-- Inputs keep a local draft while focused.
-- Core is updated on commit boundaries (blur/yield actions like Tab/Enter/boundary navigation/delete).
-- Escape cancels the local draft first, then control can bubble to Core (`NAV/out`).
+- They keep a local draft while focused.
+- Core updates on commit boundaries such as blur, local Tab, or local Enter.
+- Escape cancels the local draft first and MAY be handled locally by the focused field.
 
-Contenteditable value surfaces follow their own pipeline and apply edits model-side via their observer/event flow rather than `buildTextField`.
+Contenteditable value surfaces use their own pipeline and apply edits model-side via their observer/event flow rather than the shared draft-field flow.
 
 Intent handling and traversal semantics MUST converge to a single canonical structural result regardless of input source (keyboard, drag, paste, automation).
 

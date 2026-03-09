@@ -11,13 +11,6 @@ This document defines:
 - Required DOM/class outputs for runtime-provided subtrees.
 - Observable runtime behavior (focus integration, yielding, disposal, reconciliation).
 
-## Audience
-
-Primary audience:
-
-- Authors of views/components consuming `dom/`.
-- Authors extending shared `dom/` helpers.
-
 ## Exports index (`dom/index`)
 
 Base helpers:
@@ -29,11 +22,9 @@ Base helpers:
 
 Controls/editing helpers:
 
-- `buildTextField`: canonical shared text editor component.
-- `buildItemHeader`: canonical header subtree component.
+- `mountHeader`: canonical shared header subtree mount helper.
 - `NavDirection`: shared item-navigation direction type.
 - Core runs shared item-selection `TYPE`/`CONFIRM` handoff before view delegation.
-- `resolveFocusAfterRemove`: canonical post-remove destination helper.
 
 Contenteditable helpers:
 
@@ -103,7 +94,6 @@ createComponent(core: UiCore, build: (ctx: Ctx) => HTMLElement): Component
 Rules:
 
 - `build(ctx)` MUST be called once per component instance.
-- The returned `HTMLElement` is the component root.
 - All resource lifetime MUST be bound to `dispose()` through `Ctx` APIs.
 
 ## `Ctx` runtime contract
@@ -127,7 +117,6 @@ Rules:
 
 - `target` MAY be an `HTMLElement`, `Document`, or `Window`.
 - Listener MUST be removed when the parent component is disposed.
-- Handler receives the typed DOM event for the registered event name.
 
 ### `ctx.effect(run)`
 
@@ -146,7 +135,6 @@ Mounts a static child component.
 
 Rules:
 
-- `child.el` is appended to `host`.
 - `child.dispose()` MUST run when the parent component disposes.
 
 ### `ctx.slot(host, getComponent)`
@@ -157,7 +145,6 @@ Rules:
 
 - At most one child component is mounted at a time.
 - On recompute, the runtime clears the region, disposes the previous child, then mounts the next child if non-null.
-- If `getComponent()` returns `null`, the slot region becomes empty.
 - Runtime guarantees no stale child components remain mounted.
 - The slot occupies a stable position in host; only the slot's contents are managed/cleared.
 
@@ -223,7 +210,7 @@ Rules:
 - On `pointerdown`, MUST NOT set caret.
 - On `pointerdown`, MUST call `stopPropagation()`.
 - Pointerdown handling MUST apply only when the event reaches the frame (that is, it was not already handled/stopped by an inner control).
-- MUST reactively toggle `.is-focused`.
+- MUST reactively toggle `.is-selected` and `.is-item-selected` as selection state changes.
 - MUST reactively toggle `.is-issue`.
 
 ## Body/root helper
@@ -237,7 +224,9 @@ Rules:
 
 ## Editing helpers
 
-Intent routing:
+Routing and shared item-selection handoff follow `docs/architecture.md`.
+
+Runtime-specific rules:
 
 - Editing selection resolves from the exact bound `(location, target)`.
 - Item selection resolves from bound `ITEM_TARGET`s at both endpoints.
@@ -245,140 +234,9 @@ Intent routing:
 - Exact root item selection does not resolve through a mounted view; it routes to the root outer handler.
 - Missing bindings or mixed/cross-view item selection are invariant violations.
 
-### Shared item-selection handoff
+## Shared header helper
 
-- Core runs this before view-specific intent delegation.
-- It resolves the primary target from registered body targets first, then header text targets.
-- `TYPE` only hands off when the primary target is `content:text`; it inserts the character and focuses that target.
-- `CONFIRM` enters the primary target with the caret at end.
-
-### `resolveFocusAfterRemove(core, removedId, prefer, portals)`
-
-Behavior:
-
-- Landing order after remove: preferred sibling, opposite sibling, then parent.
-- Parent fallback is valid only if that parent survives the same remove/prune commit.
-- Returns `null` when no live destination exists (caller/Core repair handles fallback).
-- Returned location keeps the same `portals`.
-- Local remove handlers SHOULD pass the current selection portals.
-- Use `portals: []` only for explicit Core root/repair fallback, not normal view landing.
-
-## `buildTextField` contract
-
-Canonical shared text-editing component.
-
-### Signature and return
-
-```ts
-buildTextField(core, {
-  location,
-  target,
-  multiline,
-  autosize?,
-  className?,
-  inputClassName?,
-  kind?, // "isolated" | "traversable"
-  onExitToItem?,
-  commit(text),
-  getState(), // { text: string; readOnly: boolean }
-}): Component & { focusEl: HTMLInputElement | HTMLTextAreaElement };
-```
-
-Rules:
-
-- Returns a `Component` plus `focusEl` pointing to the input/textarea element.
-
-### DOM/class contract
-
-Canonical produced structure:
-
-```text
-.ui-textfield[.<opts.className>?]
-  .ui-textfield-mirror (optional; aria-hidden="true")
-  input.ui-textfield-input[.<opts.inputClassName>?] | textarea.ui-textfield-input[.<opts.inputClassName>?]
-```
-
-Rules:
-
-- Wrapper MUST always have `.ui-textfield`.
-- Wrapper MUST toggle `.is-stale` when committed text diverges from baseline during a dirty draft session.
-- Wrapper MUST include `opts.className` when provided.
-- Input MUST always have `.ui-textfield-input`.
-- Input MUST include `opts.inputClassName` when provided.
-- Input MUST set `data-target = opts.target`.
-- Input MUST always have `tabIndex = -1`.
-- Input MUST disable `autocomplete`, `autocorrect`, and spellcheck.
-- In autosize mode, `.ui-textfield-mirror` MUST be present with `aria-hidden="true"`.
-
-### Behavioral contract
-
-Draft model semantics:
-
-- Session starts when focused and editable.
-- Baseline captures committed text at session start.
-- `input` updates draft and sets dirty.
-- Cancel resets draft to baseline.
-- Commit sends current draft and clears dirty.
-
-Read-only semantics:
-
-- Read-only state prevents opening/editing draft sessions.
-- Commit operations are ignored while read-only.
-
-Sync rules:
-
-- When this target is not focused, input value syncs from committed state.
-- When focused, local draft is preserved.
-- If committed text changes while draft is clean, the field syncs to committed text.
-- If draft is dirty, visible input remains the local draft; external committed updates are not pushed into the field mid-session.
-- If draft is dirty and committed text diverges from baseline, wrapper MUST have `.is-stale`.
-- `.is-stale` MUST clear on commit, cancel, or draft-session end (for example blur, focus moved away, read-only transition, or target invalidation).
-- If the focused editing target becomes invalid (for example item/target removed or focus repaired away), the draft session ends and subsequent renders reflect committed state.
-
-Mirror rules:
-
-- Mirror reflects current displayed text (draft or committed).
-- When text ends with newline, mirror appends a trailing zero-width space (`\u200B`) for sizing.
-
-### Field kind (`kind`)
-
-- `kind="isolated"` means the field consumes all keydowns locally (does not bubble), except Escape and explicit Core-global modifier shortcuts.
-- `kind="traversable"` means the field yields arrow and delete-boundary keys at boundaries so the active view can handle navigation and structural edits.
-- `onExitToItem` MAY be provided for isolated fields. When Enter or Tab is pressed, the field commits, prevents default, and calls this callback.
-
-Propagation-gating rules:
-
-- Locally handled keydowns MUST call `stopPropagation()` so they do not reach global key routing.
-- Yielded keydowns MUST NOT call `stopPropagation()` so they bubble to Core.
-- When yielding, the runtime MUST perform the listed commit/cancel behavior and call `preventDefault()` where specified.
-- Text fields MUST NOT stop propagation for Escape. Draft fields MAY cancel local edits, but Escape always bubbles as `NAV/out` for global/view NAV-out handling.
-- Text fields MUST NOT stop propagation for Core-global modifier shortcuts such as `Cmd/Ctrl+.`.
-
-Events that trigger commit/yield behavior:
-
-- `Escape`: Cancels the draft session in draft mode and MUST NOT call `preventDefault()`.
-- `Cmd/Ctrl+.`: MUST bubble unchanged to Core global routing.
-- `Tab`: Commits the draft and MUST call `preventDefault()`. For `traversable` fields it MUST bubble. For `isolated` fields it MUST NOT bubble.
-- `Enter`: Commits the draft and MUST call `preventDefault()`. For `isolated` fields it MUST NOT bubble. For `traversable` multiline fields, `metaKey`/`ctrlKey` allows newline and does not yield.
-- Arrow keys: MUST yield only at text boundaries. Left yields at absolute start, right yields at absolute end, up yields on the first line for `textarea` (always for single-line input), and down yields on the last line for `textarea` (always for single-line input). When yielding, the runtime MUST commit the draft and call `preventDefault()`.
-- `Backspace` at start: MUST commit the draft and call `preventDefault()`.
-- `Delete` at end: MUST commit the draft and call `preventDefault()`.
-
-### Pointerdown + focus integration
-
-Rules:
-
-- On `pointerdown`, focuses Core on this target and calls `stopPropagation()`.
-- Pointer interactions inside a textfield therefore do not trigger enclosing frame pointerdown behavior.
-- Caret placement is handled by the native input/textarea (browser default) when it receives focus.
-- Pointerdown on the input/textarea MUST NOT override the browser's selection behavior.
-- `focus` MUST synchronize Core selection to this field target.
-- `focus` MUST start the draft session when applicable.
-- Target MUST be registered via `ctx.target` with the default text caret adapter.
-
-## Connected header helpers
-
-### `buildItemHeader(core, args)`
+### `mountHeader(ctx, args)`
 
 Canonical header component for item UI.
 
@@ -401,15 +259,16 @@ Canonical produced structure:
 
 Rules:
 
-- Label text field uses target `LABEL_TARGET`.
+- `mountHeader` mounts the shared header subtree into `args.host`.
+- `visibility: "always"` MUST always mount the header.
+- `visibility: "auto"` MUST mount the header only when the item has a non-empty label, is in connected mode, or the current selection is editing the label target for the same location.
 - Header root (`.ui-header`) MUST set `contenteditable="false"` when mounted inside a `contenteditable="true"` editing surface.
-- The label text field MUST use `buildTextField` with `kind="isolated"` (consumes Tab/arrows/Enter/Delete locally; only Escape bubbles).
+- Label field uses target `LABEL_TARGET` and stays local. `Enter` commits and exits to same-item item selection. `Escape` cancels and exits to same-item item selection. `Tab` / `Shift+Tab` commit and no-op.
 - Connected rows render only when `item.mode.type === "connected"`.
-- Each connected field MUST use `connTarget(field.key)` as target.
-- Each connected field MUST use `buildTextField` with autosize enabled.
-- Each connected field MUST commit through `commitConnField(field.key, text)`.
-- Connected rows are keyed by `field.key` and reconciled with `ctx.list`.
-- Render order matches `fieldsFromConn(conn)`.
+- Connected rows are keyed by `field.key`, reconciled with `ctx.list`, and rendered in canonical shared-header field order for the connected mode.
+- Each connected field MUST use `connTarget(field.key)` as target and commit through `commitConnField(field.key, text)`.
+- Connected fields MUST autosize to their current text.
+- Connected fields MUST commit on Enter/Tab, cancel on Escape, and move on Tab/Shift+Tab within the canonical shared-header field order when another field exists. Otherwise Tab/Shift+Tab commit and no-op.
 
 ## Drag system
 

@@ -1,7 +1,7 @@
 import type { ReadonlySignal } from "@preact/signals-core";
 import { signal } from "@preact/signals-core";
 
-import type { Core, ItemId, Selection } from "./core";
+import type { CaretPlacement, Core, ItemId, Selection } from "./core";
 import type { Component, UiCore } from "./dom";
 import { createComponent, el } from "./dom";
 
@@ -15,7 +15,7 @@ type DebugLast =
       type: "focus";
       selectionBefore: Selection;
       selectionAfter: Selection;
-      caret?: number;
+      caret?: CaretPlacement;
     }
   | { type: "dispose" };
 
@@ -62,7 +62,7 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
   const redoCore = core.redo.bind(core);
   const focusCore = core.focus.bind(core) as (
     selection: Selection,
-    opts?: { caret?: number },
+    opts?: { caret?: CaretPlacement },
   ) => void;
   const disposeCore = core.dispose.bind(core);
   const selectionCore = core.selection.bind(core);
@@ -93,7 +93,7 @@ export function instrumentCore<T extends Core>(core: T, debug: DebugState): T {
     debug.pushRecent("redo");
   };
 
-  core.focus = ((selection: Selection, opts?: { caret?: number }) => {
+  core.focus = ((selection: Selection, opts?: { caret?: CaretPlacement }) => {
     const selectionBefore = readSelection();
     focusCore(selection, opts);
     const selectionAfter = readSelection();
@@ -221,7 +221,6 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
 
   return createComponent(core, (ctx) => {
     const root = el("div", opts.className ?? "ui-debug");
-    root.tabIndex = -1;
     root.dataset.role = "debug";
 
     const header = el("div", "ui-debug-header");

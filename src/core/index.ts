@@ -25,12 +25,12 @@ import {
   refFromItemId,
 } from "./read";
 import {
-  connTarget,
   createSelectionController,
   LABEL_TARGET,
   sameLocation,
 } from "./select";
 import type {
+  CaretPlacement,
   FocusOpts,
   Location,
   NonEditingFocusSelection,
@@ -47,8 +47,7 @@ import type {
 import { createShapeReader, defineShape, isShapeCompatible } from "./shape";
 import {
   applyTypeToPrimaryTarget,
-  fieldsFromConn,
-  getTextForTarget,
+  primaryHeaderTargetForConn,
 } from "./editing";
 
 export type NavDirection = "left" | "right" | "up" | "down" | "out";
@@ -148,7 +147,7 @@ type LocateResult = {
   siblings: readonly ItemId[];
 };
 
-type SetSelection = (selection: Selection, caret?: number) => void;
+type SetSelection = (selection: Selection, caret?: CaretPlacement) => void;
 
 function handleNavOut(
   core: Pick<Core, "locate">,
@@ -221,7 +220,7 @@ export type CollabWire = {
 
 type CorePlatformHooks = {
   primaryContentTarget?: (location: Location) => string | null;
-  onSelectionChange?: (selection: Selection, caret?: number) => void;
+  onSelectionChange?: (selection: Selection, caret?: CaretPlacement) => void;
   readCurrentCaret?: () => number | undefined;
   handleIntent?: (selection: Selection, intent: Intent) => void;
 };
@@ -244,8 +243,7 @@ function resolvePrimaryTarget(
 
   const item = core.item(location.item);
   if (item.mode.type !== "connected") return null;
-  const firstField = fieldsFromConn(item.mode.conn)[0];
-  return firstField ? connTarget(firstField.key) : null;
+  return primaryHeaderTargetForConn(item.mode.conn);
 }
 
 export function createCore(opts: CreateCoreOptions): {
@@ -423,10 +421,9 @@ export function createCore(opts: CreateCoreOptions): {
 
     if (intent.type === "EDIT_LABEL") {
       if (!location) return;
-      const text = getTextForTarget(core, location.item, LABEL_TARGET);
       focus(
         { type: "editing", location, target: LABEL_TARGET },
-        { caret: text.length },
+        { caret: "end" },
       );
       return;
     }
@@ -459,10 +456,9 @@ export function createCore(opts: CreateCoreOptions): {
       }
 
       if (intent.type === "CONFIRM" && primaryTarget) {
-        const text = getTextForTarget(core, location.item, primaryTarget);
         core.focus(
           { type: "editing", location, target: primaryTarget },
-          { caret: text.length },
+          { caret: "end" },
         );
         return;
       }
@@ -503,8 +499,10 @@ export function createCore(opts: CreateCoreOptions): {
 
 export type {
   AnyShapeReader,
+  CaretPlacement,
   Connected,
   Content,
+  FocusOpts,
   Location,
   GroupShapeReader,
   Item,
@@ -533,11 +531,10 @@ export {
 export { sameLocation };
 export {
   applyTypeToPrimaryTarget,
-  fieldsFromConn,
-  getTextForTarget,
   indentItemInPlace,
   isNumericLikeValue,
   patchConn,
+  primaryHeaderTargetForConn,
 } from "./editing";
 
 export { isCoreReadError };

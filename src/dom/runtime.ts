@@ -1,4 +1,5 @@
 import type {
+  CaretPlacement,
   Core,
   Location,
   Intent,
@@ -12,11 +13,17 @@ import { ITEM_TARGET, parseKeyIntent } from "../core";
 
 import {
   domPointToTextOffset,
+  readPlainTextFromContentEditable,
   setContentEditableCaret,
 } from "./contenteditable";
 
 type RuntimeEffect =
-  | { type: "FOCUS_TARGET"; location: Location; target: string; caret?: number }
+  | {
+      type: "FOCUS_TARGET";
+      location: Location;
+      target: string;
+      caret?: CaretPlacement;
+    }
   | { type: "FOCUS_STRUCTURAL"; el: HTMLElement }
   | { type: "CLEAR_DOM_SELECTION" }
   | { type: "CLEAR_FOCUS" };
@@ -157,7 +164,7 @@ function ensureProgrammaticFocus(el: HTMLElement): void {
 }
 
 export type DomRuntime = {
-  syncSelection(next: Selection, caret?: number): void;
+  syncSelection(next: Selection, caret?: CaretPlacement): void;
   readCurrentCaret(): number | undefined;
   primaryContentTarget(location: Location): string | null;
 
@@ -311,7 +318,7 @@ export function createRuntime(opts: {
     const caret = locationEff.caret;
     if (caret !== undefined && binding.setCaret) {
       const len = binding.setCaret!.getLength();
-      const nextCaret = clamp(caret!, 0, len);
+      const nextCaret = caret === "end" ? len : clamp(caret, 0, len);
       const currentCaret = binding.getCaret?.();
       if (currentCaret === nextCaret) return;
       binding.setCaret!.set(nextCaret);
@@ -319,7 +326,10 @@ export function createRuntime(opts: {
     }
 
     if (caret !== undefined && targetEl.isContentEditable) {
-      const nextCaret = Math.max(0, caret);
+      const nextCaret =
+        caret === "end"
+          ? readPlainTextFromContentEditable(targetEl).length
+          : Math.max(0, caret);
       const sel = window.getSelection();
       const currentCaret =
         sel?.rangeCount &&
@@ -356,7 +366,7 @@ export function createRuntime(opts: {
 
   const planEditingSelectionEffects = (
     sel: Extract<Selection, { type: "editing" }>,
-    caret?: number,
+    caret?: CaretPlacement,
   ): RuntimeEffect[] => [
     {
       type: "FOCUS_TARGET",
@@ -385,7 +395,7 @@ export function createRuntime(opts: {
 
   const planDomEffectsForSelection = (
     sel: Selection,
-    caret?: number,
+    caret?: CaretPlacement,
   ): RuntimeEffect[] => {
     switch (sel.type) {
       case "editing":
@@ -441,7 +451,7 @@ export function createRuntime(opts: {
     });
   };
 
-  const syncSelection = (next: Selection, caret?: number): void => {
+  const syncSelection = (next: Selection, caret?: CaretPlacement): void => {
     scheduleEffects(next, planDomEffectsForSelection(next, caret));
   };
 
@@ -583,7 +593,8 @@ export function createRuntime(opts: {
   const resolveItemIntentHandler = (
     selection: Extract<Selection, { type: "item" }>,
   ): ((intent: Intent) => void) | null =>
-    resolveItemSelectionOwnerView(selection)?.onIntent ?? rootOuterIntentHandler;
+    resolveItemSelectionOwnerView(selection)?.onIntent ??
+    rootOuterIntentHandler;
 
   const resolveStructuralIntentHandler = (
     selection: Extract<Selection, { type: "editing" }>,
@@ -604,8 +615,8 @@ export function createRuntime(opts: {
       return rootOuterIntentHandler;
     }
     return (
-      resolveViewForLocationTarget(selection.location, selection.target)?.onIntent ??
-      null
+      resolveViewForLocationTarget(selection.location, selection.target)
+        ?.onIntent ?? null
     );
   };
 

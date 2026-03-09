@@ -21,28 +21,17 @@ This document covers:
 
 ## Shared assumptions
 
-All views inherit the universal controls model defined in `docs/architecture.md`, including target classification, edit target lists, item-selection behaviors, traversable-target yielding, and the escape ladder. Shared DOM runtime contracts (`docs/dom-runtime.md`) and visual language (`docs/style-system.md`) also apply.
+All views inherit the shared controls model in `docs/architecture.md`, plus the DOM runtime contracts in `docs/dom-runtime.md` and the visual language in `docs/style-system.md`.
 
-## View specification template
+## View section shape
 
-Each view section SHOULD follow this structure:
+Each view section SHOULD cover:
 
 - Purpose and mental model
 - Body DOM shape
-- Location surfaces and targets
+- Targets and surfaces
 - View-specific behaviors
-- Commands and state transitions
-- Edge cases and invariants
-- Styling notes
-
-View-specific behaviors SHOULD define:
-
-- **Navigation geometry**: how NAV moves at item selection.
-- **Tab action**: what Tab does structurally.
-- **Edit traversal scope**: how far the edit target traversal extends across items.
-- **Inter-item edge behavior**: what happens when Enter or boundary NAV overflows an item's edit target list.
-- **DELETE policy**: remove, clear, or no-op, plus any edit-focus refinements.
-- **View-specific exceptions**: split, join, or other behaviors not covered by the universal model.
+- Commands and invariants
 
 ## Outline view (`outline`)
 
@@ -52,13 +41,11 @@ Outline is the primary hierarchical editor view.
 
 Rules:
 
-- Outline is a lines-of-text editor: value items are lines, and groups define indentation levels.
-- Items are either `group` items or value leaves (plain `value` or connected `conn:*`).
-- Empty groups are valid Core state, but Outline should not normally show indentation with no lines.
-- Outline uses a placeholder for empty groups.
-- Navigation is hierarchical and depth-first over visible items.
-- Editing remains inline in the outline context.
-- Outline defines an edit traversal space across leaf edit targets.
+- Outline is a hierarchical lines-of-text editor: value items are lines, and groups define indentation levels.
+- Items are either `group` items or value items (plain `value` or connected `conn:*`).
+- Navigation is hierarchical and depth-first across visible items.
+- Editing stays inline in the outline.
+- Traversal follows visible item stops.
 - `Enter` on item selection goes inward; structural insertion uses modified Enter shortcuts.
 
 ### Body DOM shape
@@ -110,13 +97,16 @@ Outline surfaces:
 
 - `ITEM_TARGET` on the item's `.ui-frame`
 - `content:text` for plain value editing
-- `conn:*` for connected fields, in `fieldsFromConn` order
+- `conn:*` for connected fields, in canonical shared-header field order
 - `label` for label editing
 
 Notes:
 
-- Outline defines an edit traversal space for `NAV`.
-- Groups participate in navigation but not in edit traversal.
+- Traversal follows visible item stops.
+- Groups participate in navigation but do not contribute a stop directly.
+- Only `content:text` participates in linear Outline edit traversal.
+- `label` and `conn:*` are explicit-entry header controls outside Outline edit traversal.
+- Connected Outline items are atomic traversal stops at `ITEM_TARGET`.
 - Non-outline child views are atomic traversal stops at `ITEM_TARGET`.
 - Target ownership still follows `docs/dom-runtime.md`, even when child header/body are hosted inside `.ui-outline-child`.
 
@@ -135,8 +125,8 @@ Inside `.ui-outline-child`, outline mounts the child header subtree when at leas
 Pointer hit routing inside `.ui-outline-child`:
 
 - Gutter/rail region (left of `--outline-indent`) keeps frame `ITEM_TARGET` behavior. `span.ui-outline-gutter` MUST call `e.preventDefault()` on `pointerdown` (structural chrome requirement for `contenteditable` views; see `docs/content-editable.md`).
-- For the non-gutter content area, the value textarea SHOULD span under the header area while its text starts below the header via padding.
-- For clicks in the value textarea's top padding area (above first text line), Outline SHOULD place caret at end of text.
+- For the non-gutter content area, the value surface SHOULD span under the header area while its text starts below the header via padding.
+- For clicks in the value surface's top padding area (above first text line), Outline SHOULD place caret at end of text.
 - Header interactive controls retain native behavior and MUST win hit-testing over body text-editing surfaces.
 - Outline gutter is the reorder drag surface and MUST set `data-drag="reorder"`.
 
@@ -168,26 +158,37 @@ Item selection uses sibling-only vertical navigation. At boundaries (no parent, 
 
 Tab changes structure via **in-place body transforms** (item identity stays in place).
 
-- **Tab (indent)**: the focused item remains in place and keeps its **label** and **view**. Outline inserts a single child item and copies the focused item's **body content** into that child (the child is inserted "in the middle" rather than making the focused item a moved child). The focused item's label remains on the parent item. If the focused item is `connected`, indent is a no-op.
-- **Shift+Tab (outdent)**: the focused item's parent remains in place and keeps its **label** and **view**. Outline replaces the parent's **body content** with the focused child's body content, then removes the focused child and all its siblings under that parent. The focused child's label (if any) is discarded. If the parent is `connected`, outdent is a no-op.
+- **Tab (indent)**: the focused item remains in place and keeps its **label** and **view**. Outline inserts a single child item and copies the focused item's **body content** into that child. The focused item's label remains on the parent item. If the focused item is `connected`, indent is a no-op.
+- **Shift+Tab (outdent)**: the focused item's parent remains in place and keeps its **label** and **view**. Outline replaces the parent's **body content** with the focused child's body content, then removes the focused child and all its siblings under that parent. The focused child's label, if any, is discarded. If the parent is `connected`, outdent is a no-op.
 - Preserve the current target and caret when possible. Otherwise, no-op.
 
 #### Edit traversal scope
 
-Unified across all visible leaf items in depth-first order. Each leaf contributes its edit target list (per `docs/architecture.md`). Groups do not participate. These are concatenated into one continuous sequence of edit stops.
+Traversal is unified across visible Outline items in depth-first order, with at most one stop per item.
 
-For contenteditable-based implementations, this section specifies the required **outcomes** (focus/target/caret transitions), even when the browser's contenteditable event pipeline is the implementation mechanism instead of `onIntent`.
+- Plain value items contribute one `content:text` stop.
+- Connected Outline items and non-outline child views contribute one atomic `ITEM_TARGET` stop.
+- Header controls do not participate.
+- Outline groups do not contribute a stop directly; they contribute the stops of their visible descendants.
 
 #### Inter-item edge behavior
 
-Continue to the adjacent leaf's edit target in the unified traversal. Backward moves to the previous leaf's last target with caret at end. Forward moves to the next leaf's first target with caret at start. At the very first or last edit stop in the entire traversal, no-op.
+Continue to the adjacent stop in the unified traversal. Backward lands at the previous stop's end when it is editable; forward lands at the next stop's start when it is editable. At the first or last stop, no-op.
 
-When the adjacent leaf is a non-outline embedded child view, traversal lands on that row's `ITEM_TARGET` (item selection). From that embedded item stop, boundary NAV back into an outline edit target keeps the standard caret rule: backward -> end, forward -> start.
+When the adjacent stop is a connected Outline item or a non-outline embedded child view, traversal lands on that row's `ITEM_TARGET`. Subsequent arrow navigation from that stop uses ordinary Outline item-selection geometry until the user explicitly goes inward.
 
-`Enter` from a plain value `content:text` target splits at caret and focuses the new sibling item's `content:text` target at caret `0`. This split behavior applies only to plain value `content:text` targets, never to `conn:*` fields.
-`Shift+Enter` from a plain value `content:text` target inserts a newline in place and keeps edit focus on the same item.
-`Mod+Enter` inserts a new plain sibling after the focused item and focuses its `content:text` target at caret `0`.
-`Mod+Shift+Enter` inserts a new plain item after the parent only when the focused item is the last child of a non-root group; otherwise it is a no-op. Focus moves to the new item's `content:text` target at caret `0`.
+For `ArrowUp` / `ArrowDown`, native text movement remains in effect while the caret can still move within the current `content:text` block. At the first or last visual line boundary, vertical movement follows the same stop model: plain-value stops re-enter `content:text`, while connected and embedded stops land on `ITEM_TARGET`.
+Sticky column is preserved only within the same continuous vertical `content:text` session.
+
+Header text-editing keys stay local/native. `Enter` commits and exits to same-item item selection. `Escape` cancels and exits to same-item item selection. For `conn:*`, `Tab` / `Shift+Tab` move within canonical shared-header field order when another field exists; otherwise they commit and no-op.
+
+#### Enter behavior
+
+- `Enter` from a plain value `content:text` target splits at caret and focuses the new sibling item's `content:text` target at caret `0`. This applies only to plain value `content:text` targets, never to `conn:*`.
+- `Shift+Enter` from a plain value `content:text` target inserts a newline in place and keeps edit focus on the same item.
+- `Mod+Enter` inserts a new plain sibling after the focused item and focuses its `content:text` target at caret `0`.
+- `Mod+Shift+Enter` inserts a new plain item after the parent only when the focused item is the last child of a non-root group; otherwise it is a no-op. Focus moves to the new item's `content:text` target at caret `0`.
+
 These structural intents are always handled by Outline, even when focus is on an embedded child view's `content:*` target.
 
 #### Item-selection Enter behavior
@@ -198,19 +199,15 @@ These structural intents are always handled by Outline, even when focus is on an
 - Non-empty group: focus the first child at `ITEM_TARGET`.
 - Empty group: create the first child and focus its `content:text` target with caret at start.
 
-Delete at boundary from a `conn:*` target is a no-op.
-
-Delete at boundary from a `content:text` target is target-specific:
-
-- If the current text is non-empty, boundary delete checks the adjacent edit stop in the delete direction. If that stop is a plain value item, Outline joins the two values at the boundary point and places the caret at the join boundary in the surviving item. Otherwise, no-op.
-- If the current text is empty, that DELETE intent removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
-
-When the contenteditable selection spans multiple plain value items within the same parent, delete/backspace merges the start item's text up to the selection start with the end item's text from the selection end, removing all spanned items between them. The caret lands at the merge point in the surviving start item. Constrained to same-parent siblings; cross-parent ranges are a no-op.
-
 #### DELETE policy
 
 - Outline handles DELETE with remove semantics (not clear-in-place).
 - `ITEM_TARGET` DELETE MUST remove the selected subtree.
+- Delete at boundary from a `conn:*` target is a no-op.
+- Delete at boundary from a `content:text` target is target-specific:
+  If the current text is non-empty, boundary delete checks the adjacent edit stop in the delete direction. If that stop is a plain value item, Outline joins the two values at the boundary point and places the caret at the join boundary in the surviving item. Otherwise, no-op.
+  If the current text is empty, that DELETE intent removes the item and moves to the adjacent edit stop in the unified traversal when one exists. Backward moves to the previous stop with caret at end; forward moves to the next stop with caret at start.
+- When the contenteditable selection spans multiple plain value items within the same parent, delete/backspace merges the start item's text up to the selection start with the end item's text from the selection end, removing all spanned items between them. The caret lands at the merge point in the surviving start item. Constrained to same-parent siblings; cross-parent ranges are a no-op.
 - After remove, focus lands on: next sibling, then previous sibling, then parent.
 - Parent fallback is valid only if that parent survives the same commit.
 - If no live destination exists, Core repair MUST apply.
@@ -340,7 +337,7 @@ Rules:
 - Schema row SHOULD resolve as `rows[0] ?? null`.
 - `colCount` SHOULD follow `schemaRow.children.length` when schema row exists.
 - Header rendering for schema cells SHOULD use the same header DOM contract as the outer view (`.ui-header`), but mounted in a table header cell context.
-- Schema header cells SHOULD use `buildItemHeader` to preserve shared header target semantics (see `docs/dom-runtime.md`).
+- Schema header cells SHOULD use `mountHeader` to preserve shared header target semantics (see `docs/dom-runtime.md`).
 
 ### View-specific behaviors
 
