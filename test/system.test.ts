@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { ItemId, Transaction } from "../src/core";
+import type { NodeId, Transaction } from "../src/core";
 import type { UiCore } from "../src/dom";
 import { buildRootShell, createApp } from "../src/setup";
 import { viewRegistrations } from "../src/views";
@@ -12,7 +12,7 @@ import {
   flushDomEffects,
   makeCoreRuntime,
   mkBlank,
-  mkGroup,
+  mkItem,
   pointerDown,
   requireCreatedEntryId,
   requireFrameEl,
@@ -20,7 +20,7 @@ import {
   valueOfId,
 } from "./dom-test-utils";
 
-function mountAppShell(core: UiCore, rootId: ItemId): () => void {
+function mountAppShell(core: UiCore, rootId: NodeId): () => void {
   const appRoot = buildRootShell(core, rootId);
 
   document.body.replaceChildren(appRoot.el);
@@ -41,17 +41,17 @@ describe("system/bootstrap & lifecycle", () => {
 
     const main = document.body.querySelector(".ui-main") as HTMLElement | null;
     expect(main).toBeTruthy();
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     unmount();
     expect(document.body.querySelector(".ui-main")).toBeNull();
   });
 
-  test("root item selection focuses the root shell", async () => {
+  test("root node selection focuses the root shell", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const unmount = mountAppShell(core, rootId);
-    core.focus({ type: "item", location: { item: rootId, portals: [] } });
+    core.focus({ type: "node", location: { node: rootId, portals: [] } });
     await flushDomEffects();
 
     const main = document.body.querySelector(".ui-main") as HTMLElement | null;
@@ -66,11 +66,11 @@ describe("system/keyboard routing & focus ownership", () => {
   test("routes NAV to the active nested table view", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "t" });
+    const tableId = mkItem(core, rootId, { label: "t" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     const c21 = childrenOf(core, r2)[1]!;
@@ -82,12 +82,12 @@ describe("system/keyboard routing & focus ownership", () => {
     pointerDown(c11Frame);
     await flushDomEffects();
 
-    expectSel(core, { item: c11, portals: [] });
+    expectSel(core, { node: c11, portals: [] });
 
     dispatchKey(c11Frame, "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { item: c21, portals: [] });
+    expectSel(core, { node: c21, portals: [] });
 
     unmount();
   });
@@ -99,13 +99,13 @@ describe("system/keyboard routing & focus ownership", () => {
     const app = createApp({ host, rootView: "outline" });
     const { core, rootId } = app;
 
-    let itemId: ItemId = "";
+    let nodeId: NodeId = "";
     core.commit((t) => {
-      itemId = t.insertChild(rootId);
-      t.setValue(itemId, "hello");
+      nodeId = t.insertChild(rootId);
+      t.setValue(nodeId, "hello");
     });
 
-    core.focus({ type: "item", location: { item: itemId, portals: [] } });
+    core.focus({ type: "node", location: { node: nodeId, portals: [] } });
     await flushDomEffects();
 
     const toolbarButton = document.body.querySelector(
@@ -117,7 +117,7 @@ describe("system/keyboard routing & focus ownership", () => {
     toolbarButton!.click();
     await flushDomEffects();
 
-    expectSel(core, { item: itemId, portals: [] });
+    expectSel(core, { node: nodeId, portals: [] });
 
     app.dispose();
     document.body.replaceChildren();
@@ -130,13 +130,13 @@ describe("system/keyboard routing & focus ownership", () => {
     const app = createApp({ host, rootView: "outline" });
     const { core, rootId } = app;
 
-    let itemId: ItemId = "";
+    let nodeId: NodeId = "";
     core.commit((t) => {
-      itemId = t.insertChild(rootId);
-      t.setValue(itemId, null);
+      nodeId = t.insertChild(rootId);
+      t.setValue(nodeId, null);
     });
 
-    core.focus({ type: "item", location: { item: itemId, portals: [] } });
+    core.focus({ type: "node", location: { node: nodeId, portals: [] } });
     await flushDomEffects();
 
     const toolbarButton = document.body.querySelector(
@@ -148,12 +148,12 @@ describe("system/keyboard routing & focus ownership", () => {
     toolbarButton!.click();
     await flushDomEffects();
 
-    expect(core.view(itemId)).toBe("table");
-    expect(core.item(itemId).content.type).toBe("group");
+    expect(core.view(nodeId)).toBe("table");
+    expect(core.node(nodeId).content.type).toBe("item");
 
-    const rows = childrenOf(core, itemId);
+    const rows = childrenOf(core, nodeId);
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(core.item(rows[0]!).content.type).toBe("group");
+    expect(core.node(rows[0]!).content.type).toBe("item");
 
     const cells = childrenOf(core, rows[0]!);
     expect(cells.length).toBeGreaterThanOrEqual(1);
@@ -169,9 +169,9 @@ describe("system/history across views", () => {
 
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
-    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
 
     core.commit((t) => t.setValue(a, "x2"));
@@ -193,7 +193,7 @@ describe("system/history across views", () => {
     expect(valueOfId(core, c11)).toBe(9);
 
     const selection = core.selection();
-    expect(selection.type).toBe("item");
+    expect(selection.type).toBe("node");
   });
 });
 
@@ -220,7 +220,7 @@ describe("system/collab + local history", () => {
     const unmount = mountAppShell(core, rootId);
     await flushDomEffects();
 
-    let x: ItemId = "";
+    let x: NodeId = "";
     core.commit((t) => {
       x = t.insertChild(rootId);
       t.setLabel(x, "x");

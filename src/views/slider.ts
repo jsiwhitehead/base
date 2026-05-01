@@ -1,7 +1,7 @@
 import type {
   Location,
   Intent,
-  ItemId,
+  NodeId,
   ReaderForShape,
   ValueOrBlank,
 } from "../core";
@@ -15,7 +15,7 @@ type SliderOpts = { min: number; max: number; step: number };
 
 type SliderMountCtx = {
   core: UiCore;
-  id: ItemId;
+  id: NodeId;
   reader: SliderReader;
   opts: SliderOpts;
   location: Location;
@@ -71,7 +71,7 @@ function formatNumberForStep(value: number, step: number): string {
 }
 
 const cmd = {
-  setValue(core: UiCore, id: ItemId, value: number): void {
+  setValue(core: UiCore, id: NodeId, value: number): void {
     if (!Number.isFinite(value)) return;
     core.commit((t) => t.setValue(id, value));
   },

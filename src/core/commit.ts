@@ -13,25 +13,25 @@ import type {
   ViewName,
 } from "./model";
 import { CoreApiError } from "./model";
-import type { Connected, ItemId, ValueOrBlank } from "./read";
-import { entryIdFromItemId, itemIdOf, parseItemId } from "./read";
+import type { Connected, NodeId, ValueOrBlank } from "./read";
+import { entryIdFromNodeId, nodeIdOf, parseNodeId } from "./read";
 import { CONTENT_TEXT_TARGET } from "./select";
 import type { Selection, SelectionRepairAnchor } from "./select";
 import { enforceViewShapes } from "./shape";
 import type { ViewShape } from "./shape";
 
 export type Tx = {
-  setLabel(id: ItemId, label: string): void;
-  setView(id: ItemId, view: ViewName | null): void;
+  setLabel(id: NodeId, label: string): void;
+  setView(id: NodeId, view: ViewName | null): void;
 
-  setValue(id: ItemId, value: ValueOrBlank): void;
-  setConnected(id: ItemId, conn: Connected): void;
-  setGroup(id: ItemId): void;
+  setValue(id: NodeId, value: ValueOrBlank): void;
+  setConnected(id: NodeId, conn: Connected): void;
+  setItem(id: NodeId): void;
 
-  insertChild(parentId: ItemId, opts?: { at?: number }): ItemId;
+  insertChild(parentId: NodeId, opts?: { at?: number }): NodeId;
 
-  move(id: ItemId, toParentId: ItemId, opts?: { at?: number }): void;
-  remove(id: ItemId): void;
+  move(id: NodeId, toParentId: NodeId, opts?: { at?: number }): void;
+  remove(id: NodeId): void;
 };
 
 export type CommitController = {
@@ -48,7 +48,7 @@ export type CommitController = {
 type TextHistoryOpClass = "insert" | "delete" | "replace";
 type TextHistoryGroupKey = {
   type: "text";
-  itemId: ItemId;
+  nodeId: NodeId;
   target: string;
   opClass: TextHistoryOpClass;
 };
@@ -108,7 +108,7 @@ type CommitControllerOptions = {
   restoreSelectionIfValid: (snapshot: HistorySelectionSnapshot) => void;
   captureRepairAnchor: () => SelectionRepairAnchor | null;
   repairAfterLocalApply: (anchor: SelectionRepairAnchor | null) => void;
-  coerceEditingToItem: () => void;
+  coerceEditingToNode: () => void;
   coerceAfterRemoteApply: () => void;
   clearCachesForRemovedEntries: (removedIds: readonly EntryId[]) => void;
   collab?: { origin: string; send(txn: Transaction): void };
@@ -128,18 +128,18 @@ function cloneSelection(selection: Selection): Selection {
     return {
       type: "editing",
       location: {
-        item: selection.location.item,
+        node: selection.location.node,
         portals: [...selection.location.portals],
       },
       target: selection.target,
     };
   return {
-    type: "item",
+    type: "node",
     anchor: {
-      item: selection.anchor.item,
+      node: selection.anchor.node,
       portals: [...selection.anchor.portals],
     },
-    head: { item: selection.head.item, portals: [...selection.head.portals] },
+    head: { node: selection.head.node, portals: [...selection.head.portals] },
   };
 }
 
@@ -161,7 +161,7 @@ function patchesViewOnSelection(
   snapshot: HistorySelectionSnapshot,
 ): boolean {
   if (snapshot.selection.type !== "editing") return false;
-  const eid = entryIdFromItemId(snapshot.selection.location.item);
+  const eid = entryIdFromNodeId(snapshot.selection.location.node);
   if (eid == null) return false;
   return txn.ops.some(
     (op) => op.type === "patch" && op.id === eid && op.next.view !== undefined,
@@ -246,7 +246,7 @@ export function createCommitController(
   const coerceEditingIfViewChanged = (txn: Transaction): void => {
     const sel = opts.getSelection();
     if (sel.type !== "editing") return;
-    const eid = entryIdFromItemId(sel.location.item);
+    const eid = entryIdFromNodeId(sel.location.node);
     if (eid == null) return;
     if (
       txn.ops.some(
@@ -254,7 +254,7 @@ export function createCommitController(
           op.type === "patch" && op.id === eid && op.next.view !== undefined,
       )
     ) {
-      opts.coerceEditingToItem();
+      opts.coerceEditingToNode();
     }
   };
 
@@ -305,7 +305,7 @@ export function createCommitController(
     if (sel.type !== "editing") return null;
     if (sel.target !== CONTENT_TEXT_TARGET) return null;
 
-    const focusedEntryId = entryIdFromItemId(sel.location.item);
+    const focusedEntryId = entryIdFromNodeId(sel.location.node);
     if (focusedEntryId == null) return null;
 
     const nextPatch = readSingleTextPatch(txn.ops, focusedEntryId);
@@ -326,7 +326,7 @@ export function createCommitController(
 
     return {
       type: "text",
-      itemId: sel.location.item,
+      nodeId: sel.location.node,
       target: sel.target,
       opClass,
     };
@@ -341,7 +341,7 @@ export function createCommitController(
     if (!prevKey || !nextKey) return false;
 
     return (
-      prevKey.itemId === nextKey.itemId &&
+      prevKey.nodeId === nextKey.nodeId &&
       prevKey.target === nextKey.target &&
       prevKey.opClass === nextKey.opClass &&
       next.groupedAt - prev.groupedAt <= TEXT_HISTORY_COALESCE_MS
@@ -540,7 +540,7 @@ export function createCommitController(
   const buildTx = (
     ops: Op[],
     pendingCreated: Set<EntryId>,
-    requireTxEntryId: (id: ItemId, opName: string) => EntryId,
+    requireTxEntryId: (id: NodeId, opName: string) => EntryId,
     allocateEntryId: () => EntryId,
   ): Tx => ({
     setLabel: (id, label) => {
@@ -584,11 +584,11 @@ export function createCommitController(
       );
     },
 
-    setGroup: (id) => {
-      const eid = requireTxEntryId(id, "setGroup");
+    setItem: (id) => {
+      const eid = requireTxEntryId(id, "setItem");
       ops.push(
         currentModel.ops.patch(eid, {
-          content: { type: "group", childIds: [] },
+          content: { type: "item", childIds: [] },
         }),
       );
     },
@@ -609,7 +609,7 @@ export function createCommitController(
         }),
       );
 
-      return itemIdOf(id);
+      return nodeIdOf(id);
     },
 
     move: (id, toParentId, moveOpts) => {
@@ -650,25 +650,25 @@ export function createCommitController(
     const ops: Op[] = [];
     const pendingCreated = new Set<EntryId>();
 
-    const requireTxEntryId = (id: ItemId, opName: string): EntryId => {
-      const ref = parseItemId(id);
+    const requireTxEntryId = (id: NodeId, opName: string): EntryId => {
+      const ref = parseNodeId(id);
       if (!ref)
         throw new CoreApiError(
-          "INVALID_ITEM_ID",
-          `${opName} expects a valid item id`,
+          "INVALID_NODE_ID",
+          `${opName} expects a valid node id`,
         );
 
       const { entryId, path } = ref;
       if (path.length !== 0)
         throw new CoreApiError(
-          "DERIVED_ITEM_ID",
-          `${opName} does not accept readonly/derived item ids`,
+          "DERIVED_NODE_ID",
+          `${opName} does not accept readonly/derived node ids`,
         );
       const model = currentModel;
       if (!model.hasEntry(entryId) && !pendingCreated.has(entryId)) {
         throw new CoreApiError(
-          "UNKNOWN_ITEM_ID",
-          `${opName} expects an existing item id`,
+          "UNKNOWN_NODE_ID",
+          `${opName} expects an existing node id`,
         );
       }
 

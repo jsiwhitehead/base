@@ -1,16 +1,16 @@
 import type { Tx } from "./commit";
 import type { Connected } from "./read";
-import type { Item, ItemId, ValueOrBlank } from "./read";
+import type { Node, NodeId, ValueOrBlank } from "./read";
 import { connTarget } from "./select";
 
 const NUMERIC_VALUE_RE = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
 type EditCore = {
-  item(id: ItemId): Item;
+  node(id: NodeId): Node;
   commit(run: (t: Tx) => void): void;
   locate(
-    id: ItemId,
-  ): { parentId: ItemId; index: number; siblings: readonly ItemId[] } | null;
+    id: NodeId,
+  ): { parentId: NodeId; index: number; siblings: readonly NodeId[] } | null;
 };
 
 export function isNumericLikeValue(value: ValueOrBlank): boolean {
@@ -43,25 +43,25 @@ export function patchConn(
   return conn;
 }
 
-export function indentItemInPlace(core: EditCore, id: ItemId): ItemId | null {
-  const snapshot = core.item(id);
+export function indentNodeInPlace(core: EditCore, id: NodeId): NodeId | null {
+  const snapshot = core.node(id);
   if (snapshot.mode.type !== "plain") return null;
   if (snapshot.content.type === "issue") return null;
 
   const value =
     snapshot.content.type === "value" ? snapshot.content.value : null;
   const children =
-    snapshot.content.type === "group" ? [...snapshot.content.children] : null;
+    snapshot.content.type === "item" ? [...snapshot.content.children] : null;
 
-  let childId: ItemId | null = null;
+  let childId: NodeId | null = null;
   core.commit((t) => {
-    t.setGroup(id);
+    t.setItem(id);
     childId = t.insertChild(id, { at: 0 });
     if (!children) {
       t.setValue(childId, value);
       return;
     }
-    t.setGroup(childId);
+    t.setItem(childId);
     for (let i = 0; i < children.length; i += 1) {
       t.move(children[i]!, childId, { at: i });
     }

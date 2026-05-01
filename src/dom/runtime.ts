@@ -3,13 +3,13 @@ import type {
   Core,
   Location,
   Intent,
-  ItemId,
+  NodeId,
   ReaderForShape,
   Selection,
   ViewShape,
   ViewName,
 } from "../core";
-import { ITEM_TARGET, parseGlobalKeyIntent } from "../core";
+import { NODE_TARGET, parseGlobalKeyIntent } from "../core";
 
 import {
   domPointToTextOffset,
@@ -41,7 +41,7 @@ export type DomView = {
 
 export type ViewFactory<C extends Core = Core> = (args: {
   core: C;
-  id: ItemId;
+  id: NodeId;
   location: Location;
 }) => DomView;
 
@@ -50,7 +50,7 @@ export type ViewRegistration = {
   shape?: ViewShape;
 };
 
-type ViewMountArgs = { core: UiCore; id: ItemId; location: Location };
+type ViewMountArgs = { core: UiCore; id: NodeId; location: Location };
 
 export type AuthoredView = {
   onIntent: (intent: Intent) => void;
@@ -118,14 +118,14 @@ type AttachTargetOpts = {
 };
 
 type MountViewOpts = {
-  id: ItemId;
-  portals: readonly ItemId[];
+  id: NodeId;
+  portals: readonly NodeId[];
   view: ViewName;
 };
 
-const itemKey = (id: ItemId): string => id;
+const nodeKey = (id: NodeId): string => id;
 const keyOf = (f: Location): string =>
-  `${f.portals.map(itemKey).join("|")}::${itemKey(f.item)}`;
+  `${f.portals.map(nodeKey).join("|")}::${nodeKey(f.node)}`;
 
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
@@ -183,7 +183,7 @@ export type DomRuntime = {
 
 export function createRuntime(opts: {
   getCore: () => UiCore;
-  rootId: ItemId;
+  rootId: NodeId;
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
   dispatchIntent: (intent: Intent) => void;
   getSelection: () => Selection;
@@ -238,25 +238,25 @@ export function createRuntime(opts: {
   };
 
   const isExactRootLocation = (location: Location): boolean =>
-    location.item === opts.rootId && location.portals.length === 0;
+    location.node === opts.rootId && location.portals.length === 0;
 
   const resolveStructuralFocusEl = (
-    sel: Extract<Selection, { type: "item" }>,
+    sel: Extract<Selection, { type: "node" }>,
   ): HTMLElement | null => {
     const exactRoot =
       isExactRootLocation(sel.anchor) && isExactRootLocation(sel.head);
 
     if (exactRoot) {
-      const rootItemTarget = resolveBinding(sel.head, ITEM_TARGET)?.getEl();
-      if (rootItemTarget) return rootItemTarget;
+      const rootNodeTarget = resolveBinding(sel.head, NODE_TARGET)?.getEl();
+      if (rootNodeTarget) return rootNodeTarget;
       return mountedViewsByLocation.get(keyOf(sel.head))?.root ?? null;
     }
 
-    return resolveBinding(sel.head, ITEM_TARGET)?.getEl() ?? null;
+    return resolveBinding(sel.head, NODE_TARGET)?.getEl() ?? null;
   };
 
-  const resolveItemSelectionOwnerView = (
-    selection: Extract<Selection, { type: "item" }>,
+  const resolveNodeSelectionOwnerView = (
+    selection: Extract<Selection, { type: "node" }>,
   ): ViewHandle | null => {
     const anchorIsRoot = isExactRootLocation(selection.anchor);
     const headIsRoot = isExactRootLocation(selection.head);
@@ -264,7 +264,7 @@ export function createRuntime(opts: {
     if (anchorIsRoot || headIsRoot) {
       if (!anchorIsRoot || !headIsRoot) {
         throw new Error(
-          `Mixed root/non-root item selection is invalid: anchor=${keyOf(selection.anchor)} head=${keyOf(selection.head)}`,
+          `Mixed root/non-root node selection is invalid: anchor=${keyOf(selection.anchor)} head=${keyOf(selection.head)}`,
         );
       }
       return null;
@@ -272,24 +272,24 @@ export function createRuntime(opts: {
 
     const anchorView = resolveViewForLocationTarget(
       selection.anchor,
-      ITEM_TARGET,
+      NODE_TARGET,
     );
     if (!anchorView) {
       throw new Error(
-        `Missing ITEM_TARGET binding for item selection anchor at ${keyOf(selection.anchor)}`,
+        `Missing NODE_TARGET binding for node selection anchor at ${keyOf(selection.anchor)}`,
       );
     }
 
-    const headView = resolveViewForLocationTarget(selection.head, ITEM_TARGET);
+    const headView = resolveViewForLocationTarget(selection.head, NODE_TARGET);
     if (!headView) {
       throw new Error(
-        `Missing ITEM_TARGET binding for item selection head at ${keyOf(selection.head)}`,
+        `Missing NODE_TARGET binding for node selection head at ${keyOf(selection.head)}`,
       );
     }
 
     if (anchorView !== headView) {
       throw new Error(
-        `Cross-view item selection is invalid: anchor=${keyOf(selection.anchor)} head=${keyOf(selection.head)}`,
+        `Cross-view node selection is invalid: anchor=${keyOf(selection.anchor)} head=${keyOf(selection.head)}`,
       );
     }
 
@@ -377,8 +377,8 @@ export function createRuntime(opts: {
     },
   ];
 
-  const planItemSelectionEffects = (
-    sel: Extract<Selection, { type: "item" }>,
+  const planNodeSelectionEffects = (
+    sel: Extract<Selection, { type: "node" }>,
   ): RuntimeEffect[] => {
     const focusEl = resolveStructuralFocusEl(sel);
     return focusEl
@@ -401,8 +401,8 @@ export function createRuntime(opts: {
     switch (sel.type) {
       case "editing":
         return planEditingSelectionEffects(sel, caret);
-      case "item":
-        return planItemSelectionEffects(sel);
+      case "node":
+        return planNodeSelectionEffects(sel);
       case "idle":
         return planIdleSelectionEffects();
       default:
@@ -560,7 +560,7 @@ export function createRuntime(opts: {
 
   const mountView = (mountOpts: MountViewOpts): Component => {
     const id = mountOpts.id;
-    const location: Location = { item: id, portals: mountOpts.portals };
+    const location: Location = { node: id, portals: mountOpts.portals };
     const core = opts.getCore();
 
     const factory = views[mountOpts.view] ?? views.outline;
@@ -604,17 +604,17 @@ export function createRuntime(opts: {
   ): ((intent: Intent) => void) | null => {
     if (selection.type === "idle") return null;
 
-    const itemSelection =
-      selection.type === "item"
+    const nodeSelection =
+      selection.type === "node"
         ? selection
         : {
-            type: "item" as const,
+            type: "node" as const,
             anchor: selection.location,
             head: selection.location,
           };
 
     return (
-      resolveItemSelectionOwnerView(itemSelection)?.onIntent ??
+      resolveNodeSelectionOwnerView(nodeSelection)?.onIntent ??
       rootOuterIntentHandler
     );
   };
@@ -667,7 +667,7 @@ function createUiCore(core: Core, runtime: DomRuntime): UiCore {
 
 export function bindUiRuntime(args: {
   core: Core;
-  rootId: ItemId;
+  rootId: NodeId;
   views: Partial<Record<ViewName, ViewFactory<UiCore>>>;
 }): { core: UiCore; runtime: DomRuntime } {
   let uiCore!: UiCore;

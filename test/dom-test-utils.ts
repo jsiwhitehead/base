@@ -4,7 +4,7 @@ import { afterEach, beforeAll, expect } from "bun:test";
 import type {
   CollabWire,
   Intent,
-  ItemId,
+  NodeId,
   Location,
   ViewName,
 } from "../src/core";
@@ -16,7 +16,7 @@ export {
   childrenOf,
   expectSel,
   mkBlank,
-  mkGroup,
+  mkItem,
   requireCreatedEntryId,
   setFormula,
   setQuery,
@@ -72,7 +72,7 @@ afterEach(() => {
 export function makeCoreRuntime(args?: {
   views?: Partial<typeof viewRegistrations>;
   collab?: CollabWire;
-}): { core: UiCore; rootId: ItemId } {
+}): { core: UiCore; rootId: NodeId } {
   drainCleanups();
 
   const { core, pureCore, rootId, runtime } = createUiCoreRuntime({
@@ -101,7 +101,7 @@ const viewFactories = Object.fromEntries(
 export async function mountView(args: {
   view: Extract<ViewName, "outline" | "table" | "slider">;
   core: UiCore;
-  id: ItemId;
+  id: NodeId;
   location: Location;
 }): Promise<{ root: HTMLElement; unmount: () => void }> {
   const { view, core, id, location } = args;
@@ -122,7 +122,7 @@ export async function mountView(args: {
 export async function mountLocalView(args: {
   view: Extract<ViewName, "outline" | "table" | "slider">;
   core: UiCore;
-  id: ItemId;
+  id: NodeId;
   location: Location;
 }): Promise<{ domView: DomView; unmount: () => void }> {
   const { view, core, id, location } = args;
@@ -311,11 +311,11 @@ export function queryTargetInput(
     | null;
 }
 
-function findFrameEl(root: ParentNode, id: ItemId): HTMLElement | null {
+function findFrameEl(root: ParentNode, id: NodeId): HTMLElement | null {
   return root.querySelector(`.ui-frame[data-id="${id}"]`) as HTMLElement | null;
 }
 
-export function requireFrameEl(root: ParentNode, id: ItemId): HTMLElement {
+export function requireFrameEl(root: ParentNode, id: NodeId): HTMLElement {
   const frameEl = findFrameEl(root, id);
   if (!frameEl) throw new Error(`Missing frame element for id=${String(id)}`);
   return frameEl;

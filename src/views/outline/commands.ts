@@ -1,38 +1,38 @@
 import {
-  indentItemInPlace,
+  indentNodeInPlace,
   CONTENT_TEXT_TARGET,
   type Core,
-  type ItemId,
+  type NodeId,
   type Location,
   type Selection,
 } from "../../core";
 
 import {
-  blockSelectionItems,
+  blockSelectionNodes,
   childrenOf,
-  isPlainValueItem,
+  isPlainValueNode,
   parentOf,
   valueToText,
   type ModelPosition,
 } from "./navigation";
 
 export type BlockRemovalPlan = {
-  removeRoots: ItemId[];
-  pruneIds: ItemId[];
-  removedIds: Set<ItemId>;
+  removeRoots: NodeId[];
+  pruneIds: NodeId[];
+  removedIds: Set<NodeId>;
   shouldClearRoot: boolean;
 };
 
 export function resolveFocusAfterOutlineRemove(
   core: Core,
-  rootId: ItemId,
-  id: ItemId,
+  rootId: NodeId,
+  id: NodeId,
   prefer: "next" | "previous",
-  portals: readonly ItemId[],
-  removedIds: ReadonlySet<ItemId>,
+  portals: readonly NodeId[],
+  removedIds: ReadonlySet<NodeId>,
 ): Location | null {
   const loc = core.locate(id);
-  const findSibling = (dir: "next" | "previous"): ItemId | null => {
+  const findSibling = (dir: "next" | "previous"): NodeId | null => {
     if (!loc) return null;
     if (dir === "next") {
       for (let i = loc.index + 1; i < loc.siblings.length; i += 1) {
@@ -49,32 +49,32 @@ export function resolveFocusAfterOutlineRemove(
   };
 
   const primary = findSibling(prefer === "next" ? "next" : "previous");
-  if (primary) return { item: primary, portals };
+  if (primary) return { node: primary, portals };
 
   const fallback = findSibling(prefer === "next" ? "previous" : "next");
-  if (fallback) return { item: fallback, portals };
+  if (fallback) return { node: fallback, portals };
 
   const parentId = parentOf(core, rootId, id);
   if (!parentId || removedIds.has(parentId)) return null;
-  return { item: parentId, portals };
+  return { node: parentId, portals };
 }
 
 export function computePruneAncestorsForRemoval(
   core: Core,
-  rootId: ItemId,
-  removedId: ItemId,
-): ItemId[] {
-  const out: ItemId[] = [];
-  let cur: ItemId = removedId;
+  rootId: NodeId,
+  removedId: NodeId,
+): NodeId[] {
+  const out: NodeId[] = [];
+  let cur: NodeId = removedId;
 
   while (true) {
     const parentId = parentOf(core, rootId, cur);
     if (!parentId) break;
     if (parentId === rootId) break;
 
-    const parent = core.item(parentId);
+    const parent = core.node(parentId);
     if (parent.mode.type === "readonly") break;
-    if (parent.content.type !== "group") break;
+    if (parent.content.type !== "item") break;
 
     const kids = parent.content.children;
     if (kids.length !== 1 || kids[0] !== cur) break;
@@ -86,9 +86,9 @@ export function computePruneAncestorsForRemoval(
   return out;
 }
 
-function itemDepth(core: Core, id: ItemId): number {
+function nodeDepth(core: Core, id: NodeId): number {
   let depth = 0;
-  let cur: ItemId | null = id;
+  let cur: NodeId | null = id;
   while (cur) {
     const loc = core.locate(cur);
     if (!loc) break;
@@ -100,25 +100,25 @@ function itemDepth(core: Core, id: ItemId): number {
 
 function shouldClearRootAfterRemovals(
   core: Core,
-  rootId: ItemId,
-  removedIds: ReadonlySet<ItemId>,
+  rootId: NodeId,
+  removedIds: ReadonlySet<NodeId>,
 ): boolean {
   if (removedIds.size === 0) return false;
-  const rootSnap = core.item(rootId);
+  const rootSnap = core.node(rootId);
   return (
-    rootSnap.content.type === "group" &&
+    rootSnap.content.type === "item" &&
     rootSnap.content.children.every((cid) => removedIds.has(cid))
   );
 }
 
 function normalizeRemovalRoots(
   core: Core,
-  itemIds: readonly ItemId[],
-): ItemId[] {
-  const candidate = new Set<ItemId>(itemIds);
-  const out: ItemId[] = [];
-  const seen = new Set<ItemId>();
-  for (const id of itemIds) {
+  nodeIds: readonly NodeId[],
+): NodeId[] {
+  const candidate = new Set<NodeId>(nodeIds);
+  const out: NodeId[] = [];
+  const seen = new Set<NodeId>();
+  for (const id of nodeIds) {
     if (seen.has(id)) continue;
     seen.add(id);
     let curLoc = core.locate(id);
@@ -138,13 +138,13 @@ function normalizeRemovalRoots(
 
 function computePruneAncestorsForRemovals(
   core: Core,
-  rootId: ItemId,
-  removedIds: readonly ItemId[],
-): ItemId[] {
-  const removed = new Set<ItemId>(removedIds);
-  const pruneIds: ItemId[] = [];
+  rootId: NodeId,
+  removedIds: readonly NodeId[],
+): NodeId[] {
+  const removed = new Set<NodeId>(removedIds);
+  const pruneIds: NodeId[] = [];
   while (true) {
-    const candidates = new Set<ItemId>();
+    const candidates = new Set<NodeId>();
     for (const removedId of removed) {
       let cur = removedId;
       while (true) {
@@ -158,9 +158,9 @@ function computePruneAncestorsForRemovals(
     let changed = false;
     for (const parentId of candidates) {
       if (removed.has(parentId)) continue;
-      const parent = core.item(parentId);
+      const parent = core.node(parentId);
       if (parent.mode.type === "readonly") continue;
-      if (parent.content.type !== "group") continue;
+      if (parent.content.type !== "item") continue;
       if (!parent.content.children.every((childId) => removed.has(childId))) {
         continue;
       }
@@ -171,17 +171,17 @@ function computePruneAncestorsForRemovals(
     if (!changed) break;
   }
 
-  return pruneIds.sort((a, b) => itemDepth(core, b) - itemDepth(core, a));
+  return pruneIds.sort((a, b) => nodeDepth(core, b) - nodeDepth(core, a));
 }
 
 export function planBlockRemoval(
   core: Core,
-  rootId: ItemId,
-  itemIds: readonly ItemId[],
+  rootId: NodeId,
+  nodeIds: readonly NodeId[],
 ): BlockRemovalPlan {
-  const removeRoots = normalizeRemovalRoots(core, itemIds);
+  const removeRoots = normalizeRemovalRoots(core, nodeIds);
   const pruneIds = computePruneAncestorsForRemovals(core, rootId, removeRoots);
-  const removedIds = new Set<ItemId>([...removeRoots, ...pruneIds]);
+  const removedIds = new Set<NodeId>([...removeRoots, ...pruneIds]);
   const shouldClearRoot = shouldClearRootAfterRemovals(
     core,
     rootId,
@@ -192,9 +192,9 @@ export function planBlockRemoval(
 
 export function removeBlockSelection(
   core: Core,
-  rootId: ItemId,
-  sel: Extract<Selection, { type: "item" }>,
-  portals: readonly ItemId[],
+  rootId: NodeId,
+  sel: Extract<Selection, { type: "node" }>,
+  portals: readonly NodeId[],
   plan?: BlockRemovalPlan,
 ): void {
   const nextPlan =
@@ -202,7 +202,7 @@ export function removeBlockSelection(
     planBlockRemoval(
       core,
       rootId,
-      blockSelectionItems(core, rootId, sel, portals),
+      blockSelectionNodes(core, rootId, sel, portals),
     );
   if (nextPlan.removeRoots.length === 0) return;
   core.commit((t) => {
@@ -216,14 +216,14 @@ function insertSibling(
   core: Core,
   location: Location,
   side: "before" | "after",
-): ItemId | null {
-  const loc = core.locate(location.item);
+): NodeId | null {
+  const loc = core.locate(location.node);
   if (!loc) return null;
 
   const { parentId, index: idx } = loc;
   const at = side === "before" ? idx : idx + 1;
 
-  let id!: ItemId;
+  let id!: NodeId;
   core.commit((t) => {
     id = t.insertChild(parentId, { at });
   });
@@ -233,10 +233,10 @@ function insertSibling(
 
 function insertAfterParentIfEdge(
   core: Core,
-  rootId: ItemId,
+  rootId: NodeId,
   location: Location,
-): ItemId | null {
-  const childLoc = core.locate(location.item);
+): NodeId | null {
+  const childLoc = core.locate(location.node);
   if (!childLoc) return null;
   if (childLoc.index !== childLoc.siblings.length - 1) return null;
 
@@ -244,7 +244,7 @@ function insertAfterParentIfEdge(
   if (!parentLoc) return null;
   if (childLoc.parentId === rootId) return null;
 
-  const parentSnap = core.item(childLoc.parentId);
+  const parentSnap = core.node(childLoc.parentId);
   if (
     parentSnap.mode.type === "readonly" ||
     parentSnap.mode.type === "connected"
@@ -252,7 +252,7 @@ function insertAfterParentIfEdge(
     return null;
   }
 
-  let nextId!: ItemId;
+  let nextId!: NodeId;
   core.commit((t) => {
     nextId = t.insertChild(parentLoc.parentId, { at: parentLoc.index + 1 });
   });
@@ -261,9 +261,9 @@ function insertAfterParentIfEdge(
 }
 
 export const outlineCmd = {
-  removeAndPruneAncestors(core: Core, rootId: ItemId, id: ItemId): void {
+  removeAndPruneAncestors(core: Core, rootId: NodeId, id: NodeId): void {
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, id);
-    const removedIds = new Set<ItemId>([id, ...pruneIds]);
+    const removedIds = new Set<NodeId>([id, ...pruneIds]);
     const shouldClearRoot = shouldClearRootAfterRemovals(
       core,
       rootId,
@@ -281,14 +281,14 @@ export const outlineCmd = {
     core: Core,
     location: Location,
     initialText = "",
-  ): ItemId | null {
-    const item = core.item(location.item);
-    if (item.mode.type === "readonly") return null;
-    if (item.content.type !== "group") return null;
+  ): NodeId | null {
+    const node = core.node(location.node);
+    if (node.mode.type === "readonly") return null;
+    if (node.content.type !== "item") return null;
 
-    let id!: ItemId;
+    let id!: NodeId;
     core.commit((t) => {
-      id = t.insertChild(location.item, { at: 0 });
+      id = t.insertChild(location.node, { at: 0 });
       if (initialText) t.setValue(id, initialText);
     });
 
@@ -297,10 +297,10 @@ export const outlineCmd = {
 
   insertForScope(
     core: Core,
-    rootId: ItemId,
+    rootId: NodeId,
     location: Location,
     scope: "sibling" | "after-parent",
-  ): ItemId | null {
+  ): NodeId | null {
     return scope === "after-parent"
       ? insertAfterParentIfEdge(core, rootId, location)
       : insertSibling(core, location, "after");
@@ -311,9 +311,9 @@ export const outlineCmd = {
     location: Location,
     caretStart: number,
     caretEnd = caretStart,
-  ): ItemId | null {
-    const id = location.item;
-    const snap = core.item(id);
+  ): NodeId | null {
+    const id = location.node;
+    const snap = core.node(id);
 
     const loc = core.locate(id);
     if (!loc) return null;
@@ -333,7 +333,7 @@ export const outlineCmd = {
     const left = curText.slice(0, start);
     const right = curText.slice(end);
 
-    let rightId!: ItemId;
+    let rightId!: NodeId;
 
     core.commit((t) => {
       t.setValue(id, left);
@@ -346,12 +346,12 @@ export const outlineCmd = {
 
   splitAfterParent(
     core: Core,
-    rootId: ItemId,
+    rootId: NodeId,
     location: Location,
     caretStart: number,
     caretEnd = caretStart,
-  ): ItemId | null {
-    const childLoc = core.locate(location.item);
+  ): NodeId | null {
+    const childLoc = core.locate(location.node);
     if (!childLoc) return null;
     if (childLoc.index !== childLoc.siblings.length - 1) return null;
 
@@ -359,7 +359,7 @@ export const outlineCmd = {
     if (!parentLoc) return null;
     if (childLoc.parentId === rootId) return null;
 
-    const parentSnap = core.item(childLoc.parentId);
+    const parentSnap = core.node(childLoc.parentId);
     if (
       parentSnap.mode.type === "readonly" ||
       parentSnap.mode.type === "connected"
@@ -367,7 +367,7 @@ export const outlineCmd = {
       return null;
     }
 
-    const childSnap = core.item(location.item);
+    const childSnap = core.node(location.node);
     if (
       !(childSnap.mode.type === "plain" && childSnap.content.type === "value")
     ) {
@@ -380,10 +380,10 @@ export const outlineCmd = {
     const left = curText.slice(0, start);
     const right = curText.slice(end);
 
-    let nextId!: ItemId;
+    let nextId!: NodeId;
 
     core.commit((t) => {
-      t.setValue(location.item, left);
+      t.setValue(location.node, left);
       nextId = t.insertChild(parentLoc.parentId, { at: parentLoc.index + 1 });
       t.setValue(nextId, right);
     });
@@ -393,26 +393,26 @@ export const outlineCmd = {
 
   joinValues(
     core: Core,
-    rootId: ItemId,
-    leftId: ItemId,
-    rightId: ItemId,
-  ): { id: ItemId; caret: number } | null {
-    const leftItem = core.item(leftId);
-    const rightItem = core.item(rightId);
+    rootId: NodeId,
+    leftId: NodeId,
+    rightId: NodeId,
+  ): { id: NodeId; caret: number } | null {
+    const leftNode = core.node(leftId);
+    const rightNode = core.node(rightId);
 
     if (
-      !(leftItem.mode.type === "plain" && leftItem.content.type === "value")
+      !(leftNode.mode.type === "plain" && leftNode.content.type === "value")
     ) {
       return null;
     }
     if (
-      !(rightItem.mode.type === "plain" && rightItem.content.type === "value")
+      !(rightNode.mode.type === "plain" && rightNode.content.type === "value")
     ) {
       return null;
     }
 
-    const leftText = valueToText(leftItem.content.value);
-    const rightText = valueToText(rightItem.content.value);
+    const leftText = valueToText(leftNode.content.value);
+    const rightText = valueToText(rightNode.content.value);
     const pruneIds = computePruneAncestorsForRemoval(core, rootId, rightId);
 
     core.commit((t) => {
@@ -425,19 +425,19 @@ export const outlineCmd = {
   },
 
   indentInPlace(core: Core, location: Location): Location | null {
-    const id = location.item;
-    const childId = indentItemInPlace(core, id);
+    const id = location.node;
+    const childId = indentNodeInPlace(core, id);
     if (!childId) return null;
-    return { item: childId, portals: location.portals };
+    return { node: childId, portals: location.portals };
   },
 
   outdentInPlace(core: Core, location: Location): Location | null {
-    const childId = location.item;
+    const childId = location.node;
     const loc = core.locate(childId);
     if (!loc) return null;
     const parentId = loc.parentId;
-    const parentSnap = core.item(parentId);
-    const childSnap = core.item(childId);
+    const parentSnap = core.node(parentId);
+    const childSnap = core.node(childId);
     if (
       parentSnap.mode.type === "readonly" ||
       parentSnap.mode.type === "connected"
@@ -452,15 +452,14 @@ export const outlineCmd = {
     }
     if (
       childSnap.content.type !== "value" &&
-      childSnap.content.type !== "group"
+      childSnap.content.type !== "item"
     ) {
       return null;
     }
 
     const bodyType = childSnap.content.type;
     const bodyValue = bodyType === "value" ? childSnap.content.value : null;
-    const bodyKids =
-      bodyType === "group" ? [...childSnap.content.children] : [];
+    const bodyKids = bodyType === "item" ? [...childSnap.content.children] : [];
     const siblings = [...childrenOf(core, parentId)];
 
     core.commit((t) => {
@@ -468,7 +467,7 @@ export const outlineCmd = {
         for (const sid of siblings) t.remove(sid);
         t.setValue(parentId, bodyValue);
       } else {
-        t.setGroup(parentId);
+        t.setItem(parentId);
         for (let i = 0; i < bodyKids.length; i += 1) {
           t.move(bodyKids[i]!, parentId, { at: i });
         }
@@ -476,7 +475,7 @@ export const outlineCmd = {
       }
     });
 
-    return { item: parentId, portals: location.portals };
+    return { node: parentId, portals: location.portals };
   },
 };
 
@@ -487,23 +486,23 @@ export function readSelectionText(
   const { range, start, end } = rangeSel;
   if (range.collapsed) return "";
 
-  if (start.itemId === end.itemId) {
-    const snap = core.item(start.itemId);
-    if (!isPlainValueItem(snap)) return null;
+  if (start.nodeId === end.nodeId) {
+    const snap = core.node(start.nodeId);
+    if (!isPlainValueNode(snap)) return null;
     const text = valueToText(snap.content.value);
     return text.slice(start.offset, end.offset);
   }
 
-  const startLoc = core.locate(start.itemId);
-  const endLoc = core.locate(end.itemId);
+  const startLoc = core.locate(start.nodeId);
+  const endLoc = core.locate(end.nodeId);
   if (!startLoc || !endLoc || startLoc.parentId !== endLoc.parentId) {
     return null;
   }
 
-  const startSnap = core.item(start.itemId);
-  const endSnap = core.item(end.itemId);
-  if (!isPlainValueItem(startSnap)) return null;
-  if (!isPlainValueItem(endSnap)) return null;
+  const startSnap = core.node(start.nodeId);
+  const endSnap = core.node(end.nodeId);
+  if (!isPlainValueNode(startSnap)) return null;
+  if (!isPlainValueNode(endSnap)) return null;
 
   const parts: string[] = [];
   const startText = valueToText(startSnap.content.value);
@@ -512,8 +511,8 @@ export function readSelectionText(
   for (let i = startLoc.index + 1; i < endLoc.index; i += 1) {
     const id = startLoc.siblings[i];
     if (!id) return null;
-    const snap = core.item(id);
-    if (!isPlainValueItem(snap)) return null;
+    const snap = core.node(id);
+    if (!isPlainValueNode(snap)) return null;
     parts.push(valueToText(snap.content.value));
   }
 
@@ -522,50 +521,50 @@ export function readSelectionText(
   return parts.join("\n");
 }
 
-export function deleteSingleItemRange(
+export function deleteSingleNodeRange(
   core: Core,
-  portals: readonly ItemId[],
+  portals: readonly NodeId[],
   start: ModelPosition,
   end: ModelPosition,
-  placeCursor: (itemId: ItemId, offset: number) => void,
+  placeCursor: (nodeId: NodeId, offset: number) => void,
 ): boolean {
-  if (start.itemId !== end.itemId) return false;
+  if (start.nodeId !== end.nodeId) return false;
   if (start.offset === end.offset) return false;
 
-  const snap = core.item(start.itemId);
-  if (!isPlainValueItem(snap)) return false;
+  const snap = core.node(start.nodeId);
+  if (!isPlainValueNode(snap)) return false;
 
   const text = valueToText(snap.content.value);
   const nextText = text.slice(0, start.offset) + text.slice(end.offset);
-  core.commit((t) => t.setValue(start.itemId, nextText));
+  core.commit((t) => t.setValue(start.nodeId, nextText));
   core.focus({
     type: "editing",
-    location: { item: start.itemId, portals },
+    location: { node: start.nodeId, portals },
     target: CONTENT_TEXT_TARGET,
   });
-  placeCursor(start.itemId, start.offset);
+  placeCursor(start.nodeId, start.offset);
   return true;
 }
 
-export function deleteMultiItemRange(
+export function deleteMultiNodeRange(
   core: Core,
-  portals: readonly ItemId[],
+  portals: readonly NodeId[],
   start: ModelPosition,
   end: ModelPosition,
-  placeCursor: (itemId: ItemId, offset: number) => void,
+  placeCursor: (nodeId: NodeId, offset: number) => void,
 ): boolean {
-  if (start.itemId === end.itemId) return false;
+  if (start.nodeId === end.nodeId) return false;
 
-  const startLoc = core.locate(start.itemId);
-  const endLoc = core.locate(end.itemId);
+  const startLoc = core.locate(start.nodeId);
+  const endLoc = core.locate(end.nodeId);
   if (!startLoc || !endLoc || startLoc.parentId !== endLoc.parentId) {
     return false;
   }
 
-  const startSnap = core.item(start.itemId);
-  const endSnap = core.item(end.itemId);
-  if (!isPlainValueItem(startSnap)) return false;
-  if (!isPlainValueItem(endSnap)) return false;
+  const startSnap = core.node(start.nodeId);
+  const endSnap = core.node(end.nodeId);
+  if (!isPlainValueNode(startSnap)) return false;
+  if (!isPlainValueNode(endSnap)) return false;
 
   const startText = valueToText(startSnap.content.value).slice(0, start.offset);
   const endText = valueToText(endSnap.content.value).slice(end.offset);
@@ -574,14 +573,14 @@ export function deleteMultiItemRange(
   ];
 
   core.commit((t) => {
-    t.setValue(start.itemId, startText + endText);
+    t.setValue(start.nodeId, startText + endText);
     for (const id of toRemove) t.remove(id);
   });
   core.focus({
     type: "editing",
-    location: { item: start.itemId, portals },
+    location: { node: start.nodeId, portals },
     target: CONTENT_TEXT_TARGET,
   });
-  placeCursor(start.itemId, start.offset);
+  placeCursor(start.nodeId, start.offset);
   return true;
 }

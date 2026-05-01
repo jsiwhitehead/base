@@ -5,7 +5,7 @@ import {
 } from "../../dom";
 
 import {
-  isPlainValueItem,
+  isPlainValueNode,
   moveStop,
   textLengthForTarget,
   valueToText,
@@ -16,7 +16,7 @@ import {
   domPositionToModel,
   getCollapsedCaretRect,
   getCaretBoundaryRect,
-  itemSelectorById,
+  nodeSelectorById,
   valueCaretOffset,
   VALUE_SELECTOR,
 } from "./dom-mapping";
@@ -43,10 +43,10 @@ function getVerticalBoundaryTextStop(
     return null;
   }
   if (!getDomSelectionPointsInRoot(root)?.isCollapsed) return null;
-  const caretOffset = valueCaretOffset(root, selection.location.item, true);
+  const caretOffset = valueCaretOffset(root, selection.location.node, true);
   if (caretOffset == null) return null;
-  const snap = core.item(selection.location.item);
-  if (!isPlainValueItem(snap)) return null;
+  const snap = core.node(selection.location.node);
+  if (!isPlainValueNode(snap)) return null;
   const text = valueToText(snap.content.value);
   const totalLogicalLines = text.split("\n").length;
   const logicalLineIdx = text.slice(0, caretOffset).split("\n").length - 1;
@@ -69,8 +69,8 @@ export function applyStopMove(
   textCaret?: number,
   scrollIntoView?: { offset: number; defer?: boolean },
 ): true {
-  if (moved.stop.type === "item") {
-    core.focus({ type: "item", location: moved.stop.location });
+  if (moved.stop.type === "node") {
+    core.focus({ type: "node", location: moved.stop.location });
     return true;
   }
   const caret =
@@ -81,7 +81,7 @@ export function applyStopMove(
         ? 0
         : textLengthForTarget(
             core,
-            moved.stop.location.item,
+            moved.stop.location.node,
             moved.stop.target,
           ));
   applyEditingResult({
@@ -110,9 +110,9 @@ function resolveVerticalTextCaret(
   destination: OutlineTextStop,
   dir: "up" | "down",
 ): { caret: number; scrollIntoView: { offset: number; defer: false } } | null {
-  const targetId = destination.location.item;
-  const itemEl = root.querySelector<HTMLElement>(itemSelectorById(targetId));
-  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
+  const targetId = destination.location.node;
+  const nodeEl = root.querySelector<HTMLElement>(nodeSelectorById(targetId));
+  const valueEl = nodeEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (!valueEl) return null;
   const valueRect = valueEl.getBoundingClientRect();
   const y =
@@ -127,15 +127,15 @@ function resolveVerticalTextCaret(
     point && valueEl.contains(point.node)
       ? domPositionToModel(root, point.node, point.offset)
       : null;
-  if (pos && pos.itemId === targetId) {
+  if (pos && pos.nodeId === targetId) {
     return {
       caret: pos.offset,
       scrollIntoView: { offset: pos.offset, defer: false },
     };
   }
-  const snap = core.item(targetId);
+  const snap = core.node(targetId);
   const fallbackOffset =
-    dir === "up" && isPlainValueItem(snap)
+    dir === "up" && isPlainValueNode(snap)
       ? valueToText(snap.content.value).length
       : 0;
   return {
@@ -163,12 +163,12 @@ function moveVerticalFromBoundaryStop(
   const boundaryRect = getCaretBoundaryRect(
     root,
     core,
-    current.location.item,
+    current.location.node,
     dir,
   );
   if (getStickyCaretX() == null && boundaryRect)
     setStickyCaretX(boundaryRect.left);
-  if (moved.stop.type === "item")
+  if (moved.stop.type === "node")
     return applyStopMove(core, applyEditingResult, moved);
   const destination = resolveVerticalTextCaret(
     core,
@@ -203,10 +203,10 @@ export function handleArrowHorizontal(
       modelSel.type === "editing" &&
       modelSel.target === CONTENT_TEXT_TARGET
     ) {
-      const caretOffset = valueCaretOffset(root, modelSel.location.item, true);
+      const caretOffset = valueCaretOffset(root, modelSel.location.node, true);
       if (caretOffset == null) return null;
-      const snap = core.item(modelSel.location.item);
-      if (!isPlainValueItem(snap)) return null;
+      const snap = core.node(modelSel.location.node);
+      if (!isPlainValueNode(snap)) return null;
       const textLen = valueToText(snap.content.value).length;
       const atBoundary =
         dir === "backward" ? caretOffset === 0 : caretOffset === textLen;
@@ -223,19 +223,19 @@ export function handleArrowHorizontal(
       if (!moved) atValueBoundaryWithNoNavMove = true;
       return moved;
     }
-    if (modelSel.type === "item") {
+    if (modelSel.type === "node") {
       if (
         modelSel.anchor.portals.length !== modelSel.head.portals.length ||
         modelSel.anchor.portals.some(
           (portal, i) => portal !== modelSel.head.portals[i],
         ) ||
-        modelSel.anchor.item !== modelSel.head.item
+        modelSel.anchor.node !== modelSel.head.node
       ) {
         return null;
       }
       return resolveAdjacentStopMove(
         stops,
-        { type: "item", location: modelSel.head },
+        { type: "node", location: modelSel.head },
         dir,
       );
     }
@@ -268,7 +268,7 @@ export function handleVerticalArrowIntent(
 ): boolean {
   const boundaryStop = getVerticalBoundaryTextStop(core, root, dir);
   if (!boundaryStop) return false;
-  const caretRect = getCollapsedCaretRect(root, boundaryStop.location.item);
+  const caretRect = getCollapsedCaretRect(root, boundaryStop.location.node);
   if (getStickyCaretX() == null && caretRect) {
     setStickyCaretX(caretRect.rect.left);
   }

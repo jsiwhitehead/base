@@ -2,11 +2,11 @@ import { computed } from "@preact/signals-core";
 
 import {
   CONTENT_TEXT_TARGET,
-  ITEM_TARGET,
+  NODE_TARGET,
   isNumericLikeValue,
   sameLocation,
 } from "../../core";
-import type { ItemId, Location } from "../../core";
+import type { NodeId, Location } from "../../core";
 import type { Component, Ctx, UiCore } from "../../dom";
 import {
   createComponent,
@@ -21,13 +21,13 @@ import { valueCaretOffset } from "./dom-mapping";
 import { locationKey, valueToText } from "./navigation";
 import type { OutlineSelectionState } from "./runtime";
 
-type OutlineItemSelectionState = "none" | "item" | "value" | "header";
+type OutlineNodeSelectionState = "none" | "node" | "value" | "header";
 export type OutlineMountCtx = {
   core: UiCore;
-  portals: readonly ItemId[];
+  portals: readonly NodeId[];
   onGutterPointerDown: (
-    itemId: ItemId,
-    portals: readonly ItemId[],
+    nodeId: NodeId,
+    portals: readonly NodeId[],
     shiftKey: boolean,
     pointerId: number,
   ) => void;
@@ -39,39 +39,39 @@ export type OutlineMountCtx = {
 function bindOutlineFrame(args: {
   core: UiCore;
   ctx: Ctx;
-  itemEl: HTMLElement;
-  itemFocus: Location;
-  itemSelectionState: { value: OutlineItemSelectionState };
+  nodeEl: HTMLElement;
+  nodeFocus: Location;
+  nodeSelectionState: { value: OutlineNodeSelectionState };
 }): void {
-  const { core, ctx, itemEl, itemFocus, itemSelectionState } = args;
+  const { core, ctx, nodeEl, nodeFocus, nodeSelectionState } = args;
 
-  itemEl.classList.add("ui-frame");
-  itemEl.dataset.id = itemFocus.item;
-  if (!itemEl.hasAttribute("tabindex")) itemEl.tabIndex = -1;
+  nodeEl.classList.add("ui-frame");
+  nodeEl.dataset.id = nodeFocus.node;
+  if (!nodeEl.hasAttribute("tabindex")) nodeEl.tabIndex = -1;
 
-  ctx.target(itemFocus, ITEM_TARGET, () =>
-    itemEl.isConnected ? itemEl : null,
+  ctx.target(nodeFocus, NODE_TARGET, () =>
+    nodeEl.isConnected ? nodeEl : null,
   );
 
   ctx.effect(() => {
-    const snap = core.item(itemFocus.item);
+    const snap = core.node(nodeFocus.node);
     const isIssue = snap.content.type === "issue";
     const isNumeric =
       snap.content.type === "value" && isNumericLikeValue(snap.content.value);
 
-    itemEl.classList.toggle(
-      "is-item-selected",
-      itemSelectionState.value === "item",
+    nodeEl.classList.toggle(
+      "is-node-selected",
+      nodeSelectionState.value === "node",
     );
-    itemEl.classList.toggle("is-selected", itemSelectionState.value !== "none");
-    itemEl.classList.toggle("is-issue", isIssue);
-    itemEl.classList.toggle("is-numeric", isNumeric);
+    nodeEl.classList.toggle("is-selected", nodeSelectionState.value !== "none");
+    nodeEl.classList.toggle("is-issue", isIssue);
+    nodeEl.classList.toggle("is-numeric", isNumeric);
   });
 }
 
 function buildOutlineValue(
   mountCtx: OutlineMountCtx,
-  itemId: ItemId,
+  nodeId: NodeId,
 ): Component {
   const { core, portals, discardPendingMutationRecords } = mountCtx;
   return createComponent(core, (ctx) => {
@@ -79,7 +79,7 @@ function buildOutlineValue(
     valueEl.dataset.target = CONTENT_TEXT_TARGET;
 
     ctx.target(
-      { item: itemId, portals },
+      { node: nodeId, portals },
       CONTENT_TEXT_TARGET,
       () => (valueEl.isConnected ? valueEl : null),
       {
@@ -87,13 +87,13 @@ function buildOutlineValue(
         getCaret: () => {
           const host = valueEl.closest("[contenteditable='true']");
           if (!(host instanceof HTMLElement)) return undefined;
-          return valueCaretOffset(host, itemId) ?? undefined;
+          return valueCaretOffset(host, nodeId) ?? undefined;
         },
       },
     );
 
     ctx.effect(() => {
-      const snap = core.item(itemId);
+      const snap = core.node(nodeId);
       const newText =
         snap.content.type === "value"
           ? valueToText(snap.content.value)
@@ -110,7 +110,7 @@ function buildOutlineValue(
     });
 
     ctx.effect(() => {
-      const snap = core.item(itemId);
+      const snap = core.node(nodeId);
       if (snap.mode.type === "plain" && snap.content.type === "value") {
         valueEl.removeAttribute("contenteditable");
         return;
@@ -124,22 +124,22 @@ function buildOutlineValue(
 
 function buildOutlineChild(
   mountCtx: OutlineMountCtx,
-  itemId: ItemId,
+  nodeId: NodeId,
 ): Component {
   const {
     core,
     portals,
     onGutterPointerDown,
     selectionState: {
-      selectedItemKeys,
-      valueRangeSelectedItemKeys,
+      selectedNodeKeys,
+      valueRangeSelectedNodeKeys,
       valueSelectionCollapsed,
     },
   } = mountCtx;
   return createComponent(core, (ctx) => {
-    const itemEl = el("div", "ui-outline-child");
-    const itemFocus: Location = { item: itemId, portals };
-    const itemKey = locationKey(itemFocus);
+    const nodeEl = el("div", "ui-outline-child");
+    const nodeFocus: Location = { node: nodeId, portals };
+    const nodeKey = locationKey(nodeFocus);
 
     const gutterEl = el("span", "ui-outline-gutter");
     gutterEl.dataset.drag = "reorder";
@@ -148,59 +148,59 @@ function buildOutlineChild(
       if ((e.button ?? 0) !== 0) return;
       e.preventDefault();
       e.stopPropagation();
-      onGutterPointerDown(itemId, portals, e.shiftKey, e.pointerId);
+      onGutterPointerDown(nodeId, portals, e.shiftKey, e.pointerId);
     });
-    itemEl.append(gutterEl);
+    nodeEl.append(gutterEl);
 
-    const itemSelectionState = computed<OutlineItemSelectionState>(() => {
+    const nodeSelectionState = computed<OutlineNodeSelectionState>(() => {
       const selection = core.selection();
-      if (selection.type === "item") {
-        if (!selectedItemKeys.value.has(itemKey)) return "none";
-        return "item";
+      if (selection.type === "node") {
+        if (!selectedNodeKeys.value.has(nodeKey)) return "none";
+        return "node";
       }
       if (selection.type !== "editing") return "none";
 
       if (selection.target === CONTENT_TEXT_TARGET) {
         if (!valueSelectionCollapsed.value) {
-          return valueRangeSelectedItemKeys.value.has(itemKey)
+          return valueRangeSelectedNodeKeys.value.has(nodeKey)
             ? "value"
             : "none";
         }
-        if (!sameLocation(selection.location, itemFocus)) return "none";
+        if (!sameLocation(selection.location, nodeFocus)) return "none";
         return "value";
       }
-      if (!sameLocation(selection.location, itemFocus)) return "none";
+      if (!sameLocation(selection.location, nodeFocus)) return "none";
       return "header";
     });
     bindOutlineFrame({
       core,
       ctx,
-      itemEl,
-      itemFocus,
-      itemSelectionState,
+      nodeEl,
+      nodeFocus,
+      nodeSelectionState,
     });
 
     mountHeader(ctx, {
       core,
-      host: itemEl,
-      location: { item: itemId, portals },
-      id: itemId,
+      host: nodeEl,
+      location: { node: nodeId, portals },
+      id: nodeId,
     });
 
-    const childView = computed(() => core.view(itemId));
+    const childView = computed(() => core.view(nodeId));
     const childUsesPortal = computed(() => {
-      const mode = core.item(itemId).mode;
+      const mode = core.node(nodeId).mode;
       return mode.type === "connected" && mode.conn.type === "query";
     });
 
-    ctx.slot(itemEl, () => {
+    ctx.slot(nodeEl, () => {
       const view = childView.value;
-      if (view === "outline") return buildOutlineItem(mountCtx, itemId);
+      if (view === "outline") return buildOutlineNode(mountCtx, nodeId);
       const childPortals = childUsesPortal.value
-        ? [...portals, itemId]
+        ? [...portals, nodeId]
         : portals;
       const mounted = core.mountView({
-        id: itemId,
+        id: nodeId,
         portals: childPortals,
         view,
       });
@@ -208,40 +208,40 @@ function buildOutlineChild(
       return mounted;
     });
 
-    return itemEl;
+    return nodeEl;
   });
 }
 
-export function buildOutlineItem(
+export function buildOutlineNode(
   mountCtx: OutlineMountCtx,
-  itemId: ItemId,
+  nodeId: NodeId,
 ): Component {
   const { core } = mountCtx;
   return createComponent(core, (ctx) => {
     const bodyEl = el("div");
     setBodyClasses(bodyEl, "outline");
-    bodyEl.dataset.id = itemId;
-    const renderKind = computed<"value" | "group" | "placeholder">(() => {
-      const snap = core.item(itemId);
-      if (snap.content.type !== "group") return "value";
+    bodyEl.dataset.id = nodeId;
+    const renderKind = computed<"value" | "item" | "placeholder">(() => {
+      const snap = core.node(nodeId);
+      if (snap.content.type !== "item") return "value";
       if (snap.content.children.length === 0) return "placeholder";
-      return "group";
+      return "item";
     });
     const kids = computed(() => {
-      const snap = core.item(itemId);
-      if (snap.content.type !== "group") return [] as ItemId[];
+      const snap = core.node(nodeId);
+      if (snap.content.type !== "item") return [] as NodeId[];
       return [...snap.content.children];
     });
 
     ctx.slot(bodyEl, () => {
       const kind = renderKind.value;
-      if (kind === "value") return buildOutlineValue(mountCtx, itemId);
+      if (kind === "value") return buildOutlineValue(mountCtx, nodeId);
       if (kind === "placeholder") {
         return createComponent(core, () => {
           const placeholderEl = el(
             "div",
             "ui-outline-placeholder",
-            "Empty group",
+            "Empty item",
           );
           placeholderEl.contentEditable = "false";
           placeholderEl.setAttribute("aria-hidden", "true");

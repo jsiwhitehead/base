@@ -3,14 +3,14 @@ import { computed } from "@preact/signals-core";
 import type {
   Location,
   Intent,
-  ItemId,
+  NodeId,
   ReaderForShape,
   Selection,
 } from "../core";
 import { defineShape, CONTENT_TEXT_TARGET, LABEL_TARGET } from "../core";
 import type { Component, NavDirection, UiCore } from "../dom";
 import {
-  bindItemFrame,
+  bindNodeFrame,
   createComponent,
   defineShapedView,
   el,
@@ -19,8 +19,8 @@ import {
 } from "../dom";
 
 const tableShape = defineShape({
-  type: "group",
-  children: { type: "group", nonEmpty: true, children: { type: "any" } },
+  type: "item",
+  children: { type: "item", nonEmpty: true, children: { type: "any" } },
   nonEmpty: true,
   alignChildren: true,
 });
@@ -29,69 +29,69 @@ type TableReader = ReaderForShape<typeof tableShape>;
 type RowReader = ReturnType<TableReader["child"]>;
 
 type TableSignals = {
-  rows: { value: readonly ItemId[] };
-  schemaRowId: { value: ItemId };
+  rows: { value: readonly NodeId[] };
+  schemaRowId: { value: NodeId };
   colCount: { value: number };
 };
 
 type TableMountCtx = {
   core: UiCore;
-  tableId: ItemId;
-  portals: readonly ItemId[];
+  tableId: NodeId;
+  portals: readonly NodeId[];
   reader: TableReader;
   signals: TableSignals;
 };
 
 type CellPosition = {
-  rowId: ItemId;
+  rowId: NodeId;
   rowIdx: number;
   rowReader: RowReader;
   colIdx: number;
 };
 
-function isRowItemSel(
+function isRowNodeSel(
   core: UiCore,
-  sel: Extract<Selection, { type: "item" }>,
-  tableId: ItemId,
+  sel: Extract<Selection, { type: "node" }>,
+  tableId: NodeId,
 ): boolean {
-  return core.locate(sel.anchor.item)?.parentId === tableId;
+  return core.locate(sel.anchor.node)?.parentId === tableId;
 }
 
 function isCellSel(
   core: UiCore,
   reader: TableReader,
-  tableId: ItemId,
-  rows: readonly ItemId[],
-  sel: Extract<Selection, { type: "item" }>,
+  tableId: NodeId,
+  rows: readonly NodeId[],
+  sel: Extract<Selection, { type: "node" }>,
 ): boolean {
   return (
-    resolveCellPosition(core, reader, tableId, rows, sel.anchor.item) !== null
+    resolveCellPosition(core, reader, tableId, rows, sel.anchor.node) !== null
   );
 }
 
 function isCellValueSel(
   core: UiCore,
   reader: TableReader,
-  tableId: ItemId,
-  rows: readonly ItemId[],
+  tableId: NodeId,
+  rows: readonly NodeId[],
   sel: Extract<Selection, { type: "editing" }>,
 ): boolean {
   if (sel.target !== CONTENT_TEXT_TARGET) return false;
   return (
-    resolveCellPosition(core, reader, tableId, rows, sel.location.item) !== null
+    resolveCellPosition(core, reader, tableId, rows, sel.location.node) !== null
   );
 }
 
-function cellColIdx(rowReader: RowReader, cellId: ItemId): number {
+function cellColIdx(rowReader: RowReader, cellId: NodeId): number {
   return rowReader.childIds().indexOf(cellId);
 }
 
 function resolveCellPosition(
   core: UiCore,
   reader: TableReader,
-  tableId: ItemId,
-  rows: readonly ItemId[],
-  cellId: ItemId,
+  tableId: NodeId,
+  rows: readonly NodeId[],
+  cellId: NodeId,
 ): CellPosition | null {
   const rowId = core.locate(cellId)?.parentId;
   if (!rowId || rowId === tableId) return null;
@@ -107,9 +107,9 @@ function resolveCellPosition(
 
 function resolveFocusAfterRemove(
   core: UiCore,
-  removedId: ItemId,
+  removedId: NodeId,
   prefer: "prev" | "next",
-  portals: readonly ItemId[],
+  portals: readonly NodeId[],
 ): Location | null {
   const loc = core.locate(removedId);
   if (!loc) return null;
@@ -119,43 +119,43 @@ function resolveFocusAfterRemove(
   const sibling =
     prefer === "prev" ? (prev ?? next ?? null) : (next ?? prev ?? null);
   if (sibling) {
-    return { item: sibling, portals };
+    return { node: sibling, portals };
   }
 
-  return { item: loc.parentId, portals };
+  return { node: loc.parentId, portals };
 }
 
 const plan = {
   navMove(
     core: UiCore,
     reader: TableReader,
-    tableId: ItemId,
-    portals: readonly ItemId[],
-    rows: readonly ItemId[],
+    tableId: NodeId,
+    portals: readonly NodeId[],
+    rows: readonly NodeId[],
     colCount: number,
-    sel: Extract<Selection, { type: "item" }>,
+    sel: Extract<Selection, { type: "node" }>,
     dir: NavDirection,
   ): Location | null {
-    if (isRowItemSel(core, sel, tableId)) {
-      const rowId = sel.anchor.item;
+    if (isRowNodeSel(core, sel, tableId)) {
+      const rowId = sel.anchor.node;
       const rowReader = reader.child(rowId);
       const rowIdx = rows.indexOf(rowId);
       if (rowIdx < 0) return null;
 
       if (dir === "up") {
         const prev = rows[rowIdx - 1] ?? null;
-        return prev ? { item: prev, portals } : null;
+        return prev ? { node: prev, portals } : null;
       }
 
       if (dir === "down") {
         const next = rows[rowIdx + 1] ?? null;
-        return next ? { item: next, portals } : null;
+        return next ? { node: next, portals } : null;
       }
 
       if (dir === "right") {
         const firstCell =
           colCount > 0 ? (rowReader.childIds()[0] ?? null) : null;
-        return firstCell ? { item: firstCell, portals } : null;
+        return firstCell ? { node: firstCell, portals } : null;
       }
 
       return null;
@@ -167,20 +167,20 @@ const plan = {
       reader,
       tableId,
       rows,
-      sel.anchor.item,
+      sel.anchor.node,
     );
     if (!position) return null;
     const { rowReader, rowIdx, colIdx, rowId } = position;
 
     if (dir === "left") {
-      if (colIdx === 0) return { item: rowId, portals };
+      if (colIdx === 0) return { node: rowId, portals };
       const prev = rowReader.childIds()[colIdx - 1] ?? null;
-      return prev ? { item: prev, portals } : null;
+      return prev ? { node: prev, portals } : null;
     }
 
     if (dir === "right") {
       const next = rowReader.childIds()[colIdx + 1] ?? null;
-      return next ? { item: next, portals } : null;
+      return next ? { node: next, portals } : null;
     }
 
     if (dir === "up") {
@@ -188,34 +188,34 @@ const plan = {
       if (!prevRow) return null;
       const prevRowReader = reader.child(prevRow);
       const prevCell = prevRowReader.childIds()[colIdx] ?? null;
-      return prevCell ? { item: prevCell, portals } : null;
+      return prevCell ? { node: prevCell, portals } : null;
     }
 
     const nextRow = rows[rowIdx + 1] ?? null;
     if (!nextRow) return null;
     const nextRowReader = reader.child(nextRow);
     const nextCell = nextRowReader.childIds()[colIdx] ?? null;
-    return nextCell ? { item: nextCell, portals } : null;
+    return nextCell ? { node: nextCell, portals } : null;
   },
 
   tabMove(
     core: UiCore,
     reader: TableReader,
-    tableId: ItemId,
-    portals: readonly ItemId[],
-    rows: readonly ItemId[],
+    tableId: NodeId,
+    portals: readonly NodeId[],
+    rows: readonly NodeId[],
     colCount: number,
-    sel: Extract<Selection, { type: "item" }>,
+    sel: Extract<Selection, { type: "node" }>,
     shift: boolean,
   ): Location | null {
     const dir = shift ? -1 : 1;
 
-    if (isRowItemSel(core, sel, tableId)) {
+    if (isRowNodeSel(core, sel, tableId)) {
       if (shift) return null;
-      const rowId = sel.anchor.item;
+      const rowId = sel.anchor.node;
       const rowReader = reader.child(rowId);
       const firstCell = colCount > 0 ? (rowReader.childIds()[0] ?? null) : null;
-      return firstCell ? { item: firstCell, portals } : null;
+      return firstCell ? { node: firstCell, portals } : null;
     }
 
     if (!isCellSel(core, reader, tableId, rows, sel)) return null;
@@ -224,7 +224,7 @@ const plan = {
       reader,
       tableId,
       rows,
-      sel.anchor.item,
+      sel.anchor.node,
     );
     if (!position) return null;
     const { rowReader, rowIdx, colIdx } = position;
@@ -233,7 +233,7 @@ const plan = {
 
     if (nextCol >= 0 && nextCol < colCount) {
       const nextCell = rowReader.childIds()[nextCol] ?? null;
-      return nextCell ? { item: nextCell, portals } : null;
+      return nextCell ? { node: nextCell, portals } : null;
     }
 
     const nextRow = rows[rowIdx + dir] ?? null;
@@ -244,22 +244,22 @@ const plan = {
       const firstCell =
         colCount > 0 ? (nextRowReader.childIds()[0] ?? null) : null;
       return firstCell
-        ? { item: firstCell, portals }
-        : { item: nextRow, portals };
+        ? { node: firstCell, portals }
+        : { node: nextRow, portals };
     }
 
     const nextRowReader = reader.child(nextRow);
     const lastCell =
       colCount > 0 ? (nextRowReader.childIds()[colCount - 1] ?? null) : null;
-    return lastCell ? { item: lastCell, portals } : { item: nextRow, portals };
+    return lastCell ? { node: lastCell, portals } : { node: nextRow, portals };
   },
 
   enterMove(
     core: UiCore,
     reader: TableReader,
-    tableId: ItemId,
-    portals: readonly ItemId[],
-    rows: readonly ItemId[],
+    tableId: NodeId,
+    portals: readonly NodeId[],
+    rows: readonly NodeId[],
     sel: Extract<Selection, { type: "editing" }>,
   ): Location | null {
     const position = resolveCellPosition(
@@ -267,7 +267,7 @@ const plan = {
       reader,
       tableId,
       rows,
-      sel.location.item,
+      sel.location.node,
     );
     if (!position) return null;
     const { rowIdx, colIdx } = position;
@@ -277,32 +277,32 @@ const plan = {
 
     const nextRowReader = reader.child(nextRow);
     const nextCell = nextRowReader.childIds()[colIdx] ?? null;
-    return nextCell ? { item: nextCell, portals } : null;
+    return nextCell ? { node: nextCell, portals } : null;
   },
 } as const;
 
 const cmd = {
   addRowAfter(
     core: UiCore,
-    tableId: ItemId,
-    rows: readonly ItemId[],
-    afterRowId: ItemId | null,
-  ): ItemId {
+    tableId: NodeId,
+    rows: readonly NodeId[],
+    afterRowId: NodeId | null,
+  ): NodeId {
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
     const schemaRowId = rows[0] ?? null;
     const schemaRow =
-      schemaRowId != null ? core.item(schemaRowId).content : null;
-    const schemaCellIds = schemaRow?.type === "group" ? schemaRow.children : [];
+      schemaRowId != null ? core.node(schemaRowId).content : null;
+    const schemaCellIds = schemaRow?.type === "item" ? schemaRow.children : [];
 
-    let id: ItemId = "";
+    let id: NodeId = "";
     core.commit((t) => {
       id = t.insertChild(tableId, { at });
-      t.setGroup(id);
+      t.setItem(id);
       for (const schemaCellId of schemaCellIds) {
         const cellId = t.insertChild(id);
         t.setValue(cellId, null);
-        const label = core.item(schemaCellId).label;
+        const label = core.node(schemaCellId).label;
         if (label != null) t.setLabel(cellId, label);
       }
     });
@@ -312,11 +312,11 @@ const cmd = {
 
   addColumnAfter(
     core: UiCore,
-    rows: readonly ItemId[],
+    rows: readonly NodeId[],
     afterColIdx: number,
-    focusRowId: ItemId,
-  ): ItemId | null {
-    let focusedCellId: ItemId | null = null;
+    focusRowId: NodeId,
+  ): NodeId | null {
+    let focusedCellId: NodeId | null = null;
     core.commit((t) => {
       for (const rowId of rows) {
         const cellId = t.insertChild(rowId, { at: afterColIdx + 1 });
@@ -327,42 +327,42 @@ const cmd = {
     return focusedCellId;
   },
 
-  clearCell(core: UiCore, cellId: ItemId): void {
+  clearCell(core: UiCore, cellId: NodeId): void {
     core.commit((t) => t.setValue(cellId, null));
   },
 } as const;
 
-function focusItem(core: UiCore, location: Location | null): void {
+function focusNode(core: UiCore, location: Location | null): void {
   if (!location) return;
-  core.focus({ type: "item", location });
+  core.focus({ type: "node", location });
 }
 
 function insertRowAfterAndFocus(
   core: UiCore,
-  tableId: ItemId,
-  rows: readonly ItemId[],
-  afterRowId: ItemId,
-  portals: readonly ItemId[],
+  tableId: NodeId,
+  rows: readonly NodeId[],
+  afterRowId: NodeId,
+  portals: readonly NodeId[],
 ): void {
   const newId = cmd.addRowAfter(core, tableId, rows, afterRowId);
   core.focus({
-    type: "item",
-    location: { item: newId, portals },
+    type: "node",
+    location: { node: newId, portals },
   });
 }
 
 function insertColumnAfterAndFocus(
   core: UiCore,
-  rows: readonly ItemId[],
+  rows: readonly NodeId[],
   afterColIdx: number,
-  focusRowId: ItemId,
-  portals: readonly ItemId[],
+  focusRowId: NodeId,
+  portals: readonly NodeId[],
 ): void {
   const newCellId = cmd.addColumnAfter(core, rows, afterColIdx, focusRowId);
   if (!newCellId) return;
   core.focus({
-    type: "item",
-    location: { item: newCellId, portals },
+    type: "node",
+    location: { node: newCellId, portals },
   });
 }
 
@@ -374,13 +374,13 @@ function buildHeader(mountCtx: TableMountCtx): Component {
     const headerHead = el("div", "ui-table-cell ui-table-first");
     header.append(headerHead);
 
-    ctx.list<ItemId>(
+    ctx.list<NodeId>(
       header,
       () => reader.child(signals.schemaRowId.value).childIds(),
       (cellId) =>
         createComponent(core, (colCtx) => {
           const col = el("div", "ui-table-cell");
-          const location: Location = { item: cellId, portals };
+          const location: Location = { node: cellId, portals };
           mountHeader(colCtx, {
             core,
             host: col,
@@ -413,15 +413,15 @@ function buildHeader(mountCtx: TableMountCtx): Component {
 
 function buildDataCell(
   core: UiCore,
-  portals: readonly ItemId[],
-  cellId: ItemId,
+  portals: readonly NodeId[],
+  cellId: NodeId,
 ): Component {
   return createComponent(core, (ctx) => {
     const host = el("div", "ui-table-cell");
     host.dataset.drag = "slot";
 
-    const location: Location = { item: cellId, portals };
-    bindItemFrame(ctx, { core, location }, host);
+    const location: Location = { node: cellId, portals };
+    bindNodeFrame(ctx, { core, location }, host);
 
     ctx.slot(host, () => {
       return core.mountView({ id: cellId, portals, view: core.view(cellId) });
@@ -431,13 +431,13 @@ function buildDataCell(
   });
 }
 
-function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
+function buildRowFrame(mountCtx: TableMountCtx, rowId: NodeId): Component {
   const { core, portals, reader, signals } = mountCtx;
   const rowReader = reader.child(rowId);
 
   return createComponent(core, (ctx) => {
     const row = el("div", "ui-table-row");
-    bindItemFrame(ctx, { core, location: { item: rowId, portals } }, row);
+    bindNodeFrame(ctx, { core, location: { node: rowId, portals } }, row);
 
     const headerCell = el("div", "ui-table-cell ui-table-first");
     headerCell.dataset.drag = "reorder";
@@ -445,12 +445,12 @@ function buildRowFrame(mountCtx: TableMountCtx, rowId: ItemId): Component {
     mountHeader(ctx, {
       core,
       host: headerCell,
-      location: { item: rowId, portals },
+      location: { node: rowId, portals },
       id: rowId,
       visibility: "always",
     });
 
-    ctx.list<ItemId>(
+    ctx.list<NodeId>(
       row,
       () => rowReader.childIds().slice(0, signals.colCount.value),
       (cellId) => buildDataCell(core, portals, cellId),
@@ -466,7 +466,7 @@ function buildBody(mountCtx: TableMountCtx): Component {
   return createComponent(core, (ctx) => {
     const body = el("div", "ui-table-body");
 
-    ctx.list<ItemId>(
+    ctx.list<NodeId>(
       body,
       () => signals.rows.value,
       (rid) => buildRowFrame(mountCtx, rid),
@@ -492,7 +492,7 @@ export const tableView = defineShapedView(
       colCount: colCountSignal,
     };
 
-    const schemaCell = (cellId: ItemId): ItemId | null => {
+    const schemaCell = (cellId: NodeId): NodeId | null => {
       const rowId = core.locate(cellId)?.parentId;
       if (!rowId) return null;
       const colIdx = cellColIdx(tableReader.child(rowId), cellId);
@@ -501,27 +501,27 @@ export const tableView = defineShapedView(
       );
     };
 
-    const focusSchemaLabel = (cellId: ItemId): void => {
+    const focusSchemaLabel = (cellId: NodeId): void => {
       const target = schemaCell(cellId);
       if (!target) return;
       core.focus(
         {
           type: "editing",
-          location: { item: target, portals: rootPortals },
+          location: { node: target, portals: rootPortals },
           target: LABEL_TARGET,
         },
         { caret: "end" },
       );
     };
 
-    const handleItemNav = (
-      selection: Extract<Selection, { type: "item" }>,
+    const handleNodeNav = (
+      selection: Extract<Selection, { type: "node" }>,
       dir: NavDirection,
     ): void => {
-      if (dir === "left" && isRowItemSel(core, selection, tableId)) {
+      if (dir === "left" && isRowNodeSel(core, selection, tableId)) {
         core.focus({
-          type: "item",
-          location: { item: tableId, portals: rootPortals },
+          type: "node",
+          location: { node: tableId, portals: rootPortals },
         });
         return;
       }
@@ -538,17 +538,17 @@ export const tableView = defineShapedView(
         selection,
         dir,
       );
-      focusItem(core, nextFocus);
+      focusNode(core, nextFocus);
     };
 
-    const handleItemDelete = (
-      selection: Extract<Selection, { type: "item" }>,
+    const handleNodeDelete = (
+      selection: Extract<Selection, { type: "node" }>,
       dir: "backward" | "forward",
     ): void => {
-      if (isRowItemSel(core, selection, tableId)) {
+      if (isRowNodeSel(core, selection, tableId)) {
         const rows = signals.rows.value;
         const removingTable = rows.length === 1;
-        const removeId = removingTable ? tableId : selection.anchor.item;
+        const removeId = removingTable ? tableId : selection.anchor.node;
         const nextFocus = resolveFocusAfterRemove(
           core,
           removeId,
@@ -557,7 +557,7 @@ export const tableView = defineShapedView(
         );
         core.commit((t) => t.remove(removeId));
         if (nextFocus) {
-          core.focus({ type: "item", location: nextFocus });
+          core.focus({ type: "node", location: nextFocus });
         } else {
           core.focus({ type: "idle" });
         }
@@ -565,7 +565,7 @@ export const tableView = defineShapedView(
       }
       const rows = signals.rows.value;
       if (!isCellSel(core, tableReader, tableId, rows, selection)) return;
-      core.commit((t) => t.setValue(selection.anchor.item, null));
+      core.commit((t) => t.setValue(selection.anchor.node, null));
     };
 
     const onIntent = (intent: Intent): void => {
@@ -583,10 +583,10 @@ export const tableView = defineShapedView(
               rows,
               selection,
             );
-            focusItem(core, next ?? selection.location);
+            focusNode(core, next ?? selection.location);
             return;
           }
-          core.focus({ type: "item", location: selection.location });
+          core.focus({ type: "node", location: selection.location });
           return;
         }
         if (intent.type === "NAV") {
@@ -603,13 +603,13 @@ export const tableView = defineShapedView(
             rows,
             colCount,
             {
-              type: "item",
+              type: "node",
               anchor: selection.location,
               head: selection.location,
             },
             intent.dir,
           );
-          focusItem(core, nextFocus);
+          focusNode(core, nextFocus);
           return;
         }
         if (intent.type === "DELETE") {
@@ -621,28 +621,28 @@ export const tableView = defineShapedView(
         if (intent.type === "LABEL") {
           const rows = signals.rows.value;
           if (isCellValueSel(core, tableReader, tableId, rows, selection)) {
-            focusSchemaLabel(selection.location.item);
+            focusSchemaLabel(selection.location.node);
           }
           return;
         }
         return;
       }
 
-      if (selection.type !== "item") return;
+      if (selection.type !== "node") return;
 
       switch (intent.type) {
         case "NAV": {
-          handleItemNav(selection, intent.dir);
+          handleNodeNav(selection, intent.dir);
           return;
         }
         case "ENTER": {
           const rows = signals.rows.value;
-          if (isRowItemSel(core, selection, tableId)) {
+          if (isRowNodeSel(core, selection, tableId)) {
             insertRowAfterAndFocus(
               core,
               tableId,
               rows,
-              selection.anchor.item,
+              selection.anchor.node,
               rootPortals,
             );
             return;
@@ -652,7 +652,7 @@ export const tableView = defineShapedView(
         case "LABEL": {
           const rows = signals.rows.value;
           if (isCellSel(core, tableReader, tableId, rows, selection)) {
-            focusSchemaLabel(selection.anchor.item);
+            focusSchemaLabel(selection.anchor.node);
           }
           return;
         }
@@ -663,10 +663,10 @@ export const tableView = defineShapedView(
             tableReader,
             tableId,
             rows,
-            selection.anchor.item,
+            selection.anchor.node,
           );
-          const selectedRowId = isRowItemSel(core, selection, tableId)
-            ? selection.anchor.item
+          const selectedRowId = isRowNodeSel(core, selection, tableId)
+            ? selection.anchor.node
             : cellPosition?.rowId;
           if (!selectedRowId) return;
 
@@ -693,7 +693,7 @@ export const tableView = defineShapedView(
         case "TYPE":
           return;
         case "DELETE": {
-          handleItemDelete(selection, intent.dir);
+          handleNodeDelete(selection, intent.dir);
           return;
         }
       }
@@ -706,11 +706,11 @@ export const tableView = defineShapedView(
       ctx.on(root, "keydown", (e: KeyboardEvent) => {
         if (e.defaultPrevented) return;
         const selection = core.selection();
-        if (selection.type !== "item") return;
+        if (selection.type !== "node") return;
 
         const rows = signals.rows.value;
         if (
-          !isRowItemSel(core, selection, tableId) &&
+          !isRowNodeSel(core, selection, tableId) &&
           !isCellSel(core, tableReader, tableId, rows, selection)
         ) {
           return;
@@ -736,7 +736,7 @@ export const tableView = defineShapedView(
                   : "down";
           e.preventDefault();
           e.stopPropagation();
-          handleItemNav(selection, dir);
+          handleNodeNav(selection, dir);
           return;
         }
 
@@ -749,7 +749,7 @@ export const tableView = defineShapedView(
         ) {
           e.preventDefault();
           e.stopPropagation();
-          handleItemDelete(
+          handleNodeDelete(
             selection,
             e.key === "Backspace" ? "backward" : "forward",
           );
@@ -772,7 +772,7 @@ export const tableView = defineShapedView(
           e.shiftKey,
         );
         if (!nextFocus) return;
-        focusItem(core, nextFocus);
+        focusNode(core, nextFocus);
       });
 
       const inner = el("div", "ui-table-inner");

@@ -1,10 +1,10 @@
-import type { Core, Intent, ItemId, Location } from "../../core";
+import type { Core, Intent, NodeId, Location } from "../../core";
 import { CONTENT_TEXT_TARGET } from "../../core";
 
 import { outlineCmd } from "./commands";
 import {
   collectStops,
-  isPlainValueItem,
+  isPlainValueNode,
   moveStop,
   textLengthForTarget,
   valueToText,
@@ -22,8 +22,8 @@ function focusStop(
     : never,
   edge: "start" | "end" | null,
 ): void {
-  if (stop.type === "item") {
-    core.focus({ type: "item", location: stop.location });
+  if (stop.type === "node") {
+    core.focus({ type: "node", location: stop.location });
     return;
   }
   const caret =
@@ -31,7 +31,7 @@ function focusStop(
       ? undefined
       : edge === "start"
         ? 0
-        : textLengthForTarget(core, stop.location.item, stop.target);
+        : textLengthForTarget(core, stop.location.node, stop.target);
   core.focus(
     { type: "editing", location: stop.location, target: stop.target },
     caret === undefined ? undefined : { caret },
@@ -50,10 +50,10 @@ export function isHorizontalEditingBoundary(
   ) {
     return false;
   }
-  const caretOffset = valueCaretOffset(root, selection.location.item, true);
+  const caretOffset = valueCaretOffset(root, selection.location.node, true);
   if (caretOffset == null) return false;
-  const snap = core.item(selection.location.item);
-  if (!isPlainValueItem(snap)) return false;
+  const snap = core.node(selection.location.node);
+  if (!isPlainValueNode(snap)) return false;
   const textLen = valueToText(snap.content.value).length;
   return dir === "left" ? caretOffset === 0 : caretOffset === textLen;
 }
@@ -62,21 +62,21 @@ export function handleOutlineEditingEnter(args: {
   core: Core;
   location: Location;
   intent: EditingEnterIntent;
-  portals: readonly ItemId[];
+  portals: readonly NodeId[];
 }): boolean {
   const { core, intent, portals } = args;
   let { location } = args;
   const range = intent.range;
   if (range) {
-    if (range.start.itemId !== range.end.itemId) {
-      const startLoc = core.locate(range.start.itemId);
-      const endLoc = core.locate(range.end.itemId);
+    if (range.start.nodeId !== range.end.nodeId) {
+      const startLoc = core.locate(range.start.nodeId);
+      const endLoc = core.locate(range.end.nodeId);
       if (!startLoc || !endLoc || startLoc.parentId !== endLoc.parentId) {
         return false;
       }
       core.commit((t) => {
-        const startSnap = core.item(range.start.itemId);
-        const endSnap = core.item(range.end.itemId);
+        const startSnap = core.node(range.start.nodeId);
+        const endSnap = core.node(range.end.nodeId);
         if (
           startSnap.mode.type !== "plain" ||
           startSnap.content.type !== "value" ||
@@ -92,7 +92,7 @@ export function handleOutlineEditingEnter(args: {
         const endText = String(endSnap.content.value ?? "").slice(
           range.end.offset,
         );
-        t.setValue(range.start.itemId, startText + endText);
+        t.setValue(range.start.nodeId, startText + endText);
         for (const id of startLoc.siblings.slice(
           startLoc.index + 1,
           endLoc.index + 1,
@@ -100,13 +100,13 @@ export function handleOutlineEditingEnter(args: {
           t.remove(id);
         }
       });
-      location = { item: range.start.itemId, portals };
+      location = { node: range.start.nodeId, portals };
     }
     const newId = outlineCmd.splitAt(
       core,
       location,
       range.start.offset,
-      range.start.itemId === range.end.itemId
+      range.start.nodeId === range.end.nodeId
         ? range.end.offset
         : range.start.offset,
     );
@@ -114,7 +114,7 @@ export function handleOutlineEditingEnter(args: {
     core.focus(
       {
         type: "editing",
-        location: { item: newId, portals },
+        location: { node: newId, portals },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -127,7 +127,7 @@ export function handleOutlineEditingEnter(args: {
   core.focus(
     {
       type: "editing",
-      location: { item: newId, portals },
+      location: { node: newId, portals },
       target: CONTENT_TEXT_TARGET,
     },
     { caret: 0 },
@@ -137,9 +137,9 @@ export function handleOutlineEditingEnter(args: {
 
 export function handleOutlineEditingNav(args: {
   core: Core;
-  viewRootId: ItemId;
+  viewRootId: NodeId;
   location: Location;
-  portals: readonly ItemId[];
+  portals: readonly NodeId[];
   dir: EditingNavIntent["dir"];
 }): boolean {
   const { core, viewRootId, location, portals, dir } = args;
@@ -156,13 +156,13 @@ export function handleOutlineEditingNav(args: {
 
 export function handleOutlineEditingDelete(args: {
   core: Core;
-  viewRootId: ItemId;
+  viewRootId: NodeId;
   location: Location;
-  portals: readonly ItemId[];
+  portals: readonly NodeId[];
   dir: EditingDeleteIntent["dir"];
 }): boolean {
   const { core, viewRootId, location, portals, dir } = args;
-  const snap = core.item(location.item);
+  const snap = core.node(location.node);
   if (snap.mode.type !== "plain" || snap.content.type !== "value") return false;
   const text = String(snap.content.value ?? "");
   const stops = collectStops(core, viewRootId, portals);
@@ -173,7 +173,7 @@ export function handleOutlineEditingDelete(args: {
   };
   if (text.length === 0) {
     const nextStop = moveStop(stops, current, dir);
-    outlineCmd.removeAndPruneAncestors(core, viewRootId, location.item);
+    outlineCmd.removeAndPruneAncestors(core, viewRootId, location.node);
     if (!nextStop) return true;
     focusStop(core, nextStop.stop, nextStop.edge);
     return true;
@@ -189,14 +189,14 @@ export function handleOutlineEditingDelete(args: {
   const joined = outlineCmd.joinValues(
     core,
     viewRootId,
-    dir === "backward" ? adjacentStop.stop.location.item : location.item,
-    dir === "backward" ? location.item : adjacentStop.stop.location.item,
+    dir === "backward" ? adjacentStop.stop.location.node : location.node,
+    dir === "backward" ? location.node : adjacentStop.stop.location.node,
   );
   if (!joined) return false;
   core.focus(
     {
       type: "editing",
-      location: { item: joined.id, portals },
+      location: { node: joined.id, portals },
       target: CONTENT_TEXT_TARGET,
     },
     { caret: joined.caret },

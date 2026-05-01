@@ -1,7 +1,7 @@
 import { effect, signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
-import type { ItemId, Selection } from "../src/core";
+import type { NodeId, Selection } from "../src/core";
 import { CONTENT_TEXT_TARGET, contentTarget } from "../src/core";
 import {
   createDragController,
@@ -24,7 +24,7 @@ import {
   installCapturedWindowHandlers,
   makeCoreRuntime,
   mkBlank,
-  mkGroup,
+  mkItem,
   mountLocalView,
   mountView,
   pointerDown,
@@ -46,21 +46,21 @@ function requireOutlineRoot(root: ParentNode): HTMLElement {
   return el;
 }
 
-function requireOutlineItemEl(root: ParentNode, id: ItemId): HTMLElement {
-  const itemEl = root.querySelector(
+function requireOutlineNodeEl(root: ParentNode, id: NodeId): HTMLElement {
+  const nodeEl = root.querySelector(
     `.ui-frame.ui-outline-child[data-id="${id}"]`,
   ) as HTMLElement | null;
-  if (!itemEl)
-    throw new Error(`Missing outline item element for id=${String(id)}`);
-  return itemEl;
+  if (!nodeEl)
+    throw new Error(`Missing outline node element for id=${String(id)}`);
+  return nodeEl;
 }
 
-function requireOutlineValueEl(root: ParentNode, id: ItemId): HTMLElement {
-  const itemEl = root.querySelector(
+function requireOutlineValueEl(root: ParentNode, id: NodeId): HTMLElement {
+  const nodeEl = root.querySelector(
     `.ui-frame.ui-outline-child[data-id="${id}"]`,
   ) as HTMLElement | null;
-  if (itemEl) {
-    const valueEl = itemEl.querySelector(
+  if (nodeEl) {
+    const valueEl = nodeEl.querySelector(
       `.ui-outline-value[data-target="content:text"]`,
     ) as HTMLElement | null;
     if (!valueEl)
@@ -80,9 +80,9 @@ function requireOutlineValueEl(root: ParentNode, id: ItemId): HTMLElement {
   throw new Error(`Missing outline value element for id=${String(id)}`);
 }
 
-function requireOutlineGutterEl(root: ParentNode, id: ItemId): HTMLElement {
-  const itemEl = requireOutlineItemEl(root, id);
-  const gutterEl = itemEl.querySelector(
+function requireOutlineGutterEl(root: ParentNode, id: NodeId): HTMLElement {
+  const nodeEl = requireOutlineNodeEl(root, id);
+  const gutterEl = nodeEl.querySelector(
     ".ui-outline-gutter",
   ) as HTMLElement | null;
   if (!gutterEl)
@@ -295,9 +295,9 @@ function dispatchComposition(
 
 async function mountOutline(
   core: UiCore,
-  rootId: ItemId,
-  location: { item: ItemId; portals: readonly ItemId[] } = {
-    item: rootId,
+  rootId: NodeId,
+  location: { node: NodeId; portals: readonly NodeId[] } = {
+    node: rootId,
     portals: [],
   },
 ): Promise<{
@@ -315,9 +315,9 @@ async function mountOutline(
 
 async function mountLocalOutline(
   core: UiCore,
-  rootId: ItemId,
-  location: { item: ItemId; portals: readonly ItemId[] } = {
-    item: rootId,
+  rootId: NodeId,
+  location: { node: NodeId; portals: readonly NodeId[] } = {
+    node: rootId,
     portals: [],
   },
 ): Promise<{
@@ -334,30 +334,30 @@ async function mountLocalOutline(
   return { ...mounted, root: requireOutlineRoot(document.body) };
 }
 
-function expectItemRangeSel(
+function expectNodeRangeSel(
   core: { selection(): ReturnType<UiCore["selection"]> },
   want: {
-    anchor: { item: ItemId; portals: readonly ItemId[] };
-    head: { item: ItemId; portals: readonly ItemId[] };
+    anchor: { node: NodeId; portals: readonly NodeId[] };
+    head: { node: NodeId; portals: readonly NodeId[] };
   },
 ): void {
   const sel = core.selection();
-  expect(sel.type).toBe("item");
-  if (sel.type !== "item") throw new Error("Expected item selection");
+  expect(sel.type).toBe("node");
+  if (sel.type !== "node") throw new Error("Expected node selection");
   expect(sel.anchor).toEqual(want.anchor);
   expect(sel.head).toEqual(want.head);
 }
 
 describe("outline/rendering", () => {
-  test("renders outline root and item frame contracts", async () => {
+  test("renders outline root and node frame contracts", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "aa" });
 
     core.focus({
-      type: "item",
-      anchor: { item: rootId, portals: [] },
-      head: { item: rootId, portals: [] },
+      type: "node",
+      anchor: { node: rootId, portals: [] },
+      head: { node: rootId, portals: [] },
     });
 
     const { unmount, root } = await mountOutline(core, rootId);
@@ -370,7 +370,7 @@ describe("outline/rendering", () => {
     expect(root.getAttribute("autocorrect")).toBe("off");
     expect(root.getAttribute("autocapitalize")).toBe("off");
 
-    const gEl = requireOutlineItemEl(document.body, g);
+    const gEl = requireOutlineNodeEl(document.body, g);
     const gFrameEl = requireFrameEl(document.body, g);
     const gutterEl = gEl.querySelector(
       ".ui-outline-gutter",
@@ -388,23 +388,23 @@ describe("outline/rendering", () => {
     expect(gutterEl).toBeTruthy();
     expect(gutterEl?.getAttribute("contenteditable")).toBe("false");
     expect(valueEl.dataset.target).toBe("content:text");
-    expect(requireOutlineItemEl(document.body, a).isConnected).toBe(true);
+    expect(requireOutlineNodeEl(document.body, a).isConnected).toBe(true);
 
     unmount();
   });
 
-  test("empty outline group renders visual placeholder only", async () => {
+  test("empty outline item renders visual placeholder only", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const gEl = requireOutlineItemEl(document.body, g);
+    const gEl = requireOutlineNodeEl(document.body, g);
     const placeholder = gEl.querySelector(
       ".ui-outline-placeholder",
     ) as HTMLElement | null;
     expect(placeholder).toBeTruthy();
-    expect(placeholder?.textContent).toContain("Empty group");
+    expect(placeholder?.textContent).toContain("Empty item");
     expect(placeholder?.getAttribute("contenteditable")).toBe("false");
     expect(placeholder?.getAttribute("aria-hidden")).toBe("true");
     expect(placeholder?.hasAttribute("tabindex")).toBe(false);
@@ -412,7 +412,7 @@ describe("outline/rendering", () => {
     mkBlank(core, g, { label: "a", value: "x" });
     await flushDomEffects();
     expect(
-      requireOutlineItemEl(document.body, g).querySelector(
+      requireOutlineNodeEl(document.body, g).querySelector(
         ".ui-outline-placeholder",
       ),
     ).toBeNull();
@@ -427,11 +427,11 @@ describe("outline/rendering", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const valueEl = itemEl.querySelector(
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const valueEl = nodeEl.querySelector(
       `.ui-outline-value[data-target="content:text"]`,
     ) as HTMLElement | null;
-    const sliderInput = itemEl.querySelector(
+    const sliderInput = nodeEl.querySelector(
       "input[type='range']",
     ) as HTMLInputElement | null;
 
@@ -478,14 +478,14 @@ describe("outline/rendering", () => {
   });
 });
 
-describe("outline/item-intents", () => {
-  test("Enter on empty group creates first child and enters content:text", async () => {
+describe("outline/node-intents", () => {
+  test("Enter on empty item creates first child and enters content:text", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     core.focus({
-      type: "item",
-      anchor: { item: g, portals: [] },
-      head: { item: g, portals: [] },
+      type: "node",
+      anchor: { node: g, portals: [] },
+      head: { node: g, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -496,7 +496,7 @@ describe("outline/item-intents", () => {
     const kids = childrenOf(core, g);
     expect(kids.length).toBe(1);
     expectSel(core, {
-      item: kids[0]!,
+      node: kids[0]!,
       target: CONTENT_TEXT_TARGET,
       portals: [],
     });
@@ -505,15 +505,15 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
-  test("Enter on non-empty group focuses first child item", async () => {
+  test("Enter on non-empty item focuses first child node", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "x" });
     mkBlank(core, g, { label: "b", value: "y" });
     core.focus({
-      type: "item",
-      anchor: { item: g, portals: [] },
-      head: { item: g, portals: [] },
+      type: "node",
+      anchor: { node: g, portals: [] },
+      head: { node: g, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -521,20 +521,20 @@ describe("outline/item-intents", () => {
     dispatchViewIntentKey(domView, "Enter");
     await flushDomEffects();
 
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     unmount();
   });
 
-  test("Cmd+Enter on item selection inserts sibling in same parent", async () => {
+  test("Cmd+Enter on node selection inserts sibling in same parent", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "x" });
     const z = mkBlank(core, rootId, { label: "z", value: "tail" });
     core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+      type: "node",
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -547,7 +547,7 @@ describe("outline/item-intents", () => {
     expect(childrenOf(core, rootId)).toEqual([g, z]);
     expect(valueOfId(core, gKids[1]!)).toBe(null);
     expectSel(core, {
-      item: gKids[1]!,
+      node: gKids[1]!,
       target: CONTENT_TEXT_TARGET,
       portals: [],
     });
@@ -557,14 +557,14 @@ describe("outline/item-intents", () => {
 
   test("Cmd+Shift+Enter on last child inserts after parent", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: "x" });
     const b = mkBlank(core, g, { label: "b", value: "y" });
     const z = mkBlank(core, rootId, { label: "z", value: "tail" });
     core.focus({
-      type: "item",
-      anchor: { item: b, portals: [] },
-      head: { item: b, portals: [] },
+      type: "node",
+      anchor: { node: b, portals: [] },
+      head: { node: b, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -581,7 +581,7 @@ describe("outline/item-intents", () => {
     const inserted = rootKids[1]!;
     expect(valueOfId(core, inserted)).toBe(null);
     expectSel(core, {
-      item: inserted,
+      node: inserted,
       target: CONTENT_TEXT_TARGET,
       portals: [],
     });
@@ -591,13 +591,13 @@ describe("outline/item-intents", () => {
 
   test("Cmd+Shift+Enter on non-last child is a no-op", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "x" });
     const b = mkBlank(core, g, { label: "b", value: "y" });
     core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+      type: "node",
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -609,20 +609,20 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
 
     expect(childrenOf(core, g)).toEqual([a, b]);
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     unmount();
   });
 
-  test("Enter on embedded leaf item selection enters primary control target", async () => {
+  test("Enter on embedded leaf node selection enters primary control target", async () => {
     const CONTENT_SLIDER_TARGET = contentTarget("slider");
     const { core, rootId } = makeCoreRuntime();
     const s = mkBlank(core, rootId, { label: "s", value: 5 });
     setView(core, s, "slider");
     core.focus({
-      type: "item",
-      anchor: { item: s, portals: [] },
-      head: { item: s, portals: [] },
+      type: "node",
+      anchor: { node: s, portals: [] },
+      head: { node: s, portals: [] },
     });
 
     const { unmount } = await mountOutline(core, rootId);
@@ -630,7 +630,7 @@ describe("outline/item-intents", () => {
     core.dispatch({ type: "ENTER" });
     await flushDomEffects();
 
-    expectSel(core, { item: s, target: CONTENT_SLIDER_TARGET, portals: [] });
+    expectSel(core, { node: s, target: CONTENT_SLIDER_TARGET, portals: [] });
 
     unmount();
   });
@@ -639,9 +639,9 @@ describe("outline/item-intents", () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+      type: "node",
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     const { unmount } = await mountOutline(core, rootId);
@@ -649,22 +649,22 @@ describe("outline/item-intents", () => {
     core.dispatch({ type: "TYPE", char: "x" });
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(valueOfId(core, a)).toBe("x");
 
     unmount();
   });
 
-  test("NAV from item focus uses sibling geometry with right fallthrough", async () => {
+  test("NAV from node focus uses sibling geometry with right fallthrough", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "aa" });
     const b = mkBlank(core, g, { label: "b", value: "bb" });
     mkBlank(core, rootId, { label: "c", value: "cc" });
     core.focus({
-      type: "item",
-      anchor: { item: g, portals: [] },
-      head: { item: g, portals: [] },
+      type: "node",
+      anchor: { node: g, portals: [] },
+      head: { node: g, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -672,22 +672,22 @@ describe("outline/item-intents", () => {
     let key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: b, portals: [] });
+    expectSel(core, { node: b, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: b, portals: [] });
+    expectSel(core, { node: b, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: g, portals: [] });
+    expectSel(core, { node: g, portals: [] });
 
     unmount();
   });
@@ -696,9 +696,9 @@ describe("outline/item-intents", () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+      type: "node",
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -706,31 +706,31 @@ describe("outline/item-intents", () => {
     let key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     core.focus({
-      type: "item",
-      anchor: { item: rootId, portals: [] },
-      head: { item: rootId, portals: [] },
+      type: "node",
+      anchor: { node: rootId, portals: [] },
+      head: { node: rootId, portals: [] },
     });
     await flushDomEffects();
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     unmount();
   });
 
-  test("DELETE on a non-last item lands on the next sibling", async () => {
+  test("DELETE on a non-last node lands on the next sibling", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
     const b = mkBlank(core, rootId, { label: "b", value: "b" });
     const c = mkBlank(core, rootId, { label: "c", value: "c" });
     core.focus({
-      type: "item",
-      anchor: { item: b, portals: [] },
-      head: { item: b, portals: [] },
+      type: "node",
+      anchor: { node: b, portals: [] },
+      head: { node: b, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -740,19 +740,19 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, c]);
-    expectSel(core, { item: c, portals: [] });
+    expectSel(core, { node: c, portals: [] });
 
     unmount();
   });
 
-  test("DELETE on the last item lands on the previous sibling", async () => {
+  test("DELETE on the last node lands on the previous sibling", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
     const b = mkBlank(core, rootId, { label: "b", value: "b" });
     core.focus({
-      type: "item",
-      anchor: { item: b, portals: [] },
-      head: { item: b, portals: [] },
+      type: "node",
+      anchor: { node: b, portals: [] },
+      head: { node: b, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -762,21 +762,21 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a]);
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     unmount();
   });
 
-  test("DELETE on sole child of non-root group lands on sibling of pruned group", async () => {
+  test("DELETE on sole child of non-root item lands on sibling of pruned item", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const x = mkBlank(core, g, { label: "x", value: "x" });
     const z = mkBlank(core, rootId, { label: "z", value: "z" });
     core.focus({
-      type: "item",
-      anchor: { item: x, portals: [] },
-      head: { item: x, portals: [] },
+      type: "node",
+      anchor: { node: x, portals: [] },
+      head: { node: x, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -786,22 +786,22 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, z]);
-    expectSel(core, { item: z, portals: [] });
+    expectSel(core, { node: z, portals: [] });
 
     unmount();
   });
 
-  test("DELETE on sole child of nested sole-child groups lands on sibling of outer pruned group", async () => {
+  test("DELETE on sole child of nested sole-child items lands on sibling of outer pruned item", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
-    const outer = mkGroup(core, rootId, { label: "outer" });
-    const inner = mkGroup(core, outer, { label: "inner" });
+    const outer = mkItem(core, rootId, { label: "outer" });
+    const inner = mkItem(core, outer, { label: "inner" });
     const x = mkBlank(core, inner, { label: "x", value: "x" });
     const z = mkBlank(core, rootId, { label: "z", value: "z" });
     core.focus({
-      type: "item",
-      anchor: { item: x, portals: [] },
-      head: { item: x, portals: [] },
+      type: "node",
+      anchor: { node: x, portals: [] },
+      head: { node: x, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -811,18 +811,18 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a, z]);
-    expectSel(core, { item: z, portals: [] });
+    expectSel(core, { node: z, portals: [] });
 
     unmount();
   });
 
-  test("DELETE on final remaining item keeps selection valid", async () => {
+  test("DELETE on final remaining node keeps selection valid", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
     core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+      type: "node",
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -832,21 +832,21 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(valueOfId(core, rootId)).toBeNull();
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     unmount();
   });
 
-  test("DELETE in a multi-child group still lands on next sibling", async () => {
+  test("DELETE in a multi-child item still lands on next sibling", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const x = mkBlank(core, g, { label: "x", value: "x" });
     const y = mkBlank(core, g, { label: "y", value: "y" });
     const z = mkBlank(core, g, { label: "z", value: "z" });
     core.focus({
-      type: "item",
-      anchor: { item: y, portals: [] },
-      head: { item: y, portals: [] },
+      type: "node",
+      anchor: { node: y, portals: [] },
+      head: { node: y, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -856,21 +856,21 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(childrenOf(core, g)).toEqual([x, z]);
-    expectSel(core, { item: z, portals: [] });
+    expectSel(core, { node: z, portals: [] });
 
     unmount();
   });
 
-  test("DELETE on a block selection lands on the item after the block", async () => {
+  test("DELETE on a block selection lands on the node after the block", async () => {
     const { core, rootId } = makeCoreRuntime();
     mkBlank(core, rootId, { label: "a", value: "a" });
     const b = mkBlank(core, rootId, { label: "b", value: "b" });
     const c = mkBlank(core, rootId, { label: "c", value: "c" });
     const d = mkBlank(core, rootId, { label: "d", value: "d" });
     core.focus({
-      type: "item",
-      anchor: { item: b, portals: [] },
-      head: { item: c, portals: [] },
+      type: "node",
+      anchor: { node: b, portals: [] },
+      head: { node: c, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -879,7 +879,7 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
     expect(key).toBe(true);
 
-    expectSel(core, { item: d, portals: [] });
+    expectSel(core, { node: d, portals: [] });
 
     unmount();
   });
@@ -890,9 +890,9 @@ describe("outline/item-intents", () => {
     const b = mkBlank(core, rootId, { label: "b", value: "b" });
     const c = mkBlank(core, rootId, { label: "c", value: "c" });
     core.focus({
-      type: "item",
-      anchor: { item: b, portals: [] },
-      head: { item: c, portals: [] },
+      type: "node",
+      anchor: { node: b, portals: [] },
+      head: { node: c, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalOutline(core, rootId);
@@ -902,12 +902,12 @@ describe("outline/item-intents", () => {
     expect(key).toBe(true);
 
     expect(childrenOf(core, rootId)).toEqual([a]);
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     unmount();
   });
 
-  test("ArrowRight from outline content:text enters embedded view as item selection, ArrowLeft goes to parent item", async () => {
+  test("ArrowRight from outline content:text enters embedded view as node selection, ArrowLeft goes to parent node", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
     const slider = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -915,7 +915,7 @@ describe("outline/item-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -927,26 +927,26 @@ describe("outline/item-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { item: slider, portals: [] });
+    expectSel(core, { node: slider, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowLeft");
+    dispatchKey(requireOutlineNodeEl(document.body, slider), "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     unmount();
   });
 
-  test("ArrowRight/ArrowLeft boundary traversal uses item stop for embedded table rows, with ArrowLeft going to parent item", async () => {
+  test("ArrowRight/ArrowLeft boundary traversal uses node stop for embedded table rows, with ArrowLeft going to parent node", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
-    const tableId = mkGroup(core, rootId, { label: "t" });
+    const tableId = mkItem(core, rootId, { label: "t" });
     setView(core, tableId, "table");
-    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
     mkBlank(core, r1, { label: "c1", value: 1 });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -958,16 +958,16 @@ describe("outline/item-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { item: tableId, portals: [] });
+    expectSel(core, { node: tableId, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, tableId), "ArrowLeft");
+    dispatchKey(requireOutlineNodeEl(document.body, tableId), "ArrowLeft");
     await flushDomEffects();
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     unmount();
   });
 
-  test("ArrowRight from outline content:text lands on connected item stop, not conn field", async () => {
+  test("ArrowRight from outline content:text lands on connected node stop, not conn field", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
     const formula = mkBlank(core, rootId, { label: "f", value: "x" });
@@ -976,7 +976,7 @@ describe("outline/item-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -988,22 +988,22 @@ describe("outline/item-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { item: formula, portals: [] });
+    expectSel(core, { node: formula, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowRight");
+    dispatchKey(requireOutlineNodeEl(document.body, formula), "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { item: b, portals: [] });
+    expectSel(core, { node: b, portals: [] });
 
     core.dispatch({ type: "ENTER" });
     await flushDomEffects();
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("query parent is an item stop even when it exposes child leaves", async () => {
+  test("query parent is a node stop even when it exposes child leaves", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const rows = mkGroup(core, rootId, { label: "rows" });
+    const rows = mkItem(core, rootId, { label: "rows" });
     mkBlank(core, rows, { label: "r1", value: "one" });
     mkBlank(core, rows, { label: "r2", value: "two" });
     const a = mkBlank(core, rootId, { label: "a", value: "ab" });
@@ -1012,7 +1012,7 @@ describe("outline/item-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1024,28 +1024,28 @@ describe("outline/item-intents", () => {
 
     dispatchKey(outlineRoot, "ArrowRight");
     await flushDomEffects();
-    expectSel(core, { item: query, portals: [] });
+    expectSel(core, { node: query, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, query), "ArrowRight");
+    dispatchKey(requireOutlineNodeEl(document.body, query), "ArrowRight");
     await flushDomEffects();
     const sel = core.selection();
-    expect(sel.type).toBe("item");
-    if (sel.type !== "item") throw new Error("Expected item selection");
+    expect(sel.type).toBe("node");
+    if (sel.type !== "node") throw new Error("Expected node selection");
     const firstChild = childrenOf(core, query)[0];
     if (!firstChild) throw new Error("Expected query child");
-    expect(sel.head.item).toBe(firstChild);
+    expect(sel.head.node).toBe(firstChild);
 
     unmount();
   });
 
   test("Tab/Shift+Tab keydown uses in-place body transforms", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const x = mkBlank(core, g, { label: "x", value: "v" });
     core.focus(
       {
         type: "editing",
-        location: { item: x, portals: [] },
+        location: { node: x, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -1058,37 +1058,37 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
     expect(firstTab).toBe(true);
 
-    expect(core.item(x).content.type).toBe("group");
+    expect(core.node(x).content.type).toBe("item");
     const nestedKids = childrenOf(core, x);
     expect(nestedKids.length).toBe(1);
     const child = nestedKids[0]!;
     expect(valueOfId(core, child)).toBe("v");
-    expectSel(core, { item: child, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: child, target: CONTENT_TEXT_TARGET, portals: [] });
 
     const secondTab = dispatchKey(outlineRoot, "Tab", { shiftKey: true });
     await flushDomEffects();
     expect(secondTab).toBe(true);
-    expect(core.item(x).content.type).toBe("value");
+    expect(core.node(x).content.type).toBe("value");
     expect(valueOfId(core, x)).toBe("v");
-    expectSel(core, { item: x, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: x, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("Shift+Tab on the mounted outline root item is a local no-op", async () => {
+  test("Shift+Tab on the mounted outline root node is a local no-op", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
     core.focus(
       {
         type: "editing",
-        location: { item: x, portals: [] },
+        location: { node: x, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
 
     const { root, unmount } = await mountOutline(core, x, {
-      item: x,
+      node: x,
       portals: [],
     });
 
@@ -1097,7 +1097,7 @@ describe("outline/item-intents", () => {
 
     expect(ev).toBe(true);
     expect(valueOfId(core, x)).toBe("v");
-    expectSel(core, { item: x, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: x, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1108,7 +1108,7 @@ describe("outline/item-intents", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: x, portals: [] },
+        location: { node: x, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -1126,10 +1126,10 @@ describe("outline/item-intents", () => {
     const tab = dispatchKey(outlineRoot, "Tab");
     await flushDomEffects();
     expect(tab).toBe(true);
-    expect(core.item(x).content.type).toBe("group");
+    expect(core.node(x).content.type).toBe("item");
 
     core.undo();
-    expect(core.item(x).content.type).toBe("value");
+    expect(core.node(x).content.type).toBe("value");
     expect(valueOfId(core, x)).toBe("ab");
 
     core.undo();
@@ -1138,14 +1138,14 @@ describe("outline/item-intents", () => {
     unmount();
   });
 
-  test("Escape from CONTENT_TEXT_TARGET exits to same-item block", async () => {
+  test("Escape from CONTENT_TEXT_TARGET exits to same-node block", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1159,8 +1159,8 @@ describe("outline/item-intents", () => {
     await flushDomEffects();
 
     expect(ev).toBe(true);
-    expectSel(core, { item: a, portals: [] });
-    expect(document.activeElement).toBe(requireOutlineItemEl(document.body, a));
+    expectSel(core, { node: a, portals: [] });
+    expect(document.activeElement).toBe(requireOutlineNodeEl(document.body, a));
     const domSel = window.getSelection();
     expect(domSel?.rangeCount ?? 0).toBe(0);
 
@@ -1169,11 +1169,11 @@ describe("outline/item-intents", () => {
 
   test("Tab keydown resets sticky caret before applying the body transform", () => {
     const { core, rootId } = makeCoreRuntime();
-    const item = mkBlank(core, rootId, { label: "x", value: "hello" });
+    const node = mkBlank(core, rootId, { label: "x", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item, portals: [] },
+        location: { node, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -1182,21 +1182,21 @@ describe("outline/item-intents", () => {
     const root = document.createElement("div");
     root.className = "ui-body ui-outline";
     root.setAttribute("contenteditable", "true");
-    const itemEl = document.createElement("div");
-    itemEl.className = "ui-frame ui-outline-child";
-    itemEl.dataset.id = item;
+    const nodeEl = document.createElement("div");
+    nodeEl.className = "ui-frame ui-outline-child";
+    nodeEl.dataset.id = node;
     const valueEl = document.createElement("span");
     valueEl.className = "ui-outline-value";
     valueEl.dataset.target = CONTENT_TEXT_TARGET;
     valueEl.textContent = "hello";
-    itemEl.append(valueEl);
-    root.append(itemEl);
+    nodeEl.append(valueEl);
+    root.append(nodeEl);
     document.body.replaceChildren(root);
     setContentEditableSelection(valueEl, 0);
 
     let stickyResets = 0;
     const onValueTabCalls: Array<
-      [{ item: ItemId; portals: readonly ItemId[] }, boolean, number]
+      [{ node: NodeId; portals: readonly NodeId[] }, boolean, number]
     > = [];
     const runtime = createOutlineInputRuntime({
       core,
@@ -1214,7 +1214,7 @@ describe("outline/item-intents", () => {
       ),
       selection: {
         suppressSelectionSync: createSuppressionFlag(false),
-        clearValueRangeSelectedItems: () => {},
+        clearValueRangeSelectedNodes: () => {},
         setValueSelectionRangeState: () => {},
       },
     });
@@ -1249,7 +1249,7 @@ describe("outline/item-intents", () => {
 
     expect(ev).toBe(true);
     expect(stickyResets).toBe(1);
-    expect(onValueTabCalls).toEqual([[{ item, portals: [] }, false, 0]]);
+    expect(onValueTabCalls).toEqual([[{ node, portals: [] }, false, 0]]);
 
     for (const dispose of disposers) dispose();
   });
@@ -1259,14 +1259,14 @@ describe("outline/embedded-routing", () => {
   test("Cmd+Enter from embedded control editing inserts sibling in same parent", async () => {
     const CONTENT_SLIDER_TARGET = contentTarget("slider");
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const s = mkBlank(core, g, { label: "s", value: 5 });
     mkBlank(core, rootId, { label: "z", value: "tail" });
     setView(core, s, "slider");
     core.focus(
       {
         type: "editing",
-        location: { item: s, portals: [] },
+        location: { node: s, portals: [] },
         target: CONTENT_SLIDER_TARGET,
       },
       { caret: 0 },
@@ -1274,7 +1274,7 @@ describe("outline/embedded-routing", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const sliderInput = requireOutlineItemEl(document.body, s).querySelector(
+    const sliderInput = requireOutlineNodeEl(document.body, s).querySelector(
       "input[type='range']",
     ) as HTMLInputElement | null;
     expect(sliderInput).toBeTruthy();
@@ -1286,7 +1286,7 @@ describe("outline/embedded-routing", () => {
     const inserted = gKids[1]!;
     expect(valueOfId(core, inserted)).toBe(null);
     expectSel(core, {
-      item: inserted,
+      node: inserted,
       target: CONTENT_TEXT_TARGET,
       portals: [],
     });
@@ -1297,7 +1297,7 @@ describe("outline/embedded-routing", () => {
   test("Cmd+Shift+Enter from embedded control editing inserts after parent at valid edge", async () => {
     const CONTENT_SLIDER_TARGET = contentTarget("slider");
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: "x" });
     const s = mkBlank(core, g, { label: "s", value: 5 });
     const z = mkBlank(core, rootId, { label: "z", value: "tail" });
@@ -1305,7 +1305,7 @@ describe("outline/embedded-routing", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: s, portals: [] },
+        location: { node: s, portals: [] },
         target: CONTENT_SLIDER_TARGET,
       },
       { caret: 0 },
@@ -1313,7 +1313,7 @@ describe("outline/embedded-routing", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const sliderInput = requireOutlineItemEl(document.body, s).querySelector(
+    const sliderInput = requireOutlineNodeEl(document.body, s).querySelector(
       "input[type='range']",
     ) as HTMLInputElement | null;
     expect(sliderInput).toBeTruthy();
@@ -1327,7 +1327,7 @@ describe("outline/embedded-routing", () => {
     const inserted = rootKids[1]!;
     expect(valueOfId(core, inserted)).toBe(null);
     expectSel(core, {
-      item: inserted,
+      node: inserted,
       target: CONTENT_TEXT_TARGET,
       portals: [],
     });
@@ -1337,13 +1337,13 @@ describe("outline/embedded-routing", () => {
 });
 
 describe("outline/contenteditable-beforeinput", () => {
-  test("beforeinput insertParagraph splits item at selection", async () => {
+  test("beforeinput insertParagraph splits node at selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1363,13 +1363,13 @@ describe("outline/contenteditable-beforeinput", () => {
     const b = kids[aIdx + 1]!;
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     core.undo();
     await flushDomEffects();
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
     ).toBe(2);
@@ -1379,20 +1379,20 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(childrenOf(core, rootId)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, b)).toBe("llo");
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("Cmd+Enter inserts a blank sibling item from text editing", async () => {
+  test("Cmd+Enter inserts a blank sibling node from text editing", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "hello" });
     const z = mkBlank(core, rootId, { label: "z", value: "tail" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1414,20 +1414,20 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(childrenOf(core, rootId)).toEqual([g, z]);
     const b = gKids[1]!;
     expect(valueOfId(core, b)).toBe(null);
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
   test("Cmd+Shift+Enter inserts after parent from text editing at valid edge", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "hello" });
     const z = mkBlank(core, rootId, { label: "z", value: "tail" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1451,20 +1451,20 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(rootKids[2]).toBe(z);
     const b = rootKids[1]!;
     expect(valueOfId(core, b)).toBe(null);
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
   test("Cmd+Shift+Enter from text editing is a no-op when not at last child", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "hello" });
     const b = mkBlank(core, g, { label: "b", value: "tail" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1483,18 +1483,18 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(ev).toBe(true);
     expect(childrenOf(core, g)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("beforeinput insertParagraph with non-collapsed single-item selection splits using range end", async () => {
+  test("beforeinput insertParagraph with non-collapsed single-node selection splits using range end", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -1514,7 +1514,7 @@ describe("outline/contenteditable-beforeinput", () => {
     const b = kids[aIdx + 1]!;
     expect(valueOfId(core, a)).toBe("h");
     expect(valueOfId(core, b)).toBe("o");
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, b)),
     ).toBe(0);
@@ -1522,14 +1522,14 @@ describe("outline/contenteditable-beforeinput", () => {
     unmount();
   });
 
-  test("beforeinput insertParagraph with non-collapsed multi-item selection deletes range then splits", async () => {
+  test("beforeinput insertParagraph with non-collapsed multi-node selection deletes range then splits", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     const b = mkBlank(core, rootId, { label: "b", value: "world" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1561,7 +1561,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(c).not.toBe(b);
     expect(valueOfId(core, a)).toBe("he");
     expect(valueOfId(core, c)).toBe("ld");
-    expectSel(core, { item: c, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: c, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1572,7 +1572,7 @@ describe("outline/contenteditable-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1589,7 +1589,7 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("he\nllo");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -1601,7 +1601,7 @@ describe("outline/contenteditable-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1618,7 +1618,7 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(ev).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
     ).toBe(2);
@@ -1632,7 +1632,7 @@ describe("outline/contenteditable-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -1647,11 +1647,11 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(ev).toBe(true);
     expect(valueOfId(core, rootId)).toBeNull();
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     dispatchKey(outlineRoot, "Tab", { shiftKey: true });
     await flushDomEffects();
-    expectSel(core, { item: rootId, portals: [] });
+    expectSel(core, { node: rootId, portals: [] });
 
     unmount();
   });
@@ -1659,13 +1659,13 @@ describe("outline/contenteditable-beforeinput", () => {
   test("deleteContentBackward on empty sole-child prunes ancestor and lands on previous edit stop", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "aa" });
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const x = mkBlank(core, g, { label: "x", value: "" });
     const z = mkBlank(core, rootId, { label: "z", value: "zz" });
     core.focus(
       {
         type: "editing",
-        location: { item: x, portals: [] },
+        location: { node: x, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -1680,20 +1680,20 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(ev).toBe(true);
     expect(childrenOf(core, rootId)).toEqual([a, z]);
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
   test("deleteContentBackward at boundary joins siblings and keeps focus on survivor", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const a = mkBlank(core, g, { label: "a", value: "aa" });
     const b = mkBlank(core, g, { label: "b", value: "bb" });
     core.focus(
       {
         type: "editing",
-        location: { item: b, portals: [] },
+        location: { node: b, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -1709,33 +1709,33 @@ describe("outline/contenteditable-beforeinput", () => {
     expect(ev).toBe(true);
     expect(childrenOf(core, g)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("aabb");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     core.undo();
     await flushDomEffects();
     expect(childrenOf(core, g)).toEqual([a, b]);
     expect(valueOfId(core, a)).toBe("aa");
     expect(valueOfId(core, b)).toBe("bb");
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("nested outline root: final leaf delete clears nested root and repairs to parent item selection", async () => {
+  test("nested outline root: final leaf delete clears nested root and repairs to parent node selection", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const nestedRoot = mkGroup(core, rootId, { label: "nested" });
+    const nestedRoot = mkItem(core, rootId, { label: "nested" });
     const a = mkBlank(core, nestedRoot, { label: "a", value: "" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
     );
 
     const { unmount } = await mountOutline(core, nestedRoot, {
-      item: nestedRoot,
+      node: nestedRoot,
       portals: [],
     });
 
@@ -1746,19 +1746,19 @@ describe("outline/contenteditable-beforeinput", () => {
 
     expect(ev).toBe(true);
     expect(valueOfId(core, nestedRoot)).toBeNull();
-    expectSel(core, { item: nestedRoot, portals: [] });
+    expectSel(core, { node: nestedRoot, portals: [] });
 
     unmount();
   });
 
-  test("non-empty group items do not expose an outline value surface", async () => {
+  test("non-empty item nodes do not expose an outline value surface", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: "x" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const gEl = requireOutlineItemEl(document.body, g);
+    const gEl = requireOutlineNodeEl(document.body, g);
     const gValueEl =
       [...gEl.children].find(
         (child) =>
@@ -1804,7 +1804,7 @@ describe("outline/contenteditable-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -1831,7 +1831,7 @@ describe("outline/contenteditable-beforeinput", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -1853,13 +1853,13 @@ describe("outline/contenteditable-beforeinput", () => {
 });
 
 describe("outline/clipboard-drop", () => {
-  test("copy and cut single-item contenteditable selection use model text/plain semantics", async () => {
+  test("copy and cut single-node contenteditable selection use model text/plain semantics", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -1880,12 +1880,12 @@ describe("outline/clipboard-drop", () => {
     expect(cut.defaultPrevented).toBe(true);
     expect(cut.textPlain).toBe("ell");
     expect(valueOfId(core, a)).toBe("ho");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("copy and cut same-parent multi-item selection serializes newline-joined text", async () => {
+  test("copy and cut same-parent multi-node selection serializes newline-joined text", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     const b = mkBlank(core, rootId, { label: "b", value: "world" });
@@ -1927,7 +1927,7 @@ describe("outline/clipboard-drop", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -1956,7 +1956,7 @@ describe("outline/clipboard-drop", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -1989,7 +1989,7 @@ describe("outline/clipboard-drop", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2014,13 +2014,13 @@ describe("outline/clipboard-drop", () => {
     unmount();
   });
 
-  test("multi-line paste creates sibling items", async () => {
+  test("multi-line paste creates sibling nodes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -2043,7 +2043,7 @@ describe("outline/clipboard-drop", () => {
 
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, b)).toBe("barllo");
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, b)),
     ).toBe(3);
@@ -2051,13 +2051,13 @@ describe("outline/clipboard-drop", () => {
     unmount();
   });
 
-  test("multi-line drop creates sibling items", async () => {
+  test("multi-line drop creates sibling nodes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -2078,7 +2078,7 @@ describe("outline/clipboard-drop", () => {
 
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, b)).toBe("barllo");
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, b)),
     ).toBe(3);
@@ -2092,7 +2092,7 @@ describe("outline/clipboard-drop", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -2120,7 +2120,7 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(childrenOf(core, rootId)).toEqual([a]);
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
       readContentEditableCaret(requireOutlineValueEl(document.body, a)),
     ).toBe(2);
@@ -2133,7 +2133,7 @@ describe("outline/clipboard-drop", () => {
     expect(valueOfId(core, a)).toBe("hefoo");
     expect(valueOfId(core, redoneB)).toBe("barllo");
     expectSel(core, {
-      item: redoneB,
+      node: redoneB,
       target: CONTENT_TEXT_TARGET,
       portals: [],
     });
@@ -2144,13 +2144,13 @@ describe("outline/clipboard-drop", () => {
     unmount();
   });
 
-  test("paste into non-collapsed single-item selection replaces range", async () => {
+  test("paste into non-collapsed single-node selection replaces range", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2165,18 +2165,18 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(paste.defaultPrevented).toBe(true);
     expect(valueOfId(core, a)).toBe("hXo");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("drop into non-collapsed single-item selection replaces range", async () => {
+  test("drop into non-collapsed single-node selection replaces range", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2191,7 +2191,7 @@ describe("outline/clipboard-drop", () => {
     await flushDomEffects();
     expect(drop).toBe(true);
     expect(valueOfId(core, a)).toBe("hXo");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -2203,7 +2203,7 @@ describe("outline/clipboard-drop", () => {
       core.focus(
         {
           type: "editing",
-          location: { item: a, portals: [] },
+          location: { node: a, portals: [] },
           target: CONTENT_TEXT_TARGET,
         },
         { caret: 1 },
@@ -2257,7 +2257,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -2279,7 +2279,7 @@ describe("outline/ime-mutation", () => {
     await flushDomEffects();
 
     expect(ev.defaultPrevented).toBe(false);
-    expect(core.item(a).content.type).toBe("value");
+    expect(core.node(a).content.type).toBe("value");
 
     unmount();
   });
@@ -2290,7 +2290,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -2319,7 +2319,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -2342,7 +2342,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -2392,7 +2392,7 @@ describe("outline/ime-mutation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2435,7 +2435,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2451,7 +2451,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: b, portals: [] },
+        location: { node: b, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -2474,7 +2474,7 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -2490,16 +2490,16 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expectSel(core, { item: rootId, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: rootId, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
   test("selection cleanup clears sticky caret when selection leaves content:text", () => {
-    const item = "a" as ItemId;
+    const node = "a" as NodeId;
     const selection = signal<Selection>({
       type: "editing",
-      location: { item, portals: [] },
+      location: { node, portals: [] },
       target: CONTENT_TEXT_TARGET,
     });
     const valueSelectionCollapsed = signal(true);
@@ -2516,7 +2516,7 @@ describe("outline/selection-cursor", () => {
       resetStickyCaretX: () => {
         stickyClears += 1;
       },
-      clearValueRangeSelectedItems: () => {
+      clearValueRangeSelectedNodes: () => {
         rangeClears += 1;
       },
     });
@@ -2524,9 +2524,9 @@ describe("outline/selection-cursor", () => {
     stickyClears = 0;
     rangeClears = 0;
     selection.value = {
-      type: "item",
-      anchor: { item, portals: [] },
-      head: { item, portals: [] },
+      type: "node",
+      anchor: { node, portals: [] },
+      head: { node, portals: [] },
     };
 
     expect(stickyClears).toBe(1);
@@ -2536,10 +2536,10 @@ describe("outline/selection-cursor", () => {
   });
 
   test("selection cleanup clears sticky caret for non-collapsed content:text selection", () => {
-    const item = "a" as ItemId;
+    const node = "a" as NodeId;
     const selection = signal<Selection>({
       type: "editing",
-      location: { item, portals: [] },
+      location: { node, portals: [] },
       target: CONTENT_TEXT_TARGET,
     });
     const valueSelectionCollapsed = signal(true);
@@ -2556,7 +2556,7 @@ describe("outline/selection-cursor", () => {
       resetStickyCaretX: () => {
         stickyClears += 1;
       },
-      clearValueRangeSelectedItems: () => {
+      clearValueRangeSelectedNodes: () => {
         rangeClears += 1;
       },
     });
@@ -2582,7 +2582,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -2597,7 +2597,7 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expect(ev).toBe(true);
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(0);
 
     unmount();
@@ -2610,9 +2610,9 @@ describe("outline/selection-cursor", () => {
     const { unmount } = await mountOutline(core, rootId);
 
     core.focus({
-      type: "item",
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+      type: "node",
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
     await flushDomEffects();
 
@@ -2623,12 +2623,12 @@ describe("outline/selection-cursor", () => {
     dispatchPointerEvent(document, "pointerup", { pointerId: 7 });
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("pointerup fallback is skipped for item-intent pointer cycle", async () => {
+  test("pointerup fallback is skipped for node-intent pointer cycle", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
 
@@ -2642,9 +2642,9 @@ describe("outline/selection-cursor", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushDomEffects();
 
-    expectItemRangeSel(core, {
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     unmount();
@@ -2657,7 +2657,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2675,12 +2675,12 @@ describe("outline/selection-cursor", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushDomEffects();
 
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("pointerup fallback clears stale multi-item range when collapse has no trailing selectionchange", async () => {
+  test("pointerup fallback clears stale multi-node range when collapse has no trailing selectionchange", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "alpha" });
     const b = mkBlank(core, rootId, { label: "b", value: "beta" });
@@ -2703,10 +2703,10 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expect(
-      requireOutlineItemEl(document.body, a).classList.contains("is-selected"),
+      requireOutlineNodeEl(document.body, a).classList.contains("is-selected"),
     ).toBe(true);
     expect(
-      requireOutlineItemEl(document.body, b).classList.contains("is-selected"),
+      requireOutlineNodeEl(document.body, b).classList.contains("is-selected"),
     ).toBe(true);
 
     dispatchPointerEvent(bValueEl, "pointerdown", { pointerId: 9 });
@@ -2723,12 +2723,12 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
 
     expect(readContentEditableCaret(bValueEl)).toBe(2);
-    expectSel(core, { item: b, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: b, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(
-      requireOutlineItemEl(document.body, a).classList.contains("is-selected"),
+      requireOutlineNodeEl(document.body, a).classList.contains("is-selected"),
     ).toBe(false);
     expect(
-      requireOutlineItemEl(document.body, b).classList.contains("is-selected"),
+      requireOutlineNodeEl(document.body, b).classList.contains("is-selected"),
     ).toBe(true);
 
     unmount();
@@ -2741,14 +2741,14 @@ describe("outline/selection-cursor", () => {
     const { unmount } = await mountOutline(core, rootId);
 
     const root = requireOutlineRoot(document.body);
-    const itemEl = requireOutlineItemEl(document.body, a);
+    const nodeEl = requireOutlineNodeEl(document.body, a);
     const valueEl = requireOutlineValueEl(document.body, a);
 
     setContentEditableSelection(valueEl, 2, 6);
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    root.dispatchEvent(new FocusEvent("blur", { relatedTarget: itemEl }));
+    root.dispatchEvent(new FocusEvent("blur", { relatedTarget: nodeEl }));
     setContentEditableSelection(valueEl, 4);
     root.dispatchEvent(new FocusEvent("focus"));
     await flushDomEffects();
@@ -2764,7 +2764,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -2778,7 +2778,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 4 },
@@ -2798,7 +2798,7 @@ describe("outline/selection-cursor", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 2 },
@@ -2815,19 +2815,19 @@ describe("outline/selection-cursor", () => {
     core.undo();
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("hello");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(4);
 
     core.redo();
     await flushDomEffects();
     expect(valueOfId(core, a)).toBe("helXlo");
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(4);
 
     unmount();
   });
 
-  test("selectionchange after gutter click does not overwrite item selection", async () => {
+  test("selectionchange after gutter click does not overwrite node selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "hello" });
 
@@ -2838,9 +2838,9 @@ describe("outline/selection-cursor", () => {
     document.dispatchEvent(new Event("selectionchange"));
     await flushDomEffects();
 
-    expectItemRangeSel(core, {
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     unmount();
@@ -2860,7 +2860,7 @@ describe("outline/selection-cursor", () => {
     await flushDomEffects();
     expect(cut.defaultPrevented).toBe(true);
 
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     const sel = window.getSelection();
     expect(sel).toBeTruthy();
     expect(sel?.anchorNode).toBeTruthy();
@@ -2873,7 +2873,7 @@ describe("outline/selection-cursor", () => {
 });
 
 describe("outline/block-selection", () => {
-  test("gutter pointerdown creates single-item item selection", async () => {
+  test("gutter pointerdown creates single-node selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     mkBlank(core, rootId, { label: "b", value: "y" });
@@ -2886,9 +2886,9 @@ describe("outline/block-selection", () => {
     );
     await flushDomEffects();
 
-    expectItemRangeSel(core, {
-      anchor: { item: a, portals: [] },
-      head: { item: a, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: a, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     unmount();
@@ -2913,15 +2913,15 @@ describe("outline/block-selection", () => {
     );
     await flushDomEffects();
 
-    expectItemRangeSel(core, {
-      anchor: { item: a, portals: [] },
-      head: { item: c, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: a, portals: [] },
+      head: { node: c, portals: [] },
     });
 
     unmount();
   });
 
-  test("shift+ArrowDown/up extends and shrinks item selection", async () => {
+  test("shift+ArrowDown/up extends and shrinks node selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     const b = mkBlank(core, rootId, { label: "b", value: "y" });
@@ -2938,41 +2938,41 @@ describe("outline/block-selection", () => {
     const root = requireOutlineRoot(document.body);
     dispatchKey(root, "ArrowDown", { shiftKey: true });
     await flushDomEffects();
-    expectItemRangeSel(core, {
-      anchor: { item: b, portals: [] },
-      head: { item: c, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: b, portals: [] },
+      head: { node: c, portals: [] },
     });
 
     dispatchKey(root, "ArrowUp", { shiftKey: true });
     await flushDomEffects();
-    expectItemRangeSel(core, {
-      anchor: { item: b, portals: [] },
-      head: { item: b, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: b, portals: [] },
+      head: { node: b, portals: [] },
     });
 
     dispatchKey(root, "ArrowUp", { shiftKey: true });
     await flushDomEffects();
-    expectItemRangeSel(core, {
-      anchor: { item: b, portals: [] },
-      head: { item: a, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: b, portals: [] },
+      head: { node: a, portals: [] },
     });
 
     unmount();
   });
 
-  test("item-selected class toggles across selected range", async () => {
+  test("node-selected class toggles across selected range", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     const b = mkBlank(core, rootId, { label: "b", value: "y" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const aItem = requireOutlineItemEl(document.body, a);
-    const bItem = requireOutlineItemEl(document.body, b);
-    expect(aItem.classList.contains("is-item-selected")).toBe(false);
-    expect(bItem.classList.contains("is-item-selected")).toBe(false);
-    expect(aItem.classList.contains("is-selected")).toBe(false);
-    expect(bItem.classList.contains("is-selected")).toBe(false);
+    const aNode = requireOutlineNodeEl(document.body, a);
+    const bNode = requireOutlineNodeEl(document.body, b);
+    expect(aNode.classList.contains("is-node-selected")).toBe(false);
+    expect(bNode.classList.contains("is-node-selected")).toBe(false);
+    expect(aNode.classList.contains("is-selected")).toBe(false);
+    expect(bNode.classList.contains("is-selected")).toBe(false);
 
     dispatchPointerEvent(
       requireOutlineGutterEl(document.body, a),
@@ -2985,10 +2985,10 @@ describe("outline/block-selection", () => {
     );
     await flushDomEffects();
 
-    expect(aItem.classList.contains("is-item-selected")).toBe(true);
-    expect(bItem.classList.contains("is-item-selected")).toBe(true);
-    expect(aItem.classList.contains("is-selected")).toBe(true);
-    expect(bItem.classList.contains("is-selected")).toBe(true);
+    expect(aNode.classList.contains("is-node-selected")).toBe(true);
+    expect(bNode.classList.contains("is-node-selected")).toBe(true);
+    expect(aNode.classList.contains("is-selected")).toBe(true);
+    expect(bNode.classList.contains("is-selected")).toBe(true);
 
     unmount();
   });
@@ -3021,10 +3021,10 @@ describe("outline/block-selection", () => {
     unmount();
   });
 
-  test("DELETE on block selection prunes newly empty ancestor groups", async () => {
+  test("DELETE on block selection prunes newly empty ancestor items", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "a" });
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     const x = mkBlank(core, g, { label: "x", value: "x" });
     const y = mkBlank(core, g, { label: "y", value: "y" });
     const z = mkBlank(core, rootId, { label: "z", value: "z" });
@@ -3061,7 +3061,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: mid, portals: [] },
+        location: { node: mid, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -3074,12 +3074,12 @@ describe("outline/vertical-navigation", () => {
     const up = dispatchKey(root, "ArrowUp");
     await flushDomEffects();
     expect(up).toBe(true);
-    expectSel(core, { item: top, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: top, target: CONTENT_TEXT_TARGET, portals: [] });
 
     core.focus(
       {
         type: "editing",
-        location: { item: mid, portals: [] },
+        location: { node: mid, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -3090,7 +3090,7 @@ describe("outline/vertical-navigation", () => {
     const down = dispatchKey(root, "ArrowDown");
     await flushDomEffects();
     expect(down).toBe(true);
-    expectSel(core, { item: bot, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: bot, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
@@ -3101,7 +3101,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -3115,14 +3115,14 @@ describe("outline/vertical-navigation", () => {
     const up = dispatchKey(root, "ArrowUp");
     await flushDomEffects();
     expect(up).toBe(true);
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(0);
 
     setContentEditableSelection(valueEl, 5);
     const down = dispatchKey(root, "ArrowDown");
     await flushDomEffects();
     expect(down).toBe(true);
-    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: a, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(readContentEditableCaret(valueEl)).toBe(5);
 
     unmount();
@@ -3135,7 +3135,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: top, portals: [] },
+        location: { node: top, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -3177,19 +3177,19 @@ describe("outline/vertical-navigation", () => {
     setContentEditableSelection(requireOutlineValueEl(document.body, top), 1);
     expect(runVertical("up")).toBe(true);
     await flushDomEffects();
-    expectSel(core, { item: top, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: top, target: CONTENT_TEXT_TARGET, portals: [] });
     expect(resetCount).toBe(1);
     expect(sticky).toBeNull();
 
     setContentEditableSelection(requireOutlineValueEl(document.body, top), 0);
     expect(runVertical("down")).toBe(true);
     await flushDomEffects();
-    expectSel(core, { item: mid, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: mid, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("ArrowUp from content:text lands on connected item stop and then continues structurally", async () => {
+  test("ArrowUp from content:text lands on connected node stop and then continues structurally", async () => {
     const { core, rootId } = makeCoreRuntime();
     const top = mkBlank(core, rootId, { label: "top", value: "zz" });
     const formula = mkBlank(core, rootId, { label: "f", value: "x" });
@@ -3198,7 +3198,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -3211,27 +3211,27 @@ describe("outline/vertical-navigation", () => {
     dispatchKey(root, "ArrowUp");
     await flushDomEffects();
 
-    expectSel(core, { item: formula, portals: [] });
+    expectSel(core, { node: formula, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowDown");
+    dispatchKey(requireOutlineNodeEl(document.body, formula), "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, a), "ArrowUp");
+    dispatchKey(requireOutlineNodeEl(document.body, a), "ArrowUp");
     await flushDomEffects();
 
-    expectSel(core, { item: formula, portals: [] });
+    expectSel(core, { node: formula, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowUp");
+    dispatchKey(requireOutlineNodeEl(document.body, formula), "ArrowUp");
     await flushDomEffects();
 
-    expectSel(core, { item: top, portals: [] });
+    expectSel(core, { node: top, portals: [] });
 
     unmount();
   });
 
-  test("ArrowUp from content:text lands on embedded item stop and then continues structurally", async () => {
+  test("ArrowUp from content:text lands on embedded node stop and then continues structurally", async () => {
     const { core, rootId } = makeCoreRuntime();
     const slider = mkBlank(core, rootId, { label: "s", value: 5 });
     const a = mkBlank(core, rootId, { label: "a", value: "a\nb" });
@@ -3245,7 +3245,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -3258,44 +3258,44 @@ describe("outline/vertical-navigation", () => {
     dispatchKey(root, "ArrowUp");
     await flushDomEffects();
 
-    expectSel(core, { item: slider, portals: [] });
+    expectSel(core, { node: slider, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowDown");
+    dispatchKey(requireOutlineNodeEl(document.body, slider), "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, a), "ArrowUp");
+    dispatchKey(requireOutlineNodeEl(document.body, a), "ArrowUp");
     await flushDomEffects();
 
-    expectSel(core, { item: slider, portals: [] });
+    expectSel(core, { node: slider, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowUp");
+    dispatchKey(requireOutlineNodeEl(document.body, slider), "ArrowUp");
     await flushDomEffects();
 
-    expectSel(core, { item: top, portals: [] });
+    expectSel(core, { node: top, portals: [] });
 
     unmount();
   });
 
-  test("ArrowDown from connected item stop lands on the following plain value row", async () => {
+  test("ArrowDown from connected node stop lands on the following plain value row", async () => {
     const { core, rootId } = makeCoreRuntime();
     const formula = mkBlank(core, rootId, { label: "f", value: "x" });
     const a = mkBlank(core, rootId, { label: "a", value: "a\nb" });
     setFormula(core, formula, "1+2");
-    core.focus({ type: "item", location: { item: formula, portals: [] } });
+    core.focus({ type: "node", location: { node: formula, portals: [] } });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowDown");
+    dispatchKey(requireOutlineNodeEl(document.body, formula), "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     unmount();
   });
 
-  test("ArrowDown from embedded item stop lands on the following plain value row", async () => {
+  test("ArrowDown from embedded node stop lands on the following plain value row", async () => {
     const { core, rootId } = makeCoreRuntime();
     const top = mkBlank(core, rootId, { label: "top", value: "zz" });
     const slider = mkBlank(core, rootId, { label: "s", value: 5 });
@@ -3306,14 +3306,14 @@ describe("outline/vertical-navigation", () => {
       tx.move(slider, rootId, { at: 1 });
       tx.move(a, rootId, { at: 2 });
     });
-    core.focus({ type: "item", location: { item: slider, portals: [] } });
+    core.focus({ type: "node", location: { node: slider, portals: [] } });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    dispatchKey(requireOutlineItemEl(document.body, slider), "ArrowDown");
+    dispatchKey(requireOutlineNodeEl(document.body, slider), "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { item: a, portals: [] });
+    expectSel(core, { node: a, portals: [] });
 
     unmount();
   });
@@ -3324,7 +3324,7 @@ describe("outline/vertical-navigation", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -3345,23 +3345,23 @@ describe("outline/vertical-navigation", () => {
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
+    expect(sel.location.node).toBe(a);
     expect(sel.target).toBe(CONTENT_TEXT_TARGET);
 
     unmount();
   });
 
-  test("vertical mixed-stop traversal works the same inside nested groups", async () => {
+  test("vertical mixed-stop traversal works the same inside nested items", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const group = mkGroup(core, rootId, { label: "g" });
-    const top = mkBlank(core, group, { label: "top", value: "zz" });
-    const formula = mkBlank(core, group, { label: "f", value: "x" });
-    const a = mkBlank(core, group, { label: "a", value: "a\nb" });
+    const item = mkItem(core, rootId, { label: "g" });
+    const top = mkBlank(core, item, { label: "top", value: "zz" });
+    const formula = mkBlank(core, item, { label: "f", value: "x" });
+    const a = mkBlank(core, item, { label: "a", value: "a\nb" });
     setFormula(core, formula, "1+2");
     core.focus(
       {
         type: "editing",
-        location: { item: a, portals: [] },
+        location: { node: a, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 0 },
@@ -3373,11 +3373,11 @@ describe("outline/vertical-navigation", () => {
 
     dispatchKey(root, "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { item: formula, portals: [] });
+    expectSel(core, { node: formula, portals: [] });
 
-    dispatchKey(requireOutlineItemEl(document.body, formula), "ArrowUp");
+    dispatchKey(requireOutlineNodeEl(document.body, formula), "ArrowUp");
     await flushDomEffects();
-    expectSel(core, { item: top, portals: [] });
+    expectSel(core, { node: top, portals: [] });
 
     unmount();
   });
@@ -3400,9 +3400,9 @@ describe("outline/vertical-navigation", () => {
     await flushDomEffects();
 
     expect(ev).toBe(true);
-    expectItemRangeSel(core, {
-      anchor: { item: a, portals: [] },
-      head: { item: b, portals: [] },
+    expectNodeRangeSel(core, {
+      anchor: { node: a, portals: [] },
+      head: { node: b, portals: [] },
     });
 
     unmount();
@@ -3410,7 +3410,7 @@ describe("outline/vertical-navigation", () => {
 
   test("applyEditingResult resets sticky caret while navigation application preserves it", () => {
     const { core, rootId } = makeCoreRuntime();
-    const item = mkBlank(core, rootId, { label: "x", value: "hello" });
+    const node = mkBlank(core, rootId, { label: "x", value: "hello" });
     let stickyResets = 0;
     const runtime = createOutlineInputRuntime({
       core,
@@ -3428,20 +3428,20 @@ describe("outline/vertical-navigation", () => {
       ),
       selection: {
         suppressSelectionSync: createSuppressionFlag(false),
-        clearValueRangeSelectedItems: () => {},
+        clearValueRangeSelectedNodes: () => {},
         setValueSelectionRangeState: () => {},
       },
     });
 
     runtime.applyNavigationEditingResult({
-      location: { item, portals: [] },
+      location: { node, portals: [] },
       target: CONTENT_TEXT_TARGET,
       caret: 1,
     });
     expect(stickyResets).toBe(0);
 
     runtime.applyEditingResult({
-      location: { item, portals: [] },
+      location: { node, portals: [] },
       target: CONTENT_TEXT_TARGET,
       caret: 0,
     });
@@ -3450,30 +3450,30 @@ describe("outline/vertical-navigation", () => {
 });
 
 describe("outline/header-embedded", () => {
-  test("renders header for labeled item and exposes label target input", async () => {
+  test("renders header for labeled node and exposes label target input", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "name", value: "x" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const headerEl = itemEl.querySelector(".ui-header") as HTMLElement | null;
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const headerEl = nodeEl.querySelector(".ui-header") as HTMLElement | null;
     expect(headerEl).toBeTruthy();
     expect(headerEl?.getAttribute("contenteditable")).toBe("false");
-    expect(requireTargetInput(itemEl, "label")).toBeTruthy();
+    expect(requireTargetInput(nodeEl, "label")).toBeTruthy();
 
     unmount();
   });
 
-  test("connected item header focuses conn:expr and header interactions do not force content:text", async () => {
+  test("connected node header focuses conn:expr and header interactions do not force content:text", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "calc", value: "x" });
     setFormula(core, a, "1+2");
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const exprInput = requireTargetInput(itemEl, "conn:expr");
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const exprInput = requireTargetInput(nodeEl, "conn:expr");
     pointerDown(exprInput);
     exprInput.focus();
     await flushDomEffects();
@@ -3481,7 +3481,7 @@ describe("outline/header-embedded", () => {
     let sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
+    expect(sel.location.node).toBe(a);
     expect(sel.target).toBe("conn:expr");
 
     document.dispatchEvent(new Event("selectionchange"));
@@ -3502,8 +3502,8 @@ describe("outline/header-embedded", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const fromInput = requireTargetInput(itemEl, "conn:from");
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const fromInput = requireTargetInput(nodeEl, "conn:from");
     pointerDown(fromInput);
     fromInput.focus();
     await flushDomEffects();
@@ -3519,9 +3519,9 @@ describe("outline/header-embedded", () => {
     expect(core.selection().type).toBe("editing");
     const sel = core.selection();
     if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
+    expect(sel.location.node).toBe(a);
     expect(sel.target).toBe("conn:where");
-    const connected = core.item(a);
+    const connected = core.node(a);
     expect(connected.mode.type).toBe("connected");
     if (connected.mode.type !== "connected")
       throw new Error("Expected connected mode");
@@ -3540,8 +3540,8 @@ describe("outline/header-embedded", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const orderByInput = requireTargetInput(itemEl, "conn:orderBy");
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const orderByInput = requireTargetInput(nodeEl, "conn:orderBy");
     pointerDown(orderByInput);
     orderByInput.focus();
     await flushDomEffects();
@@ -3557,9 +3557,9 @@ describe("outline/header-embedded", () => {
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
+    expect(sel.location.node).toBe(a);
     expect(sel.target).toBe("conn:orderBy");
-    const connected = core.item(a);
+    const connected = core.node(a);
     expect(connected.mode.type).toBe("connected");
     if (connected.mode.type !== "connected")
       throw new Error("Expected connected mode");
@@ -3571,14 +3571,14 @@ describe("outline/header-embedded", () => {
     unmount();
   });
 
-  test("label Enter commits and exits to same-item item selection", async () => {
+  test("label Enter commits and exits to same-node selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "name", value: "x" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const labelInput = requireTargetInput(itemEl, "label");
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const labelInput = requireTargetInput(nodeEl, "label");
     pointerDown(labelInput);
     labelInput.focus();
     await flushDomEffects();
@@ -3591,20 +3591,20 @@ describe("outline/header-embedded", () => {
     await flushDomEffects();
 
     expect(enter).toBe(true);
-    expectSel(core, { item: a, portals: [] });
-    expect(core.item(a).label).toBe("renamed");
+    expectSel(core, { node: a, portals: [] });
+    expect(core.node(a).label).toBe("renamed");
 
     unmount();
   });
 
-  test("label Escape cancels and exits to same-item item selection", async () => {
+  test("label Escape cancels and exits to same-node selection", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "name", value: "x" });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const labelInput = requireTargetInput(itemEl, "label");
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const labelInput = requireTargetInput(nodeEl, "label");
     pointerDown(labelInput);
     labelInput.focus();
     await flushDomEffects();
@@ -3617,8 +3617,8 @@ describe("outline/header-embedded", () => {
     await flushDomEffects();
 
     expect(escape).toBe(true);
-    expectSel(core, { item: a, portals: [] });
-    expect(core.item(a).label).toBe("name");
+    expectSel(core, { node: a, portals: [] });
+    expect(core.node(a).label).toBe("name");
 
     unmount();
   });
@@ -3629,8 +3629,8 @@ describe("outline/header-embedded", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const labelInput = requireTargetInput(itemEl, "label");
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const labelInput = requireTargetInput(nodeEl, "label");
     pointerDown(labelInput);
     labelInput.focus();
     await flushDomEffects();
@@ -3646,14 +3646,14 @@ describe("outline/header-embedded", () => {
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
+    expect(sel.location.node).toBe(a);
     expect(sel.target).toBe("label");
-    expect(core.item(a).label).toBe("tabbed");
+    expect(core.node(a).label).toBe("tabbed");
 
     unmount();
   });
 
-  test("non-control header click keeps item selection on the frame", async () => {
+  test("non-control header click keeps node selection on the frame", async () => {
     const { core, rootId } = makeCoreRuntime();
     mkBlank(core, rootId, { label: "a", value: "x" });
     const b = mkBlank(core, rootId, { label: "calc", value: "y" });
@@ -3661,15 +3661,15 @@ describe("outline/header-embedded", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, b);
-    const headerEl = itemEl.querySelector(".ui-header") as HTMLElement | null;
+    const nodeEl = requireOutlineNodeEl(document.body, b);
+    const headerEl = nodeEl.querySelector(".ui-header") as HTMLElement | null;
     expect(headerEl).toBeTruthy();
 
     pointerDown(headerEl!);
     await flushDomEffects();
 
-    expectSel(core, { item: b, portals: [] });
-    expect(document.activeElement).toBe(itemEl);
+    expectSel(core, { node: b, portals: [] });
+    expect(document.activeElement).toBe(nodeEl);
 
     unmount();
   });
@@ -3682,13 +3682,13 @@ describe("outline/header-embedded", () => {
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const itemEl = requireOutlineItemEl(document.body, a);
-    const embeddedBody = itemEl.querySelector(
+    const nodeEl = requireOutlineNodeEl(document.body, a);
+    const embeddedBody = nodeEl.querySelector(
       ".ui-body.ui-slider",
     ) as HTMLElement | null;
     expect(embeddedBody).toBeTruthy();
     expect(embeddedBody?.getAttribute("contenteditable")).toBe("false");
-    const sliderInput = itemEl.querySelector(
+    const sliderInput = nodeEl.querySelector(
       "input[type='range']",
     ) as HTMLInputElement | null;
     expect(sliderInput).toBeTruthy();
@@ -3699,7 +3699,7 @@ describe("outline/header-embedded", () => {
     const sel = core.selection();
     expect(sel.type).toBe("editing");
     if (sel.type !== "editing") throw new Error("Expected editing selection");
-    expect(sel.location.item).toBe(a);
+    expect(sel.location.node).toBe(a);
     expect(sel.target).toBe(CONTENT_SLIDER_TARGET);
     expect(document.activeElement).toBe(sliderInput);
 
@@ -3708,26 +3708,26 @@ describe("outline/header-embedded", () => {
 
   test("embedded table mounts in outline row and table cell focus works", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const tableId = mkGroup(core, rootId, { label: "t" });
+    const tableId = mkItem(core, rootId, { label: "t" });
     setView(core, tableId, "table");
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    mkItem(core, tableId, { label: "r2" });
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
 
     const { unmount } = await mountOutline(core, rootId);
 
-    const tableItemEl = requireOutlineItemEl(document.body, tableId);
+    const tableNodeEl = requireOutlineNodeEl(document.body, tableId);
     const embeddedBody = requireEl(
-      tableItemEl.querySelector(".ui-body.ui-table"),
+      tableNodeEl.querySelector(".ui-body.ui-table"),
       "Missing embedded table body",
     ) as HTMLElement;
     expect(embeddedBody.getAttribute("contenteditable")).toBe("false");
     expect(embeddedBody.querySelector(".ui-table-body")).toBeTruthy();
 
-    const c11Frame = requireFrameEl(tableItemEl, c11);
+    const c11Frame = requireFrameEl(tableNodeEl, c11);
     pointerDown(c11Frame);
     await flushDomEffects();
-    expectSel(core, { item: c11, portals: [] });
+    expectSel(core, { node: c11, portals: [] });
 
     unmount();
   });
@@ -3782,13 +3782,13 @@ describe("outline/drag-integration", () => {
         requireOutlineValueEl(document.body, withHeader),
         requireFrameEl(document.body, withHeader),
         requireEl(
-          requireOutlineItemEl(document.body, withHeader).querySelector(
+          requireOutlineNodeEl(document.body, withHeader).querySelector(
             ".ui-header",
           ),
           "Missing header",
         ) as HTMLElement,
         requireEl(
-          requireOutlineItemEl(document.body, withEmbed).querySelector(
+          requireOutlineNodeEl(document.body, withEmbed).querySelector(
             ".ui-body.ui-slider",
           ),
           "Missing embedded body",
@@ -3815,7 +3815,7 @@ describe("outline/drag-integration", () => {
     }
   });
 
-  test("pointercancel cancels pending outline drag without moving items", async () => {
+  test("pointercancel cancels pending outline drag without moving nodes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const a = mkBlank(core, rootId, { label: "a", value: "x" });
     const b = mkBlank(core, rootId, { label: "b", value: "y" });

@@ -9,30 +9,30 @@ type LabeledResult = { label?: string; result: Result };
 type BlankResult = { type: "blank" };
 type IssueResult = { type: "issue"; message: string };
 type ScalarResult = { type: "scalar"; result: Scalar };
-type EntryGroupResult = { type: "entry-group"; entryIds: readonly EntryId[] };
-type ResultGroupResult = {
-  type: "result-group";
-  items: readonly LabeledResult[];
+type EntryItemResult = { type: "entry-item"; entryIds: readonly EntryId[] };
+type ResultItemResult = {
+  type: "result-item";
+  nodes: readonly LabeledResult[];
 };
 
 export type Result =
   | BlankResult
   | IssueResult
   | ScalarResult
-  | EntryGroupResult
-  | ResultGroupResult;
+  | EntryItemResult
+  | ResultItemResult;
 
 export const Results = {
   blank: (): Result => ({ type: "blank" }),
   issue: (message: string): Result => ({ type: "issue", message }),
   scalar: (scalar: Scalar): Result => ({ type: "scalar", result: scalar }),
-  entryGroup: (entryIds: readonly EntryId[]): Result => ({
-    type: "entry-group",
+  entryItem: (entryIds: readonly EntryId[]): Result => ({
+    type: "entry-item",
     entryIds,
   }),
-  resultGroup: (items: readonly LabeledResult[]): Result => ({
-    type: "result-group",
-    items,
+  resultItem: (nodes: readonly LabeledResult[]): Result => ({
+    type: "result-item",
+    nodes,
   }),
 } as const;
 
@@ -75,14 +75,12 @@ export function isScalarResult(result: Result): result is ScalarResult {
   return result.type === "scalar";
 }
 
-export function isEntryGroupResult(result: Result): result is EntryGroupResult {
-  return result.type === "entry-group";
+export function isEntryItemResult(result: Result): result is EntryItemResult {
+  return result.type === "entry-item";
 }
 
-export function isResultGroupResult(
-  result: Result,
-): result is ResultGroupResult {
-  return result.type === "result-group";
+export function isResultItemResult(result: Result): result is ResultItemResult {
+  return result.type === "result-item";
 }
 
 function assertNever(_exhaustive: never, message: string): never {
@@ -111,7 +109,7 @@ const sortKeyFor = (result: Result): SortKey => {
     if (result.result === true) return { rank: 2 };
     return assertNever(result.result, "Unhandled scalar variant");
   }
-  if (isEntryGroupResult(result) || isResultGroupResult(result))
+  if (isEntryItemResult(result) || isResultItemResult(result))
     return { rank: 3 };
   return assertNever(result, "Unhandled result variant");
 };
@@ -186,43 +184,43 @@ export function createEvaluator(opts: {
     return Results.issue(`Unbound identifier: ${name}`);
   };
 
-  const materializeEntryGroups = (result: Result, ctx: EvalCtx): Result => {
-    if (isEntryGroupResult(result)) {
-      return Results.resultGroup(
+  const materializeEntryItems = (result: Result, ctx: EvalCtx): Result => {
+    if (isEntryItemResult(result)) {
+      return Results.resultItem(
         result.entryIds
           .filter((id) => model.hasEntry(id))
           .map((id) => {
             const label = model.readEntry(id).label || undefined;
             return {
               ...(label ? { label } : {}),
-              result: materializeEntryGroups(evaluateResult(id, ctx), ctx),
+              result: materializeEntryItems(evaluateResult(id, ctx), ctx),
             };
           }),
       );
     }
-    if (isResultGroupResult(result)) {
-      return Results.resultGroup(
-        result.items.map((item) => ({
-          ...(item.label ? { label: item.label } : {}),
-          result: materializeEntryGroups(item.result, ctx),
+    if (isResultItemResult(result)) {
+      return Results.resultItem(
+        result.nodes.map((node) => ({
+          ...(node.label ? { label: node.label } : {}),
+          result: materializeEntryItems(node.result, ctx),
         })),
       );
     }
     return result;
   };
 
-  type UnwrapEntryGroupResult =
+  type UnwrapEntryItemResult =
     | { type: "blank" }
     | { type: "issue"; result: Result }
     | { type: "ok"; entryIds: readonly EntryId[] };
 
-  const unwrapEntryGroup = (
+  const unwrapEntryItem = (
     result: Result,
     typeMessage: string,
-  ): UnwrapEntryGroupResult => {
+  ): UnwrapEntryItemResult => {
     if (isBlankResult(result)) return { type: "blank" };
     if (isIssueResult(result)) return { type: "issue", result };
-    if (isEntryGroupResult(result))
+    if (isEntryItemResult(result))
       return { type: "ok", entryIds: result.entryIds };
     return { type: "issue", result: Results.issue(typeMessage) };
   };
@@ -241,9 +239,9 @@ export function createEvaluator(opts: {
 
     const baseEnv = baseEnvFor(parentId, ctx);
     const sourceResult = interpretExpr(from, baseEnv);
-    const unwrapped = unwrapEntryGroup(
+    const unwrapped = unwrapEntryItem(
       sourceResult,
-      "Query 'from' must evaluate to an entry-group",
+      "Query 'from' must evaluate to an entry-item",
     );
 
     if (unwrapped.type === "blank") return Results.blank();
@@ -309,7 +307,7 @@ export function createEvaluator(opts: {
       entryIds = rows.map((row) => row.rowId);
     }
 
-    return Results.entryGroup(entryIds);
+    return Results.entryItem(entryIds);
   }
 
   function evaluateResult(id: EntryId, ctx: EvalCtx): Result {
@@ -324,15 +322,15 @@ export function createEvaluator(opts: {
           return Results.blank();
         case "scalar":
           return Results.scalar(entry.content.value);
-        case "group":
-          return Results.entryGroup(
+        case "item":
+          return Results.entryItem(
             [...entry.content.childIds].filter((cid) => model.hasEntry(cid)),
           );
         case "formula": {
           const expr = entry.content.expr.trim();
           if (!expr) return Results.blank();
           const out = interpretExpr(expr, baseEnvFor(id, ctx));
-          return materializeEntryGroups(out, ctx);
+          return materializeEntryItems(out, ctx);
         }
         case "query":
           return evaluateQuery(id, entry.content, ctx);
@@ -355,7 +353,7 @@ export function createEvaluator(opts: {
 
   const entryIds = (id: EntryId): EntryId[] => {
     const resultValue = result(id);
-    return isEntryGroupResult(resultValue) ? [...resultValue.entryIds] : [];
+    return isEntryItemResult(resultValue) ? [...resultValue.entryIds] : [];
   };
 
   const prune = (ids: readonly EntryId[]): void => {

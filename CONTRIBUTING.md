@@ -129,8 +129,8 @@ Canonical domain terms (do not invent synonyms):
 
 - entry, label, view, shape
 - connected, formula, query
-- item, content, mode
-- group, value, issue
+- node, content, mode
+- item, value, issue
 - parent, child, sibling
 - intent, selection, location, target
 - frame, header, body
@@ -207,7 +207,7 @@ Canonical domain terms (do not invent synonyms):
 Use backticks for:
 
 - symbols (for example `createComponent`)
-- literal tokens (for example `ITEM_TARGET`)
+- literal tokens (for example `NODE_TARGET`)
 - CSS classes (for example `.ui-frame`)
 - file paths (for example `docs/core-api.md`)
 

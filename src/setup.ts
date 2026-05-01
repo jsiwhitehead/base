@@ -2,7 +2,7 @@ import type {
   CollabWire,
   Core,
   CorePlatformHooks,
-  ItemId,
+  NodeId,
   ViewName,
 } from "./core";
 import { createCore } from "./core";
@@ -10,7 +10,7 @@ import { buildDebugPanel, createDebugState, instrumentCore } from "./debug";
 import { DEV } from "./dev";
 import type { DomRuntime, UiCore } from "./dom";
 import {
-  bindItemFrame,
+  bindNodeFrame,
   bindUiRuntime,
   buildDropIndicator,
   createDragController,
@@ -25,15 +25,15 @@ import { splitViewRegistrations, viewRegistrations } from "./views";
 
 const SHOW_DEBUG_PANEL = true;
 
-export function buildRootShell(core: UiCore, rootId: ItemId) {
-  const location = { item: rootId, portals: [] } as const;
+export function buildRootShell(core: UiCore, rootId: NodeId) {
+  const location = { node: rootId, portals: [] } as const;
 
   return createComponent(core, (ctx) => {
     const rootFrame = el("div");
     rootFrame.classList.add("ui-main");
     rootFrame.tabIndex = 0;
 
-    bindItemFrame(ctx, { core, location }, rootFrame);
+    bindNodeFrame(ctx, { core, location }, rootFrame);
 
     mountHeader(ctx, {
       core,
@@ -57,7 +57,7 @@ export function buildRootShell(core: UiCore, rootId: ItemId) {
 export function createUiCoreRuntime(args?: {
   views?: Partial<Record<ViewName, ViewRegistration>>;
   collab?: CollabWire;
-}): { core: UiCore; pureCore: Core; rootId: ItemId; runtime: DomRuntime } {
+}): { core: UiCore; pureCore: Core; rootId: NodeId; runtime: DomRuntime } {
   const views = args?.views ?? {};
   const { shapes, factories } = splitViewRegistrations(views);
 
@@ -103,7 +103,7 @@ export function createUiCoreRuntime(args?: {
   return { core: bound.core, pureCore, rootId, runtime: bound.runtime };
 }
 
-export type App = { core: UiCore; rootId: ItemId; dispose(): void };
+export type App = { core: UiCore; rootId: NodeId; dispose(): void };
 
 export type CreateAppOpts = { host: HTMLElement; rootView?: ViewName };
 

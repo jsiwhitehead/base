@@ -1,21 +1,21 @@
 import { signal } from "@preact/signals-core";
 
 import type { EntryId, Model } from "./model";
-import type { ItemId } from "./read";
-import { entryIdFromItemId, itemIdOf } from "./read";
+import type { NodeId } from "./read";
+import { entryIdFromNodeId, nodeIdOf } from "./read";
 
 export const LABEL_TARGET = "label" as const;
-export const ITEM_TARGET = "item" as const;
+export const NODE_TARGET = "node" as const;
 export const connTarget: (key: string) => string = (key) => `conn:${key}`;
 export const contentTarget: (kind: string) => string = (kind) =>
   `content:${kind}`;
 export const CONTENT_TEXT_TARGET = contentTarget("text");
 
-export type Location = { item: ItemId; portals: readonly ItemId[] };
+export type Location = { node: NodeId; portals: readonly NodeId[] };
 
 export function sameLocation(a: Location, b: Location): boolean {
   return (
-    a.item === b.item &&
+    a.node === b.node &&
     a.portals.length === b.portals.length &&
     a.portals.every((portal, i) => portal === b.portals[i])
   );
@@ -24,16 +24,16 @@ export function sameLocation(a: Location, b: Location): boolean {
 export type Selection =
   | { type: "idle" }
   | { type: "editing"; location: Location; target: string }
-  | { type: "item"; anchor: Location; head: Location };
+  | { type: "node"; anchor: Location; head: Location };
 
 export type CaretPlacement = number | "end";
 export type FocusOpts = { caret?: CaretPlacement };
-type ItemFocusSelectionInput =
-  | Extract<Selection, { type: "item" }>
-  | { type: "item"; location: Location };
+type NodeFocusSelectionInput =
+  | Extract<Selection, { type: "node" }>
+  | { type: "node"; location: Location };
 export type NonEditingFocusSelection =
   | Extract<Selection, { type: "idle" }>
-  | ItemFocusSelectionInput;
+  | NodeFocusSelectionInput;
 
 type RepairAnchorStep = { parentId: EntryId; index: number };
 export type SelectionRepairAnchor = {
@@ -53,7 +53,7 @@ export type SelectionController = {
   focus(next: NonEditingFocusSelection, focusOpts?: never): void;
   captureRepairAnchor(): SelectionRepairAnchor | null;
   repairAfterLocalApply(anchor: SelectionRepairAnchor | null): void;
-  coerceEditingToItem(): void;
+  coerceEditingToNode(): void;
   coerceAfterRemoteApply(): void;
   resetToRoot(): void;
 };
@@ -69,18 +69,18 @@ export function createSelectionController(
   opts: SelectionControllerOptions,
 ): SelectionController {
   const selectionSignal = signal<Selection>({
-    type: "item",
+    type: "node",
     anchor: opts.rootLocation,
     head: opts.rootLocation,
   });
 
   const isValidLocation = (location: Location): boolean => {
     const model = opts.model;
-    const itemEid = entryIdFromItemId(location.item);
-    if (itemEid == null) return false;
-    if (!model.hasEntry(itemEid)) return false;
-    for (const portalItemId of location.portals) {
-      const portalEid = entryIdFromItemId(portalItemId);
+    const nodeEid = entryIdFromNodeId(location.node);
+    if (nodeEid == null) return false;
+    if (!model.hasEntry(nodeEid)) return false;
+    for (const portalNodeId of location.portals) {
+      const portalEid = entryIdFromNodeId(portalNodeId);
       if (portalEid == null || !model.hasEntry(portalEid)) return false;
       const contentType = model.contentTypeOf(portalEid);
       if (contentType !== "formula" && contentType !== "query") return false;
@@ -118,9 +118,9 @@ export function createSelectionController(
       setSelection(next, focusOpts?.caret);
       return;
     }
-    if (next.type === "item" && "location" in next) {
+    if (next.type === "node" && "location" in next) {
       setSelection({
-        type: "item",
+        type: "node",
         anchor: next.location,
         head: next.location,
       });
@@ -137,9 +137,9 @@ export function createSelectionController(
     const sel = selectionSignal.peek();
     const leafId =
       sel.type === "editing"
-        ? entryIdFromItemId(sel.location.item)
-        : sel.type === "item"
-          ? entryIdFromItemId(sel.anchor.item)
+        ? entryIdFromNodeId(sel.location.node)
+        : sel.type === "node"
+          ? entryIdFromNodeId(sel.anchor.node)
           : null;
     if (leafId == null) return null;
 
@@ -170,7 +170,7 @@ export function createSelectionController(
       const childId = siblings[index] ?? siblings[siblings.length - 1] ?? null;
       if (childId == null || !model.hasEntry(childId)) continue;
 
-      return { item: itemIdOf(childId), portals: [] };
+      return { node: nodeIdOf(childId), portals: [] };
     }
 
     return null;
@@ -189,7 +189,7 @@ export function createSelectionController(
       const repairedLocation = resolveRepairAnchor(anchor);
       if (repairedLocation) {
         setSelection({
-          type: "item",
+          type: "node",
           anchor: repairedLocation,
           head: repairedLocation,
         });
@@ -198,17 +198,17 @@ export function createSelectionController(
     }
 
     setSelection({
-      type: "item",
+      type: "node",
       anchor: opts.rootLocation,
       head: opts.rootLocation,
     });
   };
 
-  const coerceEditingToItem = (): void => {
+  const coerceEditingToNode = (): void => {
     const selNow = selectionSignal.peek();
     if (selNow.type !== "editing") return;
     setSelection({
-      type: "item",
+      type: "node",
       anchor: selNow.location,
       head: selNow.location,
     });
@@ -221,7 +221,7 @@ export function createSelectionController(
 
   const resetToRoot = (): void => {
     setSelection({
-      type: "item",
+      type: "node",
       anchor: opts.rootLocation,
       head: opts.rootLocation,
     });
@@ -235,7 +235,7 @@ export function createSelectionController(
     focus,
     captureRepairAnchor,
     repairAfterLocalApply,
-    coerceEditingToItem,
+    coerceEditingToNode,
     coerceAfterRemoteApply,
     resetToRoot,
   };

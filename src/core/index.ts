@@ -6,12 +6,12 @@ import type { Tx } from "./commit";
 import { createEvaluator } from "./eval";
 import { interpretExpr } from "./lang";
 import type { EntryId, SnapshotData, Transaction, ViewName } from "./model";
-import { CoreApiError, createModel, makeGroupEntry } from "./model";
+import { CoreApiError, createModel, makeItemEntry } from "./model";
 import type {
   Connected,
   Content,
-  Item,
-  ItemId,
+  Node,
+  NodeId,
   Mode,
   Value,
   ValueOrBlank,
@@ -20,9 +20,9 @@ import {
   CoreReadError,
   createReadApi,
   isCoreReadError,
-  itemIdOf,
-  parseItemId,
-  refFromItemId,
+  nodeIdOf,
+  parseNodeId,
+  refFromNodeId,
 } from "./read";
 import {
   createSelectionController,
@@ -38,7 +38,7 @@ import type {
 } from "./select";
 import type {
   AnyShapeReader,
-  GroupShapeReader,
+  ItemShapeReader,
   ReadFromShape,
   ReaderForShape,
   ValueShapeReader,
@@ -50,7 +50,7 @@ import { CONTENT_TEXT_TARGET } from "./select";
 
 export type NavDirection = "left" | "right" | "up" | "down" | "out";
 
-export type IntentRangePoint = { itemId: ItemId; offset: number };
+export type IntentRangePoint = { nodeId: NodeId; offset: number };
 
 export type EnterIntentRange = {
   start: IntentRangePoint;
@@ -118,9 +118,9 @@ export function parseGlobalKeyIntent(input: KeyIntentInput): Intent | null {
 }
 
 type LocateResult = {
-  parentId: ItemId;
+  parentId: NodeId;
   index: number;
-  siblings: readonly ItemId[];
+  siblings: readonly NodeId[];
 };
 
 type SetSelection = (selection: Selection, caret?: CaretPlacement) => void;
@@ -134,26 +134,26 @@ function handleNavOut(
 
   if (selection.type === "editing") {
     setSelection({
-      type: "item",
+      type: "node",
       anchor: selection.location,
       head: selection.location,
     });
     return true;
   }
 
-  if (selection.type === "item") {
-    const parentLocation = core.locate(selection.head.item);
+  if (selection.type === "node") {
+    const parentLocation = core.locate(selection.head.node);
     if (!parentLocation) {
       setSelection({ type: "idle" });
       return true;
     }
     setSelection({
-      type: "item",
+      type: "node",
       anchor: {
-        item: parentLocation.parentId,
+        node: parentLocation.parentId,
         portals: selection.head.portals,
       },
-      head: { item: parentLocation.parentId, portals: selection.head.portals },
+      head: { node: parentLocation.parentId, portals: selection.head.portals },
     });
     return true;
   }
@@ -164,10 +164,10 @@ function handleNavOut(
 export type Core = {
   dispose(): void;
 
-  item(id: ItemId): Item;
-  reader<S extends ViewShape>(id: ItemId, shape: S): ReaderForShape<S>;
-  view(id: ItemId): ViewName;
-  locate(id: ItemId): LocateResult | null;
+  node(id: NodeId): Node;
+  reader<S extends ViewShape>(id: NodeId, shape: S): ReaderForShape<S>;
+  view(id: NodeId): ViewName;
+  locate(id: NodeId): LocateResult | null;
   selection(): Selection;
 
   focus(
@@ -218,14 +218,14 @@ function resolvePrimaryTarget(
   const target = platform?.primaryContentTarget?.(location);
   if (target) return target;
 
-  const item = core.item(location.item);
-  if (item.mode.type !== "connected") return null;
-  return primaryHeaderTargetForConn(item.mode.conn);
+  const node = core.node(location.node);
+  if (node.mode.type !== "connected") return null;
+  return primaryHeaderTargetForConn(node.mode.conn);
 }
 
 export function createCore(opts: CreateCoreOptions): {
   core: Core;
-  rootId: ItemId;
+  rootId: NodeId;
 } {
   const shapes = opts.shapes ?? {};
 
@@ -234,15 +234,15 @@ export function createCore(opts: CreateCoreOptions): {
   const rootEntryId = model.createId();
   model.setRoot(rootEntryId);
   model.apply(
-    model.ops.transaction([model.ops.create(makeGroupEntry(rootEntryId))]),
+    model.ops.transaction([model.ops.create(makeItemEntry(rootEntryId))]),
   );
 
   const evaluator = createEvaluator({ model, interpret: interpretExpr });
 
   let core!: Core;
 
-  const rootId = itemIdOf(rootEntryId);
-  const rootLocation: Location = { item: rootId, portals: [] };
+  const rootId = nodeIdOf(rootEntryId);
+  const rootLocation: Location = { node: rootId, portals: [] };
   const selectionController = createSelectionController({
     model,
     rootLocation,
@@ -260,26 +260,26 @@ export function createCore(opts: CreateCoreOptions): {
     peekSelection,
     captureRepairAnchor,
     repairAfterLocalApply,
-    coerceEditingToItem,
+    coerceEditingToNode,
     coerceAfterRemoteApply,
     resetToRoot,
   } = selectionController;
 
   const read = createReadApi({ evaluator, model });
 
-  const item = (id: ItemId): Item => read.item(id);
+  const node = (id: NodeId): Node => read.node(id);
 
   const viewSignalCache = new Map<EntryId, ReadonlySignal<ViewName>>();
 
-  const view = (id: ItemId): ViewName => {
-    const ref = refFromItemId(id);
+  const view = (id: NodeId): ViewName => {
+    const ref = refFromNodeId(id);
     if (ref.path.length) {
-      item(id);
+      node(id);
       return "outline";
     }
     const eid = ref.entryId;
     if (!model.hasEntry(eid))
-      throw new CoreReadError("UNKNOWN_ITEM_ID", "Unknown entry id");
+      throw new CoreReadError("UNKNOWN_NODE_ID", "Unknown node id");
 
     let sig = viewSignalCache.get(eid);
     if (!sig) {
@@ -291,7 +291,7 @@ export function createCore(opts: CreateCoreOptions): {
         if (wanted === "outline") return "outline";
         const shape = shapes[wanted];
         if (!shape) return wanted;
-        return isShapeCompatible(read, itemIdOf(eid), shape)
+        return isShapeCompatible(read, nodeIdOf(eid), shape)
           ? wanted
           : "outline";
       });
@@ -333,7 +333,7 @@ export function createCore(opts: CreateCoreOptions): {
     },
     captureRepairAnchor,
     repairAfterLocalApply,
-    coerceEditingToItem,
+    coerceEditingToNode,
     coerceAfterRemoteApply,
     clearCachesForRemovedEntries,
     ...(opts.collab ? { collab: opts.collab } : {}),
@@ -357,21 +357,21 @@ export function createCore(opts: CreateCoreOptions): {
   };
 
   const reader = <S extends ViewShape>(
-    id: ItemId,
+    id: NodeId,
     shape: S,
   ): ReaderForShape<S> => createShapeReader(read, id, shape);
 
-  const locate = (id: ItemId): LocateResult | null => {
-    const ref = parseItemId(id);
+  const locate = (id: NodeId): LocateResult | null => {
+    const ref = parseNodeId(id);
     if (!ref || ref.path.length) return null;
 
     const loc = model.locateInParent(ref.entryId);
     if (!loc) return null;
 
     return {
-      parentId: itemIdOf(loc.parentId),
+      parentId: nodeIdOf(loc.parentId),
       index: loc.index,
-      siblings: loc.childIds.map((eid) => itemIdOf(eid)),
+      siblings: loc.childIds.map((eid) => nodeIdOf(eid)),
     };
   };
 
@@ -386,7 +386,7 @@ export function createCore(opts: CreateCoreOptions): {
     const location =
       sel.type === "editing"
         ? sel.location
-        : sel.type === "item"
+        : sel.type === "node"
           ? sel.head
           : null;
 
@@ -417,11 +417,11 @@ export function createCore(opts: CreateCoreOptions): {
       return;
     }
 
-    if (sel.type === "item" && location) {
+    if (sel.type === "node" && location) {
       const primaryTarget = resolvePrimaryTarget(core, opts.platform, location);
 
       if (intent.type === "TYPE" && primaryTarget === CONTENT_TEXT_TARGET) {
-        core.commit((t) => t.setValue(location.item, intent.char));
+        core.commit((t) => t.setValue(location.node, intent.char));
         core.focus(
           { type: "editing", location, target: primaryTarget },
           { caret: intent.char.length },
@@ -448,7 +448,7 @@ export function createCore(opts: CreateCoreOptions): {
       viewSignalCache.clear();
     },
 
-    item,
+    node,
     reader,
     view,
     locate,
@@ -478,9 +478,9 @@ export type {
   Content,
   FocusOpts,
   Location,
-  GroupShapeReader,
-  Item,
-  ItemId,
+  ItemShapeReader,
+  Node,
+  NodeId,
   Mode,
   ReadFromShape,
   Selection,
@@ -498,13 +498,13 @@ export type {
 export {
   CONTENT_TEXT_TARGET,
   contentTarget,
-  ITEM_TARGET,
+  NODE_TARGET,
   LABEL_TARGET,
   connTarget,
 } from "./select";
 export { sameLocation };
 export {
-  indentItemInPlace,
+  indentNodeInPlace,
   isNumericLikeValue,
   patchConn,
   primaryHeaderTargetForConn,

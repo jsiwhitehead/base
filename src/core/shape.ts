@@ -2,50 +2,50 @@ import { CoreInvariantError } from "../dev";
 import type { EntryContent, EntryId, Model, Op, ViewName } from "./model";
 import {
   isFormulaContent,
-  isGroupContent,
+  isItemContent,
   isQueryContent,
   makeBlankEntry,
   normalizeLabel,
 } from "./model";
 import { CoreReadError } from "./read";
-import type { ItemId, ReadApi } from "./read";
+import type { NodeId, ReadApi } from "./read";
 
 type ChildSlotSchema = {
   label: string | null;
   normalizedLabel: string | null;
 };
 
-export type ViewShape = { type: "any" } | { type: "value" } | GroupViewShape;
+export type ViewShape = { type: "any" } | { type: "value" } | ItemViewShape;
 
-type GroupViewShape =
-  | { type: "group"; children: ViewShape; nonEmpty?: true }
+type ItemViewShape =
+  | { type: "item"; children: ViewShape; nonEmpty?: true }
   | {
-      type: "group";
-      children: GroupViewShape;
+      type: "item";
+      children: ItemViewShape;
       nonEmpty?: true;
       alignChildren?: true;
     };
 
 type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
-type ChildListForGroup<G extends GroupViewShape, T> = G extends {
+type ChildListForGroup<G extends ItemViewShape, T> = G extends {
   nonEmpty: true;
 }
   ? NonEmptyReadonlyArray<T>
   : readonly T[];
-type ChildShapeOfGroup<G extends GroupViewShape> = G["children"];
-type ReadChildOfGroup<G extends GroupViewShape> = ReadFromShape<G["children"]>;
+type ChildShapeOfGroup<G extends ItemViewShape> = G["children"];
+type ReadChildOfGroup<G extends ItemViewShape> = ReadFromShape<G["children"]>;
 
-type ReadShapeAny = { type: "any"; id: ItemId };
+type ReadShapeAny = { type: "any"; id: NodeId };
 
 type ReadShapeValue = {
   type: "value";
-  id: ItemId;
+  id: NodeId;
   value: true | number | string | null;
 };
 
-type ReadShapeGroup<G extends GroupViewShape, Child> = {
-  type: "group";
-  id: ItemId;
+type ReadShapeItem<G extends ItemViewShape, Child> = {
+  type: "item";
+  id: NodeId;
   children: ChildListForGroup<G, Child>;
 };
 
@@ -53,11 +53,11 @@ export type ReadFromShape<S extends ViewShape> = S extends { type: "any" }
   ? ReadShapeAny
   : S extends { type: "value" }
     ? ReadShapeValue
-    : S extends GroupViewShape
-      ? ReadShapeGroup<S, ReadChildOfGroup<S>>
+    : S extends ItemViewShape
+      ? ReadShapeItem<S, ReadChildOfGroup<S>>
       : never;
 
-type BaseShapeReader = { readonly id: ItemId; label(): string | null };
+type BaseShapeReader = { readonly id: NodeId; label(): string | null };
 
 export type AnyShapeReader = BaseShapeReader;
 
@@ -65,17 +65,17 @@ export type ValueShapeReader = BaseShapeReader & {
   value(): ReadShapeValue["value"];
 };
 
-export type GroupShapeReader<G extends GroupViewShape> = BaseShapeReader & {
-  childIds(): ChildListForGroup<G, ItemId>;
-  child(id: ItemId): ReaderForShape<ChildShapeOfGroup<G>>;
+export type ItemShapeReader<G extends ItemViewShape> = BaseShapeReader & {
+  childIds(): ChildListForGroup<G, NodeId>;
+  child(id: NodeId): ReaderForShape<ChildShapeOfGroup<G>>;
 };
 
 export type ReaderForShape<S extends ViewShape> = S extends { type: "any" }
   ? AnyShapeReader
   : S extends { type: "value" }
     ? ValueShapeReader
-    : S extends GroupViewShape
-      ? GroupShapeReader<S>
+    : S extends ItemViewShape
+      ? ItemShapeReader<S>
       : never;
 
 export function defineShape<const S extends ViewShape>(shape: S): S {
@@ -84,61 +84,61 @@ export function defineShape<const S extends ViewShape>(shape: S): S {
 
 export function createShapeReader<S extends ViewShape>(
   read: ReadApi,
-  id: ItemId,
+  id: NodeId,
   shape: S,
 ): ReaderForShape<S> {
-  const readLabel = (itemId: ItemId): string | null =>
-    read.item(itemId).label ?? null;
+  const readLabel = (nodeId: NodeId): string | null =>
+    read.node(nodeId).label ?? null;
 
-  const readValue = (itemId: ItemId): ReadShapeValue["value"] => {
-    const item = read.item(itemId);
-    if (item.content.type === "value") return item.content.value;
+  const readValue = (nodeId: NodeId): ReadShapeValue["value"] => {
+    const node = read.node(nodeId);
+    if (node.content.type === "value") return node.content.value;
     throw new CoreReadError(
       "CONTENT_MISMATCH",
       "Shape reader expected value content",
     );
   };
 
-  const childIdsOfGroup = (itemId: ItemId): readonly ItemId[] => {
-    const item = read.item(itemId);
-    if (item.content.type !== "group")
+  const childIdsOfGroup = (nodeId: NodeId): readonly NodeId[] => {
+    const node = read.node(nodeId);
+    if (node.content.type !== "item")
       throw new CoreReadError(
         "CONTENT_MISMATCH",
-        "Shape reader expected group content",
+        "Shape reader expected item content",
       );
-    return item.content.children;
+    return node.content.children;
   };
 
   const build = <T extends ViewShape>(
-    itemId: ItemId,
+    nodeId: NodeId,
     nodeShape: T,
   ): ReaderForShape<T> => {
     if (nodeShape.type === "any") {
       return {
-        id: itemId,
-        label: () => readLabel(itemId),
+        id: nodeId,
+        label: () => readLabel(nodeId),
       } as ReaderForShape<T>;
     }
 
     if (nodeShape.type === "value") {
       return {
-        id: itemId,
-        label: () => readLabel(itemId),
-        value: () => readValue(itemId),
+        id: nodeId,
+        label: () => readLabel(nodeId),
+        value: () => readValue(nodeId),
       } as ReaderForShape<T>;
     }
 
     const childShape = nodeShape.children;
     return {
-      id: itemId,
-      label: () => readLabel(itemId),
+      id: nodeId,
+      label: () => readLabel(nodeId),
       childIds: () =>
-        childIdsOfGroup(itemId) as ChildListForGroup<
-          Extract<T, GroupViewShape>,
-          ItemId
+        childIdsOfGroup(nodeId) as ChildListForGroup<
+          Extract<T, ItemViewShape>,
+          NodeId
         >,
-      child: (cid: ItemId) => {
-        if (!childIdsOfGroup(itemId).includes(cid))
+      child: (cid: NodeId) => {
+        if (!childIdsOfGroup(nodeId).includes(cid))
           throw new CoreReadError(
             "SHAPE_CHILD_NOT_FOUND",
             "Shape reader child id not found",
@@ -153,15 +153,15 @@ export function createShapeReader<S extends ViewShape>(
 
 export function isShapeCompatible(
   read: ReadApi,
-  id: ItemId,
+  id: NodeId,
   shape: ViewShape,
 ): boolean {
-  const childSlotSchema = (groupId: ItemId): ChildSlotSchema[] => {
-    const group = read.item(groupId);
-    if (group.content.type !== "group") return [];
+  const childSlotSchema = (itemId: NodeId): ChildSlotSchema[] => {
+    const item = read.node(itemId);
+    if (item.content.type !== "item") return [];
     const out: ChildSlotSchema[] = [];
-    for (const childId of group.content.children) {
-      const rawLabel = read.item(childId).label ?? null;
+    for (const childId of item.content.children) {
+      const rawLabel = read.node(childId).label ?? null;
       const normalizedLabel = normalizeLabel(rawLabel ?? "");
       out.push({
         label: rawLabel,
@@ -171,22 +171,22 @@ export function isShapeCompatible(
     return out;
   };
 
-  const item = read.item(id);
+  const node = read.node(id);
 
   if (shape.type === "any") return true;
-  if (shape.type === "value") return item.content.type === "value";
-  if (item.content.type !== "group") return false;
-  if (shape.nonEmpty && item.content.children.length === 0) return false;
+  if (shape.type === "value") return node.content.type === "value";
+  if (node.content.type !== "item") return false;
+  if (shape.nonEmpty && node.content.children.length === 0) return false;
 
   if ("alignChildren" in shape && shape.alignChildren) {
-    const childGroupIds = item.content.children;
-    const leaderChildGroupId = childGroupIds[0] ?? null;
-    if (!leaderChildGroupId) return true;
-    const schema = childSlotSchema(leaderChildGroupId);
+    const childItemIds = node.content.children;
+    const leaderChildItemId = childItemIds[0] ?? null;
+    if (!leaderChildItemId) return true;
+    const schema = childSlotSchema(leaderChildItemId);
 
-    for (let i = 1; i < childGroupIds.length; i += 1) {
-      const childGroupId = childGroupIds[i]!;
-      const slots = childSlotSchema(childGroupId);
+    for (let i = 1; i < childItemIds.length; i += 1) {
+      const childItemId = childItemIds[i]!;
+      const slots = childSlotSchema(childItemId);
       if (slots.length !== schema.length) return false;
       for (let j = 0; j < schema.length; j += 1) {
         if (slots[j]!.normalizedLabel !== schema[j]!.normalizedLabel) {
@@ -196,7 +196,7 @@ export function isShapeCompatible(
     }
   }
 
-  for (const childId of item.content.children) {
+  for (const childId of node.content.children) {
     if (!isShapeCompatible(read, childId, shape.children)) return false;
   }
 
@@ -224,7 +224,7 @@ export function enforceViewShapes(
     return (
       content.type === "blank" ||
       content.type === "scalar" ||
-      content.type === "group"
+      content.type === "item"
     );
   };
 
@@ -242,10 +242,10 @@ export function enforceViewShapes(
     return true;
   };
 
-  const childIdsOfGroup = (groupId: EntryId): EntryId[] => {
-    if (!model.hasEntry(groupId)) return [];
-    const entry = model.peekEntry(groupId);
-    if (!isGroupContent(entry.content)) return [];
+  const childIdsOfGroup = (itemId: EntryId): EntryId[] => {
+    if (!model.hasEntry(itemId)) return [];
+    const entry = model.peekEntry(itemId);
+    if (!isItemContent(entry.content)) return [];
     const out: EntryId[] = [];
     for (const childId of entry.content.childIds) {
       if (!model.hasEntry(childId)) continue;
@@ -254,9 +254,9 @@ export function enforceViewShapes(
     return out;
   };
 
-  const childSlotSchema = (groupId: EntryId): ChildSlotSchema[] => {
+  const childSlotSchema = (itemId: EntryId): ChildSlotSchema[] => {
     const schema: ChildSlotSchema[] = [];
-    for (const cid of childIdsOfGroup(groupId)) {
+    for (const cid of childIdsOfGroup(itemId)) {
       const rawLabel = model.peekEntry(cid).label;
       const normalizedLabel = normalizeLabel(rawLabel);
       schema.push({
@@ -287,14 +287,14 @@ export function enforceViewShapes(
 
     const content = model.peekEntry(id).content;
 
-    if (shape.type === "group" && !isGroupContent(content)) {
+    if (shape.type === "item" && !isItemContent(content)) {
       applyOps([
-        model.ops.patch(id, { content: { type: "group", childIds: [] } }),
+        model.ops.patch(id, { content: { type: "item", childIds: [] } }),
       ]);
       return constraintRootStillConstrained(constraintRootId);
     }
 
-    if (shape.type === "value" && isGroupContent(content)) {
+    if (shape.type === "value" && isItemContent(content)) {
       if (content.childIds.length === 0) {
         applyOps([model.ops.patch(id, { content: { type: "blank" } })]);
       } else {
@@ -308,11 +308,11 @@ export function enforceViewShapes(
 
   const enforceNonEmpty = (
     id: EntryId,
-    shape: Extract<ViewShape, { type: "group" }>,
+    shape: Extract<ViewShape, { type: "item" }>,
   ): void => {
     if (!model.hasEntry(id)) return;
     const entry = model.peekEntry(id);
-    if (!isGroupContent(entry.content)) return;
+    if (!isItemContent(entry.content)) return;
 
     if (shape.nonEmpty && entry.content.childIds.length === 0) {
       const newId = model.createId();
@@ -333,47 +333,47 @@ export function enforceViewShapes(
     return true;
   };
 
-  const enqueueAlignChildrenOps = (groupId: EntryId, out: Op[]): void => {
-    const childGroupIds = childIdsOfGroup(groupId).filter((childGroupId) =>
-      isGroupContent(model.peekEntry(childGroupId).content),
+  const enqueueAlignChildrenOps = (itemId: EntryId, out: Op[]): void => {
+    const childItemIds = childIdsOfGroup(itemId).filter((childItemId) =>
+      isItemContent(model.peekEntry(childItemId).content),
     );
-    if (childGroupIds.length < 2) return;
-    const childGroupIdSet = new Set(childGroupIds);
+    if (childItemIds.length < 2) return;
+    const childItemIdSet = new Set(childItemIds);
 
-    const touchedChildGroups = new Set<EntryId>();
+    const touchedChildItems = new Set<EntryId>();
     for (const touchedId of touched) {
       let cur: EntryId | null = touchedId;
       while (cur != null && model.hasEntry(cur)) {
-        if (childGroupIdSet.has(cur)) {
-          touchedChildGroups.add(cur);
+        if (childItemIdSet.has(cur)) {
+          touchedChildItems.add(cur);
           break;
         }
         const parentId: EntryId | null = model.peekEntry(cur).parentId;
-        if (parentId === groupId) break;
+        if (parentId === itemId) break;
         cur = parentId;
       }
     }
 
-    const touchedChildGroupWithChildren = childGroupIds.find(
-      (childGroupId) =>
-        touchedChildGroups.has(childGroupId) &&
-        model.childIdsOf(childGroupId).length > 0,
+    const touchedChildItemWithChildren = childItemIds.find(
+      (childItemId) =>
+        touchedChildItems.has(childItemId) &&
+        model.childIdsOf(childItemId).length > 0,
     );
-    const touchedChildGroup = childGroupIds.find((childGroupId) =>
-      touchedChildGroups.has(childGroupId),
+    const touchedChildItem = childItemIds.find((childItemId) =>
+      touchedChildItems.has(childItemId),
     );
-    const childGroupWithChildren = childGroupIds.find(
-      (childGroupId) => model.childIdsOf(childGroupId).length > 0,
+    const childItemWithChildren = childItemIds.find(
+      (childItemId) => model.childIdsOf(childItemId).length > 0,
     );
-    const leaderChildGroupId =
-      touchedChildGroupWithChildren ??
-      touchedChildGroup ??
-      childGroupWithChildren ??
-      childGroupIds[0]!;
-    const schema = childSlotSchema(leaderChildGroupId);
+    const leaderChildItemId =
+      touchedChildItemWithChildren ??
+      touchedChildItem ??
+      childItemWithChildren ??
+      childItemIds[0]!;
+    const schema = childSlotSchema(leaderChildItemId);
 
     const leaderFormulaCols = new Map<number, EntryContent>();
-    const leaderCells = model.childIdsOf(leaderChildGroupId);
+    const leaderCells = model.childIdsOf(leaderChildItemId);
     for (let i = 0; i < leaderCells.length; i += 1) {
       const cellId = leaderCells[i]!;
       if (!model.hasEntry(cellId)) continue;
@@ -383,10 +383,10 @@ export function enforceViewShapes(
       }
     }
 
-    for (const childGroupId of childGroupIds) {
-      if (childGroupId === leaderChildGroupId) continue;
+    for (const childItemId of childItemIds) {
+      if (childItemId === leaderChildItemId) continue;
 
-      const childIds = model.childIdsOf(childGroupId);
+      const childIds = model.childIdsOf(childItemId);
       const byLabel = new Map<string, EntryId>();
       const unlabeled: EntryId[] = [];
       const desiredIds: EntryId[] = [];
@@ -439,7 +439,7 @@ export function enforceViewShapes(
         out.push(
           model.ops.move({
             childId,
-            toParentId: childGroupId,
+            toParentId: childItemId,
             toIndex: i,
           }),
         );
@@ -457,7 +457,7 @@ export function enforceViewShapes(
         if (model.hasEntry(followerCellId)) {
           const followerContent = model.peekEntry(followerCellId).content;
           if (
-            isGroupContent(followerContent) &&
+            isItemContent(followerContent) &&
             followerContent.childIds.length > 0
           )
             continue;
@@ -476,7 +476,7 @@ export function enforceViewShapes(
     if (!enforceNodeType(constraintRootId, id, shape)) return false;
     if (!model.hasEntry(id))
       return constraintRootStillConstrained(constraintRootId);
-    if (shape.type !== "group")
+    if (shape.type !== "item")
       return constraintRootStillConstrained(constraintRootId);
 
     enforceNonEmpty(id, shape);
@@ -495,7 +495,7 @@ export function enforceViewShapes(
     }
 
     const entry = model.peekEntry(id);
-    if (!isGroupContent(entry.content))
+    if (!isItemContent(entry.content))
       return constraintRootStillConstrained(constraintRootId);
     for (const childId of childIdsOfGroup(id)) {
       if (!enforceNode(constraintRootId, childId, shape.children)) return false;
@@ -508,7 +508,7 @@ export function enforceViewShapes(
       if (!constraintRootStillConstrained(constraintRootId)) return false;
       if (!model.hasEntry(id)) return true;
       const refreshed = model.peekEntry(id);
-      if (!isGroupContent(refreshed.content))
+      if (!isItemContent(refreshed.content))
         return constraintRootStillConstrained(constraintRootId);
     }
 

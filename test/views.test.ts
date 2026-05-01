@@ -15,7 +15,7 @@ import {
   mountLocalView,
   mountView,
   mkBlank,
-  mkGroup,
+  mkItem,
   pointerDown,
   requireFrameEl,
   setView,
@@ -26,24 +26,24 @@ describe("views/table", () => {
   test("renders header columns based on schema row", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
     mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
     core.focus({
-      type: "item",
-      anchor: { item: tableId, portals: [] },
-      head: { item: tableId, portals: [] },
+      type: "node",
+      anchor: { node: tableId, portals: [] },
+      head: { node: tableId, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     const header = document.body.querySelector(
@@ -59,58 +59,58 @@ describe("views/table", () => {
     unmount();
   });
 
-  test("NAV in row item moves rows; right enters first cell", async () => {
+  test("NAV in row node moves rows; right enters first cell", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
     const [shapeCell] = childrenOf(core, r1);
 
     core.focus({
-      type: "item",
-      anchor: { item: r1, portals: [] },
-      head: { item: r1, portals: [] },
+      type: "node",
+      anchor: { node: r1, portals: [] },
+      head: { node: r1, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     let key = dispatchKey(domView.root, "ArrowDown");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: r2, portals: [] });
+    expectSel(core, { node: r2, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: r1, portals: [] });
+    expectSel(core, { node: r1, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: shapeCell!, portals: [] });
+    expectSel(core, { node: shapeCell!, portals: [] });
 
     unmount();
   });
 
-  test("NAV in cells moves in grid; left from first cell exits to row item", async () => {
+  test("NAV in cells moves in grid; left from first cell exits to row node", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     const c12 = mkBlank(core, r1, { label: "c2", value: 2 });
@@ -118,42 +118,42 @@ describe("views/table", () => {
     const [r2ShapeCell, r2C1, r2C2] = childrenOf(core, r2);
 
     core.focus({
-      type: "item",
-      anchor: { item: c11, portals: [] },
-      head: { item: c11, portals: [] },
+      type: "node",
+      anchor: { node: c11, portals: [] },
+      head: { node: c11, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     let key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: c12, portals: [] });
+    expectSel(core, { node: c12, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowDown");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: r2C2!, portals: [] });
+    expectSel(core, { node: r2C2!, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: r2C1!, portals: [] });
+    expectSel(core, { node: r2C1!, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: r2ShapeCell!, portals: [] });
+    expectSel(core, { node: r2ShapeCell!, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: r2, portals: [] });
+    expectSel(core, { node: r2, portals: [] });
 
     unmount();
   });
@@ -161,11 +161,11 @@ describe("views/table", () => {
   test("TAB moves across cells and wraps rows", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     const c12 = mkBlank(core, r1, { label: "c2", value: 2 });
@@ -173,27 +173,27 @@ describe("views/table", () => {
     const [r2ShapeCell] = childrenOf(core, r2);
 
     core.focus({
-      type: "item",
-      anchor: { item: c11, portals: [] },
-      head: { item: c11, portals: [] },
+      type: "node",
+      anchor: { node: c11, portals: [] },
+      head: { node: c11, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     const tab1 = dispatchKey(domView.root, "Tab");
     await flushDomEffects();
     expect(tab1).toBe(true);
-    expectSel(core, { item: c12, portals: [] });
+    expectSel(core, { node: c12, portals: [] });
 
     const tab2 = dispatchKey(domView.root, "Tab");
     await flushDomEffects();
     expect(tab2).toBe(true);
-    expectSel(core, { item: r2ShapeCell!, portals: [] });
+    expectSel(core, { node: r2ShapeCell!, portals: [] });
 
     unmount();
   });
@@ -201,11 +201,11 @@ describe("views/table", () => {
   test("Enter from cell content:text keeps the current editing target", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
     mkBlank(core, r1, { label: "c2", value: "b" });
@@ -213,7 +213,7 @@ describe("views/table", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: c11, portals: [] },
+        location: { node: c11, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -223,7 +223,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     const c11Frame = requireFrameEl(document.body, c11);
@@ -246,19 +246,19 @@ describe("views/table", () => {
     dispatchKey(valueEl, "Enter");
     await flushDomEffects();
 
-    expectSel(core, { item: c11, target: CONTENT_TEXT_TARGET, portals: [] });
+    expectSel(core, { node: c11, target: CONTENT_TEXT_TARGET, portals: [] });
 
     unmount();
   });
 
-  test("DELETE: row item removes row; cell item clears value", async () => {
+  test("DELETE: row node removes row; cell node clears value", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
@@ -267,13 +267,13 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     core.focus({
-      type: "item",
-      anchor: { item: c11, portals: [] },
-      head: { item: c11, portals: [] },
+      type: "node",
+      anchor: { node: c11, portals: [] },
+      head: { node: c11, portals: [] },
     });
     await flushDomEffects();
 
@@ -283,9 +283,9 @@ describe("views/table", () => {
     expect(valueOfId(core, c11)).toBe(null);
 
     core.focus({
-      type: "item",
-      anchor: { item: r2, portals: [] },
-      head: { item: r2, portals: [] },
+      type: "node",
+      anchor: { node: r2, portals: [] },
+      head: { node: r2, portals: [] },
     });
     await flushDomEffects();
 
@@ -298,27 +298,27 @@ describe("views/table", () => {
     unmount();
   });
 
-  test("INSERT from row item preserves table columns", async () => {
+  test("INSERT from row node preserves table columns", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
     mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
     core.focus({
-      type: "item",
-      anchor: { item: r1, portals: [] },
-      head: { item: r1, portals: [] },
+      type: "node",
+      anchor: { node: r1, portals: [] },
+      head: { node: r1, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
     const rowCountBefore = childrenOf(core, tableId).length;
 
@@ -337,55 +337,55 @@ describe("views/table", () => {
   test("NAV beyond grid edges does nothing", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
     mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
 
     const firstRow = childrenOf(core, tableId)[0]!;
     core.focus({
-      type: "item",
-      anchor: { item: firstRow, portals: [] },
-      head: { item: firstRow, portals: [] },
+      type: "node",
+      anchor: { node: firstRow, portals: [] },
+      head: { node: firstRow, portals: [] },
     });
 
     const { domView, unmount } = await mountLocalView({
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     let key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: firstRow, portals: [] });
+    expectSel(core, { node: firstRow, portals: [] });
 
     const firstCell = childrenOf(core, firstRow)[0]!;
     core.focus({
-      type: "item",
-      anchor: { item: firstCell, portals: [] },
-      head: { item: firstCell, portals: [] },
+      type: "node",
+      anchor: { node: firstCell, portals: [] },
+      head: { node: firstCell, portals: [] },
     });
     await flushDomEffects();
 
     key = dispatchKey(domView.root, "ArrowUp");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: firstCell, portals: [] });
+    expectSel(core, { node: firstCell, portals: [] });
 
     unmount();
   });
 
-  test("pointerdown on a cell shell from embedded outline editing lands on the cell item", async () => {
+  test("pointerdown on a cell shell from embedded outline editing lands on the cell node", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
     const c11 = mkBlank(core, r1, { label: "c1", value: "alpha" });
     const c12 = mkBlank(core, r1, { label: "c2", value: "beta" });
 
@@ -393,13 +393,13 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     core.focus(
       {
         type: "editing",
-        location: { item: c11, portals: [] },
+        location: { node: c11, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: 1 },
@@ -410,7 +410,7 @@ describe("views/table", () => {
     pointerDown(c12Frame);
     await flushDomEffects();
 
-    expectSel(core, { item: c12, portals: [] });
+    expectSel(core, { node: c12, portals: [] });
 
     unmount();
   });
@@ -418,11 +418,11 @@ describe("views/table", () => {
   test("slot replace moves the cell and clears the source slot", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
     mkBlank(core, r1, { label: "c2", value: "b" });
@@ -434,7 +434,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     try {
@@ -457,7 +457,7 @@ describe("views/table", () => {
         throw new Error("Drag not active");
       drag.state.value = {
         ...drag.state.value,
-        drop: { type: "replace", itemId: r2C1!, anchorEl: r2C1Frame },
+        drop: { type: "replace", nodeId: r2C1!, anchorEl: r2C1Frame },
       };
 
       cap.emitPointer("pointerup", { pointerId: 31, clientX: 0, clientY: 0 });
@@ -478,14 +478,14 @@ describe("views/table", () => {
     }
   });
 
-  test("slot edge drop inserts the dragged item as a new row and clears the source slot", async () => {
+  test("slot edge drop inserts the dragged node as a new row and clears the source slot", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const r1 = mkGroup(core, tableId, { label: "r1" });
-    const r2 = mkGroup(core, tableId, { label: "r2" });
+    const r1 = mkItem(core, tableId, { label: "r1" });
+    const r2 = mkItem(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
     mkBlank(core, r1, { label: "c2", value: "b" });
@@ -495,7 +495,7 @@ describe("views/table", () => {
       view: "table",
       core,
       id: tableId,
-      location: { item: tableId, portals: [] },
+      location: { node: tableId, portals: [] },
     });
 
     try {
@@ -560,16 +560,16 @@ describe("views/slider", () => {
     setView(core, s, "slider");
 
     core.focus({
-      type: "item",
-      anchor: { item: s, portals: [] },
-      head: { item: s, portals: [] },
+      type: "node",
+      anchor: { node: s, portals: [] },
+      head: { node: s, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
-      location: { item: s, portals: [] },
+      location: { node: s, portals: [] },
     });
 
     const body = document.body.querySelector(".ui-body.ui-slider");
@@ -590,16 +590,16 @@ describe("views/slider", () => {
     setView(core, s, "slider");
 
     core.focus({
-      type: "item",
-      anchor: { item: s, portals: [] },
-      head: { item: s, portals: [] },
+      type: "node",
+      anchor: { node: s, portals: [] },
+      head: { node: s, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
-      location: { item: s, portals: [] },
+      location: { node: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -610,7 +610,7 @@ describe("views/slider", () => {
     pointerDown(input);
     await flushDomEffects();
 
-    expectSel(core, { item: s, target: CONTENT_SLIDER_TARGET, portals: [] });
+    expectSel(core, { node: s, target: CONTENT_SLIDER_TARGET, portals: [] });
 
     unmount();
   });
@@ -622,16 +622,16 @@ describe("views/slider", () => {
     setView(core, s, "slider");
 
     core.focus({
-      type: "item",
-      anchor: { item: s, portals: [] },
-      head: { item: s, portals: [] },
+      type: "node",
+      anchor: { node: s, portals: [] },
+      head: { node: s, portals: [] },
     });
 
     const { unmount } = await mountView({
       view: "slider",
       core,
       id: s,
-      location: { item: s, portals: [] },
+      location: { node: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -645,7 +645,7 @@ describe("views/slider", () => {
     dispatchKey(input, "ArrowDown");
     await flushDomEffects();
 
-    expectSel(core, { item: s, portals: [] });
+    expectSel(core, { node: s, portals: [] });
 
     unmount();
   });
@@ -660,7 +660,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      location: { item: s, portals: [] },
+      location: { node: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -686,7 +686,7 @@ describe("views/slider", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: s, portals: [] },
+        location: { node: s, portals: [] },
         target: CONTENT_SLIDER_TARGET,
       },
       { caret: 0 },
@@ -696,7 +696,7 @@ describe("views/slider", () => {
       view: "slider",
       core,
       id: s,
-      location: { item: s, portals: [] },
+      location: { node: s, portals: [] },
     });
 
     const input = document.body.querySelector(
@@ -708,7 +708,7 @@ describe("views/slider", () => {
     await flushDomEffects();
     expect(enter).toBe(false);
     expectSel(core, {
-      item: s,
+      node: s,
       target: CONTENT_SLIDER_TARGET,
       portals: [],
     });

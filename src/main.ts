@@ -1,6 +1,6 @@
 import { effect } from "@preact/signals-core";
 
-import type { ItemId, SnapshotData, Value } from "./core";
+import type { NodeId, SnapshotData, Value } from "./core";
 import { DEV, devAssert, devWarn } from "./dev";
 import type { App } from "./setup";
 import { createApp } from "./setup";
@@ -10,8 +10,8 @@ const STORAGE_KEY = "base:snapshot";
 function seedDemo(app: App): void {
   const { core, rootId } = app;
 
-  const mkValue = (parentId: ItemId, label: string, value: Value): ItemId => {
-    let id: ItemId = "";
+  const mkValue = (parentId: NodeId, label: string, value: Value): NodeId => {
+    let id: NodeId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
       t.setLabel(id, label);
@@ -20,18 +20,18 @@ function seedDemo(app: App): void {
     return id;
   };
 
-  const mkGroup = (parentId: ItemId, label: string): ItemId => {
-    let id: ItemId = "";
+  const mkItem = (parentId: NodeId, label: string): NodeId => {
+    let id: NodeId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
       t.setLabel(id, label);
-      t.setGroup(id);
+      t.setItem(id);
     });
     return id;
   };
 
-  const mkFormula = (parentId: ItemId, label: string, expr: string): ItemId => {
-    let id: ItemId = "";
+  const mkFormula = (parentId: NodeId, label: string, expr: string): NodeId => {
+    let id: NodeId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
       t.setLabel(id, label);
@@ -41,11 +41,11 @@ function seedDemo(app: App): void {
   };
 
   const mkQuery = (
-    parentId: ItemId,
+    parentId: NodeId,
     label: string,
     spec: { from: string; where?: string; orderBy?: string },
-  ): ItemId => {
-    let id: ItemId = "";
+  ): NodeId => {
+    let id: NodeId = "";
     core.commit((t) => {
       id = t.insertChild(parentId);
       t.setLabel(id, label);
@@ -61,12 +61,12 @@ function seedDemo(app: App): void {
 
   mkValue(rootId, "", "hello");
   mkValue(rootId, "", "world");
-  const table = mkGroup(rootId, "table");
-  const row1 = mkGroup(table, "r1");
-  mkValue(row1, "item", "Apples");
+  const table = mkItem(rootId, "table");
+  const row1 = mkItem(table, "r1");
+  mkValue(row1, "node", "Apples");
   mkValue(row1, "qty", 3);
-  const row2 = mkGroup(table, "r2");
-  mkValue(row2, "item", "Oranges");
+  const row2 = mkItem(table, "r2");
+  mkValue(row2, "node", "Oranges");
   mkValue(row2, "qty", 5);
   core.commit((t) => t.setView(table, "table"));
 

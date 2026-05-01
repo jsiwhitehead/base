@@ -17,13 +17,13 @@ Base helpers:
 
 - `createComponent`: lifecycle-safe component factory.
 - `el`: small DOM element constructor helper.
-- `bindItemFrame`: canonical `.ui-frame` binding helper.
+- `bindNodeFrame`: canonical `.ui-frame` binding helper.
 - `setBodyClasses`: canonical body-root class helper.
 
 Controls/editing helpers:
 
 - `mountHeader`: canonical shared header subtree mount helper.
-- `NavDirection`: shared item-navigation direction type.
+- `NavDirection`: shared node-navigation direction type.
 
 Contenteditable helpers:
 
@@ -60,10 +60,10 @@ Rules:
 - `dom/` MUST NOT own canonical state or canonical selection; Core remains the source of truth.
 - Runtime selection/focus behavior MUST be driven by Core selection updates (for example via `runtime.syncSelection(...)`).
 - Editing selection MUST focus the bound edit target.
-- Item selection MUST clear any active DOM document selection from `contenteditable` surfaces first, then focus the owning structural `ITEM_TARGET` surface (or the root shell for exact root item selection).
+- Node selection MUST clear any active DOM document selection from `contenteditable` surfaces first, then focus the owning structural `NODE_TARGET` surface (or the root shell for exact root node selection).
 - Idle MUST clear DOM text selection and DOM focus.
 - View mounting and target binding are `UiCore`/runtime responsibilities, not pure `Core` API responsibilities.
-- Runtime code MUST treat `ItemId` as opaque (see `docs/core-api.md`).
+- Runtime code MUST treat `NodeId` as opaque (see `docs/core-api.md`).
 
 ## Component model
 
@@ -193,20 +193,20 @@ Rules:
 - If `className` is provided, sets `element.className = className`.
 - If `text` is provided (including empty string), sets `element.textContent = text`.
 
-## Frame binding (`bindItemFrame`)
+## Frame binding (`bindNodeFrame`)
 
-### `bindItemFrame(ctx, spec, frameEl)`
+### `bindNodeFrame(ctx, spec, frameEl)`
 
 Canonical `.ui-frame` behavior contract.
 
 Rules:
 
 - Adds class `ui-frame`.
-- Sets `data-id = location.item`.
+- Sets `data-id = location.node`.
 - If `tabindex` is absent, sets `tabIndex = -1`.
-- Registers `ITEM_TARGET` on `frameEl` via `ctx.target`.
-- On `pointerdown`, when the event reaches the frame, `bindItemFrame` MUST own the hit: it MUST call `stopPropagation()`, MUST NOT set caret, and MUST either focus Core on `ITEM_TARGET` for the same item location or preserve active nested editing.
-- MUST reactively toggle `.is-selected` and `.is-item-selected` as selection state changes.
+- Registers `NODE_TARGET` on `frameEl` via `ctx.target`.
+- On `pointerdown`, when the event reaches the frame, `bindNodeFrame` MUST own the hit: it MUST call `stopPropagation()`, MUST NOT set caret, and MUST either focus Core on `NODE_TARGET` for the same node location or preserve active nested editing.
+- MUST reactively toggle `.is-selected` and `.is-node-selected` as selection state changes.
 - MUST reactively toggle `.is-issue`.
 
 ## Body/root helper
@@ -220,21 +220,21 @@ Rules:
 
 ## Editing helpers
 
-Routing and shared item-selection handoff follow `docs/architecture.md`.
+Routing and shared node-selection handoff follow `docs/architecture.md`.
 
 Runtime-specific rules:
 
 - Editing selection resolves from the exact bound `(location, target)`.
-- Item selection resolves from bound `ITEM_TARGET`s at both endpoints.
-- Non-root item selection must resolve to a mounted view.
-- Exact root item selection does not resolve through a mounted view; it routes to the root outer handler.
-- Missing bindings or mixed/cross-view item selection are invariant violations.
+- Node selection resolves from bound `NODE_TARGET`s at both endpoints.
+- Non-root node selection must resolve to a mounted view.
+- Exact root node selection does not resolve through a mounted view; it routes to the root outer handler.
+- Missing bindings or mixed/cross-view node selection are invariant violations.
 
 ## Shared header helper
 
 ### `mountHeader(ctx, args)`
 
-Canonical header component for item UI.
+Canonical header component for node UI.
 
 #### DOM/class contract
 
@@ -257,10 +257,10 @@ Rules:
 
 - `mountHeader` mounts the shared header subtree into `args.host`.
 - `visibility: "always"` MUST always mount the header.
-- `visibility: "auto"` MUST mount the header only when the item has a non-empty label, is in connected mode, or the current selection is editing the label target for the same location.
+- `visibility: "auto"` MUST mount the header only when the node has a non-empty label, is in connected mode, or the current selection is editing the label target for the same location.
 - Header root (`.ui-header`) MUST set `contenteditable="false"` when mounted inside a `contenteditable="true"` editing surface.
-- Label field uses target `LABEL_TARGET` and stays local. `Enter` commits and exits to same-item item selection. `Escape` cancels and exits to same-item item selection. `Tab` / `Shift+Tab` commit and no-op.
-- Connected rows render only when `item.mode.type === "connected"`.
+- Label field uses target `LABEL_TARGET` and stays local. `Enter` commits and exits to same-node selection. `Escape` cancels and exits to same-node selection. `Tab` / `Shift+Tab` commit and no-op.
+- Connected rows render only when `node.mode.type === "connected"`.
 - Connected rows are keyed by `field.key`, reconciled with `ctx.list`, and rendered in canonical shared-header field order for the connected mode.
 - Each connected field MUST use `connTarget(field.key)` as target and commit through `commitConnField(field.key, text)`.
 - Connected fields MUST autosize to their current text.
@@ -278,7 +278,7 @@ type DragState =
   | {
       type: "pending";
       cleanupType: DragType;
-      itemId: ItemId;
+      nodeId: NodeId;
       pointerId: number;
       startX: number;
       startY: number;
@@ -286,7 +286,7 @@ type DragState =
   | {
       type: "active";
       cleanupType: DragType;
-      itemId: ItemId;
+      nodeId: NodeId;
       drop: DropTarget | null;
     };
 
@@ -295,12 +295,12 @@ type DragType = "reorder" | "slot";
 type DropTarget =
   | {
       type: "gap";
-      parentId: ItemId;
+      parentId: NodeId;
       at: number;
       side: "before" | "after";
       anchorEl: HTMLElement;
     }
-  | { type: "replace"; itemId: ItemId; anchorEl: HTMLElement };
+  | { type: "replace"; nodeId: NodeId; anchorEl: HTMLElement };
 
 type DragController = {
   state: Signal<DragState>;
@@ -331,11 +331,11 @@ Rules:
 
 Drop rules:
 
-- `data-drag="reorder"` on the source removes the source item on success and prunes newly empty source ancestors when needed.
+- `data-drag="reorder"` on the source removes the source node on success and prunes newly empty source ancestors when needed.
 - `data-drag="slot"` on the source clears the source slot on success.
 - Hovered `data-drag="reorder"` resolves a vertical `gap` from the upper/lower half.
 - Hovered `data-drag="slot"` resolves `replace` in the middle band and parent-level `gap` in the top/bottom bands.
-- `slot` edge-band `gap` drops insert a new parent-level group entry and move the dragged item into it.
+- `slot` edge-band `gap` drops insert a new parent-level item entry and move the dragged node into it.
 
 Drag contract:
 

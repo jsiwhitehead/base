@@ -1,6 +1,6 @@
 import { computed, signal, type Signal } from "@preact/signals-core";
 
-import type { ItemId, Location, Selection } from "../../core";
+import type { NodeId, Location, Selection } from "../../core";
 import { sameLocation, CONTENT_TEXT_TARGET } from "../../core";
 import {
   createSuppressionFlag,
@@ -11,12 +11,12 @@ import type { Ctx, SuppressionFlag, UiCore } from "../../dom";
 
 import {
   domPositionToModel,
-  ITEM_SELECTOR,
+  NODE_SELECTOR,
   VALUE_SELECTOR,
 } from "./dom-mapping";
 import { blockSelectionLocations, locationKey } from "./navigation";
 
-export type OutlinePointerIntent = "value" | "item" | null;
+export type OutlinePointerIntent = "value" | "node" | null;
 
 export type OutlinePointerRuntime = {
   beginPointerSelection: (
@@ -35,26 +35,26 @@ export type OutlinePointerRuntime = {
 };
 
 export type OutlineSelectionState = {
-  selectedItemKeys: Signal<Set<string>>;
-  valueRangeSelectedItemKeys: Signal<Set<string>>;
+  selectedNodeKeys: Signal<Set<string>>;
+  valueRangeSelectedNodeKeys: Signal<Set<string>>;
   valueSelectionCollapsed: Signal<boolean>;
 };
 
 export type OutlineSelectionEditingControls = {
   suppressSelectionSync: SuppressionFlag<boolean>;
-  clearValueRangeSelectedItems: () => void;
+  clearValueRangeSelectedNodes: () => void;
   setValueSelectionRangeState: (args: {
     collapsed: boolean;
-    startItemId?: ItemId;
-    endItemId?: ItemId;
+    startNodeId?: NodeId;
+    endNodeId?: NodeId;
   }) => void;
 };
 
 export type OutlineSelectionRuntime = {
   selectionState: OutlineSelectionState;
   onGutterPointerDown: (
-    itemId: ItemId,
-    portals: readonly ItemId[],
+    nodeId: NodeId,
+    portals: readonly NodeId[],
     shiftKey: boolean,
     pointerId: number,
   ) => void;
@@ -99,26 +99,26 @@ function isPointerEditingTarget(targetEl: Element | null): boolean {
   );
 }
 
-function resolveOutlinePointerItemId(
+function resolveOutlinePointerNodeId(
   target: EventTarget | null,
   zones: readonly OutlinePointerZone[],
-): ItemId | null {
+): NodeId | null {
   const targetEl = resolveEventTargetElement(target);
   if (!targetEl) return null;
   if (isPointerEditingTarget(targetEl)) return null;
   const zone = classifyOutlinePointerZone(targetEl);
   if (!zones.includes(zone)) return null;
-  return targetEl.closest<HTMLElement>(ITEM_SELECTOR)?.dataset.id ?? null;
+  return targetEl.closest<HTMLElement>(NODE_SELECTOR)?.dataset.id ?? null;
 }
 
-export function resolveValuePointerItemId(
+export function resolveValuePointerNodeId(
   target: EventTarget | null,
-): ItemId | null {
-  return resolveOutlinePointerItemId(target, ["value", "shell"]);
+): NodeId | null {
+  return resolveOutlinePointerNodeId(target, ["value", "shell"]);
 }
 
-function resolveItemPointerItemId(target: EventTarget | null): ItemId | null {
-  return resolveOutlinePointerItemId(target, ["header", "shell"]);
+function resolveNodePointerNodeId(target: EventTarget | null): NodeId | null {
+  return resolveOutlinePointerNodeId(target, ["header", "shell"]);
 }
 
 export function isOutlineValueEditEvent(
@@ -187,48 +187,48 @@ export function createOutlinePointerRuntime(): OutlinePointerRuntime {
 
 export function createOutlineSelectionRuntime(args: {
   core: UiCore;
-  rootId: ItemId;
-  portals: readonly ItemId[];
+  rootId: NodeId;
+  portals: readonly NodeId[];
   getRoot: () => HTMLElement | null;
   resetStickyCaretX: () => void;
 }): OutlineSelectionRuntime {
   const { core, rootId, portals, getRoot, resetStickyCaretX } = args;
-  const selectedItemKeys = computed(() => {
+  const selectedNodeKeys = computed(() => {
     const sel = core.selection();
-    if (sel.type !== "item") return new Set<string>();
+    if (sel.type !== "node") return new Set<string>();
     return new Set(
       blockSelectionLocations(core, rootId, sel, portals).map((location) =>
         locationKey(location),
       ),
     );
   });
-  const valueRangeSelectedItemKeys = signal(new Set<string>());
+  const valueRangeSelectedNodeKeys = signal(new Set<string>());
   const valueSelectionCollapsed = signal(true);
 
-  const clearValueRangeSelectedItems = (): void => {
-    if (valueRangeSelectedItemKeys.value.size === 0) return;
-    valueRangeSelectedItemKeys.value = new Set<string>();
+  const clearValueRangeSelectedNodes = (): void => {
+    if (valueRangeSelectedNodeKeys.value.size === 0) return;
+    valueRangeSelectedNodeKeys.value = new Set<string>();
   };
 
   const setValueSelectionRangeState = (args: {
     collapsed: boolean;
-    startItemId?: ItemId;
-    endItemId?: ItemId;
+    startNodeId?: NodeId;
+    endNodeId?: NodeId;
   }): void => {
-    const { collapsed, startItemId, endItemId } = args;
+    const { collapsed, startNodeId, endNodeId } = args;
     valueSelectionCollapsed.value = collapsed;
-    if (collapsed || !startItemId || !endItemId) {
-      clearValueRangeSelectedItems();
+    if (collapsed || !startNodeId || !endNodeId) {
+      clearValueRangeSelectedNodes();
       return;
     }
-    valueRangeSelectedItemKeys.value = new Set(
+    valueRangeSelectedNodeKeys.value = new Set(
       blockSelectionLocations(
         core,
         rootId,
         {
-          type: "item",
-          anchor: { item: startItemId, portals },
-          head: { item: endItemId, portals },
+          type: "node",
+          anchor: { node: startNodeId, portals },
+          head: { node: endNodeId, portals },
         },
         portals,
       ).map((location) => locationKey(location)),
@@ -240,23 +240,23 @@ export function createOutlineSelectionRuntime(args: {
   const pointer = createOutlinePointerRuntime();
 
   const onGutterPointerDown = (
-    itemId: ItemId,
-    itemPortals: readonly ItemId[],
+    nodeId: NodeId,
+    nodePortals: readonly NodeId[],
     shiftKey: boolean,
     pointerId: number,
   ): void => {
-    pointer.beginPointerSelection(pointerId, "item");
+    pointer.beginPointerSelection(pointerId, "node");
     suppressSelectionChangeFromGutter.suppressForTurn(true);
 
-    const nextFocus: Location = { item: itemId, portals: itemPortals };
+    const nextFocus: Location = { node: nodeId, portals: nodePortals };
     if (shiftKey) {
       const sel = core.selection();
-      if (sel.type === "item") {
-        core.focus({ type: "item", anchor: sel.anchor, head: nextFocus });
+      if (sel.type === "node") {
+        core.focus({ type: "node", anchor: sel.anchor, head: nextFocus });
         return;
       }
     }
-    core.focus({ type: "item", location: nextFocus });
+    core.focus({ type: "node", location: nextFocus });
   };
 
   const reconcileDomSelectionToModel = (
@@ -266,7 +266,7 @@ export function createOutlineSelectionRuntime(args: {
     if (!root) return;
     if (suppressSelectionChangeFromGutter.get()) return;
     if (suppressSelectionSync.get()) return;
-    if (pointer.getPointerIntent() === "item") {
+    if (pointer.getPointerIntent() === "node") {
       setValueSelectionRangeState({ collapsed: true });
       return;
     }
@@ -292,53 +292,53 @@ export function createOutlineSelectionRuntime(args: {
         : null;
 
     const collapsed = mappedRange.range.collapsed;
-    const startItemId = mappedRange.start.itemId;
-    const endItemId = mappedRange.end.itemId;
-    setValueSelectionRangeState({ collapsed, startItemId, endItemId });
+    const startNodeId = mappedRange.start.nodeId;
+    const endNodeId = mappedRange.end.nodeId;
+    setValueSelectionRangeState({ collapsed, startNodeId, endNodeId });
     const shouldDeferNonCollapsedPointerSync =
       allowNonCollapsedPointerDefer &&
       pointer.isPointerSelecting() &&
       !collapsed;
     if (shouldDeferNonCollapsedPointerSync) {
-      const focusItemId = focusPos?.itemId ?? endItemId;
-      const itemFocus: Location = { item: focusItemId, portals };
+      const focusNodeId = focusPos?.nodeId ?? endNodeId;
+      const nodeFocus: Location = { node: focusNodeId, portals };
       const selNow = core.selection();
       if (
         !(
           selNow.type === "editing" &&
           selNow.target === CONTENT_TEXT_TARGET &&
-          sameLocation(selNow.location, itemFocus)
+          sameLocation(selNow.location, nodeFocus)
         )
       ) {
         core.focus({
           type: "editing",
-          location: itemFocus,
+          location: nodeFocus,
           target: CONTENT_TEXT_TARGET,
         });
       }
       return;
     }
 
-    const focusItemId = focusPos?.itemId ?? endItemId;
-    const itemFocus: Location = { item: focusItemId, portals };
+    const focusNodeId = focusPos?.nodeId ?? endNodeId;
+    const nodeFocus: Location = { node: focusNodeId, portals };
     const selNow = core.selection();
     if (
       selNow.type === "editing" &&
       selNow.target === CONTENT_TEXT_TARGET &&
-      sameLocation(selNow.location, itemFocus)
+      sameLocation(selNow.location, nodeFocus)
     ) {
       return;
     }
     core.focus(
-      { type: "editing", location: itemFocus, target: CONTENT_TEXT_TARGET },
+      { type: "editing", location: nodeFocus, target: CONTENT_TEXT_TARGET },
       collapsed && focusPos ? { caret: focusPos.offset } : undefined,
     );
   };
 
   return {
     selectionState: {
-      selectedItemKeys,
-      valueRangeSelectedItemKeys,
+      selectedNodeKeys,
+      valueRangeSelectedNodeKeys,
       valueSelectionCollapsed,
     },
     onGutterPointerDown,
@@ -346,7 +346,7 @@ export function createOutlineSelectionRuntime(args: {
     pointer,
     editingControls: {
       suppressSelectionSync,
-      clearValueRangeSelectedItems,
+      clearValueRangeSelectedNodes,
       setValueSelectionRangeState,
     },
     bind: ({ on, effect, isComposing }): void => {
@@ -357,7 +357,7 @@ export function createOutlineSelectionRuntime(args: {
         core,
         root,
         portals,
-        clearValueRangeSelectedItems,
+        clearValueRangeSelectedNodes,
         reconcileDomSelectionToModel: (allowNonCollapsedPointerDefer) => {
           if (isComposing()) return;
           reconcileDomSelectionToModel(allowNonCollapsedPointerDefer);
@@ -369,7 +369,7 @@ export function createOutlineSelectionRuntime(args: {
         core,
         valueSelectionCollapsed,
         resetStickyCaretX,
-        clearValueRangeSelectedItems,
+        clearValueRangeSelectedNodes,
       });
     },
   };
@@ -379,8 +379,8 @@ export function bindOutlineSelectionEvents(args: {
   on: Ctx["on"];
   core: UiCore;
   root: HTMLElement;
-  portals: readonly ItemId[];
-  clearValueRangeSelectedItems: () => void;
+  portals: readonly NodeId[];
+  clearValueRangeSelectedNodes: () => void;
   reconcileDomSelectionToModel: (
     allowNonCollapsedPointerDefer: boolean,
   ) => void;
@@ -391,7 +391,7 @@ export function bindOutlineSelectionEvents(args: {
     core,
     root,
     portals,
-    clearValueRangeSelectedItems,
+    clearValueRangeSelectedNodes,
     reconcileDomSelectionToModel,
     pointer,
   } = args;
@@ -401,36 +401,36 @@ export function bindOutlineSelectionEvents(args: {
     if (!(next instanceof Node) || !root.contains(next)) {
       pointer.clearPointerSelectionState();
       pointer.invalidatePointerFinalize();
-      clearValueRangeSelectedItems();
+      clearValueRangeSelectedNodes();
     }
   });
 
   on(root, "pointerdown", (e: PointerEvent): void => {
     if ((e.button ?? 0) !== 0) return;
-    const targetItemId = resolveValuePointerItemId(e.target);
-    if (targetItemId) {
+    const targetNodeId = resolveValuePointerNodeId(e.target);
+    if (targetNodeId) {
       pointer.beginPointerSelection(e.pointerId, "value");
       const selNow = core.selection();
       if (
         selNow.type !== "editing" ||
         selNow.target !== CONTENT_TEXT_TARGET ||
-        selNow.location.item !== targetItemId
+        selNow.location.node !== targetNodeId
       ) {
         core.focus({
           type: "editing",
-          location: { item: targetItemId, portals },
+          location: { node: targetNodeId, portals },
           target: CONTENT_TEXT_TARGET,
         });
       }
       return;
     }
 
-    const itemTargetId = resolveItemPointerItemId(e.target);
-    if (!itemTargetId) return;
-    pointer.beginPointerSelection(e.pointerId, "item");
+    const nodeTargetId = resolveNodePointerNodeId(e.target);
+    if (!nodeTargetId) return;
+    pointer.beginPointerSelection(e.pointerId, "node");
     core.focus({
-      type: "item",
-      location: { item: itemTargetId, portals },
+      type: "node",
+      location: { node: nodeTargetId, portals },
     });
     e.stopPropagation();
   });
@@ -475,26 +475,26 @@ export function bindOutlineSelectionCleanupEffect(args: {
   core: UiCore;
   valueSelectionCollapsed: Signal<boolean>;
   resetStickyCaretX: () => void;
-  clearValueRangeSelectedItems: () => void;
+  clearValueRangeSelectedNodes: () => void;
 }): void {
   const {
     effect,
     core,
     valueSelectionCollapsed,
     resetStickyCaretX,
-    clearValueRangeSelectedItems,
+    clearValueRangeSelectedNodes,
   } = args;
   effect(() => {
     const selNow: Selection = core.selection();
     if (selNow.type !== "editing" || selNow.target !== CONTENT_TEXT_TARGET) {
       resetStickyCaretX();
-      clearValueRangeSelectedItems();
+      clearValueRangeSelectedNodes();
       return;
     }
     if (!valueSelectionCollapsed.value) {
       resetStickyCaretX();
       return;
     }
-    clearValueRangeSelectedItems();
+    clearValueRangeSelectedNodes();
   });
 }

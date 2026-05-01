@@ -4,7 +4,7 @@ import {
   CONTENT_TEXT_TARGET,
   parseGlobalKeyIntent,
   type Core,
-  type ItemId,
+  type NodeId,
   type Location,
 } from "../../core";
 import {
@@ -20,22 +20,22 @@ import {
 import type { Ctx, SuppressionFlag, UiCore } from "../../dom";
 
 import {
-  deleteMultiItemRange,
-  deleteSingleItemRange,
+  deleteMultiNodeRange,
+  deleteSingleNodeRange,
   readSelectionText,
 } from "./commands";
 import { isHorizontalEditingBoundary } from "./editing-structural";
 import {
   extendBlockSelectionByArrow,
-  isPlainValueItem,
+  isPlainValueNode,
   textLengthForTarget,
   valueToText,
   type OutlineStop,
 } from "./navigation";
 import {
   domPositionToModel,
-  ITEM_SELECTOR,
-  itemSelectorById,
+  NODE_SELECTOR,
+  nodeSelectorById,
   modelPositionToDom,
   valueCaretOffset,
   VALUE_SELECTOR,
@@ -54,12 +54,12 @@ import { isOutlineValueEditEvent } from "./runtime-selection";
 
 export type InputCtx = {
   core: Core;
-  rootId: ItemId;
-  portals: readonly ItemId[];
+  rootId: NodeId;
+  portals: readonly NodeId[];
   root: HTMLElement;
   stops: Signal<readonly OutlineStop[]>;
   applyEditingResult: ApplyEditingResult;
-  setCursorAndScrollIntoView: (itemId: ItemId, offset: number) => void;
+  setCursorAndScrollIntoView: (nodeId: NodeId, offset: number) => void;
   discardPendingMutationRecords: () => void;
   suppressMutationSync: SuppressionFlag<boolean>;
   suppressHistoryKeydown: SuppressionFlag<"undo" | "redo" | null>;
@@ -67,11 +67,11 @@ export type InputCtx = {
 
 function deleteSelection(
   ctx: InputCtx,
-  start: { itemId: ItemId; offset: number },
-  end: { itemId: ItemId; offset: number },
+  start: { nodeId: NodeId; offset: number },
+  end: { nodeId: NodeId; offset: number },
 ): void {
   if (
-    deleteSingleItemRange(
+    deleteSingleNodeRange(
       ctx.core,
       ctx.portals,
       start,
@@ -81,7 +81,7 @@ function deleteSelection(
   ) {
     return;
   }
-  deleteMultiItemRange(
+  deleteMultiNodeRange(
     ctx.core,
     ctx.portals,
     start,
@@ -112,12 +112,12 @@ export function createOutlineMutationSync(args: {
       if (!valueEl) continue;
       if (textNode && !valueEl.contains(textNode)) continue;
 
-      const itemEl = valueEl.closest<HTMLElement>(ITEM_SELECTOR);
-      const itemId = itemEl?.dataset.id as ItemId | undefined;
-      if (!itemId) continue;
+      const nodeEl = valueEl.closest<HTMLElement>(NODE_SELECTOR);
+      const nodeId = nodeEl?.dataset.id as NodeId | undefined;
+      if (!nodeId) continue;
 
-      const snap = core.item(itemId);
-      if (!isPlainValueItem(snap)) continue;
+      const snap = core.node(nodeId);
+      if (!isPlainValueNode(snap)) continue;
 
       if (
         mutation.type === "childList" &&
@@ -136,7 +136,7 @@ export function createOutlineMutationSync(args: {
       }
       const newText = readPlainTextFromContentEditable(valueEl);
       if (valueToText(snap.content.value) === newText) continue;
-      core.commit((t) => t.setValue(itemId, newText));
+      core.commit((t) => t.setValue(nodeId, newText));
     }
   });
 
@@ -161,7 +161,7 @@ export function createOutlineMutationSync(args: {
 }
 
 export type OutlineInputRuntime = {
-  setCursorAndScrollIntoView: (itemId: ItemId, offset: number) => void;
+  setCursorAndScrollIntoView: (nodeId: NodeId, offset: number) => void;
   applyEditingResult: ApplyEditingResult;
   applyNavigationEditingResult: ApplyEditingResult;
   bind: (args: {
@@ -178,8 +178,8 @@ export type OutlineInputRuntime = {
 
 export function createOutlineInputRuntime(args: {
   core: UiCore;
-  rootId: ItemId;
-  portals: readonly ItemId[];
+  rootId: NodeId;
+  portals: readonly NodeId[];
   root: HTMLElement;
   stops: Signal<readonly OutlineStop[]>;
   resetStickyCaretX: () => void;
@@ -202,20 +202,20 @@ export function createOutlineInputRuntime(args: {
   } = args;
   const {
     suppressSelectionSync,
-    clearValueRangeSelectedItems,
+    clearValueRangeSelectedNodes,
     setValueSelectionRangeState,
   } = selection;
 
-  const setCursorAndScrollIntoView = (itemId: ItemId, offset: number): void => {
+  const setCursorAndScrollIntoView = (nodeId: NodeId, offset: number): void => {
     discardPendingMutationRecords();
-    const pos = modelPositionToDom(root, itemId, offset);
+    const pos = modelPositionToDom(root, nodeId, offset);
     if (pos) {
       suppressSelectionSync.suppressForTurn(true);
       setDomCaret(pos);
       setValueSelectionRangeState({ collapsed: true });
     }
-    const itemEl = root.querySelector<HTMLElement>(itemSelectorById(itemId));
-    const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
+    const nodeEl = root.querySelector<HTMLElement>(nodeSelectorById(nodeId));
+    const valueEl = nodeEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
     valueEl?.scrollIntoView({ block: "nearest" });
   };
 
@@ -224,7 +224,7 @@ export function createOutlineInputRuntime(args: {
   ): void => {
     const { location, target, caret, scrollIntoView } = args;
     if (target !== CONTENT_TEXT_TARGET || caret !== undefined) {
-      clearValueRangeSelectedItems();
+      clearValueRangeSelectedNodes();
     }
     core.focus(
       { type: "editing", location, target },
@@ -232,7 +232,7 @@ export function createOutlineInputRuntime(args: {
     );
     if (target !== CONTENT_TEXT_TARGET || !scrollIntoView) return;
     const run = (): void => {
-      setCursorAndScrollIntoView(location.item, scrollIntoView.offset);
+      setCursorAndScrollIntoView(location.node, scrollIntoView.offset);
     };
     if (scrollIntoView.defer === false) run();
     else queueMicrotask(run);
@@ -305,8 +305,8 @@ export function bindOutlineBodyInputEvents(args: {
   setIsComposing: (next: boolean) => void;
   setValueSelectionRangeState: (args: {
     collapsed: boolean;
-    startItemId?: ItemId;
-    endItemId?: ItemId;
+    startNodeId?: NodeId;
+    endNodeId?: NodeId;
   }) => void;
   suppressSelectionSync: SuppressionFlag<boolean>;
 }): void {
@@ -417,8 +417,8 @@ function bindOutlineKeydownEvents(args: {
   root: HTMLElement;
   gated: <E extends Event>(handler: (e: E) => void) => (e: E) => void;
   core: Core;
-  rootId: ItemId;
-  portals: readonly ItemId[];
+  rootId: NodeId;
+  portals: readonly NodeId[];
   inputCtx: InputCtx;
   applyNavigationEditingResult: ApplyEditingResult;
   getCompositionEndedAt: () => number;
@@ -427,8 +427,8 @@ function bindOutlineKeydownEvents(args: {
   resetStickyCaretX: () => void;
   setValueSelectionRangeState: (args: {
     collapsed: boolean;
-    startItemId?: ItemId;
-    endItemId?: ItemId;
+    startNodeId?: NodeId;
+    endNodeId?: NodeId;
   }) => void;
   suppressSelectionSync: SuppressionFlag<boolean>;
   discardPendingMutationRecords: () => void;
@@ -463,7 +463,7 @@ function bindOutlineKeydownEvents(args: {
         return;
       }
       const sel = core.selection();
-      if (sel.type === "item") {
+      if (sel.type === "node") {
         if (
           e.shiftKey &&
           !e.altKey &&
@@ -480,7 +480,7 @@ function bindOutlineKeydownEvents(args: {
           );
           if (!next) return;
           e.preventDefault();
-          core.focus({ type: "item", anchor: sel.anchor, head: next });
+          core.focus({ type: "node", anchor: sel.anchor, head: next });
           return;
         }
       }
@@ -512,38 +512,38 @@ function bindOutlineKeydownEvents(args: {
           return;
         }
 
-        const seen = new Set<ItemId>();
-        let firstItemId: ItemId | undefined;
-        let lastItemId: ItemId | undefined;
+        const seen = new Set<NodeId>();
+        let firstNodeId: NodeId | undefined;
+        let lastNodeId: NodeId | undefined;
         for (const stop of inputCtx.stops.value) {
           if (stop.type !== "editing" || stop.target !== CONTENT_TEXT_TARGET) {
             continue;
           }
-          const itemId = stop.location.item;
-          if (seen.has(itemId)) continue;
-          seen.add(itemId);
-          if (!firstItemId) firstItemId = itemId;
-          lastItemId = itemId;
+          const nodeId = stop.location.node;
+          if (seen.has(nodeId)) continue;
+          seen.add(nodeId);
+          if (!firstNodeId) firstNodeId = nodeId;
+          lastNodeId = nodeId;
         }
-        if (!firstItemId || !lastItemId) return;
+        if (!firstNodeId || !lastNodeId) return;
 
         e.preventDefault();
         setValueSelectionRangeState({
           collapsed: false,
-          startItemId: firstItemId,
-          endItemId: lastItemId,
+          startNodeId: firstNodeId,
+          endNodeId: lastNodeId,
         });
         core.focus({
           type: "editing",
-          location: { item: lastItemId, portals },
+          location: { node: lastNodeId, portals },
           target: CONTENT_TEXT_TARGET,
         });
 
-        const anchorDom = modelPositionToDom(root, firstItemId, 0);
+        const anchorDom = modelPositionToDom(root, firstNodeId, 0);
         const focusDom = modelPositionToDom(
           root,
-          lastItemId,
-          textLengthForTarget(core, lastItemId, CONTENT_TEXT_TARGET),
+          lastNodeId,
+          textLengthForTarget(core, lastNodeId, CONTENT_TEXT_TARGET),
         );
         if (anchorDom && focusDom) {
           suppressSelectionSync.suppressForTurn(true);
@@ -630,7 +630,7 @@ function bindOutlineKeydownEvents(args: {
       if (e.key === "Tab") {
         const modelSel = core.selection();
         if (modelSel.type !== "editing") return;
-        const caretOffset = valueCaretOffset(root, modelSel.location.item) ?? 0;
+        const caretOffset = valueCaretOffset(root, modelSel.location.node) ?? 0;
         resetStickyCaretX();
         inputCtx.suppressMutationSync.suppressForTurn(true);
         e.preventDefault();

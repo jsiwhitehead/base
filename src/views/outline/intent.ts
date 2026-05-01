@@ -1,4 +1,4 @@
-import type { Intent, ItemId, Location } from "../../core";
+import type { Intent, NodeId, Location } from "../../core";
 import { CONTENT_TEXT_TARGET, LABEL_TARGET } from "../../core";
 import type { UiCore } from "../../dom";
 
@@ -14,17 +14,17 @@ import {
   handleOutlineEditingDelete,
   handleOutlineEditingNav,
 } from "./editing-structural";
-import { blockSelectionItems } from "./navigation";
-import { handleOutlineItemNav } from "./runtime";
+import { blockSelectionNodes } from "./navigation";
+import { handleOutlineNodeNav } from "./runtime";
 
 function focusFirstChildIfAny(core: UiCore, location: Location): boolean {
-  const item = core.item(location.item);
-  if (item.content.type !== "group") return false;
-  const firstChildId = item.content.children[0] ?? null;
+  const node = core.node(location.node);
+  if (node.content.type !== "item") return false;
+  const firstChildId = node.content.children[0] ?? null;
   if (!firstChildId) return false;
   core.focus({
-    type: "item",
-    location: { item: firstChildId, portals: location.portals },
+    type: "node",
+    location: { node: firstChildId, portals: location.portals },
   });
   return true;
 }
@@ -34,17 +34,17 @@ function createFirstChildAndFocus(
   location: Location,
   initialText: string,
 ): boolean {
-  const item = core.item(location.item);
-  if (item.mode.type === "readonly") return false;
-  if (item.content.type !== "group") return false;
-  if (item.content.children.length !== 0) return false;
+  const node = core.node(location.node);
+  if (node.mode.type === "readonly") return false;
+  if (node.content.type !== "item") return false;
+  if (node.content.children.length !== 0) return false;
 
   const childId = outlineCmd.createFirstChild(core, location, initialText);
   if (!childId) return false;
   core.focus(
     {
       type: "editing",
-      location: { item: childId, portals: location.portals },
+      location: { node: childId, portals: location.portals },
       target: CONTENT_TEXT_TARGET,
     },
     { caret: initialText.length },
@@ -52,15 +52,15 @@ function createFirstChildAndFocus(
   return true;
 }
 
-function focusInsertedItem(
+function focusInsertedNode(
   core: UiCore,
-  itemId: ItemId,
-  portals: readonly ItemId[],
+  nodeId: NodeId,
+  portals: readonly NodeId[],
 ): void {
   core.focus(
     {
       type: "editing",
-      location: { item: itemId, portals },
+      location: { node: nodeId, portals },
       target: CONTENT_TEXT_TARGET,
     },
     { caret: 0 },
@@ -79,11 +79,11 @@ function nextOutlineTabFocus(
 
 export function createOutlineValueTabHandler(args: {
   core: UiCore;
-  viewRootId: ItemId;
+  viewRootId: NodeId;
 }): (location: Location, shift: boolean, caret: number) => void {
   const { core, viewRootId } = args;
   return (location: Location, shift: boolean, caret: number): void => {
-    if (shift && location.item === viewRootId) return;
+    if (shift && location.node === viewRootId) return;
     const nextFocus = nextOutlineTabFocus(core, location, shift);
     if (!nextFocus) return;
     core.focus(
@@ -93,14 +93,14 @@ export function createOutlineValueTabHandler(args: {
   };
 }
 
-export function createOutlineItemTabHandler(args: {
+export function createOutlineNodeTabHandler(args: {
   core: UiCore;
 }): (location: Location, shift: boolean) => void {
   const { core } = args;
   return (location, shift) => {
     const nextFocus = nextOutlineTabFocus(core, location, shift);
     if (!nextFocus) return;
-    core.focus({ type: "item", location: nextFocus });
+    core.focus({ type: "node", location: nextFocus });
   };
 }
 
@@ -109,28 +109,28 @@ function handleOutlineType(
   location: Location,
   char: string,
 ): void {
-  const item = core.item(location.item);
-  if (item.mode.type === "readonly") return;
+  const node = core.node(location.node);
+  if (node.mode.type === "readonly") return;
   createFirstChildAndFocus(core, location, char);
 }
 
-export function handleOutlineItemDelete(args: {
+export function handleOutlineNodeDelete(args: {
   core: UiCore;
-  viewRootId: ItemId;
-  portals: readonly ItemId[];
-  selection: Extract<ReturnType<UiCore["selection"]>, { type: "item" }>;
+  viewRootId: NodeId;
+  portals: readonly NodeId[];
+  selection: Extract<ReturnType<UiCore["selection"]>, { type: "node" }>;
 }): void {
   const { core, viewRootId, portals, selection } = args;
-  const selectedItems = blockSelectionItems(
+  const selectedNodes = blockSelectionNodes(
     core,
     viewRootId,
     selection,
     portals,
   );
 
-  if (selectedItems.length > 1) {
-    const lastId = selectedItems[selectedItems.length - 1]!;
-    const blockPlan = planBlockRemoval(core, viewRootId, selectedItems);
+  if (selectedNodes.length > 1) {
+    const lastId = selectedNodes[selectedNodes.length - 1]!;
+    const blockPlan = planBlockRemoval(core, viewRootId, selectedNodes);
     const nextFocus = resolveFocusAfterOutlineRemove(
       core,
       viewRootId,
@@ -140,14 +140,14 @@ export function handleOutlineItemDelete(args: {
       blockPlan.removedIds,
     );
     removeBlockSelection(core, viewRootId, selection, portals, blockPlan);
-    if (nextFocus) core.focus({ type: "item", location: nextFocus });
+    if (nextFocus) core.focus({ type: "node", location: nextFocus });
     return;
   }
 
-  const id = selection.head.item;
+  const id = selection.head.node;
   if (!core.locate(id)) return;
-  if (core.item(id).mode.type === "readonly") return;
-  const removedIds = new Set<ItemId>([
+  if (core.node(id).mode.type === "readonly") return;
+  const removedIds = new Set<NodeId>([
     id,
     ...computePruneAncestorsForRemoval(core, viewRootId, id),
   ]);
@@ -160,13 +160,13 @@ export function handleOutlineItemDelete(args: {
     removedIds,
   );
   outlineCmd.removeAndPruneAncestors(core, viewRootId, id);
-  if (nextFocus) core.focus({ type: "item", location: nextFocus });
+  if (nextFocus) core.focus({ type: "node", location: nextFocus });
 }
 
 export function createOutlineIntentHandler(args: {
   core: UiCore;
-  viewRootId: ItemId;
-  portals: readonly ItemId[];
+  viewRootId: NodeId;
+  portals: readonly NodeId[];
 }): (intent: Intent) => void {
   const { core, viewRootId, portals } = args;
 
@@ -175,7 +175,7 @@ export function createOutlineIntentHandler(args: {
     if (selection.type === "idle") return;
     const sel = selection;
 
-    const location: Location = sel.type === "item" ? sel.head : sel.location;
+    const location: Location = sel.type === "node" ? sel.head : sel.location;
 
     if (intent.type === "DELETE") {
       if (sel.type === "editing") {
@@ -188,7 +188,7 @@ export function createOutlineIntentHandler(args: {
         });
         return;
       }
-      handleOutlineItemDelete({
+      handleOutlineNodeDelete({
         core,
         viewRootId,
         portals,
@@ -209,7 +209,7 @@ export function createOutlineIntentHandler(args: {
           });
           return;
         }
-        handleOutlineItemNav({
+        handleOutlineNodeNav({
           core,
           viewRootId,
           portals,
@@ -219,7 +219,7 @@ export function createOutlineIntentHandler(args: {
         return;
       }
       case "TYPE": {
-        if (sel.type !== "item") return;
+        if (sel.type !== "node") return;
         handleOutlineType(core, location, intent.char);
         return;
       }
@@ -251,7 +251,7 @@ export function createOutlineIntentHandler(args: {
           intent.scope,
         );
         if (!nextId) return;
-        focusInsertedItem(core, nextId, portals);
+        focusInsertedNode(core, nextId, portals);
         return;
       }
     }

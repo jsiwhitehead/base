@@ -6,7 +6,7 @@ A view built on `contenteditable` uses a single editing root. This document cove
 
 The established approach (ProseMirror, Lexical) uses a single `contenteditable` root. The alternatives fail structurally:
 
-- **One input/textarea per item** — no cross-item selection, no cross-item paste, IME breaks at item boundaries, poor accessibility.
+- **One input/textarea per node** — no cross-node selection, no cross-node paste, IME breaks at node boundaries, poor accessibility.
 - **Fully custom rendering** — must re-implement all browser text input behaviour; IME (CJK, Arabic, etc.) is notoriously hard to get right; accessibility requires `contenteditable`; spell-check, autocorrect, and OS text services are lost.
 
 `contenteditable` gives: native cursor and caret, IME, spell-check, autocorrect, accessibility, system copy/paste. The architecture's job is to intercept browser behaviour at the right points and keep the model as the single source of truth.
@@ -60,9 +60,9 @@ Fires before DOM mutation; `e.preventDefault()` suppresses the browser's action.
 
 | `inputType`                                                                                | Handling                                                                                                                               |
 | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `insertText`                                                                               | Prevent; apply via model text insertion. Guard: non-empty groups reject text insertion                                                 |
+| `insertText`                                                                               | Prevent; apply via model text insertion. Guard: non-empty items reject text insertion                                                  |
 | `insertReplacementText`                                                                    | Prevent; apply replacement via model using target range when available; fallback to model insert (autocorrect replacement-intent path) |
-| `insertParagraph`, `insertLineBreak`                                                       | Prevent; split item at cursor                                                                                                          |
+| `insertParagraph`, `insertLineBreak`                                                       | Prevent; split node at cursor                                                                                                          |
 | `deleteContentBackward`, `deleteContentForward`, `deleteWordBackward`, `deleteWordForward` | Handle in model; if not handleable (for example unsupported cross-parent range), still prevent native DOM mutation                     |
 | `insertFromPaste`                                                                          | Prevent (browser DOM mutation only; insertion is handled in the `paste` event)                                                         |
 | `insertFromDrop`                                                                           | Prevent (browser DOM mutation only; insertion is handled in the `drop` event)                                                          |
@@ -131,7 +131,7 @@ Native contenteditable undo (`Cmd+Z`) reverts DOM changes without touching the m
 
 Application undo/redo replays recorded transactions; reactive effects reconcile the DOM. The browser's undo stack is never involved.
 
-**History coalescing.** Consecutive character edits on the same item merge into a single undo entry rather than one per keystroke. The grouping key is item ID + target; merging stops when a non-character operation occurs or after a time window.
+**History coalescing.** Consecutive character edits on the same node merge into a single undo entry rather than one per keystroke. The grouping key is node ID + target; merging stops when a non-character operation occurs or after a time window.
 
 **Flushing/sealing.** The active coalescing group MUST be flushed at `compositionstart` and sealed at `compositionend` (see IME section above).
 
@@ -195,11 +195,11 @@ observer.observe(contenteditableRoot, {
 Two mutation types matter:
 
 - `characterData` — normal typing; modifies an existing text node.
-- `childList` — **the first character in an empty item** creates a new text node rather than modifying one. Without `childList: true` this character is silently lost — a well-known gotcha. Also filter bare `<br>` insertions: browsers add one to maintain editability in an empty surface; treat it as structural noise, not a text edit, or the model briefly sees `"\n"` as content.
+- `childList` — **the first character in an empty node** creates a new text node rather than modifying one. Without `childList: true` this character is silently lost — a well-known gotcha. Also filter bare `<br>` insertions: browsers add one to maintain editability in an empty surface; treat it as structural noise, not a text edit, or the model briefly sees `"\n"` as content.
 
 `characterDataOldValue: true` provides each `characterData` record's previous text. If `record.target.data === record.oldValue`, treat it as a no-op re-normalization and skip the full-surface read. Keep the full-surface idempotency check as fallback for `childList` mutations and any case without usable `oldValue`.
 
-The observer is a **text-sync channel**, not a general source of truth for every DOM mutation. App-authored structural and reconciliation DOM churn must not be misclassified as user text edits. With `subtree: true` the observer fires for mutations anywhere in the editing root; each `MutationRecord.target` must be traced up the DOM to identify which item's value surface was affected. Mutations outside any value surface are skipped.
+The observer is a **text-sync channel**, not a general source of truth for every DOM mutation. App-authored structural and reconciliation DOM churn must not be misclassified as user text edits. With `subtree: true` the observer fires for mutations anywhere in the editing root; each `MutationRecord.target` must be traced up the DOM to identify which node's value surface was affected. Mutations outside any value surface are skipped.
 
 Read the full value surface with the plain-text parser, not the mutated node. IME and autocorrect can produce multiple adjacent text nodes and `<br>`/block wrappers; only full-surface parsing is reliable.
 
@@ -247,13 +247,13 @@ Rules:
 
 ## DOM structure
 
-A view built on `contenteditable` has a single editing root with recursively rendered item rows. Each row contains:
+A view built on `contenteditable` has a single editing root with recursively rendered node rows. Each row contains:
 
 - **Gutter/handle** — structural chrome; `contenteditable="false"`
 - **Value surface** — the text editing surface; uniquely identifiable; the only zone without editing suppression
 - **Non-text metadata/control zone** — optional; `contenteditable="false"`
 - **Embedded interactive subtree zone** — optional; `contenteditable="false"`
-- **Child item list** — optional; holds nested item rows for group items
+- **Child node list** — optional; holds nested node rows for item nodes
 
 **`contenteditable="false"` on all non-text zones** is mandatory. Without it the browser treats structural and control content as editable, producing corrupt mutations and broken selection behaviour.
 
@@ -261,19 +261,19 @@ Plain-text value surfaces SHOULD always contain at least one caret-host node (fo
 
 **`preventDefault()` on structural chrome `pointerdown`.** All `contenteditable="false"` structural chrome inside the editing root — gutter, drag handle, collapse toggle — must call `e.preventDefault()` on `pointerdown`. Without it, the browser silently relocates the text cursor to the nearest text position at the click coordinates before any handler runs. Applies only to interactive chrome inside the editing root; elements outside follow normal focus rules.
 
-**Location/blur lifecycle with embedded controls.** Embedded controls within `contenteditable="false"` zones steal DOM focus when clicked — the item is still logically focused. The runtime must distinguish focus leaving the editor host entirely from focus moving to an embedded control within it. Save the last known selection on `blur` and restore it on `focus`; browsers do not reliably restore cursor position, and without this the cursor resets to position 0.
+**Location/blur lifecycle with embedded controls.** Embedded controls within `contenteditable="false"` zones steal DOM focus when clicked — the node is still logically focused. The runtime must distinguish focus leaving the editor host entirely from focus moving to an embedded control within it. Save the last known selection on `blur` and restore it on `focus`; browsers do not reliably restore cursor position, and without this the cursor resets to position 0.
 
-**Exiting `contenteditable` requires explicit selection clear.** Moving DOM focus away from a `contenteditable` surface does not reliably clear the browser's document selection. When text editing exits to structural/item selection, clear the DOM document selection before or while focusing the structural owner, or a stale caret/range may remain visible in the old surface.
+**Exiting `contenteditable` requires explicit selection clear.** Moving DOM focus away from a `contenteditable` surface does not reliably clear the browser's document selection. When text editing exits to structural/node selection, clear the DOM document selection before or while focusing the structural owner, or a stale caret/range may remain visible in the old surface.
 
 **Decorations and overlays.** Visual adornments must not be interleaved with the editing root DOM. Two approaches, both driven reactively from model signals:
 
-- **Node decorations** — CSS classes or attributes on existing item elements driven by reactive state updates. Correct for per-item state: selected, focused, collapsed, error.
-- **Overlay layer** — a separate element positioned above the editing root with absolutely-positioned children computed from item bounding boxes. Correct for multi-item highlights, annotations, or anything spanning item boundaries.
+- **Node decorations** — CSS classes or attributes on existing node elements driven by reactive state updates. Correct for per-node state: selected, focused, collapsed, error.
+- **Overlay layer** — a separate element positioned above the editing root with absolutely-positioned children computed from node bounding boxes. Correct for multi-node highlights, annotations, or anything spanning node boundaries.
 
 **Durable requirements:**
 
 - Value surface is uniquely identifiable (for observer target identification and position mapping)
-- Item identity is available on row hosts (for DOM↔model mapping)
+- Node identity is available on row hosts (for DOM↔model mapping)
 - Mounted non-text metadata/control roots and embedded interactive subtree roots are explicitly marked `contenteditable="false"`
 - `spellcheck="false"` `autocorrect="off"` `autocapitalize="off"` on the editing root — suppresses browser input transforms, particularly on mobile
 - Observer text sync is scoped to the value surface; structural DOM churn is distinguishable and ignorable
@@ -282,13 +282,13 @@ Plain-text value surfaces SHOULD always contain at least one caret-host node (fo
 
 A deterministic bridge between browser cursor positions and model positions is required:
 
-- **DOM position -> `{ itemId, offset }`** — to determine which item and offset the cursor is at
+- **DOM position -> `{ nodeId, offset }`** — to determine which node and offset the cursor is at
 - **Model position -> DOM point/offset** — to programmatically place the cursor
 
-**Cursor restoration after structural ops.** After any structural commit (split, join, paste-expand, item removal with join), the browser cursor is left pointing at DOM nodes that may no longer exist or have been repositioned by reconciliation. The cursor must be programmatically restored:
+**Cursor restoration after structural ops.** After any structural commit (split, join, paste-expand, node removal with join), the browser cursor is left pointing at DOM nodes that may no longer exist or have been repositioned by reconciliation. The cursor must be programmatically restored:
 
 ```ts
-const { node, offset } = mapModelPositionToDom(targetItemId, targetOffset);
+const { node, offset } = mapModelPositionToDom(targetNodeId, targetOffset);
 selection.setBaseAndExtent(node, offset, node, offset);
 ```
 
@@ -314,8 +314,8 @@ Arrow movement should stay native inside a text surface so wrapped-line movement
 Left/Right stays native until the caret reaches a text boundary. At that point the editor intercepts in `keydown`:
 
 ```
-ArrowLeft  + caretOffset === 0                   -> preventDefault + jump to end of previous item
-ArrowRight + caretOffset === modelText.length    -> preventDefault + jump to start of next item
+ArrowLeft  + caretOffset === 0                   -> preventDefault + jump to end of previous node
+ArrowRight + caretOffset === modelText.length    -> preventDefault + jump to start of next node
 otherwise                                         -> let browser handle
 ```
 
@@ -354,24 +354,24 @@ When vertical traversal enters another text surface, the caret should land at th
 
 - **Don't intercept all arrow keys** and navigate by model position — this loses wrapped-line awareness, bidirectional text, and OS text services.
 - **Don't correct cursor position after `selectionchange`** — by then the cursor is already wrong; `keydown` interception before the browser acts is the correct point.
-- **Don't use character offset alone to detect first/last line** — `anchorOffset === 0` indicates the text start but not which visual line for wrapped items; rect comparison is the reliable approach.
+- **Don't use character offset alone to detect first/last line** — `anchorOffset === 0` indicates the text start but not which visual line for wrapped nodes; rect comparison is the reliable approach.
 
 ## Selection
 
 ### Model during drag
 
 During text drag selection, application selection should remain in text-edit mode and should not be cleared just because the DOM range is expanding.
-The app should keep tracking the active item and text-edit target, while DOM `Selection` remains the source of live range endpoints during the drag.
+The app should keep tracking the active node and text-edit target, while DOM `Selection` remains the source of live range endpoints during the drag.
 
 ```
-mousedown   -> text edit focus on item A, DOM range collapsed
-drag moves  -> text edit focus remains on item A, DOM range extended
-settles     -> text edit focus may move to item X, DOM range collapsed
+mousedown   -> text edit focus on node A, DOM range collapsed
+drag moves  -> text edit focus remains on node A, DOM range extended
+settles     -> text edit focus may move to node X, DOM range collapsed
 ```
 
 Operations triggered mid-range (type to replace, copy, cut) use the live DOM range directly — no awkward save-and-restore logic needed.
 
-The browser exposes `anchorNode/anchorOffset` (fixed — where the selection started) and `focusNode/focusOffset` (the moving end). The `selectionchange` handler maps the **focus** side to the active editing position and caret, so backward drags and extended selections keep item identity aligned to the moving endpoint.
+The browser exposes `anchorNode/anchorOffset` (fixed — where the selection started) and `focusNode/focusOffset` (the moving end). The `selectionchange` handler maps the **focus** side to the active editing position and caret, so backward drags and extended selections keep node identity aligned to the moving endpoint.
 
 ### `selectionchange` reconciliation algorithm
 
@@ -385,19 +385,19 @@ Recommended order:
 4. Exit if either selection endpoint is outside the active editor root.
 5. Map DOM endpoints into model positions; if unmappable, clear range visuals and exit.
    During active pointer selection, a temporary unmappable state may be tolerated to avoid range-visual flicker/churn.
-6. Update range-visual state (collapsed vs expanded; start/end items).
+6. Update range-visual state (collapsed vs expanded; start/end nodes).
 7. Derive focus-side model location from DOM focus endpoint.
 8. If model selection is already on the same editing location+target, exit.
 9. Otherwise write editing selection, with caret only when collapsed.
 
 Rules:
 
-- Never "correct" intra-item cursor movement after the fact.
+- Never "correct" intra-node cursor movement after the fact.
 - Reconcile only when mapping is valid inside owned contenteditable surfaces.
 - Prefer focus endpoint identity for active editing location.
-- Expanded ranges should preserve editing mode rather than dropping to item mode.
+- Expanded ranges should preserve editing mode rather than dropping to node mode.
 
-This keeps pointer drag selection stable and avoids item/editing thrash.
+This keeps pointer drag selection stable and avoids node/editing thrash.
 
 ### Default-prevention matrix for pointer-related paths
 

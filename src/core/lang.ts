@@ -4,10 +4,10 @@ import type { EvalEnv, Result } from "./eval";
 import {
   Results,
   isBlankResult,
-  isEntryGroupResult,
+  isEntryItemResult,
   isIssueResult,
   isPresent,
-  isResultGroupResult,
+  isResultItemResult,
   isScalarResult,
   isTrue,
 } from "./eval";
@@ -18,20 +18,19 @@ const ISSUE = {
   numOrBlank: "Expected number or blank",
   text: "Expected text",
   textOrBlank: "Expected text or blank",
-  group: "Expected group",
+  item: "Expected item",
   posLabelMustBeTextOrNumber: "Label/position must be text or number",
   unknownLabel: (label: string) => `Unknown label '${label}'`,
-  labelOnNonEntryGroup: (label: string) =>
-    `Cannot access label '${label}' of non-entry-group content`,
+  labelOnNonEntryItem: (label: string) =>
+    `Cannot access label '${label}' of non-entry-item content`,
   positionFinite: "Position must be a finite number",
   positionOneBased: "Position must be 1 or greater",
   positionOutOfRange: (position: number, len: number) =>
     `Position ${position} is out of range (length ${len})`,
-  selectPosNonEntryGroup:
-    "Cannot select a position from non-entry-group content",
-  selectPosNonResultGroup:
-    "Cannot select a position from non-result-group content",
-  selectPosNonGroup: "Cannot select a position from non-group content",
+  selectPosNonEntryItem: "Cannot select a position from non-entry-item content",
+  selectPosNonResultItem:
+    "Cannot select a position from non-result-item content",
+  selectPosNonItem: "Cannot select a position from non-item content",
   fnName: "Expected function name",
 } as const;
 
@@ -135,13 +134,13 @@ interface Call {
 
 interface Select {
   type: "Select";
-  group: Expr;
+  item: Expr;
   select: Expr;
 }
 
 interface Member {
   type: "Member";
-  group: Expr;
+  item: Expr;
   label: Ident;
 }
 
@@ -236,7 +235,7 @@ const SEMANTICS = GRAMMAR.createSemantics().addAttribute("ast", {
     const select = expr.ast;
     return (receiver: Expr): Select => ({
       type: "Select",
-      group: receiver,
+      item: receiver,
       select,
     });
   },
@@ -245,7 +244,7 @@ const SEMANTICS = GRAMMAR.createSemantics().addAttribute("ast", {
     const label: Ident = { type: "Ident", label: labelTok.sourceString };
     return (receiver: Expr): Member => ({
       type: "Member",
-      group: receiver,
+      item: receiver,
       label,
     });
   },
@@ -271,7 +270,7 @@ const SEMANTICS = GRAMMAR.createSemantics().addAttribute("ast", {
   Prim_dotsel(_dot, _open, expr, _close) {
     const select: Select = {
       type: "Select",
-      group: IMPLICIT_PARAM,
+      item: IMPLICIT_PARAM,
       select: expr.ast,
     };
     return select;
@@ -280,7 +279,7 @@ const SEMANTICS = GRAMMAR.createSemantics().addAttribute("ast", {
   Prim_dot(_dot, labelTok) {
     const member: Member = {
       type: "Member",
-      group: IMPLICIT_PARAM,
+      item: IMPLICIT_PARAM,
       label: { type: "Ident", label: labelTok.sourceString },
     };
     return member;
@@ -398,17 +397,17 @@ function numericOp(
   return map(...(nums as number[]));
 }
 
-function getEntryGroupByLabel(
-  group: Result,
+function getEntryItemByLabel(
+  item: Result,
   label: string,
   env: EvalEnv,
 ): Result {
-  if (isIssueResult(group)) return group;
-  if (!isEntryGroupResult(group))
-    return Results.issue(ISSUE.labelOnNonEntryGroup(label));
+  if (isIssueResult(item)) return item;
+  if (!isEntryItemResult(item))
+    return Results.issue(ISSUE.labelOnNonEntryItem(label));
 
   const want = label.trim();
-  const id = group.entryIds.find((cid) => env.getLabel(cid) === want);
+  const id = item.entryIds.find((cid) => env.getLabel(cid) === want);
   if (id == null) return Results.issue(ISSUE.unknownLabel(want));
   return env.resolve(id);
 }
@@ -420,62 +419,59 @@ function normalizePosition(position: number): { index: number } | Result {
   return { index };
 }
 
-function getEntryGroupByPosition(
-  group: Result,
+function getEntryItemByPosition(
+  item: Result,
   position: number,
   env: EvalEnv,
 ): Result {
-  if (isIssueResult(group)) return group;
+  if (isIssueResult(item)) return item;
 
   const norm = normalizePosition(position);
   if ("type" in norm) return norm;
 
-  if (!isEntryGroupResult(group))
-    return Results.issue(ISSUE.selectPosNonEntryGroup);
+  if (!isEntryItemResult(item))
+    return Results.issue(ISSUE.selectPosNonEntryItem);
 
-  const id = group.entryIds[norm.index];
+  const id = item.entryIds[norm.index];
   if (id == null)
     return Results.issue(
-      ISSUE.positionOutOfRange(position, group.entryIds.length),
+      ISSUE.positionOutOfRange(position, item.entryIds.length),
     );
   return env.resolve(id);
 }
 
-function getValueGroupByPosition(group: Result, position: number): Result {
-  if (isIssueResult(group)) return group;
+function getValueItemByPosition(item: Result, position: number): Result {
+  if (isIssueResult(item)) return item;
 
   const norm = normalizePosition(position);
   if ("type" in norm) return norm;
 
-  if (!isResultGroupResult(group))
-    return Results.issue(ISSUE.selectPosNonResultGroup);
+  if (!isResultItemResult(item))
+    return Results.issue(ISSUE.selectPosNonResultItem);
 
-  const item = group.items[norm.index];
-  if (item == null)
-    return Results.issue(
-      ISSUE.positionOutOfRange(position, group.items.length),
-    );
-  return item.result;
+  const node = item.nodes[norm.index];
+  if (node == null)
+    return Results.issue(ISSUE.positionOutOfRange(position, item.nodes.length));
+  return node.result;
 }
 
 function getByPositionOrLabel(
-  group: Result,
+  item: Result,
   selectionValue: Result,
   env: EvalEnv,
 ): Result {
-  if (isIssueResult(group)) return group;
+  if (isIssueResult(item)) return item;
   if (isIssueResult(selectionValue)) return selectionValue;
 
   if (isScalarResult(selectionValue)) {
     const lit = selectionValue.result;
     if (typeof lit === "number") {
-      if (isEntryGroupResult(group))
-        return getEntryGroupByPosition(group, lit, env);
-      if (isResultGroupResult(group))
-        return getValueGroupByPosition(group, lit);
-      return Results.issue(ISSUE.selectPosNonGroup);
+      if (isEntryItemResult(item))
+        return getEntryItemByPosition(item, lit, env);
+      if (isResultItemResult(item)) return getValueItemByPosition(item, lit);
+      return Results.issue(ISSUE.selectPosNonItem);
     }
-    if (typeof lit === "string") return getEntryGroupByLabel(group, lit, env);
+    if (typeof lit === "string") return getEntryItemByLabel(item, lit, env);
   }
 
   return Results.issue(ISSUE.posLabelMustBeTextOrNumber);
@@ -565,26 +561,26 @@ function typedFn<A extends unknown[]>(
   };
 }
 
-function iterGroupValues(group: Result, env: EvalEnv): Result[] {
-  if (isIssueResult(group)) throw new TypeError(group.message);
-  if (isEntryGroupResult(group))
-    return group.entryIds.map((id) => env.resolve(id));
-  if (isResultGroupResult(group)) return group.items.map((item) => item.result);
-  throw new TypeError(ISSUE.group);
+function iterItemValues(item: Result, env: EvalEnv): Result[] {
+  if (isIssueResult(item)) throw new TypeError(item.message);
+  if (isEntryItemResult(item))
+    return item.entryIds.map((id) => env.resolve(id));
+  if (isResultItemResult(item)) return item.nodes.map((node) => node.result);
+  throw new TypeError(ISSUE.item);
 }
 
-function groupNumbersOpt(group: Result, env: EvalEnv): number[] {
+function itemNumbersOpt(item: Result, env: EvalEnv): number[] {
   const out: number[] = [];
-  for (const result of iterGroupValues(group, env)) {
+  for (const result of iterItemValues(item, env)) {
     const number = numOpt(result);
     if (number !== null) out.push(number);
   }
   return out;
 }
 
-function groupTextsOpt(group: Result, env: EvalEnv): string[] {
+function itemTextsOpt(item: Result, env: EvalEnv): string[] {
   const out: string[] = [];
-  for (const result of iterGroupValues(group, env)) {
+  for (const result of iterItemValues(item, env)) {
     if (isIssueResult(result)) throw new TypeError(result.message);
     if (isBlankResult(result)) continue;
     if (isScalarResult(result) && typeof result.result === "string")
@@ -595,18 +591,18 @@ function groupTextsOpt(group: Result, env: EvalEnv): string[] {
 }
 
 function reduceNumbers(
-  group: Result,
+  item: Result,
   env: EvalEnv,
   op: (numbers: number[]) => number | null,
 ): number | null {
-  const numbers = groupNumbersOpt(group, env);
+  const numbers = itemNumbersOpt(item, env);
   return numbers.length ? op(numbers) : null;
 }
 
-const GROUP_SPEC = {
+const ITEM_SPEC = {
   type: "req",
   convert: (v: Result) =>
-    isEntryGroupResult(v) || isResultGroupResult(v) ? v : null,
+    isEntryItemResult(v) || isResultItemResult(v) ? v : null,
 } as const;
 
 const BUILTINS: Record<string, Builtin> = {
@@ -722,36 +718,36 @@ const BUILTINS: Record<string, Builtin> = {
   ),
 
   split: typedFn([REQ_TEXT, optText("")], (_env, t, sep) =>
-    Results.resultGroup(
+    Results.resultItem(
       t.split(sep).map((p) => ({ result: Results.scalar(p) })),
     ),
   ),
 
   join: typedFn(
-    [GROUP_SPEC, optText(",")],
+    [ITEM_SPEC, optText(",")],
     (env, groupValue: Result, sep: string) => {
-      const parts = groupTextsOpt(groupValue, env);
+      const parts = itemTextsOpt(groupValue, env);
       return parts.length ? Results.scalar(parts.join(sep)) : Results.blank();
     },
   ),
 
-  count: typedFn([GROUP_SPEC], (env, source: Result) => {
-    const values = iterGroupValues(source, env);
+  count: typedFn([ITEM_SPEC], (env, source: Result) => {
+    const values = iterItemValues(source, env);
     return Results.scalar(values.filter((c) => !isBlankResult(c)).length);
   }),
 
-  count_blank: typedFn([GROUP_SPEC], (env, source: Result) => {
-    const values = iterGroupValues(source, env);
+  count_blank: typedFn([ITEM_SPEC], (env, source: Result) => {
+    const values = iterItemValues(source, env);
     return Results.scalar(values.filter((c) => isBlankResult(c)).length);
   }),
 
-  sum: typedFn([GROUP_SPEC], (env, source: Result) =>
+  sum: typedFn([ITEM_SPEC], (env, source: Result) =>
     primitiveToResult(
       reduceNumbers(source, env, (ns) => ns.reduce((a, b) => a + b, 0)),
     ),
   ),
 
-  avg: typedFn([GROUP_SPEC], (env, source: Result) =>
+  avg: typedFn([ITEM_SPEC], (env, source: Result) =>
     primitiveToResult(
       reduceNumbers(
         source,
@@ -761,11 +757,11 @@ const BUILTINS: Record<string, Builtin> = {
     ),
   ),
 
-  min: typedFn([GROUP_SPEC], (env, source: Result) =>
+  min: typedFn([ITEM_SPEC], (env, source: Result) =>
     primitiveToResult(reduceNumbers(source, env, (ns) => Math.min(...ns))),
   ),
 
-  max: typedFn([GROUP_SPEC], (env, source: Result) =>
+  max: typedFn([ITEM_SPEC], (env, source: Result) =>
     primitiveToResult(reduceNumbers(source, env, (ns) => Math.max(...ns))),
   ),
 };
@@ -829,7 +825,7 @@ function interpretAst(expr: Expr, env: EvalEnv): Result {
       }
 
       case "Select": {
-        const target = interpretAst(expr.group, env);
+        const target = interpretAst(expr.item, env);
         if (isIssueResult(target)) return target;
 
         const selectionValue = interpretAst(expr.select, env);
@@ -839,9 +835,9 @@ function interpretAst(expr: Expr, env: EvalEnv): Result {
       }
 
       case "Member": {
-        const target = interpretAst(expr.group, env);
+        const target = interpretAst(expr.item, env);
         if (isIssueResult(target)) return target;
-        return getEntryGroupByLabel(target, expr.label.label, env);
+        return getEntryItemByLabel(target, expr.label.label, env);
       }
 
       case "Lit":

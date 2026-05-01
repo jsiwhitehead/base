@@ -10,7 +10,7 @@ export type ViewName = "outline" | "table" | "slider";
 
 type BlankContent = { type: "blank" };
 type ScalarContent = { type: "scalar"; value: Scalar };
-type GroupContent = { type: "group"; childIds: readonly EntryId[] };
+type ItemContent = { type: "item"; childIds: readonly EntryId[] };
 type FormulaContent = { type: "formula"; expr: string };
 type QueryContent = {
   type: "query";
@@ -19,7 +19,7 @@ type QueryContent = {
   orderBy: string;
 };
 
-type EntryContentSettable = BlankContent | ScalarContent | GroupContent;
+type EntryContentSettable = BlankContent | ScalarContent | ItemContent;
 export type EntryContent = EntryContentSettable | FormulaContent | QueryContent;
 
 export type Entry = {
@@ -30,12 +30,12 @@ export type Entry = {
   readonly content: EntryContent;
 };
 
-type GroupEntry = Entry & { content: GroupContent };
+type ItemEntry = Entry & { content: ItemContent };
 
 export type SnapshotNodeContent =
   | { type: "blank" }
   | { type: "scalar"; value: Scalar }
-  | { type: "group"; children: SnapshotNode[] }
+  | { type: "item"; children: SnapshotNode[] }
   | { type: "formula"; expr: string }
   | { type: "query"; from: string; where: string; orderBy: string };
 
@@ -61,9 +61,9 @@ export type CoreOpErrorCode =
   | "CANNOT_MOVE_ROOT"
   | "CANNOT_MOVE_INTO_SELF"
   | "CANNOT_MOVE_INTO_DESCENDANT"
-  | "PARENT_NOT_GROUP"
-  | "GROUP_MEMBERSHIP_VIA_MOVE"
-  | "CANNOT_CONVERT_NONEMPTY_GROUP";
+  | "PARENT_NOT_ITEM"
+  | "ITEM_MEMBERSHIP_VIA_MOVE"
+  | "CANNOT_CONVERT_NONEMPTY_ITEM";
 
 export class CoreOpError extends Error {
   readonly code: CoreOpErrorCode;
@@ -80,9 +80,9 @@ export function isCoreOpError(err: unknown): err is CoreOpError {
 }
 
 export type CoreApiErrorCode =
-  | "INVALID_ITEM_ID"
-  | "DERIVED_ITEM_ID"
-  | "UNKNOWN_ITEM_ID"
+  | "INVALID_NODE_ID"
+  | "DERIVED_NODE_ID"
+  | "UNKNOWN_NODE_ID"
   | "SNAPSHOT_ROOT_MISMATCH"
   | "SNAPSHOT_PARSE_ERROR";
 
@@ -172,8 +172,8 @@ export type Model = {
   contentTypeOf(id: EntryId): EntryContent["type"];
   canEditScalarText(id: EntryId): boolean;
 
-  childIdsOf(groupId: EntryId): EntryId[];
-  findChildIdByLabel(groupId: EntryId, label: string): EntryId | null;
+  childIdsOf(itemId: EntryId): EntryId[];
+  findChildIdByLabel(itemId: EntryId, label: string): EntryId | null;
   locateInParent(childId: EntryId): LocateInParentResult | null;
 
   apply(txn: Transaction): ApplyResult;
@@ -198,8 +198,8 @@ function isScalarContent(content: EntryContent): content is ScalarContent {
   return content.type === "scalar";
 }
 
-export function isGroupContent(content: EntryContent): content is GroupContent {
-  return content.type === "group";
+export function isItemContent(content: EntryContent): content is ItemContent {
+  return content.type === "item";
 }
 
 export function isFormulaContent(
@@ -212,8 +212,8 @@ export function isQueryContent(content: EntryContent): content is QueryContent {
   return content.type === "query";
 }
 
-function isGroupEntry(entry: Entry): entry is GroupEntry {
-  return isGroupContent(entry.content);
+function isItemEntry(entry: Entry): entry is ItemEntry {
+  return isItemContent(entry.content);
 }
 
 function assertNever(_exhaustive: never, message: string): never {
@@ -238,13 +238,13 @@ export function makeBlankEntry(id: EntryId): Entry {
   };
 }
 
-export function makeGroupEntry(id: EntryId): Entry {
+export function makeItemEntry(id: EntryId): Entry {
   return {
     id,
     parentId: null,
     label: "",
     view: null,
-    content: { type: "group", childIds: [] },
+    content: { type: "item", childIds: [] },
   };
 }
 
@@ -314,16 +314,15 @@ export function createModel(): Model {
   };
 
   const childLabelIndexSignal = (
-    groupId: EntryId,
+    itemId: EntryId,
   ): ReadonlySignal<Map<string, EntryId>> => {
-    const groupRecord = entryRecord(groupId);
-    return (groupRecord.childLabelIndexSignal ??= computed(() => {
-      const groupEntry = entrySignal(groupId).value;
-      if (!isGroupContent(groupEntry.content))
-        return new Map<string, EntryId>();
+    const itemRecord = entryRecord(itemId);
+    return (itemRecord.childLabelIndexSignal ??= computed(() => {
+      const itemEntry = entrySignal(itemId).value;
+      if (!isItemContent(itemEntry.content)) return new Map<string, EntryId>();
 
       const childLabelIndex = new Map<string, EntryId>();
-      for (const childId of groupEntry.content.childIds) {
+      for (const childId of itemEntry.content.childIds) {
         if (!entries.has(childId)) continue;
         const child = entrySignal(childId).value;
         const label = normalizeLabel(child.label);
@@ -335,8 +334,8 @@ export function createModel(): Model {
 
   function assertUniqueChildLabels(parentId: EntryId): void {
     const parent = entrySignal(parentId).peek();
-    if (!isGroupEntry(parent))
-      throw new CoreInvariantError("Parent is not a group");
+    if (!isItemEntry(parent))
+      throw new CoreInvariantError("Parent is not an item");
 
     const seen = new Set<string>();
     for (const childId of parent.content.childIds) {
@@ -348,7 +347,7 @@ export function createModel(): Model {
       if (seen.has(label))
         throw new CoreOpError(
           "DUPLICATE_CHILD_LABEL",
-          `Duplicate label '${label}' in group`,
+          `Duplicate label '${label}' in item`,
         );
       seen.add(label);
     }
@@ -367,18 +366,18 @@ export function createModel(): Model {
 
   const expectGroupParent = (
     parentId: EntryId,
-  ): { entrySignal: Signal<Entry>; parent: GroupEntry } => {
+  ): { entrySignal: Signal<Entry>; parent: ItemEntry } => {
     const parentSignal = entryRecord(parentId).entrySignal;
     const parent = parentSignal.peek();
-    if (!isGroupEntry(parent))
-      throw new CoreOpError("PARENT_NOT_GROUP", "Parent is not a group");
+    if (!isItemEntry(parent))
+      throw new CoreOpError("PARENT_NOT_ITEM", "Parent is not an item");
     return { entrySignal: parentSignal, parent };
   };
 
-  const getGroupEntry = (id: EntryId | null): GroupEntry | null => {
+  const getItemEntry = (id: EntryId | null): ItemEntry | null => {
     if (id == null || !entries.has(id)) return null;
     const entry = entrySignal(id).peek();
-    return isGroupEntry(entry) ? entry : null;
+    return isItemEntry(entry) ? entry : null;
   };
 
   function move(spec: MoveSpec): MoveResult {
@@ -391,7 +390,7 @@ export function createModel(): Model {
     if (toParentId === childId)
       throw new CoreOpError(
         "CANNOT_MOVE_INTO_SELF",
-        "Cannot move item into itself",
+        "Cannot move node into itself",
       );
     let cur: EntryId | null = toParentId;
     while (cur != null) {
@@ -399,7 +398,7 @@ export function createModel(): Model {
       if (cur === childId)
         throw new CoreOpError(
           "CANNOT_MOVE_INTO_DESCENDANT",
-          "Cannot move item into its descendant",
+          "Cannot move node into its descendant",
         );
       cur = entryRecord(cur).entrySignal.peek().parentId;
     }
@@ -412,18 +411,18 @@ export function createModel(): Model {
     let toIndex: number | null = null;
     let preparedChildIds: EntryId[] | null = null;
 
-    const fromParent = getGroupEntry(fromParentId);
-    const toParent = getGroupEntry(toParentId);
+    const fromParent = getItemEntry(fromParentId);
+    const toParent = getItemEntry(toParentId);
 
     if (fromParentId != null) {
       if (!fromParent)
-        throw new CoreOpError("PARENT_NOT_GROUP", "Parent is not a group");
+        throw new CoreOpError("PARENT_NOT_ITEM", "Parent is not an item");
       const i = fromParent.content.childIds.indexOf(childId);
       fromIndex = i >= 0 ? i : null;
     }
 
     if (!toParent)
-      throw new CoreOpError("PARENT_NOT_GROUP", "Parent is not a group");
+      throw new CoreOpError("PARENT_NOT_ITEM", "Parent is not an item");
 
     const baseline =
       toParentId === fromParentId && fromIndex != null
@@ -456,7 +455,7 @@ export function createModel(): Model {
           expectGroupParent(toParentId);
         parentSignal.value = {
           ...parent,
-          content: { type: "group", childIds: preparedChildIds },
+          content: { type: "item", childIds: preparedChildIds },
         };
       }
 
@@ -467,7 +466,7 @@ export function createModel(): Model {
           parentSignal.value = {
             ...parent,
             content: {
-              type: "group",
+              type: "item",
               childIds: parent.content.childIds.filter((x) => x !== childId),
             },
           };
@@ -492,24 +491,24 @@ export function createModel(): Model {
       const currentContent = currentEntry.content;
       const requestedContent = nextContent;
 
-      if (isGroupContent(requestedContent)) {
+      if (isItemContent(requestedContent)) {
         if (requestedContent.childIds.length !== 0)
           throw new CoreOpError(
-            "GROUP_MEMBERSHIP_VIA_MOVE",
-            "Group membership must be modified via move",
+            "ITEM_MEMBERSHIP_VIA_MOVE",
+            "Item membership must be modified via move",
           );
 
-        if (isGroupContent(currentContent)) {
+        if (isItemContent(currentContent)) {
           nextContent = undefined;
         }
       } else {
         if (
-          isGroupContent(currentContent) &&
+          isItemContent(currentContent) &&
           currentContent.childIds.length !== 0
         )
           throw new CoreOpError(
-            "CANNOT_CONVERT_NONEMPTY_GROUP",
-            "Cannot convert non-empty group to non-group",
+            "CANNOT_CONVERT_NONEMPTY_ITEM",
+            "Cannot convert non-empty item to non-item",
           );
       }
     }
@@ -537,13 +536,13 @@ export function createModel(): Model {
     const collectDescendants = (rootChildId: EntryId): void => {
       if (!entries.has(rootChildId)) return;
       const childEntry = entryRecord(rootChildId).entrySignal.peek();
-      if (isGroupContent(childEntry.content)) {
+      if (isItemContent(childEntry.content)) {
         for (const cid of childEntry.content.childIds) collectDescendants(cid);
       }
       removedIds.push(rootChildId);
     };
 
-    if (isGroupEntry(currentEntry)) {
+    if (isItemEntry(currentEntry)) {
       for (const childId of currentEntry.content.childIds) {
         collectDescendants(childId);
       }
@@ -559,7 +558,7 @@ export function createModel(): Model {
           parentSignal.value = {
             ...parentVal,
             content: {
-              type: "group",
+              type: "item",
               childIds: parentVal.content.childIds.filter((x) => x !== id),
             },
           };
@@ -592,7 +591,7 @@ export function createModel(): Model {
 
   const snapshotContentFromEntryContent = (
     content: EntryContent,
-    groupChildren: SnapshotNode[] = [],
+    itemChildren: SnapshotNode[] = [],
   ): SnapshotNodeContent => {
     switch (content.type) {
       case "blank":
@@ -608,8 +607,8 @@ export function createModel(): Model {
           where: content.where,
           orderBy: content.orderBy,
         };
-      case "group":
-        return { type: "group", children: groupChildren };
+      case "item":
+        return { type: "item", children: itemChildren };
       default:
         return assertNever(content, "Unknown entry content");
     }
@@ -632,8 +631,8 @@ export function createModel(): Model {
           where: content.where,
           orderBy: content.orderBy,
         };
-      case "group":
-        return { type: "group", childIds: [] };
+      case "item":
+        return { type: "item", childIds: [] };
       default:
         return assertNever(content, "Unknown snapshot content");
     }
@@ -641,7 +640,7 @@ export function createModel(): Model {
 
   const captureSubtree = (rootEntryId: EntryId): SnapshotNode => {
     const entry = peekEntry(rootEntryId);
-    const children = isGroupContent(entry.content)
+    const children = isItemContent(entry.content)
       ? entry.content.childIds.map((childId) => captureSubtree(childId))
       : [];
     return {
@@ -673,7 +672,7 @@ export function createModel(): Model {
   ): void => {
     if (!opts?.skipRoot)
       out.push(ops.create(entryFromSnapshotNode(node, parentId)));
-    if (node.content.type !== "group") return;
+    if (node.content.type !== "item") return;
     for (let i = 0; i < node.content.children.length; i += 1) {
       const child = node.content.children[i]!;
       pushCreateSubtreeOps(child, out, node.id);
@@ -681,7 +680,7 @@ export function createModel(): Model {
   };
 
   const pushRestoreMoves = (node: SnapshotNode, out: Op[]): void => {
-    if (node.content.type !== "group") return;
+    if (node.content.type !== "item") return;
     for (let i = 0; i < node.content.children.length; i += 1) {
       const child = node.content.children[i]!;
       out.push(
@@ -739,8 +738,8 @@ export function createModel(): Model {
               if (op.next.content !== undefined) {
                 if (
                   !(
-                    op.next.content.type === "group" &&
-                    currentEntry.content.type === "group"
+                    op.next.content.type === "item" &&
+                    currentEntry.content.type === "item"
                   )
                 ) {
                   inversePatch.content = currentEntry.content;
@@ -784,7 +783,7 @@ export function createModel(): Model {
               const removedEntry = peekEntry(op.id);
               const subtree = captureSubtree(op.id);
               if (op.id === rootId()) {
-                if (subtree.content.type === "group") {
+                if (subtree.content.type === "item") {
                   appendRestoreMovesInUndoBuildOrder(subtree, undoBuildOps);
                   pushCreateSubtreeOps(subtree, undoBuildOps, null, {
                     skipRoot: true,
@@ -793,7 +792,7 @@ export function createModel(): Model {
                     ops.patch(op.id, {
                       label: removedEntry.label,
                       view: removedEntry.view,
-                      content: { type: "group", childIds: [] },
+                      content: { type: "item", childIds: [] },
                     }),
                   );
                 } else {
@@ -809,7 +808,7 @@ export function createModel(): Model {
                 const parentId = removedEntry.parentId;
                 if (parentId == null)
                   throw new CoreInvariantError(
-                    "Remove inverse expects non-root item to have a parent",
+                    "Remove inverse expects non-root node to have a parent",
                   );
                 const loc = locateInParent(op.id);
                 appendRestoreMovesInUndoBuildOrder(subtree, undoBuildOps);
@@ -838,16 +837,16 @@ export function createModel(): Model {
         }
       });
 
-      const groupsToCheck = new Set<EntryId>();
+      const itemsToCheck = new Set<EntryId>();
       for (const id of touched) {
         const entry = entries.get(id)?.entrySignal.peek();
         if (!entry) continue;
 
-        if (isGroupEntry(entry)) groupsToCheck.add(id);
+        if (isItemEntry(entry)) itemsToCheck.add(id);
         if (entry.parentId != null && entries.has(entry.parentId))
-          groupsToCheck.add(entry.parentId);
+          itemsToCheck.add(entry.parentId);
       }
-      for (const groupId of groupsToCheck) assertUniqueChildLabels(groupId);
+      for (const itemId of itemsToCheck) assertUniqueChildLabels(itemId);
       if (DEV) assertValidInternal();
       return {
         delta: { removed: [...removed], touched: [...touched] },
@@ -867,20 +866,20 @@ export function createModel(): Model {
     return isBlankContent(content) || isScalarContent(content);
   };
 
-  const childIdsOf = (groupId: EntryId): EntryId[] => {
-    const groupEntry = entrySignal(groupId).value;
-    return isGroupContent(groupEntry.content)
-      ? [...groupEntry.content.childIds]
+  const childIdsOf = (itemId: EntryId): EntryId[] => {
+    const itemEntry = entrySignal(itemId).value;
+    return isItemContent(itemEntry.content)
+      ? [...itemEntry.content.childIds]
       : [];
   };
 
   const findChildIdByLabel = (
-    groupId: EntryId,
+    itemId: EntryId,
     label: string,
   ): EntryId | null => {
     const normalizedLabel = normalizeLabel(label);
     if (!normalizedLabel) return null;
-    return childLabelIndexSignal(groupId).value.get(normalizedLabel) ?? null;
+    return childLabelIndexSignal(itemId).value.get(normalizedLabel) ?? null;
   };
 
   const locateInParent = (childId: EntryId): LocateInParentResult | null => {
@@ -893,7 +892,7 @@ export function createModel(): Model {
     if (!entries.has(parentId)) return null;
 
     const parent = readEntry(parentId);
-    if (!isGroupEntry(parent)) return null;
+    if (!isItemEntry(parent)) return null;
 
     const childIds = [...parent.content.childIds];
     const index = childIds.indexOf(childId);
@@ -914,32 +913,32 @@ export function createModel(): Model {
     const groupChildIdsOf = (id: EntryId): readonly EntryId[] | null => {
       const entry = entries.get(id)?.entrySignal.peek();
       if (!entry) return null;
-      return isGroupEntry(entry) ? entry.content.childIds : null;
+      return isItemEntry(entry) ? entry.content.childIds : null;
     };
 
-    for (const [groupId, record] of entries) {
-      const groupEntry = record.entrySignal.peek();
-      if (!isGroupEntry(groupEntry)) continue;
+    for (const [itemId, record] of entries) {
+      const itemEntry = record.entrySignal.peek();
+      if (!isItemEntry(itemEntry)) continue;
 
-      const childIds = groupEntry.content.childIds;
+      const childIds = itemEntry.content.childIds;
 
       const seenIds = new Set<EntryId>();
       for (const childId of childIds) {
         devAssert(
           !seenIds.has(childId),
-          `Group ${groupId} contains duplicate child id ${childId}`,
+          `Item ${itemId} contains duplicate child id ${childId}`,
         );
         seenIds.add(childId);
 
         devAssert(
           entries.has(childId),
-          `Group ${groupId} references missing child id ${childId}`,
+          `Item ${itemId} references missing child id ${childId}`,
         );
 
         const child = entries.get(childId)!.entrySignal.peek();
         devAssert(
-          child.parentId === groupId,
-          `Child ${childId} has parentId=${String(child.parentId)} but is listed under group ${groupId}`,
+          child.parentId === itemId,
+          `Child ${childId} has parentId=${String(child.parentId)} but is listed under item ${itemId}`,
         );
       }
 
@@ -950,7 +949,7 @@ export function createModel(): Model {
         if (!label) continue;
         devAssert(
           !seenLabels.has(label),
-          `Duplicate label '${label}' in group ${groupId}`,
+          `Duplicate label '${label}' in item ${itemId}`,
         );
         seenLabels.add(label);
       }
@@ -969,7 +968,7 @@ export function createModel(): Model {
       const parentChildIds = groupChildIdsOf(parentId);
       devAssert(
         parentChildIds != null,
-        `Entry ${childId} parent ${parentId} is not a group`,
+        `Entry ${childId} parent ${parentId} is not an item`,
       );
 
       const count = parentChildIds!.reduce(
@@ -998,7 +997,7 @@ export function createModel(): Model {
   const snapshotNodeContent = (content: EntryContent): SnapshotNodeContent =>
     snapshotContentFromEntryContent(
       content,
-      content.type === "group" ? content.childIds.map(snapshot) : [],
+      content.type === "item" ? content.childIds.map(snapshot) : [],
     );
 
   const snapshot = (id: EntryId): SnapshotNode => {
@@ -1030,8 +1029,8 @@ export function createModel(): Model {
       parentId: EntryId | null,
     ): void => {
       const content: EntryContent =
-        node.content.type === "group"
-          ? { type: "group", childIds: node.children.map((child) => child.id) }
+        node.content.type === "item"
+          ? { type: "item", childIds: node.children.map((child) => child.id) }
           : node.content;
       nextEntries.set(node.id, {
         id: node.id,
@@ -1268,7 +1267,7 @@ function parseSnapshotNode(
         },
         children: [],
       };
-    case "group": {
+    case "item": {
       const childrenInput = contentInput.children;
       if (!Array.isArray(childrenInput))
         throw new CoreApiError(
@@ -1287,7 +1286,7 @@ function parseSnapshotNode(
         id,
         label,
         view,
-        content: { type: "group", childIds: [] },
+        content: { type: "item", childIds: [] },
         children,
       };
     }

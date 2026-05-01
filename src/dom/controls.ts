@@ -1,6 +1,6 @@
 import { computed } from "@preact/signals-core";
 
-import type { Connected, Location, ItemId } from "../core";
+import type { Connected, Location, NodeId } from "../core";
 import { LABEL_TARGET, connTarget, sameLocation } from "../core";
 import { createComponent, type Ctx, el } from "./component";
 import type { Component, UiCore } from "./runtime";
@@ -319,7 +319,7 @@ function buildTextField(
 function handleHeaderControl(
   core: UiCore,
   args: {
-    id: ItemId;
+    id: NodeId;
     location: Location;
     fields: readonly ConnField[];
     fieldKey: string | null;
@@ -328,7 +328,7 @@ function handleHeaderControl(
 ): void {
   const { location, fields, fieldKey, control } = args;
   if (control.type === "enter" || control.type === "escape") {
-    core.focus({ type: "item", location });
+    core.focus({ type: "node", location });
     return;
   }
 
@@ -353,7 +353,7 @@ function buildHeader(
   core: UiCore,
   args: {
     location: Location;
-    id: ItemId;
+    id: NodeId;
     onCommitLabel?: (text: string) => void;
   },
 ): Component {
@@ -361,9 +361,9 @@ function buildHeader(
 
   return createComponent(core, (ctx) => {
     const fieldsSignal = computed(() => {
-      const item = core.item(id);
-      return item.mode.type === "connected"
-        ? fieldsFromConn(item.mode.conn)
+      const node = core.node(id);
+      return node.mode.type === "connected"
+        ? fieldsFromConn(node.mode.conn)
         : [];
     });
 
@@ -391,9 +391,9 @@ function buildHeader(
           });
         },
         commit: (text) => {
-          const item = core.item(id);
-          if (item.mode.type === "readonly") return;
-          if ((item.label ?? "") === text) return;
+          const node = core.node(id);
+          if (node.mode.type === "readonly") return;
+          if ((node.label ?? "") === text) return;
           if (args.onCommitLabel) {
             args.onCommitLabel(text);
           } else {
@@ -401,7 +401,7 @@ function buildHeader(
           }
         },
         getState: () => {
-          const snap = core.item(id);
+          const snap = core.node(id);
           return {
             text: snap.label ?? "",
             readOnly: snap.mode.type === "readonly",
@@ -447,9 +447,9 @@ function buildHeader(
                 });
               },
               commit: (text) => {
-                const item = core.item(id);
-                if (item.mode.type !== "connected") return;
-                const { conn } = item.mode;
+                const node = core.node(id);
+                if (node.mode.type !== "connected") return;
+                const { conn } = node.mode;
                 core.commit((t) =>
                   t.setConnected(id, patchConn(conn, key, text)),
                 );
@@ -476,7 +476,7 @@ export function mountHeader(
     core: UiCore;
     host: HTMLElement;
     location: Location;
-    id: ItemId;
+    id: NodeId;
     visibility?: "auto" | "always";
     onCommitLabel?: (text: string) => void;
   },
@@ -495,11 +495,11 @@ export function mountHeader(
   }
 
   const shouldShowHeader = computed(() => {
-    const item = core.item(id);
+    const node = core.node(id);
     const selection = core.selection();
     return (
-      (item.label ?? "").trim().length > 0 ||
-      item.mode.type === "connected" ||
+      (node.label ?? "").trim().length > 0 ||
+      node.mode.type === "connected" ||
       (selection.type === "editing" &&
         selection.target === LABEL_TARGET &&
         sameLocation(selection.location, location))

@@ -1,7 +1,7 @@
 import type { ReadonlySignal } from "@preact/signals-core";
 import { signal } from "@preact/signals-core";
 
-import type { CaretPlacement, Core, ItemId, Selection } from "./core";
+import type { CaretPlacement, Core, NodeId, Selection } from "./core";
 import type { Component, UiCore } from "./dom";
 import { createComponent, el } from "./dom";
 
@@ -47,11 +47,11 @@ export function createDebugState(): DebugState {
     pushRecent(line) {
       seq += 1;
       const next = `#${seq} ${line}`;
-      const items = recent.value;
+      const nodes = recent.value;
       recent.value =
-        items.length >= RECENT_LIMIT
-          ? [...items.slice(items.length - RECENT_LIMIT + 1), next]
-          : [...items, next];
+        nodes.length >= RECENT_LIMIT
+          ? [...nodes.slice(nodes.length - RECENT_LIMIT + 1), next]
+          : [...nodes, next];
     },
   };
 }
@@ -127,18 +127,18 @@ function safeJson(x: unknown): string {
 
 function selectionText(selection: Selection): string {
   if (selection.type === "idle") return "idle";
-  const formatLocation = (item: ItemId, portals: readonly ItemId[]): string =>
-    `item=${item} portals=[${portals.join("|")}]`;
-  if (selection.type === "item") {
+  const formatLocation = (node: NodeId, portals: readonly NodeId[]): string =>
+    `node=${node} portals=[${portals.join("|")}]`;
+  if (selection.type === "node") {
     return [
-      "item",
-      `anchor:    ${formatLocation(selection.anchor.item, selection.anchor.portals)}`,
-      `head:      ${formatLocation(selection.head.item, selection.head.portals)}`,
+      "node",
+      `anchor:    ${formatLocation(selection.anchor.node, selection.anchor.portals)}`,
+      `head:      ${formatLocation(selection.head.node, selection.head.portals)}`,
     ].join("\n");
   }
   return [
     "editing",
-    `item:      ${selection.location.item}`,
+    `node:      ${selection.location.node}`,
     `portals:   [${selection.location.portals.join("|")}]`,
     `target:    ${selection.target}`,
   ].join("\n");
@@ -151,11 +151,11 @@ function recentLinesText(lines: readonly string[]): string {
 
 function recentSelectionSummary(selection: Selection): string {
   if (selection.type === "idle") return "selection=idle";
-  const formatLocation = (item: ItemId, portals: readonly ItemId[]): string =>
-    `item=${item} portals=[${portals.join("|")}]`;
-  if (selection.type === "item")
-    return `selection=item anchor(${formatLocation(selection.anchor.item, selection.anchor.portals)}) head(${formatLocation(selection.head.item, selection.head.portals)})`;
-  return `editing item=${selection.location.item} portals=[${selection.location.portals.join("|")}] target=${selection.target}`;
+  const formatLocation = (node: NodeId, portals: readonly NodeId[]): string =>
+    `node=${node} portals=[${portals.join("|")}]`;
+  if (selection.type === "node")
+    return `selection=node anchor(${formatLocation(selection.anchor.node, selection.anchor.portals)}) head(${formatLocation(selection.head.node, selection.head.portals)})`;
+  return `editing node=${selection.location.node} portals=[${selection.location.portals.join("|")}] target=${selection.target}`;
 }
 
 function lastText(last: DebugLast | null): string {
@@ -176,7 +176,7 @@ function lastText(last: DebugLast | null): string {
 
 function probeUiFrame(
   probeRoot: HTMLElement,
-  id: ItemId,
+  id: NodeId,
 ): { mounted: boolean; dataset?: Record<string, string> } {
   const ui = probeRoot.querySelector(
     `.ui-frame[data-id="${CSS.escape(id)}"]`,
@@ -237,10 +237,10 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
     const bActive = el("pre", "ui-debug-pre");
     secActive.append(hActive, bActive);
 
-    const secItem = el("div", "ui-debug-section");
-    const hItem = el("div", "ui-debug-title", "Focused Item");
-    const bItem = el("pre", "ui-debug-pre");
-    secItem.append(hItem, bItem);
+    const secNode = el("div", "ui-debug-section");
+    const hNode = el("div", "ui-debug-title", "Focused Node");
+    const bNode = el("pre", "ui-debug-pre");
+    secNode.append(hNode, bNode);
 
     const secDom = el("div", "ui-debug-section");
     const hDom = el("div", "ui-debug-title", "DOM Probe (.ui-frame)");
@@ -252,7 +252,7 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
     const bRecent = el("pre", "ui-debug-pre");
     secRecent.append(hRecent, bRecent);
 
-    root.append(header, secSelection, secActive, secItem, secDom, secRecent);
+    root.append(header, secSelection, secActive, secNode, secDom, secRecent);
 
     ctx.effect(() => {
       const last = debug.lastSignal.value;
@@ -269,15 +269,15 @@ export function buildDebugPanel(opts: DebugPanelOpts): Component {
       bActive.textContent = activeDomFocusText();
 
       if (selection.type !== "editing") {
-        bItem.textContent = "(none)";
+        bNode.textContent = "(none)";
         bDom.textContent = "(none)";
         return;
       }
 
-      const snap = core.item(selection.location.item);
-      bItem.textContent = safeJson(snap);
+      const snap = core.node(selection.location.node);
+      bNode.textContent = safeJson(snap);
 
-      const probe = probeUiFrame(probeRoot, selection.location.item);
+      const probe = probeUiFrame(probeRoot, selection.location.node);
       if (!probe.mounted) {
         bDom.textContent = "mounted: no";
         return;

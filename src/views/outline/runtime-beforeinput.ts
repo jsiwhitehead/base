@@ -1,4 +1,4 @@
-import { CONTENT_TEXT_TARGET, type Core, type ItemId } from "../../core";
+import { CONTENT_TEXT_TARGET, type Core, type NodeId } from "../../core";
 import {
   getDomRangeInRoot,
   getMappedRange,
@@ -7,15 +7,15 @@ import {
 } from "../../dom";
 import type { Ctx } from "../../dom";
 
-import { deleteMultiItemRange, deleteSingleItemRange } from "./commands";
+import { deleteMultiNodeRange, deleteSingleNodeRange } from "./commands";
 import {
-  isPlainValueItem,
+  isPlainValueNode,
   valueToText,
   type ModelPosition,
 } from "./navigation";
 import {
   domPositionToModel,
-  itemSelectorById,
+  nodeSelectorById,
   VALUE_SELECTOR,
 } from "./dom-mapping";
 import type { InputCtx } from "./runtime-input";
@@ -26,7 +26,7 @@ function deleteSelection(
   end: ModelPosition,
 ): void {
   if (
-    deleteSingleItemRange(
+    deleteSingleNodeRange(
       ctx.core,
       ctx.portals,
       start,
@@ -36,7 +36,7 @@ function deleteSelection(
   ) {
     return;
   }
-  deleteMultiItemRange(
+  deleteMultiNodeRange(
     ctx.core,
     ctx.portals,
     start,
@@ -66,18 +66,18 @@ function handleInsertLineBreakBeforeInput(
     domPositionToModel(ctx.root, point.node, point.offset),
   );
   if (!rangePos) return;
-  if (rangePos.start.itemId !== rangePos.end.itemId) return;
-  const snap = ctx.core.item(rangePos.start.itemId);
-  if (!isPlainValueItem(snap)) return;
+  if (rangePos.start.nodeId !== rangePos.end.nodeId) return;
+  const snap = ctx.core.node(rangePos.start.nodeId);
+  if (!isPlainValueNode(snap)) return;
 
   const text = valueToText(snap.content.value);
   const start = rangePos.start.offset;
   const end = rangePos.end.offset;
   const nextText = text.slice(0, start) + "\n" + text.slice(end);
   const nextCaret = start + 1;
-  ctx.core.commit((t) => t.setValue(rangePos.start.itemId, nextText));
+  ctx.core.commit((t) => t.setValue(rangePos.start.nodeId, nextText));
   ctx.applyEditingResult({
-    location: { item: rangePos.start.itemId, portals: ctx.portals },
+    location: { node: rangePos.start.nodeId, portals: ctx.portals },
     target: CONTENT_TEXT_TARGET,
     caret: nextCaret,
     scrollIntoView: { offset: nextCaret },
@@ -115,27 +115,27 @@ function handleDeleteBeforeInput(
   if (!rangePos) return false;
   const startPos = rangePos.start;
   const endPos = rangePos.end;
-  if (startPos.itemId !== endPos.itemId) return false;
+  if (startPos.nodeId !== endPos.nodeId) return false;
   if (startPos.offset === endPos.offset) return false;
 
   e.preventDefault();
-  const snap = ctx.core.item(startPos.itemId);
-  if (!isPlainValueItem(snap)) return true;
+  const snap = ctx.core.node(startPos.nodeId);
+  if (!isPlainValueNode(snap)) return true;
   const text = valueToText(snap.content.value);
   const nextText = text.slice(0, startPos.offset) + text.slice(endPos.offset);
 
-  ctx.core.commit((t) => t.setValue(startPos.itemId, nextText));
+  ctx.core.commit((t) => t.setValue(startPos.nodeId, nextText));
 
-  const itemEl = ctx.root.querySelector<HTMLElement>(
-    itemSelectorById(startPos.itemId),
+  const nodeEl = ctx.root.querySelector<HTMLElement>(
+    nodeSelectorById(startPos.nodeId),
   );
-  const valueEl = itemEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
+  const valueEl = nodeEl?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (valueEl) {
     ctx.discardPendingMutationRecords();
     renderPlainTextToContentEditable(valueEl, nextText);
   }
   ctx.applyEditingResult({
-    location: { item: startPos.itemId, portals: ctx.portals },
+    location: { node: startPos.nodeId, portals: ctx.portals },
     target: CONTENT_TEXT_TARGET,
     caret: startPos.offset,
     scrollIntoView: { offset: startPos.offset, defer: false },
@@ -156,7 +156,7 @@ function handleBoundaryDeleteBeforeInput(
       range.startOffset,
     );
     if (!pos) return;
-    const snap = ctx.core.item(pos.itemId);
+    const snap = ctx.core.node(pos.nodeId);
     const text =
       snap.content.type === "value" ? valueToText(snap.content.value) : "";
     const atBoundary =
@@ -173,7 +173,7 @@ function handleBoundaryDeleteBeforeInput(
   );
   if (!rangePos) return;
   if (
-    !deleteMultiItemRange(
+    !deleteMultiNodeRange(
       ctx.core,
       ctx.portals,
       rangePos.start,
@@ -203,10 +203,10 @@ function handleInsertReplacementTextBeforeInput(
   if (!rangePos) return fallback();
   const startPos = rangePos.start;
   const endPos = rangePos.end;
-  if (startPos.itemId !== endPos.itemId) return fallback();
+  if (startPos.nodeId !== endPos.nodeId) return fallback();
 
-  const snap = ctx.core.item(startPos.itemId);
-  if (!isPlainValueItem(snap)) return fallback();
+  const snap = ctx.core.node(startPos.nodeId);
+  if (!isPlainValueNode(snap)) return fallback();
 
   const currentText = valueToText(snap.content.value);
   const nextCaret = startPos.offset + replacementText.length;
@@ -214,17 +214,17 @@ function handleInsertReplacementTextBeforeInput(
     currentText.slice(0, startPos.offset) +
     replacementText +
     currentText.slice(endPos.offset);
-  ctx.core.commit((t) => t.setValue(startPos.itemId, nextText));
+  ctx.core.commit((t) => t.setValue(startPos.nodeId, nextText));
 
   const valueEl = ctx.root
-    .querySelector<HTMLElement>(itemSelectorById(startPos.itemId))
+    .querySelector<HTMLElement>(nodeSelectorById(startPos.nodeId))
     ?.querySelector<HTMLElement>(VALUE_SELECTOR);
   if (valueEl) {
     ctx.discardPendingMutationRecords();
     renderPlainTextToContentEditable(valueEl, nextText);
   }
   ctx.applyEditingResult({
-    location: { item: startPos.itemId, portals: ctx.portals },
+    location: { node: startPos.nodeId, portals: ctx.portals },
     target: CONTENT_TEXT_TARGET,
     caret: nextCaret,
     scrollIntoView: { offset: nextCaret, defer: false },
@@ -261,25 +261,25 @@ export function insertText(
     if (!endPos) return;
     deleteSelection(ctx, startPos, endPos);
   }
-  const snap = ctx.core.item(startPos.itemId);
-  if (!isPlainValueItem(snap)) return;
+  const snap = ctx.core.node(startPos.nodeId);
+  if (!isPlainValueNode(snap)) return;
   const current = valueToText(snap.content.value);
   const caretStart = startPos.offset;
   const before = current.slice(0, caretStart);
   const after = current.slice(caretStart);
   const syncStartValueSurface = (): void => {
     if (!startValueEl) return;
-    const startSnap = ctx.core.item(startPos.itemId);
-    if (!isPlainValueItem(startSnap)) return;
+    const startSnap = ctx.core.node(startPos.nodeId);
+    if (!isPlainValueNode(startSnap)) return;
     ctx.discardPendingMutationRecords();
     renderPlainTextToContentEditable(
       startValueEl,
       valueToText(startSnap.content.value),
     );
   };
-  const applyValueEditingResult = (itemId: ItemId, caret: number): void => {
+  const applyValueEditingResult = (nodeId: NodeId, caret: number): void => {
     ctx.applyEditingResult({
-      location: { item: itemId, portals: ctx.portals },
+      location: { node: nodeId, portals: ctx.portals },
       target: CONTENT_TEXT_TARGET,
       caret,
       scrollIntoView: { offset: caret, defer: false },
@@ -287,19 +287,19 @@ export function insertText(
   };
 
   const lines = text.split("\n");
-  const loc = ctx.core.locate(startPos.itemId);
+  const loc = ctx.core.locate(startPos.nodeId);
   if (!loc) {
     const nextText = before + text + after;
     const nextCaret = before.length + text.length;
-    ctx.core.commit((t) => t.setValue(startPos.itemId, nextText));
+    ctx.core.commit((t) => t.setValue(startPos.nodeId, nextText));
     syncStartValueSurface();
-    applyValueEditingResult(startPos.itemId, nextCaret);
+    applyValueEditingResult(startPos.nodeId, nextCaret);
     return;
   }
-  const insertedIds: ItemId[] = [];
+  const insertedIds: NodeId[] = [];
   ctx.core.commit((t) => {
     t.setValue(
-      startPos.itemId,
+      startPos.nodeId,
       before + (lines[0] ?? "") + (lines.length === 1 ? after : ""),
     );
     for (let i = 1; i < lines.length; i += 1) {
@@ -312,9 +312,9 @@ export function insertText(
     }
   });
   syncStartValueSurface();
-  const lastId = insertedIds[insertedIds.length - 1] ?? startPos.itemId;
+  const lastId = insertedIds[insertedIds.length - 1] ?? startPos.nodeId;
   const lastOffset =
-    lastId === startPos.itemId
+    lastId === startPos.nodeId
       ? before.length + (lines[0]?.length ?? 0)
       : (lines[lines.length - 1]?.length ?? 0);
   applyValueEditingResult(lastId, lastOffset);
@@ -368,9 +368,9 @@ export function bindOutlineBeforeInputEvents(args: {
             range.startOffset,
           );
           if (!pos) break;
-          const snap = core.item(pos.itemId);
+          const snap = core.node(pos.nodeId);
           if (
-            snap.content.type === "group" &&
+            snap.content.type === "item" &&
             snap.content.children.length > 0
           ) {
             e.preventDefault();

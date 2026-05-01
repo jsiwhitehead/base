@@ -1,7 +1,7 @@
 import type { Signal } from "@preact/signals-core";
 import { effect, signal } from "@preact/signals-core";
 
-import type { Core, ItemId, Tx } from "../core";
+import type { Core, NodeId, Tx } from "../core";
 import { devWarn } from "../dev";
 import { el, resolveEventTargetElement } from "./component";
 import type { Component } from "./runtime";
@@ -11,19 +11,19 @@ export type DragType = "reorder" | "slot";
 export type DropTarget =
   | {
       type: "gap";
-      parentId: ItemId;
+      parentId: NodeId;
       at: number;
       side: "before" | "after";
       anchorEl: HTMLElement;
     }
-  | { type: "replace"; itemId: ItemId; anchorEl: HTMLElement };
+  | { type: "replace"; nodeId: NodeId; anchorEl: HTMLElement };
 
 export type DragState =
   | { type: "idle" }
   | {
       type: "pending";
       cleanupType: DragType;
-      itemId: ItemId;
+      nodeId: NodeId;
       pointerId: number;
       startX: number;
       startY: number;
@@ -31,7 +31,7 @@ export type DragState =
   | {
       type: "active";
       cleanupType: DragType;
-      itemId: ItemId;
+      nodeId: NodeId;
       drop: DropTarget | null;
     };
 
@@ -51,7 +51,7 @@ function isInteractiveEl(target: EventTarget | null): boolean {
 
 function resolveDragStartFrame(
   target: EventTarget | null,
-): { el: HTMLElement; itemId: ItemId; cleanupType: DragType } | null {
+): { el: HTMLElement; nodeId: NodeId; cleanupType: DragType } | null {
   const targetEl = resolveEventTargetElement(target);
   if (!targetEl) return null;
   if (isInteractiveEl(targetEl)) return null;
@@ -69,31 +69,31 @@ function resolveDragStartFrame(
 
 function nearestFrame(
   target: EventTarget | null,
-): { el: HTMLElement; itemId: ItemId } | null {
+): { el: HTMLElement; nodeId: NodeId } | null {
   for (
     let node = target instanceof HTMLElement ? target : null;
     node;
     node = node.parentElement
   ) {
-    const id = node.dataset.id as ItemId | undefined;
+    const id = node.dataset.id as NodeId | undefined;
     if (id && node.classList.contains("ui-frame"))
-      return { el: node, itemId: id };
+      return { el: node, nodeId: id };
   }
   return null;
 }
 
-function computePruneList(core: Core, sourceItemId: ItemId): ItemId[] {
-  const out: ItemId[] = [];
-  let cur = sourceItemId;
+function computePruneList(core: Core, sourceNodeId: NodeId): NodeId[] {
+  const out: NodeId[] = [];
+  let cur = sourceNodeId;
 
   while (true) {
     const loc = core.locate(cur);
     if (!loc) break;
 
-    const parent = core.item(loc.parentId);
+    const parent = core.node(loc.parentId);
     if (
       parent.mode.type !== "plain" ||
-      parent.content.type !== "group" ||
+      parent.content.type !== "item" ||
       parent.content.children.length !== 1 ||
       parent.content.children[0] !== cur
     )
@@ -110,7 +110,7 @@ function resolveDropTarget(
   core: Core,
   x: number,
   y: number,
-  sourceItemId: ItemId,
+  sourceNodeId: NodeId,
   sourceEl: HTMLElement,
 ): DropTarget | null {
   const hit = document.elementFromPoint(x, y);
@@ -119,7 +119,7 @@ function resolveDropTarget(
   const frame = nearestFrame(hit);
   if (!frame) return null;
 
-  if (frame.itemId === sourceItemId || sourceEl.contains(frame.el)) return null;
+  if (frame.nodeId === sourceNodeId || sourceEl.contains(frame.el)) return null;
 
   const rect = frame.el.getBoundingClientRect();
   const frameType: DragType =
@@ -129,21 +129,21 @@ function resolveDropTarget(
     const fraction = (y - rect.top) / rect.height;
 
     if (fraction > SLOT_EDGE_FRACTION && fraction < 1 - SLOT_EDGE_FRACTION) {
-      return { type: "replace", itemId: frame.itemId, anchorEl: frame.el };
+      return { type: "replace", nodeId: frame.nodeId, anchorEl: frame.el };
     }
 
     const parentFrame = nearestFrame(frame.el.parentElement);
     if (
       !parentFrame ||
-      parentFrame.itemId === sourceItemId ||
+      parentFrame.nodeId === sourceNodeId ||
       sourceEl.contains(parentFrame.el)
     )
       return null;
 
-    const parentLoc = core.locate(parentFrame.itemId);
+    const parentLoc = core.locate(parentFrame.nodeId);
     if (!parentLoc) return null;
 
-    if (core.item(parentLoc.parentId).mode.type !== "plain") return null;
+    if (core.node(parentLoc.parentId).mode.type !== "plain") return null;
 
     const side: "before" | "after" =
       fraction <= SLOT_EDGE_FRACTION ? "before" : "after";
@@ -157,10 +157,10 @@ function resolveDropTarget(
     };
   }
 
-  const loc = core.locate(frame.itemId);
+  const loc = core.locate(frame.nodeId);
   if (!loc) return null;
 
-  if (core.item(loc.parentId).mode.type !== "plain") return null;
+  if (core.node(loc.parentId).mode.type !== "plain") return null;
 
   const isBefore = y < rect.top + rect.height / 2;
   const side: "before" | "after" = isBefore ? "before" : "after";
@@ -176,14 +176,14 @@ function resolveDropTarget(
 
 function normalizeDropTarget(
   core: Core,
-  sourceItemId: ItemId,
+  sourceNodeId: NodeId,
   cleanupType: DragType,
   drop: DropTarget | null,
 ): DropTarget | null {
   if (!drop) return null;
   if (cleanupType !== "reorder" || drop.type !== "gap") return drop;
 
-  const sourceLoc = core.locate(sourceItemId);
+  const sourceLoc = core.locate(sourceNodeId);
   if (!sourceLoc) return null;
   if (sourceLoc.parentId !== drop.parentId) return drop;
   if (drop.at === sourceLoc.index || drop.at === sourceLoc.index + 1)
@@ -223,7 +223,7 @@ export function createDragController(core: Core): DragController {
 
   function activate(
     cleanupType: DragType,
-    itemId: ItemId,
+    nodeId: NodeId,
     frameEl: HTMLElement,
     x: number,
     y: number,
@@ -240,12 +240,12 @@ export function createDragController(core: Core): DragController {
     state.value = {
       type: "active",
       cleanupType,
-      itemId,
+      nodeId,
       drop: normalizeDropTarget(
         core,
-        itemId,
+        nodeId,
         cleanupType,
-        resolveDropTarget(core, x, y, itemId, frameEl),
+        resolveDropTarget(core, x, y, nodeId, frameEl),
       ),
     };
   }
@@ -253,13 +253,13 @@ export function createDragController(core: Core): DragController {
   function commitDrop(dragState: Extract<DragState, { type: "active" }>): void {
     if (dragState.drop) {
       const clearsSource = dragState.cleanupType === "slot";
-      const sourceLoc = clearsSource ? core.locate(dragState.itemId) : null;
+      const sourceLoc = clearsSource ? core.locate(dragState.nodeId) : null;
       const sourceLabel = clearsSource
-        ? core.item(dragState.itemId).label
+        ? core.node(dragState.nodeId).label
         : null;
       const pruneList = clearsSource
         ? []
-        : computePruneList(core, dragState.itemId);
+        : computePruneList(core, dragState.nodeId);
 
       const applySourceOps = (tx: Tx): void => {
         if (sourceLoc) {
@@ -277,20 +277,20 @@ export function createDragController(core: Core): DragController {
 
         if (drop.type === "gap") {
           core.commit((tx) => {
-            tx.move(dragState.itemId, drop.parentId, { at: drop.at });
+            tx.move(dragState.nodeId, drop.parentId, { at: drop.at });
             applySourceOps(tx);
           });
         } else {
-          const slotLoc = core.locate(drop.itemId);
+          const slotLoc = core.locate(drop.nodeId);
           if (!slotLoc) return;
 
-          const displacedLabel = core.item(drop.itemId).label;
+          const displacedLabel = core.node(drop.nodeId).label;
           core.commit((tx) => {
-            tx.move(dragState.itemId, slotLoc.parentId, {
+            tx.move(dragState.nodeId, slotLoc.parentId, {
               at: slotLoc.index,
             });
-            tx.remove(drop.itemId);
-            if (displacedLabel) tx.setLabel(dragState.itemId, displacedLabel);
+            tx.remove(drop.nodeId);
+            if (displacedLabel) tx.setLabel(dragState.nodeId, displacedLabel);
             applySourceOps(tx);
           });
         }
@@ -305,7 +305,7 @@ export function createDragController(core: Core): DragController {
     if (e.button !== 0 || state.value.type !== "idle") return;
     const frame = resolveDragStartFrame(e.target);
     if (!frame) return;
-    if (core.item(frame.itemId).mode.type === "readonly") return;
+    if (core.node(frame.nodeId).mode.type === "readonly") return;
 
     activeSourceEl = frame.el;
     activePointerId = e.pointerId;
@@ -315,7 +315,7 @@ export function createDragController(core: Core): DragController {
     state.value = {
       type: "pending",
       cleanupType: frame.cleanupType,
-      itemId: frame.itemId,
+      nodeId: frame.nodeId,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
@@ -337,7 +337,7 @@ export function createDragController(core: Core): DragController {
       }
       activate(
         dragState.cleanupType,
-        dragState.itemId,
+        dragState.nodeId,
         frameEl,
         e.clientX,
         e.clientY,
@@ -350,14 +350,14 @@ export function createDragController(core: Core): DragController {
         core,
         e.clientX,
         e.clientY,
-        dragState.itemId,
+        dragState.nodeId,
         activeSourceEl!,
       );
       state.value = {
         ...dragState,
         drop: normalizeDropTarget(
           core,
-          dragState.itemId,
+          dragState.nodeId,
           dragState.cleanupType,
           drop,
         ),

@@ -1,11 +1,11 @@
 import { signal } from "@preact/signals-core";
 import { describe, expect, test } from "bun:test";
 
-import type { Location, ItemId } from "../src/core";
+import type { Location, NodeId } from "../src/core";
 import { LABEL_TARGET, CONTENT_TEXT_TARGET, connTarget } from "../src/core";
 import type { Component } from "../src/dom";
 import {
-  bindItemFrame,
+  bindNodeFrame,
   createComponent,
   domPointToTextOffset,
   el,
@@ -28,7 +28,7 @@ import {
   flushDomEffects,
   makeCoreRuntime,
   mkBlank,
-  mkGroup,
+  mkItem,
   pointerDown,
   requireFrameEl,
   queryTargetInput,
@@ -46,14 +46,14 @@ function mount(c: Component): () => void {
   };
 }
 
-function mountInItemFrame(
+function mountInNodeFrame(
   core: Parameters<typeof createComponent>[0],
   location: Location,
   c: Component,
 ): () => void {
   const wrapped = createComponent(core, (ctx) => {
     const frameEl = el("div");
-    bindItemFrame(ctx, { core, location }, frameEl);
+    bindNodeFrame(ctx, { core, location }, frameEl);
     ctx.mount(frameEl, c);
     return frameEl;
   });
@@ -375,10 +375,10 @@ describe("dom runtime: createComponent and Ctx primitives", () => {
 describe("dom toolbar", () => {
   test("reflects current state and disables invalid content conversions", async () => {
     const { core, rootId } = makeCoreRuntime();
-    const groupId = mkGroup(core, rootId, { label: "group" });
-    mkBlank(core, groupId, { label: "child", value: "x" });
+    const itemId = mkItem(core, rootId, { label: "item" });
+    mkBlank(core, itemId, { label: "child", value: "x" });
 
-    core.focus({ type: "item", location: { item: groupId, portals: [] } });
+    core.focus({ type: "node", location: { node: itemId, portals: [] } });
 
     const toolbar = buildToolbar(core);
     const unmount = mount(toolbar);
@@ -396,11 +396,11 @@ describe("dom toolbar", () => {
     unmount();
   });
 
-  test("clicking commands updates the selected item", async () => {
+  test("clicking commands updates the selected node", async () => {
     const { core, rootId } = makeCoreRuntime();
     const valueId = mkBlank(core, rootId, { label: "x", value: "hello" });
 
-    core.focus({ type: "item", location: { item: valueId, portals: [] } });
+    core.focus({ type: "node", location: { node: valueId, portals: [] } });
 
     const toolbar = buildToolbar(core);
     const unmount = mount(toolbar);
@@ -408,14 +408,14 @@ describe("dom toolbar", () => {
 
     requireToolbarButton("formula").click();
     await flushDomEffects();
-    expect(core.item(valueId).mode.type).toBe("connected");
+    expect(core.node(valueId).mode.type).toBe("connected");
     expect(
       requireToolbarButton("formula").classList.contains("is-active"),
     ).toBe(true);
 
     requireToolbarButton("plain").click();
     await flushDomEffects();
-    expect(core.item(valueId).mode.type).toBe("plain");
+    expect(core.node(valueId).mode.type).toBe("plain");
     expect(requireToolbarButton("plain").classList.contains("is-active")).toBe(
       true,
     );
@@ -534,15 +534,15 @@ describe("dom/contenteditable utility contracts", () => {
   });
 });
 
-describe("bindItemFrame contract", () => {
+describe("bindNodeFrame contract", () => {
   test("sets baseline frame attributes", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
-      bindItemFrame(ctx, { core, location }, frame);
+      bindNodeFrame(ctx, { core, location }, frame);
       return frame;
     });
 
@@ -560,7 +560,7 @@ describe("bindItemFrame contract", () => {
   test("pointerdown focuses core and stops propagation", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const parentSaw = spy();
 
@@ -571,7 +571,7 @@ describe("bindItemFrame contract", () => {
 
       host.addEventListener("pointerdown", () => parentSaw.fn());
 
-      bindItemFrame(ctx, { core, location }, frame);
+      bindNodeFrame(ctx, { core, location }, frame);
       return host;
     });
 
@@ -584,20 +584,20 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     const selection = core.selection();
-    expect(selection.type).toBe("item");
-    if (selection.type !== "item") throw new Error("Expected item selection");
+    expect(selection.type).toBe("node");
+    if (selection.type !== "node") throw new Error("Expected node selection");
     expect(selection.head.portals).toEqual(location.portals);
-    expect(selection.head.item).toBe(location.item);
+    expect(selection.head.node).toBe(location.node);
     expect(parentSaw.count()).toBe(0);
 
     unmount();
   });
 
-  test("pointerdown on contenteditable target does not force frame item focus", async () => {
+  test("pointerdown on contenteditable target does not force frame node focus", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
@@ -606,7 +606,7 @@ describe("bindItemFrame contract", () => {
       value.contentEditable = "true";
       value.textContent = "hello";
       frame.append(value);
-      bindItemFrame(ctx, { core, location }, frame);
+      bindNodeFrame(ctx, { core, location }, frame);
       return frame;
     });
 
@@ -614,9 +614,9 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     core.focus({
-      type: "item",
-      anchor: { item: other, portals: [] },
-      head: { item: other, portals: [] },
+      type: "node",
+      anchor: { node: other, portals: [] },
+      head: { node: other, portals: [] },
     });
     await flushDomEffects();
 
@@ -627,9 +627,9 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     const selection = core.selection();
-    expect(selection.type).toBe("item");
-    if (selection.type !== "item") throw new Error("Expected item selection");
-    expect(selection.head.item).toBe(other);
+    expect(selection.type).toBe("node");
+    if (selection.type !== "node") throw new Error("Expected node selection");
+    expect(selection.head.node).toBe(other);
 
     unmount();
   });
@@ -638,7 +638,7 @@ describe("bindItemFrame contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
     const parentSaw = spy();
 
     const c = createComponent(core, (ctx) => {
@@ -651,7 +651,7 @@ describe("bindItemFrame contract", () => {
       frame.append(value);
       host.append(frame);
       host.addEventListener("pointerdown", () => parentSaw.fn());
-      bindItemFrame(ctx, { core, location }, frame);
+      bindNodeFrame(ctx, { core, location }, frame);
       return host;
     });
 
@@ -659,9 +659,9 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     core.focus({
-      type: "item",
-      anchor: { item: other, portals: [] },
-      head: { item: other, portals: [] },
+      type: "node",
+      anchor: { node: other, portals: [] },
+      head: { node: other, portals: [] },
     });
     await flushDomEffects();
 
@@ -682,9 +682,9 @@ describe("bindItemFrame contract", () => {
     await flushDomEffects();
 
     const selection = core.selection();
-    expect(selection.type).toBe("item");
-    if (selection.type !== "item") throw new Error("Expected item selection");
-    expect(selection.head.item).toBe(other);
+    expect(selection.type).toBe("node");
+    if (selection.type !== "node") throw new Error("Expected node selection");
+    expect(selection.head.node).toBe(other);
     expect(parentSaw.count()).toBe(0);
 
     unmount();
@@ -694,31 +694,31 @@ describe("bindItemFrame contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: 1 });
     const other = mkBlank(core, rootId, { label: "y", value: 2 });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const frame = el("div");
-      bindItemFrame(ctx, { core, location }, frame);
+      bindNodeFrame(ctx, { core, location }, frame);
       return frame;
     });
 
-    const unmount = mountInItemFrame(core, location, c);
+    const unmount = mountInNodeFrame(core, location, c);
     await flushDomEffects();
 
     const frame = c.el as HTMLElement;
 
     core.focus({
-      type: "item",
-      anchor: { item: other, portals: [] },
-      head: { item: other, portals: [] },
+      type: "node",
+      anchor: { node: other, portals: [] },
+      head: { node: other, portals: [] },
     });
     await flushDomEffects();
     expect(frame.classList.contains("is-selected")).toBe(false);
 
     core.focus({
-      type: "item",
-      anchor: { item: location.item, portals: [] },
-      head: { item: location.item, portals: [] },
+      type: "node",
+      anchor: { node: location.node, portals: [] },
+      head: { node: location.node, portals: [] },
     });
     await flushDomEffects();
     expect(frame.classList.contains("is-selected")).toBe(true);
@@ -735,7 +735,7 @@ describe("mountHeader contract", () => {
   test("always renders label field (LABEL_TARGET)", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const host = el("div");
@@ -761,7 +761,7 @@ describe("mountHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setFormula(core, id, "");
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const host = el("div");
@@ -791,7 +791,7 @@ describe("mountHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const host = el("div");
@@ -825,7 +825,7 @@ describe("mountHeader contract", () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
     setQuery(core, id, { from: "rows", where: "", orderBy: "" });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const c = createComponent(core, (ctx) => {
       const host = el("div");
@@ -857,11 +857,11 @@ describe("mountHeader contract", () => {
   });
 });
 
-describe("smoke: item TYPE intent model-apply path", () => {
+describe("smoke: node TYPE intent model-apply path", () => {
   test("TYPE dispatch moves to primary edit target and types a character", async () => {
     const { core, rootId } = makeCoreRuntime();
     const id = mkBlank(core, rootId, { label: "x", value: "" });
-    const location: Location = { item: id, portals: [] };
+    const location: Location = { node: id, portals: [] };
 
     const mounted = core.mountView({
       id,
@@ -872,9 +872,9 @@ describe("smoke: item TYPE intent model-apply path", () => {
     await flushDomEffects();
 
     core.focus({
-      type: "item",
-      anchor: { item: location.item, portals: [] },
-      head: { item: location.item, portals: [] },
+      type: "node",
+      anchor: { node: location.node, portals: [] },
+      head: { node: location.node, portals: [] },
     });
     await flushDomEffects();
 
@@ -888,7 +888,7 @@ describe("smoke: item TYPE intent model-apply path", () => {
     if (sel1.type !== "editing") throw new Error("Expected editing selection");
     expect(sel1.location).toEqual(location);
     expect(sel1.target).toBe(CONTENT_TEXT_TARGET);
-    expect(core.item(id).content).toEqual({ type: "value", value: "a" });
+    expect(core.node(id).content).toEqual({ type: "value", value: "a" });
 
     unmount();
   });
@@ -904,18 +904,18 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     core.commit((t) => {
       t.setValue(id, "two");
     });
-    expect(core.item(id).content).toEqual({ type: "value", value: "two" });
+    expect(core.node(id).content).toEqual({ type: "value", value: "two" });
 
     const undo = dispatchKey(rootBoundary, "z", { metaKey: true });
     expect(undo).toBe(true);
-    expect(core.item(id).content).toEqual({ type: "value", value: "one" });
+    expect(core.node(id).content).toEqual({ type: "value", value: "one" });
 
     const redo = dispatchKey(rootBoundary, "z", {
       metaKey: true,
       shiftKey: true,
     });
     expect(redo).toBe(true);
-    expect(core.item(id).content).toEqual({ type: "value", value: "two" });
+    expect(core.node(id).content).toEqual({ type: "value", value: "two" });
   });
 
   test("global Ctrl+Y redoes through core history", () => {
@@ -928,11 +928,11 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
       t.setValue(id, "two");
     });
     core.undo();
-    expect(core.item(id).content).toEqual({ type: "value", value: "one" });
+    expect(core.node(id).content).toEqual({ type: "value", value: "one" });
 
     const redo = dispatchKey(rootBoundary, "y", { ctrlKey: true });
     expect(redo).toBe(true);
-    expect(core.item(id).content).toEqual({ type: "value", value: "two" });
+    expect(core.node(id).content).toEqual({ type: "value", value: "two" });
   });
 
   test("Cmd+. stays local inside an active text field", async () => {
@@ -950,7 +950,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
 
     core.focus({
       type: "editing",
-      location: { item: id, portals: [] },
+      location: { node: id, portals: [] },
       target: connTarget("expr"),
     });
     await flushDomEffects();
@@ -969,7 +969,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const selection = core.selection();
     expect(selection.type).toBe("editing");
     if (selection.type !== "editing") throw new Error("Expected editing");
-    expect(selection.location).toEqual({ item: id, portals: [] });
+    expect(selection.location).toEqual({ node: id, portals: [] });
     expect(selection.target).toBe(connTarget("expr"));
     expect(exprInp.selectionStart).toBe(exprInp.value.length);
     expect(exprInp.selectionEnd).toBe(exprInp.value.length);
@@ -977,14 +977,14 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     unmount();
   });
 
-  test("global Cmd+. falls back to the active view when the current item has no label target", async () => {
+  test("global Cmd+. falls back to the active view when the current node has no label target", async () => {
     const { core, rootId } = makeCoreRuntime();
 
-    const tableId = mkGroup(core, rootId, { label: "table" });
+    const tableId = mkItem(core, rootId, { label: "table" });
     setView(core, tableId, "table");
 
-    const row1 = mkGroup(core, tableId, { label: "r1" });
-    const row2 = mkGroup(core, tableId, { label: "r2" });
+    const row1 = mkItem(core, tableId, { label: "r1" });
+    const row2 = mkItem(core, tableId, { label: "r2" });
 
     mkBlank(core, row1, { label: "name", value: "alice" });
     mkBlank(core, row1, { label: "score", value: 1 });
@@ -1005,7 +1005,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     core.focus(
       {
         type: "editing",
-        location: { item: cell, portals: [] },
+        location: { node: cell, portals: [] },
         target: CONTENT_TEXT_TARGET,
       },
       { caret: "end" },
@@ -1025,7 +1025,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const selection = core.selection();
     expect(selection.type).toBe("editing");
     if (selection.type !== "editing") throw new Error("Expected editing");
-    expect(selection.location).toEqual({ item: schemaCell, portals: [] });
+    expect(selection.location).toEqual({ node: schemaCell, portals: [] });
     expect(selection.target).toBe(LABEL_TARGET);
 
     const labelInp = document.activeElement as HTMLInputElement | null;
@@ -1040,7 +1040,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("edit with exact target binding focuses correct element", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
-    const location = { item: x, portals: [] };
+    const location = { node: x, portals: [] };
 
     const valueEl = document.createElement("input");
     document.body.append(valueEl);
@@ -1058,7 +1058,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     cleanValue();
   });
 
-  test("item selection focuses the bound structural item target", async () => {
+  test("node selection focuses the bound structural node target", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
 
@@ -1070,7 +1070,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const unmount = mount(mounted);
     await flushDomEffects();
 
-    core.focus({ type: "item", location: { item: x, portals: [] } });
+    core.focus({ type: "node", location: { node: x, portals: [] } });
     await flushDomEffects();
 
     expect(document.activeElement).toBe(requireFrameEl(document.body, x));
@@ -1081,7 +1081,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
   test("new binding for same (location, target) replaces previous binding", async () => {
     const { core, rootId } = makeCoreRuntime();
     const x = mkBlank(core, rootId, { label: "x", value: "v" });
-    const location = { item: x, portals: [] };
+    const location = { node: x, portals: [] };
 
     const first = document.createElement("button");
     const second = document.createElement("button");
@@ -1113,7 +1113,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     const { core } = makeCoreRuntime();
 
     const invalidMounted = core.mountView({
-      id: "not-an-id" as ItemId,
+      id: "not-an-id" as NodeId,
       portals: [],
       view: "outline",
     });
@@ -1124,7 +1124,7 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
     invalidUnmount();
 
     const missingMounted = core.mountView({
-      id: "999999:" as ItemId,
+      id: "999999:" as NodeId,
       portals: [],
       view: "outline",
     });

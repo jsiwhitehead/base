@@ -120,7 +120,7 @@ This axis covers representational scope: the structures, relationships, types, v
 
 Purpose: Harden and extend the foundational views that allow structure to be inhabited and revised without altering the data model.
 
-- Define and implement table and slider delete-focus landing rules consistent with item-boundary navigation contracts
+- Define and implement table and slider delete-focus landing rules consistent with node-boundary navigation contracts
 - Harden slider value coercion, snapping, and undo semantics
 - Provide deterministic column totals in table contexts
 - Harden row and column operations under deletion and undo
@@ -133,10 +133,10 @@ Purpose: Allow the data model to express explicit relationships beyond containme
 - Introduce shorthand forms and reusable expression patterns to reduce formula verbosity
 - Provide structured error surfacing for invalid expressions
 - Provide formula and query authoring assistance with inline feedback and expression hints
-- Add field selection to queries, returning only items that match a specified field shape
+- Add field selection to queries, returning only nodes that match a specified field shape
 - Extend queries to traverse all descendants with ancestor-chain field values from root to each result
-- Guarantee stable identity and consistency of derived items across views
-- Define result groups as a structural primitive: items with a designated output child and local context children, with explicit visibility, addressing, undo, and export semantics
+- Guarantee stable identity and consistency of derived nodes across views
+- Define result items as a structural primitive: nodes with a designated output child and local context children, with explicit visibility, addressing, undo, and export semantics
 - Introduce first-class link connections independent of derivation
 - Define referential integrity for link targets and surface broken references explicitly
 
@@ -147,7 +147,7 @@ Purpose: Allow regions of structure to become formally dependable where reliabil
 - Clarify numeric precision semantics and evaluate decimal support for financial values
 - Introduce date value semantics
 - Define type validation contracts
-- Define schema evolution strategy for typed items
+- Define schema evolution strategy for typed nodes
 - Guarantee deterministic type coercion
 - Surface type mismatches explicitly
 
@@ -168,8 +168,8 @@ Purpose: Extend how structure can be rendered and interacted with in the UI with
 Purpose: Ensure structure and meaning survive crossing boundaries and external adapters without semantic loss.
 
 - Harden drag-and-drop including validation, failure handling, and deterministic post-drop focus outcomes
-- Define and implement a structural clipboard format for item subtrees
-- Define paste semantics for structural clipboard content, including identifier regeneration and multi-item ordering
+- Define and implement a structural clipboard format for node subtrees
+- Define paste semantics for structural clipboard content, including identifier regeneration and multi-node ordering
 - Guarantee atomic import with no partial state on failure
 - Define CSV import and export contracts
 - Verify that export/import round-trips preserve structural equivalence

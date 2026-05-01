@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Core, ItemId, Intent, Transaction } from "../src/core";
+import type { Core, NodeId, Intent, Transaction } from "../src/core";
 import { CoreApiError, CoreOpError, createCore } from "../src/core";
 import { splitViewRegistrations, viewRegistrations } from "../src/views";
 import {
@@ -8,7 +8,7 @@ import {
   expectThrowsWithCode,
   makePureCore,
   mkBlank,
-  mkGroup,
+  mkItem,
 } from "./core-test-utils";
 
 type Rng = {
@@ -40,44 +40,44 @@ function createRng(seed: number): Rng {
   };
 }
 
-function reachableIds(core: Core, rootId: ItemId): ItemId[] {
-  const out: ItemId[] = [];
-  const stack: ItemId[] = [rootId];
-  const seen = new Set<ItemId>();
+function reachableIds(core: Core, rootId: NodeId): NodeId[] {
+  const out: NodeId[] = [];
+  const stack: NodeId[] = [rootId];
+  const seen = new Set<NodeId>();
   while (stack.length) {
     const id = stack.pop()!;
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(id);
-    const item = core.item(id);
-    if (item.content.type !== "group") continue;
-    for (const childId of item.content.children) stack.push(childId);
+    const node = core.node(id);
+    if (node.content.type !== "item") continue;
+    for (const childId of node.content.children) stack.push(childId);
   }
   return out;
 }
 
-function editableIds(core: Core, rootId: ItemId): ItemId[] {
+function editableIds(core: Core, rootId: NodeId): NodeId[] {
   return reachableIds(core, rootId).filter((id) => {
-    const item = core.item(id);
-    return item.mode.type !== "readonly";
+    const node = core.node(id);
+    return node.mode.type !== "readonly";
   });
 }
 
-function editableGroupIds(core: Core, rootId: ItemId): ItemId[] {
+function editableItemIds(core: Core, rootId: NodeId): NodeId[] {
   return editableIds(core, rootId).filter(
-    (id) => core.item(id).content.type === "group",
+    (id) => core.node(id).content.type === "item",
   );
 }
 
-function plainGroupIds(core: Core, rootId: ItemId): ItemId[] {
+function plainItemIds(core: Core, rootId: NodeId): NodeId[] {
   return editableIds(core, rootId).filter((id) => {
-    const item = core.item(id);
-    return item.mode.type === "plain" && item.content.type === "group";
+    const node = core.node(id);
+    return node.mode.type === "plain" && node.content.type === "item";
   });
 }
 
-function isAncestor(core: Core, ancestor: ItemId, node: ItemId): boolean {
-  let cur: ItemId | null = node;
+function isAncestor(core: Core, ancestor: NodeId, node: NodeId): boolean {
+  let cur: NodeId | null = node;
   while (cur) {
     if (cur === ancestor) return true;
     const loc = core.locate(cur);
@@ -91,16 +91,16 @@ function assertSelectionValid(core: Core): void {
   if (selection.type === "idle") return;
 
   if (selection.type === "editing") {
-    core.item(selection.location.item);
+    core.node(selection.location.node);
     for (const portalId of selection.location.portals) {
-      expect(core.item(portalId).mode.type).toBe("connected");
+      expect(core.node(portalId).mode.type).toBe("connected");
     }
     return;
   }
 
-  core.item(selection.head.item);
+  core.node(selection.head.node);
   for (const portalId of selection.head.portals) {
-    expect(core.item(portalId).mode.type).toBe("connected");
+    expect(core.node(portalId).mode.type).toBe("connected");
   }
 }
 
@@ -132,9 +132,9 @@ function randomIntent(rng: Rng): Intent {
 function isExpectedCommitRejection(err: unknown): boolean {
   if (err instanceof CoreApiError) {
     return (
-      err.code === "INVALID_ITEM_ID" ||
-      err.code === "DERIVED_ITEM_ID" ||
-      err.code === "UNKNOWN_ITEM_ID"
+      err.code === "INVALID_NODE_ID" ||
+      err.code === "DERIVED_NODE_ID" ||
+      err.code === "UNKNOWN_NODE_ID"
     );
   }
   if (err instanceof CoreOpError) {
@@ -142,8 +142,8 @@ function isExpectedCommitRejection(err: unknown): boolean {
       err.code === "DUPLICATE_CHILD_LABEL" ||
       err.code === "CANNOT_MOVE_INTO_SELF" ||
       err.code === "CANNOT_MOVE_INTO_DESCENDANT" ||
-      err.code === "PARENT_NOT_GROUP" ||
-      err.code === "CANNOT_CONVERT_NONEMPTY_GROUP"
+      err.code === "PARENT_NOT_ITEM" ||
+      err.code === "CANNOT_CONVERT_NONEMPTY_ITEM"
     );
   }
   return false;
@@ -174,41 +174,41 @@ function commitMaybeReject(
   }
 }
 
-function seedBaseTree(core: Core, rootId: ItemId): void {
-  const alpha = mkGroup(core, rootId, { label: "alpha" });
-  const beta = mkGroup(core, rootId, { label: "beta" });
-  const gamma = mkGroup(core, rootId, { label: "gamma" });
+function seedBaseTree(core: Core, rootId: NodeId): void {
+  const alpha = mkItem(core, rootId, { label: "alpha" });
+  const beta = mkItem(core, rootId, { label: "beta" });
+  const gamma = mkItem(core, rootId, { label: "gamma" });
 
   for (let i = 0; i < 8; i += 1) {
     mkBlank(core, alpha, { label: `a${i}`, value: i });
     mkBlank(core, beta, { label: `b${i}`, value: i * 10 });
   }
 
-  const nested = mkGroup(core, gamma, { label: "nested" });
+  const nested = mkItem(core, gamma, { label: "nested" });
   for (let i = 0; i < 5; i += 1) {
     mkBlank(core, nested, { label: `n${i}`, value: `v${i}` });
   }
 }
 
-function nonGroupEditableIds(core: Core, rootId: ItemId): ItemId[] {
+function nonItemEditableIds(core: Core, rootId: NodeId): NodeId[] {
   return editableIds(core, rootId).filter(
-    (id) => core.item(id).content.type !== "group",
+    (id) => core.node(id).content.type !== "item",
   );
 }
 
 function applyValidDeterministicStep(
   core: Core,
-  rootId: ItemId,
+  rootId: NodeId,
   rng: Rng,
 ): void {
-  const groups = plainGroupIds(core, rootId);
+  const items = plainItemIds(core, rootId);
   const editable = editableIds(core, rootId);
   const nonRootEditable = editable.filter((id) => id !== rootId);
-  const nonGroupEditable = nonGroupEditableIds(core, rootId);
+  const nonGroupEditable = nonItemEditableIds(core, rootId);
 
   const action = rng.int(8);
-  if (action === 0 && groups.length > 0) {
-    const parent = rng.pick(groups);
+  if (action === 0 && items.length > 0) {
+    const parent = rng.pick(items);
     core.commit((t) => {
       const id = t.insertChild(parent, { at: rng.int(8) });
       t.setValue(id, randomValue(rng));
@@ -222,7 +222,7 @@ function applyValidDeterministicStep(
   }
   if (action === 2 && editable.length > 0) {
     const id = rng.pick(editable);
-    core.commit((t) => t.setGroup(id));
+    core.commit((t) => t.setItem(id));
     return;
   }
   if (action === 3 && nonRootEditable.length > 0) {
@@ -298,7 +298,7 @@ function assertHistoryAlgebraIdentity(core: Core): void {
 
 function makeCollabFuzzCore(): {
   core: Core;
-  rootId: ItemId;
+  rootId: NodeId;
   deliverRemote: (txn: Transaction) => void;
 } {
   let onRemote: ((txn: Transaction) => void) | undefined;
@@ -321,8 +321,8 @@ function makeCollabFuzzCore(): {
   return { core, rootId, deliverRemote };
 }
 
-function entryIdOf(itemId: ItemId): number {
-  return Number(itemId.slice(0, itemId.indexOf(":")));
+function entryIdOf(nodeId: NodeId): number {
+  return Number(nodeId.slice(0, nodeId.indexOf(":")));
 }
 
 function runCollabInterleavingProgram(
@@ -375,26 +375,26 @@ function runCollabInterleavingProgram(
 type LoggedCommitAction =
   | {
       type: "insert";
-      parentId: ItemId;
+      parentId: NodeId;
       at: number;
       value: true | number | string | null;
       label: string;
     }
-  | { type: "setValue"; id: ItemId; value: true | number | string | null }
-  | { type: "setGroup"; id: ItemId }
-  | { type: "remove"; id: ItemId }
-  | { type: "move"; id: ItemId; toParentId: ItemId; at: number }
-  | { type: "setFormula"; id: ItemId; expr: string }
+  | { type: "setValue"; id: NodeId; value: true | number | string | null }
+  | { type: "setItem"; id: NodeId }
+  | { type: "remove"; id: NodeId }
+  | { type: "move"; id: NodeId; toParentId: NodeId; at: number }
+  | { type: "setFormula"; id: NodeId; expr: string }
   | {
       type: "setQuery";
-      id: ItemId;
+      id: NodeId;
       from: string;
       where: string;
       orderBy: string;
     }
   | {
       type: "setView";
-      id: ItemId;
+      id: NodeId;
       view: "outline" | "table" | "slider" | null;
     };
 type LoggedCommitOutcome = {
@@ -416,8 +416,8 @@ function applyLoggedCommitAction(core: Core, action: LoggedCommitAction): void {
       t.setValue(action.id, action.value);
       return;
     }
-    if (action.type === "setGroup") {
-      t.setGroup(action.id);
+    if (action.type === "setItem") {
+      t.setItem(action.id);
       return;
     }
     if (action.type === "remove") {
@@ -466,20 +466,20 @@ function executeLoggedCommitAction(
 
 function buildLoggedCommitAction(
   core: Core,
-  rootId: ItemId,
+  rootId: NodeId,
   rng: Rng,
   step: number,
 ): LoggedCommitAction | null {
-  const groups = plainGroupIds(core, rootId);
+  const items = plainItemIds(core, rootId);
   const editable = editableIds(core, rootId);
   const nonRootEditable = editable.filter((id) => id !== rootId);
-  const nonGroupEditable = nonGroupEditableIds(core, rootId);
+  const nonGroupEditable = nonItemEditableIds(core, rootId);
 
   const action = rng.int(8);
-  if (action === 0 && groups.length > 0) {
+  if (action === 0 && items.length > 0) {
     return {
       type: "insert",
-      parentId: rng.pick(groups),
+      parentId: rng.pick(items),
       at: rng.int(8),
       value: randomValue(rng),
       label: `lg_${step}_${rng.int(1000)}`,
@@ -493,7 +493,7 @@ function buildLoggedCommitAction(
     };
   }
   if (action === 2 && editable.length > 0) {
-    return { type: "setGroup", id: rng.pick(editable) };
+    return { type: "setItem", id: rng.pick(editable) };
   }
   if (action === 3 && nonRootEditable.length > 0) {
     return { type: "remove", id: rng.pick(nonRootEditable) };
@@ -518,9 +518,9 @@ function buildLoggedCommitAction(
     const views = [null, "outline", "table", "slider"] as const;
     return { type: "setView", id: rng.pick(editable), view: rng.pick(views) };
   }
-  if (nonRootEditable.length > 0 && groups.length > 0) {
+  if (nonRootEditable.length > 0 && items.length > 0) {
     const id = rng.pick(nonRootEditable);
-    const toParentId = rng.pick(groups);
+    const toParentId = rng.pick(items);
     if (id !== toParentId && !isAncestor(core, id, toParentId)) {
       return { type: "move", id, toParentId, at: rng.int(6) };
     }
@@ -530,19 +530,19 @@ function buildLoggedCommitAction(
 
 function seedScaledTree(
   core: Core,
-  rootId: ItemId,
-  opts: { groups: number; perGroup: number; depth: number },
+  rootId: NodeId,
+  opts: { items: number; perItem: number; depth: number },
 ): void {
-  const makeLevel = (parent: ItemId, depth: number, prefix: string): void => {
-    for (let g = 0; g < opts.groups; g += 1) {
-      const group = mkGroup(core, parent, { label: `${prefix}g${depth}_${g}` });
-      for (let i = 0; i < opts.perGroup; i += 1) {
-        mkBlank(core, group, {
+  const makeLevel = (parent: NodeId, depth: number, prefix: string): void => {
+    for (let g = 0; g < opts.items; g += 1) {
+      const item = mkItem(core, parent, { label: `${prefix}g${depth}_${g}` });
+      for (let i = 0; i < opts.perItem; i += 1) {
+        mkBlank(core, item, {
           label: `${prefix}v${depth}_${g}_${i}`,
           value: i,
         });
       }
-      if (depth > 0) makeLevel(group, depth - 1, `${prefix}${g}_`);
+      if (depth > 0) makeLevel(item, depth - 1, `${prefix}${g}_`);
     }
   };
   makeLevel(rootId, opts.depth, "s_");
@@ -560,10 +560,10 @@ describe("core fuzz/mixed operations", () => {
       for (let step = 0; step < 700; step += 1) {
         const action = rng.int(12);
         const ids = editableIds(core, rootId);
-        const groups = editableGroupIds(core, rootId);
+        const items = editableItemIds(core, rootId);
 
-        if (action <= 1 && groups.length > 0) {
-          const parent = rng.pick(groups);
+        if (action <= 1 && items.length > 0) {
+          const parent = rng.pick(items);
           commitMaybeReject(
             core,
             (t) => {
@@ -589,10 +589,10 @@ describe("core fuzz/mixed operations", () => {
           );
         } else if (action === 4 && ids.length > 0) {
           const id = rng.pick(ids);
-          commitMaybeReject(core, (t) => t.setGroup(id), "setGroup");
-        } else if (action === 5 && ids.length > 1 && groups.length > 0) {
+          commitMaybeReject(core, (t) => t.setItem(id), "setItem");
+        } else if (action === 5 && ids.length > 1 && items.length > 0) {
           const id = rng.pick(ids.filter((x) => x !== rootId));
-          const target = rng.pick(groups);
+          const target = rng.pick(items);
           if (id && target && id !== target && !isAncestor(core, id, target)) {
             commitMaybeReject(
               core,
@@ -641,8 +641,8 @@ describe("core fuzz/mixed operations", () => {
           const selectable = reachableIds(core, rootId);
           const focusId = rng.pick(selectable);
           core.focus({
-            type: "item",
-            location: { item: focusId, portals: [] },
+            type: "node",
+            location: { node: focusId, portals: [] },
           });
           core.dispatch(randomIntent(rng));
         } else {
@@ -755,7 +755,7 @@ describe("core fuzz/metamorphic equivalence", () => {
     const rootA = a.rootId;
     const rootB = b.rootId;
 
-    a.core.commit((t) => t.setGroup(rootA));
+    a.core.commit((t) => t.setItem(rootA));
 
     a.core.commit((t) => t.setView(rootA, "table"));
     a.core.commit((t) => t.setView(rootA, "table"));
@@ -802,7 +802,7 @@ describe("core fuzz/seed matrix", () => {
 describe("core fuzz/atomic failures", () => {
   test("core-fuzz: invalid operations throw and state remains unchanged", () => {
     const { core, rootId } = makePureCore();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: 1 });
     const b = mkBlank(core, g, { label: "b", value: 2 });
 
@@ -818,7 +818,7 @@ describe("core fuzz/atomic failures", () => {
     });
     expect(core.exportSnapshot()).toEqual(beforeSelfMove);
 
-    const child = mkGroup(core, g, { label: "child" });
+    const child = mkItem(core, g, { label: "child" });
     const beforeDescendantMove = core.exportSnapshot();
     expectThrowsWithCode(CoreOpError, "CANNOT_MOVE_INTO_DESCENDANT", () => {
       core.commit((t) => t.move(g, child));
@@ -831,11 +831,11 @@ describe("core fuzz/atomic failures", () => {
 
   test("core-fuzz: failed commit does not advance nextId or leak created ids", () => {
     const { core, rootId } = makePureCore();
-    const g = mkGroup(core, rootId, { label: "g" });
+    const g = mkItem(core, rootId, { label: "g" });
     mkBlank(core, g, { label: "a", value: 1 });
 
     const before = core.exportSnapshot();
-    expectThrowsWithCode(CoreOpError, "CANNOT_CONVERT_NONEMPTY_GROUP", () => {
+    expectThrowsWithCode(CoreOpError, "CANNOT_CONVERT_NONEMPTY_ITEM", () => {
       core.commit((t) => {
         t.insertChild(g);
         t.setConnected(g, { type: "formula", expr: "1" });
@@ -891,17 +891,17 @@ describe("core fuzz/pathological transactions", () => {
     seedBaseTree(core, rootId);
 
     for (let i = 0; i < 70; i += 1) {
-      const groups = plainGroupIds(core, rootId);
-      if (groups.length < 2) break;
-      const left = groups[0]!;
-      const right = groups[1]!;
+      const items = plainItemIds(core, rootId);
+      if (items.length < 2) break;
+      const left = items[0]!;
+      const right = items[1]!;
 
       core.commit((t) => {
         const a = t.insertChild(left, { at: 0 });
         const b = t.insertChild(left, { at: 1 });
         t.setLabel(a, `pa_${i}`);
         t.setValue(a, i);
-        t.setGroup(a);
+        t.setItem(a);
         const c = t.insertChild(a, { at: 0 });
         t.setValue(c, `nested_${i}`);
         t.move(b, right, { at: 0 });
@@ -945,15 +945,15 @@ describe("core fuzz/remote malformed multi-op", () => {
     ).toThrow();
     expect(core.exportSnapshot()).toEqual(beforePatchThenBadMove);
 
-    const group = plainGroupIds(core, rootId).find((id) => id !== rootId)!;
-    const child = mkBlank(core, group, { label: "tmp_child", value: 1 });
+    const item = plainItemIds(core, rootId).find((id) => id !== rootId)!;
+    const child = mkBlank(core, item, { label: "tmp_child", value: 1 });
     const childEid = entryIdOf(child);
-    const groupEid = entryIdOf(group);
+    const itemEid = entryIdOf(item);
     const beforeAncestorDescendantRemove = core.exportSnapshot();
     expect(() =>
       deliverRemote({
         ops: [
-          { type: "remove", id: groupEid },
+          { type: "remove", id: itemEid },
           { type: "remove", id: childEid },
         ],
         meta: { origin: "peer", source: "remote" },
@@ -987,7 +987,7 @@ describe("core fuzz/selection heavy", () => {
     for (let step = 0; step < 420; step += 1) {
       const ids = reachableIds(core, rootId);
       const id = rng.pick(ids);
-      core.focus({ type: "item", location: { item: id, portals: [] } });
+      core.focus({ type: "node", location: { node: id, portals: [] } });
 
       if (rng.chance(0.6)) {
         core.dispatch({ type: "ENTER" });
@@ -1014,9 +1014,9 @@ describe("core fuzz/selection heavy", () => {
 describe("core fuzz/scale variance", () => {
   test("core-fuzz: same stress program remains valid across tree size/depth variants", () => {
     const configs = [
-      { groups: 2, perGroup: 5, depth: 1, steps: 140 },
-      { groups: 3, perGroup: 7, depth: 2, steps: 170 },
-      { groups: 2, perGroup: 4, depth: 3, steps: 160 },
+      { items: 2, perItem: 5, depth: 1, steps: 140 },
+      { items: 3, perItem: 7, depth: 2, steps: 170 },
+      { items: 2, perItem: 4, depth: 3, steps: 160 },
     ] as const;
 
     for (let c = 0; c < configs.length; c += 1) {

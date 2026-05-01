@@ -1,6 +1,6 @@
 export { createComponent, el, resolveEventTargetElement } from "./component";
 export type { Ctx } from "./component";
-export { bindItemFrame, setBodyClasses } from "./frame";
+export { bindNodeFrame, setBodyClasses } from "./frame";
 export { mountHeader } from "./controls";
 export {
   createSuppressionFlag,

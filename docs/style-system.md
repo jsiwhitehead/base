@@ -9,8 +9,8 @@ This document defines:
 - Design tokens and token usage rules.
 - CSS layering responsibilities.
 - Shared primitives (`frame`, `body`, `header`, `rail`, `wash`).
-- Universal state styling (`.is-selected`, `.is-item-selected`, `.is-issue`, and derived variables).
-- Location language (item vs target, item-target vs edit-target, control vs editor).
+- Universal state styling (`.is-selected`, `.is-node-selected`, `.is-issue`, and derived variables).
+- Location language (node vs target, node-target vs edit-target, control vs editor).
 - Issue language and issue/focus interaction.
 
 ## Deep feel and visual language
@@ -50,7 +50,7 @@ The system should feel stable in the hands.
 - Predictable: behaviour is consistent across contexts.
 - Steady: navigation and editing feel deliberate rather than reactive.
 - Reversible: change feels safe and recoverable.
-- Coherent in focus: item selection and edit focus are distinct and visually legible.
+- Coherent in focus: node selection and edit focus are distinct and visually legible.
 
 ### Visual grammar
 
@@ -58,8 +58,8 @@ The system uses a small set of stable primitives that remain consistent across v
 
 - Frame/body separation: structure is expressed in the frame; content is expressed in the body.
 - Rails: structural markers and continuity cues.
-- Header: a compact, contained identity surface for each item.
-- Wash: the primary indicator of item selection.
+- Header: a compact, contained identity surface for each node.
+- Wash: the primary indicator of node selection.
 - State language: a consistent vocabulary for focus, selection, editability, and issues.
 - Quiet persistence: structure is legible without being loud.
 
@@ -76,14 +76,14 @@ The system's surface character is balanced, durable, and readable.
 
 ### Frame layer and body layer
 
-Every item is styled as two visual layers:
+Every node is styled as two visual layers:
 
 - Frame layer (system layer): owns rail, header, and optional wash; communicates system state.
 - Body layer (content layer): owns view-specific content and local target affordances.
 
 Rules:
 
-- Frame styling MUST communicate item-level state (`focused`, `issue`) without relying on body semantics.
+- Frame styling MUST communicate node-level state (`focused`, `issue`) without relying on body semantics.
 - Body styling MUST communicate target-level state without redefining frame language.
 
 ### Cross-view invariants
@@ -95,7 +95,7 @@ Rules:
 - The body MUST NOT redefine or restyle rail and header language.
 - Selection-driven state changes SHOULD use class toggles and derived variables, not structural DOM changes.
 - Views SHOULD consume shared tokens and derived variables instead of hardcoded visual values.
-- Nested items MUST remain visually coherent, with frame state scoped locally per item.
+- Nested nodes MUST remain visually coherent, with frame state scoped locally per node.
 
 ## Foundations
 
@@ -143,16 +143,16 @@ Recommended order:
 Rules:
 
 - Views MAY add view-specific state classes for view-specific semantics.
-- Views MUST NOT redefine `.is-selected`, `.is-item-selected`, `.is-issue`, or frame-derived variables.
+- Views MUST NOT redefine `.is-selected`, `.is-node-selected`, `.is-issue`, or frame-derived variables.
 - Views MUST NOT alter rail segmentation/geometry language.
 - Views MUST NOT replace the shared header language with a view-specific header system.
-- Views MUST NOT add item-level focus rings; item-level focus belongs to rail and optional wash.
+- Views MUST NOT add node-level focus rings; node-level focus belongs to rail and optional wash.
 
 ## Shared primitives
 
 ### Frame
 
-The frame is the root visual shell for an item.
+The frame is the root visual shell for a node.
 
 Rules:
 
@@ -168,12 +168,12 @@ Rules:
 
 - The body MUST remain visually neutral relative to frame-level state language.
 - The body MUST NOT restyle rail or header primitives.
-- The body MUST NOT add item-level wash/ring language.
+- The body MUST NOT add node-level wash/ring language.
 - The body MAY host active targets, but local affordance styling SHOULD come from shared base primitives.
 
 ### Header
 
-The header is the stable, system-owned identity marker for an item.
+The header is the stable, system-owned identity marker for a node.
 
 Rules:
 
@@ -185,12 +185,12 @@ Rules:
 
 Header content model:
 
-- `Label`: communicates what the item is.
-- `Conn`: communicates how the item is derived/wired/configured.
+- `Label`: communicates what the node is.
+- `Conn`: communicates how the node is derived/wired/configured.
 
 Layout rules:
 
-- Header placement SHOULD communicate structure (item-level or set-level alignment).
+- Header placement SHOULD communicate structure (node-level or set-level alignment).
 - The header MUST support `stacked` and `inline` label/conn arrangements.
 - Layout mode MAY switch based on available width.
 
@@ -206,32 +206,32 @@ Rules:
 
 ### Rail
 
-The rail is the primary structural marker for boundaries and item focus. Each item renders one rail segment. Views that render groups MUST align sibling segments so they read as a continuous rail for the group, separated by small gaps.
+The rail is the primary structural marker for boundaries and node focus. Each node renders one rail segment. Views that render items MUST align sibling segments so they read as a continuous rail for the item, separated by small gaps.
 
 Rules:
 
-- Each item MUST render a rail segment and it MUST NOT behave as a generic card border.
-- Location and issue styling MUST be local to the item's own rail segment.
+- Each node MUST render a rail segment and it MUST NOT behave as a generic card border.
+- Location and issue styling MUST be local to the node's own rail segment.
 - Rail segments MUST NOT merge across siblings (the gap must remain visible).
 - Rail segments SHOULD be square-ended at internal joins (between siblings).
-- Rail segments SHOULD be rounded only at the outer ends of a contiguous group (first and last segment).
-- Implementations SHOULD use structural selectors (`:first-*`, `:last-*`) on the items, not helper classes (for example `is-first`/`is-last`).
+- Rail segments SHOULD be rounded only at the outer ends of a contiguous item (first and last segment).
+- Implementations SHOULD use structural selectors (`:first-*`, `:last-*`) on the nodes, not helper classes (for example `is-first`/`is-last`).
 
 Notes:
 
 - Rail segments may be rendered as pseudo-elements (for example `::before`) or real elements. Both follow the same rounding rules.
-- Rail overlays (for example a thicker focus overlay) MAY be used if overlays stay local, preserve sibling geometry, and keep the inter-item gap visible.
+- Rail overlays (for example a thicker focus overlay) MAY be used if overlays stay local, preserve sibling geometry, and keep the inter-node gap visible.
 - Hit targets MAY exceed visible rail width when usability requires it.
 
 ### Wash
 
-The wash is a subtle background tint for item-level focus.
+The wash is a subtle background tint for node-level focus.
 
 Rules:
 
 - Wash MUST be subtle and frame-local.
 - Wash MUST NOT appear by default for edit focus.
-- Wash SHOULD appear only for item selection (`ITEM_TARGET`).
+- Wash SHOULD appear only for node selection (`NODE_TARGET`).
 
 ## State model
 
@@ -240,7 +240,7 @@ Rules:
 All frames MUST support these classes on the frame root:
 
 - `.is-selected`.
-- `.is-item-selected`.
+- `.is-node-selected`.
 - `.is-issue`.
 - `.is-numeric`.
 
@@ -268,57 +268,57 @@ Required derived variables:
 
 Rules:
 
-- Item-level selected state MUST be driven by `.is-selected`/`.is-item-selected`, not DOM `:focus`/`:focus-within`.
+- Node-level selected state MUST be driven by `.is-selected`/`.is-node-selected`, not DOM `:focus`/`:focus-within`.
 - Rail/header/wash MUST use frame-derived variables.
-- DOM focus MAY be used only for item-target vs edit-target mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
+- DOM focus MAY be used only for node-target vs edit-target mode (`:focus` vs `:focus-within:not(:focus)`) and local control affordances (`:focus`).
 
 ## Location language
 
-### Item focus vs target focus
+### Node focus vs target focus
 
-Item focus answers "Which item is active?" and target focus answers "Where will input go?"
+Node focus answers "Which node is active?" and target focus answers "Where will input go?"
 
 Rules:
 
-- Item focus MUST be communicated by rail tint and optional wash.
-- Item focus MUST NOT encode which field is active.
+- Node focus MUST be communicated by rail tint and optional wash.
+- Node focus MUST NOT encode which field is active.
 - Target focus MUST be communicated locally at the active control/editor.
-- Target focus MUST NOT be expressed as an item-level ring.
+- Target focus MUST NOT be expressed as a node-level ring.
 
-### Item selection vs edit focus
+### Node selection vs edit focus
 
-Item selection (`ITEM_TARGET`) represents active item, not active field.
+Node selection (`NODE_TARGET`) represents active node, not active field.
 
 Rules:
 
-- Item selection: rail tint active, wash MAY be active, local rings SHOULD be absent.
+- Node selection: rail tint active, wash MAY be active, local rings SHOULD be absent.
 - Edit focus (non-default target): rail tint remains active, wash SHOULD be off, local affordance MUST appear on active target.
 
 ### How DOM focus is used
 
-Item state is model-driven by frame classes. DOM focus is only for local target affordances.
+Node state is model-driven by frame classes. DOM focus is only for local target affordances.
 
 Signals:
 
-- `.ui-frame.is-selected`: item is active in selection/editing context.
-- `.ui-frame.is-item-selected`: item is part of item-selection range.
-- `.ui-frame:focus`: frame outline reset only (no item-state meaning).
+- `.ui-frame.is-selected`: node is active in selection/editing context.
+- `.ui-frame.is-node-selected`: node is part of node-selection range.
+- `.ui-frame:focus`: frame outline reset only (no node-state meaning).
 - `input/textarea/select/button:focus` and `.ui-textfield:focus-within`: active local control/editor.
 
 Model:
 
-- Item visuals (rail/wash) come from `.is-selected` / `.is-item-selected`.
+- Node visuals (rail/wash) come from `.is-selected` / `.is-node-selected`.
 - Target visuals (halo/ring/caret) come from local DOM focus.
-- Use `:focus`/`:focus-within` for target affordances only; never for item state.
+- Use `:focus`/`:focus-within` for target affordances only; never for node state.
 
 ### Root focus indicator
 
 Rules:
 
-- Root item selection MAY use a thin edge rail on `.ui-main`.
+- Root node selection MAY use a thin edge rail on `.ui-main`.
 - Root rail color SHOULD use frame-derived `--rail-tint` in both base and focused states.
-- Root item selection MAY use the same wash behavior as focused item frames.
-- Root focus styling MUST stay lightweight and MUST NOT imply item header/card framing.
+- Root node selection MAY use the same wash behavior as focused node frames.
+- Root focus styling MUST stay lightweight and MUST NOT imply node header/card framing.
 
 ### Control focus vs editor focus
 
@@ -333,7 +333,7 @@ Rules:
 
 Rules:
 
-- `.ui-frame` SHOULD use `cursor: pointer` to communicate item interactivity.
+- `.ui-frame` SHOULD use `cursor: pointer` to communicate node interactivity.
 - Text targets MUST use `cursor: text`.
 - Other controls SHOULD use `cursor: pointer`.
 
@@ -363,7 +363,7 @@ Issue-only (not focused):
 - Header: gentle issue fill.
 - Wash: off.
 
-Issue + item selection:
+Issue + node selection:
 
 - Rail: stronger issue tint.
 - Header: stronger issue fill.
@@ -380,7 +380,7 @@ Issue + edit focus:
 
 ### Meaning
 
-- `.is-numeric` marks items whose resolved value is numeric (`number`) or a string parseable as a finite number.
+- `.is-numeric` marks nodes whose resolved value is numeric (`number`) or a string parseable as a finite number.
 
 ### Scope
 
@@ -435,8 +435,8 @@ Rules:
 
 Universal state classes:
 
-- `.is-selected`: item participates in active selection/editing context.
-- `.is-item-selected`: item is part of item-selection range.
+- `.is-selected`: node participates in active selection/editing context.
+- `.is-node-selected`: node is part of node-selection range.
 - `.is-issue`: broken/invalid connection.
 - `.is-numeric`: numeric-like resolved value.
 
@@ -448,23 +448,23 @@ Frame-derived variables:
 
 - `--rail-tint`: rail segment tint.
 - `--header-fill`: header fill.
-- `--frame-wash`: item wash.
+- `--frame-wash`: node wash.
 - `--value-ink`: value text ink.
 - Default neutral bases: `--ui-color-rail` for rail tint, `--ui-color-header` for header fill; `--ui-color-surface` remains the generic panel/surface neutral.
 
 Location grammar:
 
-- Item focus = rail tint (+ optional wash).
+- Node focus = rail tint (+ optional wash).
 - Target focus = local affordance only.
-- Item selection = wash on, no local rings.
+- Node selection = wash on, no local rings.
 - Edit focus = wash off, local ring/caret on active target.
 
 Rail rules
 
-- Each item renders one rail segment.
-- Group layouts align sibling segments into a continuous rail with small gaps.
+- Each node renders one rail segment.
+- Item layouts align sibling segments into a continuous rail with small gaps.
 - Segments never merge across siblings.
-- Segments are square at internal joins and rounded only at the outer ends of the group.
+- Segments are square at internal joins and rounded only at the outer ends of the item.
 
 CSS layering:
 

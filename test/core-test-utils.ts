@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import type {
   Content,
   Core,
-  ItemId,
+  NodeId,
   Selection,
   SnapshotData,
   Transaction,
@@ -20,30 +20,30 @@ export function expectEditing(
     throw new Error("Expected editing selection");
 }
 
-export function makePureCore(): { core: Core; rootId: ItemId } {
+export function makePureCore(): { core: Core; rootId: NodeId } {
   const { shapes } = splitViewRegistrations(viewRegistrations);
   return createCore({ shapes });
 }
 
 export function valueOf(content: Content): true | number | string | null {
   if (content.type === "issue") throw new Error(content.message);
-  if (content.type === "group") throw new Error("Expected value content");
+  if (content.type === "item") throw new Error("Expected value content");
   return content.value;
 }
 
 export function valueOfId(
-  core: { item(id: ItemId): { content: Content } },
-  id: ItemId,
+  core: { node(id: NodeId): { content: Content } },
+  id: NodeId,
 ): true | number | string | null {
-  return valueOf(core.item(id).content);
+  return valueOf(core.node(id).content);
 }
 
 export function childrenOf(
-  core: { item(id: ItemId): { content: Content } },
-  id: ItemId,
-): readonly ItemId[] {
-  const content = core.item(id).content;
-  return content.type === "group" ? content.children : [];
+  core: { node(id: NodeId): { content: Content } },
+  id: NodeId,
+): readonly NodeId[] {
+  const content = core.node(id).content;
+  return content.type === "item" ? content.children : [];
 }
 
 export function requireCreatedEntryId(txn: Transaction): number {
@@ -69,7 +69,7 @@ export function cloneJson<T>(value: T): T {
 
 export function expectSel(
   core: { selection(): Selection },
-  want: { item: ItemId; portals?: readonly ItemId[]; target?: string },
+  want: { node: NodeId; portals?: readonly NodeId[]; target?: string },
 ): void {
   const portals = want.portals ?? [];
   const selection = core.selection();
@@ -77,13 +77,13 @@ export function expectSel(
     expect(selection.type).toBe("editing");
     if (selection.type !== "editing")
       throw new Error("Expected editing selection");
-    expect(selection.location.item).toBe(want.item);
+    expect(selection.location.node).toBe(want.node);
     expect(selection.location.portals).toEqual(portals);
     expect(selection.target).toBe(want.target);
   } else {
-    expect(selection.type).toBe("item");
-    if (selection.type !== "item") throw new Error("Expected item selection");
-    expect(selection.head.item).toBe(want.item);
+    expect(selection.type).toBe("node");
+    if (selection.type !== "node") throw new Error("Expected node selection");
+    expect(selection.head.node).toBe(want.node);
     expect(selection.head.portals).toEqual(portals);
   }
 }
@@ -105,10 +105,10 @@ export function expectThrowsWithCode<Code extends string>(
 
 export function mkBlank(
   core: { commit: Core["commit"] },
-  parentId: ItemId,
+  parentId: NodeId,
   args?: { at?: number; label?: string; value?: true | number | string | null },
-): ItemId {
-  let id: ItemId = "";
+): NodeId {
+  let id: NodeId = "";
   core.commit((t) => {
     id = t.insertChild(
       parentId,
@@ -120,18 +120,18 @@ export function mkBlank(
   return id;
 }
 
-export function mkGroup(
+export function mkItem(
   core: { commit: Core["commit"] },
-  parentId: ItemId,
+  parentId: NodeId,
   args?: { at?: number; label?: string; view?: ViewName | null },
-): ItemId {
-  let id: ItemId = "";
+): NodeId {
+  let id: NodeId = "";
   core.commit((t) => {
     id = t.insertChild(
       parentId,
       args?.at != null ? { at: args.at } : undefined,
     );
-    t.setGroup(id);
+    t.setItem(id);
     if (args?.label != null) t.setLabel(id, args.label);
     if (args?.view != null) t.setView(id, args.view);
   });
@@ -140,7 +140,7 @@ export function mkGroup(
 
 export function setFormula(
   core: { commit: Core["commit"] },
-  id: ItemId,
+  id: NodeId,
   expr: string,
 ): void {
   core.commit((t) => {
@@ -150,7 +150,7 @@ export function setFormula(
 
 export function setQuery(
   core: { commit: Core["commit"] },
-  id: ItemId,
+  id: NodeId,
   args: { from: string; where?: string; orderBy?: string },
 ): void {
   core.commit((t) => {
@@ -165,18 +165,18 @@ export function setQuery(
 
 export function setView(
   core: { commit: Core["commit"] },
-  id: ItemId,
+  id: NodeId,
   view: ViewName | null,
 ): void {
   core.commit((t) => t.setView(id, view));
 }
 
-export function assertCoreInvariants(core: Core, rootId: ItemId): void {
-  const seen = new Set<ItemId>();
-  const stack: ItemId[] = [rootId];
-  const assertAcyclicParentChain = (start: ItemId): void => {
-    const parentChain = new Set<ItemId>();
-    let cur: ItemId | null = start;
+export function assertCoreInvariants(core: Core, rootId: NodeId): void {
+  const seen = new Set<NodeId>();
+  const stack: NodeId[] = [rootId];
+  const assertAcyclicParentChain = (start: NodeId): void => {
+    const parentChain = new Set<NodeId>();
+    let cur: NodeId | null = start;
     while (cur != null) {
       expect(parentChain.has(cur)).toBe(false);
       parentChain.add(cur);
@@ -190,26 +190,26 @@ export function assertCoreInvariants(core: Core, rootId: ItemId): void {
     if (seen.has(id)) continue;
     seen.add(id);
 
-    const item = core.item(id);
+    const node = core.node(id);
     const isQuery =
-      item.mode.type === "connected" && item.mode.conn.type === "query";
+      node.mode.type === "connected" && node.mode.conn.type === "query";
 
     const loc = core.locate(id);
     if (id === rootId) {
       expect(loc).toBeNull();
     } else if (loc) {
-      const parent = core.item(loc.parentId);
-      expect(parent.content.type).toBe("group");
+      const parent = core.node(loc.parentId);
+      expect(parent.content.type).toBe("item");
       assertAcyclicParentChain(id);
     }
 
-    if (item.content.type !== "group") continue;
+    if (node.content.type !== "item") continue;
 
     const seenLabels = new Set<string>();
-    for (const childId of item.content.children) {
+    for (const childId of node.content.children) {
       const childLoc = core.locate(childId);
       if (!childLoc) {
-        expect(core.item(childId).mode.type).toBe("readonly");
+        expect(core.node(childId).mode.type).toBe("readonly");
         stack.push(childId);
         continue;
       }
@@ -220,7 +220,7 @@ export function assertCoreInvariants(core: Core, rootId: ItemId): void {
       expect(childLoc.siblings[childLoc.index]).toBe(childId);
       expect(childLoc.siblings.filter((x) => x === childId).length).toBe(1);
       if (!isQuery) {
-        const label = (core.item(childId).label ?? "").trim();
+        const label = (core.node(childId).label ?? "").trim();
         if (label) {
           expect(seenLabels.has(label)).toBe(false);
           seenLabels.add(label);

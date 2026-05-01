@@ -1,18 +1,18 @@
 import type { Result } from "./eval";
 import {
   isBlankResult,
-  isEntryGroupResult,
+  isEntryItemResult,
   isIssueResult,
-  isResultGroupResult,
+  isResultItemResult,
   isScalarResult,
 } from "./eval";
 import type { EntryContent, EntryId, Model } from "./model";
 import { isFormulaContent, isQueryContent } from "./model";
 
 export type CoreReadErrorCode =
-  | "INVALID_ITEM_ID"
-  | "UNKNOWN_ITEM_ID"
-  | "INVALID_ITEM_PATH"
+  | "INVALID_NODE_ID"
+  | "UNKNOWN_NODE_ID"
+  | "INVALID_NODE_PATH"
   | "CONTENT_MISMATCH"
   | "SHAPE_CHILD_NOT_FOUND";
 
@@ -30,7 +30,7 @@ export function isCoreReadError(err: unknown): err is CoreReadError {
   return err instanceof CoreReadError;
 }
 
-export type ItemId = string;
+export type NodeId = string;
 
 export type Value = true | number | string;
 export type ValueOrBlank = Value | null;
@@ -38,7 +38,7 @@ export type ValueOrBlank = Value | null;
 export type Content =
   | { type: "value"; value: ValueOrBlank }
   | { type: "issue"; message: string }
-  | { type: "group"; children: readonly ItemId[] };
+  | { type: "item"; children: readonly NodeId[] };
 
 export type Connected =
   | { type: "formula"; expr: string }
@@ -49,27 +49,27 @@ export type Mode =
   | { type: "plain" }
   | { type: "connected"; conn: Connected };
 
-export type Item = { id: ItemId; label?: string; content: Content; mode: Mode };
+export type Node = { id: NodeId; label?: string; content: Content; mode: Mode };
 
-export type ItemRef = { entryId: EntryId; path: readonly number[] };
+export type NodeRef = { entryId: EntryId; path: readonly number[] };
 
 export type ReadEvaluator = { result(id: EntryId): Result };
 
-export type ReadApi = { item(id: ItemId): Item };
+export type ReadApi = { node(id: NodeId): Node };
 
 type CreateReadApiOpts = { evaluator: ReadEvaluator; model: Model };
 
-type ResolvedItem = { result: Result; label?: string };
+type ResolvedNode = { result: Result; label?: string };
 
 const childrenOfResolved = (
-  base: ItemRef,
+  base: NodeRef,
   result: Result,
-): readonly ItemId[] => {
-  if (isEntryGroupResult(result))
-    return result.entryIds.map((entryId) => itemIdOf(entryId, []));
-  if (isResultGroupResult(result))
-    return result.items.map((_item, i) =>
-      itemIdOf(base.entryId, [...base.path, i]),
+): readonly NodeId[] => {
+  if (isEntryItemResult(result))
+    return result.entryIds.map((entryId) => nodeIdOf(entryId, []));
+  if (isResultItemResult(result))
+    return result.nodes.map((_node, i) =>
+      nodeIdOf(base.entryId, [...base.path, i]),
     );
   return [];
 };
@@ -77,27 +77,27 @@ const childrenOfResolved = (
 const resolve = (
   model: Model,
   evaluator: ReadEvaluator,
-  ref: ItemRef,
-): ResolvedItem => {
+  ref: NodeRef,
+): ResolvedNode => {
   let cur: Result = evaluator.result(ref.entryId);
   let label: string | undefined =
     model.readEntry(ref.entryId).label.trim() || undefined;
 
   for (let i = 0; i < ref.path.length; i += 1) {
     const idx = ref.path[i]!;
-    if (!isResultGroupResult(cur))
-      throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
-    const item = cur.items[idx];
-    if (!item)
-      throw new CoreReadError("INVALID_ITEM_PATH", "Invalid item path");
-    label = item.label?.trim() || undefined;
-    cur = item.result;
+    if (!isResultItemResult(cur))
+      throw new CoreReadError("INVALID_NODE_PATH", "Invalid node path");
+    const node = cur.nodes[idx];
+    if (!node)
+      throw new CoreReadError("INVALID_NODE_PATH", "Invalid node path");
+    label = node.label?.trim() || undefined;
+    cur = node.result;
   }
 
   return { result: cur, ...(label ? { label } : {}) };
 };
 
-const modeFromContent = (ref: ItemRef, content: EntryContent): Mode => {
+const modeFromContent = (ref: NodeRef, content: EntryContent): Mode => {
   if (ref.path.length) return { type: "readonly" };
   if (isFormulaContent(content))
     return { type: "connected", conn: { type: "formula", expr: content.expr } };
@@ -115,7 +115,7 @@ const modeFromContent = (ref: ItemRef, content: EntryContent): Mode => {
   return { type: "plain" };
 };
 
-const toContent = (ref: ItemRef, result: Result): Content => {
+const toContent = (ref: NodeRef, result: Result): Content => {
   if (isBlankResult(result)) return { type: "value", value: null };
   if (isIssueResult(result)) return { type: "issue", message: result.message };
   if (isScalarResult(result)) {
@@ -130,15 +130,15 @@ const toContent = (ref: ItemRef, result: Result): Content => {
           : null,
     };
   }
-  return { type: "group", children: childrenOfResolved(ref, result) };
+  return { type: "item", children: childrenOfResolved(ref, result) };
 };
 
-export const itemIdOf = (
+export const nodeIdOf = (
   entryId: EntryId,
   path: readonly number[] = [],
-): ItemId => `${String(entryId)}:${path.length ? path.join(",") : ""}`;
+): NodeId => `${String(entryId)}:${path.length ? path.join(",") : ""}`;
 
-export const parseItemId = (id: ItemId): ItemRef | null => {
+export const parseNodeId = (id: NodeId): NodeRef | null => {
   const i = id.indexOf(":");
   if (i === -1) return null;
 
@@ -160,14 +160,14 @@ export const parseItemId = (id: ItemId): ItemRef | null => {
   return { entryId: entryId as EntryId, path };
 };
 
-export const refFromItemId = (id: ItemId): ItemRef => {
-  const ref = parseItemId(id);
-  if (!ref) throw new CoreReadError("INVALID_ITEM_ID", "Invalid item id");
+export const refFromNodeId = (id: NodeId): NodeRef => {
+  const ref = parseNodeId(id);
+  if (!ref) throw new CoreReadError("INVALID_NODE_ID", "Invalid node id");
   return ref;
 };
 
-export const entryIdFromItemId = (id: ItemId): EntryId | null => {
-  const ref = parseItemId(id);
+export const entryIdFromNodeId = (id: NodeId): EntryId | null => {
+  const ref = parseNodeId(id);
   return ref && ref.path.length === 0 ? ref.entryId : null;
 };
 
@@ -175,10 +175,10 @@ export function createReadApi(opts: CreateReadApiOpts): ReadApi {
   const { evaluator, model } = opts;
 
   return {
-    item(id: ItemId): Item {
-      const ref = refFromItemId(id);
+    node(id: NodeId): Node {
+      const ref = refFromNodeId(id);
       if (!model.hasEntry(ref.entryId))
-        throw new CoreReadError("UNKNOWN_ITEM_ID", "Unknown item id");
+        throw new CoreReadError("UNKNOWN_NODE_ID", "Unknown node id");
       const resolved = resolve(model, evaluator, ref);
       const content = toContent(ref, resolved.result);
       const stored = model.readEntry(ref.entryId).content;

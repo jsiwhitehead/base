@@ -1,6 +1,6 @@
 import { computed } from "@preact/signals-core";
 
-import type { ItemId, Location, Selection } from "../../core";
+import type { NodeId, Location, Selection } from "../../core";
 import type { Component, UiCore } from "../../dom";
 import { createComponent, createSuppressionFlag } from "../../dom";
 
@@ -15,7 +15,7 @@ import {
   parentOf,
   prevSibling,
 } from "./navigation";
-import { buildOutlineItem, type OutlineMountCtx } from "./render";
+import { buildOutlineNode, type OutlineMountCtx } from "./render";
 export type {
   OutlineSelectionEditingControls,
   OutlinePointerIntent,
@@ -26,7 +26,7 @@ export type {
 export {
   createOutlineSelectionRuntime,
   isOutlineValueEditEvent,
-  resolveValuePointerItemId,
+  resolveValuePointerNodeId,
 } from "./runtime-selection";
 import { createOutlineSelectionRuntime } from "./runtime-selection";
 
@@ -67,58 +67,58 @@ function createOutlineRuntimeState(): {
   };
 }
 
-function samePortals(a: readonly ItemId[], b: readonly ItemId[]): boolean {
+function samePortals(a: readonly NodeId[], b: readonly NodeId[]): boolean {
   return a.length === b.length && a.every((id, idx) => id === b[idx]);
 }
 
-function isItemSelectionOwnedByThisOutline(
+function isNodeSelectionOwnedByThisOutline(
   selection: Selection,
-  portals: readonly ItemId[],
-): selection is Extract<Selection, { type: "item" }> {
+  portals: readonly NodeId[],
+): selection is Extract<Selection, { type: "node" }> {
   return (
-    selection.type === "item" &&
+    selection.type === "node" &&
     samePortals(selection.anchor.portals, portals) &&
     samePortals(selection.head.portals, portals)
   );
 }
 
-function isSingleItemSelectionInThisOutline(
+function isSingleNodeSelectionInThisOutline(
   selection: Selection,
-  portals: readonly ItemId[],
-): selection is Extract<Selection, { type: "item" }> {
+  portals: readonly NodeId[],
+): selection is Extract<Selection, { type: "node" }> {
   return (
-    isItemSelectionOwnedByThisOutline(selection, portals) &&
-    selection.anchor.item === selection.head.item
+    isNodeSelectionOwnedByThisOutline(selection, portals) &&
+    selection.anchor.node === selection.head.node
   );
 }
 
-export function handleOutlineItemNav(args: {
+export function handleOutlineNodeNav(args: {
   core: UiCore;
-  viewRootId: ItemId;
-  portals: readonly ItemId[];
+  viewRootId: NodeId;
+  portals: readonly NodeId[];
   location: Location;
   dir: "left" | "right" | "up" | "down";
 }): void {
   const { core, viewRootId, portals, location, dir } = args;
-  const fromId = location.item;
-  let nextId: ItemId | null = null;
+  const fromId = location.node;
+  let nextId: NodeId | null = null;
   if (dir === "left") nextId = parentOf(core, viewRootId, fromId);
   else if (dir === "right")
     nextId = firstChild(core, fromId) ?? nextSibling(core, fromId);
   else if (dir === "up") nextId = prevSibling(core, fromId);
   else if (dir === "down") nextId = nextSibling(core, fromId);
   if (!nextId) return;
-  core.focus({ type: "item", location: { item: nextId, portals } });
+  core.focus({ type: "node", location: { node: nextId, portals } });
 }
 
 export function buildOutlineRoot(
   core: UiCore,
-  viewRootId: ItemId,
-  portals: readonly ItemId[],
+  viewRootId: NodeId,
+  portals: readonly NodeId[],
   onValueTab: (location: Location, shift: boolean, caret: number) => void,
-  onItemTab: (location: Location, shift: boolean) => void,
-  onItemDelete: (selection: Extract<Selection, { type: "item" }>) => void,
-  onItemNav: (
+  onNodeTab: (location: Location, shift: boolean) => void,
+  onNodeDelete: (selection: Extract<Selection, { type: "node" }>) => void,
+  onNodeNav: (
     location: Location,
     dir: "left" | "right" | "up" | "down",
   ) => void,
@@ -161,8 +161,8 @@ export function buildOutlineRoot(
       discardPendingMutationRecords,
       onValueTab,
     };
-    const rootItem = buildOutlineItem(mountCtx, viewRootId);
-    const root = rootItem.el;
+    const rootNode = buildOutlineNode(mountCtx, viewRootId);
+    const root = rootNode.el;
     rootRef = root;
     configureOutlineRootElement(root);
 
@@ -186,7 +186,7 @@ export function buildOutlineRoot(
       selection: selectionRuntime.editingControls,
     });
 
-    ctx.effect(() => () => rootItem.dispose());
+    ctx.effect(() => () => rootNode.dispose());
     selectionRuntime.bind({
       on: ctx.on,
       effect: ctx.effect,
@@ -209,10 +209,10 @@ export function buildOutlineRoot(
     ctx.on(root, "keydown", (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.key !== "Tab") return;
       const selection = core.selection();
-      if (!isSingleItemSelectionInThisOutline(selection, portals)) return;
+      if (!isSingleNodeSelectionInThisOutline(selection, portals)) return;
       e.preventDefault();
       e.stopPropagation();
-      onItemTab(selection.head, e.shiftKey);
+      onNodeTab(selection.head, e.shiftKey);
     });
 
     ctx.on(root, "keydown", (e: KeyboardEvent) => {
@@ -220,7 +220,7 @@ export function buildOutlineRoot(
       const selection = core.selection();
 
       if (
-        isItemSelectionOwnedByThisOutline(selection, portals) &&
+        isNodeSelectionOwnedByThisOutline(selection, portals) &&
         !e.shiftKey &&
         !e.altKey &&
         !e.metaKey &&
@@ -229,12 +229,12 @@ export function buildOutlineRoot(
       ) {
         e.preventDefault();
         e.stopPropagation();
-        onItemDelete(selection);
+        onNodeDelete(selection);
         return;
       }
 
       if (
-        isSingleItemSelectionInThisOutline(selection, portals) &&
+        isSingleNodeSelectionInThisOutline(selection, portals) &&
         !e.shiftKey &&
         !e.altKey &&
         !e.metaKey &&
@@ -254,7 +254,7 @@ export function buildOutlineRoot(
                 : "down";
         e.preventDefault();
         e.stopPropagation();
-        onItemNav(selection.head, dir);
+        onNodeNav(selection.head, dir);
       }
     });
 
