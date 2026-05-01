@@ -30,6 +30,38 @@ export type ApplyEditingResult = (args: {
 
 type OutlineTextStop = Extract<OutlineStop, { type: "editing" }>;
 
+function getVerticalBoundaryTextStop(
+  core: Core,
+  root: HTMLElement,
+  dir: "up" | "down",
+): OutlineTextStop | null {
+  const selection = core.selection();
+  if (
+    selection.type !== "editing" ||
+    selection.target !== CONTENT_TEXT_TARGET
+  ) {
+    return null;
+  }
+  if (!getDomSelectionPointsInRoot(root)?.isCollapsed) return null;
+  const caretOffset = valueCaretOffset(root, selection.location.item, true);
+  if (caretOffset == null) return null;
+  const snap = core.item(selection.location.item);
+  if (!isPlainValueItem(snap)) return null;
+  const text = valueToText(snap.content.value);
+  const totalLogicalLines = text.split("\n").length;
+  const logicalLineIdx = text.slice(0, caretOffset).split("\n").length - 1;
+  const isBoundary =
+    dir === "up"
+      ? logicalLineIdx === 0
+      : logicalLineIdx === totalLogicalLines - 1;
+  if (!isBoundary) return null;
+  return {
+    type: "editing",
+    location: selection.location,
+    target: CONTENT_TEXT_TARGET,
+  };
+}
+
 export function applyStopMove(
   core: Core,
   applyEditingResult: ApplyEditingResult,
@@ -69,35 +101,6 @@ function resolveAdjacentStopMove(
   dir: "backward" | "forward",
 ): StopMove | null {
   return moveStop(stops, current, dir);
-}
-
-function resolveVerticalBoundaryTextStop(
-  core: Core,
-  root: HTMLElement,
-  dir: "up" | "down",
-): OutlineTextStop | null {
-  const modelSel = core.selection();
-  if (modelSel.type !== "editing" || modelSel.target !== CONTENT_TEXT_TARGET)
-    return null;
-  const caretOffset = valueCaretOffset(root, modelSel.location.item, true);
-  if (caretOffset == null) return null;
-  const current = core.item(modelSel.location.item);
-  if (!isPlainValueItem(current)) return null;
-  const text = valueToText(current.content.value);
-  const totalLogicalLines = text.split("\n").length;
-  if (totalLogicalLines > 1) {
-    const logicalLineIdx = text.slice(0, caretOffset).split("\n").length - 1;
-    const onLogicalBoundary =
-      dir === "up"
-        ? logicalLineIdx === 0
-        : logicalLineIdx === totalLogicalLines - 1;
-    if (!onLogicalBoundary) return null;
-  }
-  return {
-    type: "editing",
-    location: modelSel.location,
-    target: CONTENT_TEXT_TARGET,
-  };
 }
 
 function resolveVerticalTextCaret(
@@ -141,17 +144,16 @@ function resolveVerticalTextCaret(
   };
 }
 
-function moveVerticalFromTextStop(
+function moveVerticalFromBoundaryStop(
   core: Core,
   root: HTMLElement,
   stops: readonly OutlineStop[],
+  current: OutlineTextStop,
   getStickyCaretX: () => number | null,
   setStickyCaretX: (next: number) => void,
   applyEditingResult: ApplyEditingResult,
   dir: "up" | "down",
 ): boolean {
-  const current = resolveVerticalBoundaryTextStop(core, root, dir);
-  if (!current) return false;
   const moved = resolveAdjacentStopMove(
     stops,
     current,
@@ -164,12 +166,10 @@ function moveVerticalFromTextStop(
     current.location.item,
     dir,
   );
-  if (getStickyCaretX() == null && boundaryRect) {
+  if (getStickyCaretX() == null && boundaryRect)
     setStickyCaretX(boundaryRect.left);
-  }
-  if (moved.stop.type === "item") {
+  if (moved.stop.type === "item")
     return applyStopMove(core, applyEditingResult, moved);
-  }
   const destination = resolveVerticalTextCaret(
     core,
     root,
@@ -255,36 +255,40 @@ export function handleArrowHorizontal(
   return applyStopMove(core, applyEditingResult, moved);
 }
 
-export function handleArrowVertical(
+export function handleVerticalArrowIntent(
   core: Core,
   root: HTMLElement,
   stops: readonly OutlineStop[],
   getStickyCaretX: () => number | null,
   setStickyCaretX: (next: number) => void,
+  resetStickyCaretX: () => void,
   applyEditingResult: ApplyEditingResult,
   e: KeyboardEvent,
   dir: "up" | "down",
 ): boolean {
-  const modelSel = core.selection();
-  if (modelSel.type !== "editing" || modelSel.target !== CONTENT_TEXT_TARGET)
-    return false;
-  if (!getDomSelectionPointsInRoot(root)?.isCollapsed) return false;
-  const caretRect = getCollapsedCaretRect(root, modelSel.location.item);
-  if (getStickyCaretX() == null && caretRect)
+  const boundaryStop = getVerticalBoundaryTextStop(core, root, dir);
+  if (!boundaryStop) return false;
+  const caretRect = getCollapsedCaretRect(root, boundaryStop.location.item);
+  if (getStickyCaretX() == null && caretRect) {
     setStickyCaretX(caretRect.rect.left);
+  }
   if (
-    !moveVerticalFromTextStop(
+    moveVerticalFromBoundaryStop(
       core,
       root,
       stops,
+      boundaryStop,
       getStickyCaretX,
       setStickyCaretX,
       applyEditingResult,
       dir,
     )
   ) {
-    return false;
+    e.preventDefault();
+    return true;
   }
   e.preventDefault();
+  resetStickyCaretX();
+  core.dispatch({ type: "NAV", dir });
   return true;
 }

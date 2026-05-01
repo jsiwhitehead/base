@@ -247,6 +247,4 @@ Use backticks for:
 - One blank line after headings.
 - One blank line around lists and code fences.
 - No trailing spaces. No tabs.
-- Prefer ASCII punctuation in technical docs (`'`, `"`, `--`).
-- Typographic punctuation is allowed for prose-heavy sections if used consistently.
-- Avoid mixing punctuation styles within a section.
+- Prefer ASCII punctuation in technical docs.

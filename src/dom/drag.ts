@@ -15,7 +15,6 @@ export type DropTarget =
       at: number;
       side: "before" | "after";
       anchorEl: HTMLElement;
-      referenceItemId?: ItemId;
     }
   | { type: "replace"; itemId: ItemId; anchorEl: HTMLElement };
 
@@ -155,7 +154,6 @@ function resolveDropTarget(
       at: side === "before" ? parentLoc.index : parentLoc.index + 1,
       side,
       anchorEl: parentFrame.el,
-      referenceItemId: frame.itemId,
     };
   }
 
@@ -277,22 +275,7 @@ export function createDragController(core: Core): DragController {
       try {
         const drop = dragState.drop;
 
-        if (drop.type === "gap" && dragState.cleanupType === "slot") {
-          const referenceItemId = drop.referenceItemId;
-          const targetLoc = referenceItemId
-            ? core.locate(referenceItemId)
-            : null;
-          if (!targetLoc) {
-            cancel();
-            return;
-          }
-          core.commit((tx) => {
-            const newParentId = tx.insertChild(drop.parentId, { at: drop.at });
-            tx.setGroup(newParentId);
-            tx.move(dragState.itemId, newParentId, { at: targetLoc.index });
-            applySourceOps(tx);
-          });
-        } else if (drop.type === "gap") {
+        if (drop.type === "gap") {
           core.commit((tx) => {
             tx.move(dragState.itemId, drop.parentId, { at: drop.at });
             applySourceOps(tx);

@@ -121,7 +121,12 @@ export function handleOutlineItemDelete(args: {
   selection: Extract<ReturnType<UiCore["selection"]>, { type: "item" }>;
 }): void {
   const { core, viewRootId, portals, selection } = args;
-  const selectedItems = blockSelectionItems(core, viewRootId, selection, portals);
+  const selectedItems = blockSelectionItems(
+    core,
+    viewRootId,
+    selection,
+    portals,
+  );
 
   if (selectedItems.length > 1) {
     const lastId = selectedItems[selectedItems.length - 1]!;

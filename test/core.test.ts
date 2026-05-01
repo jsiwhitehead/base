@@ -620,6 +620,20 @@ describe("core/formula", () => {
     }
   });
 
+  test("sum coerces numeric text values in groups", () => {
+    const { core, rootId } = makeCoreForTest();
+
+    const rows = mkGroup(core, rootId, { label: "rows" });
+    mkBlank(core, rows, { value: "1" });
+    mkBlank(core, rows, { value: "2" });
+    mkBlank(core, rows, { value: "3" });
+
+    const total = mkBlank(core, rootId, { label: "total" });
+    setFormula(core, total, "sum(rows)");
+
+    expect(valueOfId(core, total)).toBe(6);
+  });
+
   test("formula referencing a removed sibling yields an issue", () => {
     const { core, rootId } = makeCoreForTest();
 
@@ -894,18 +908,18 @@ describe("core/view shapes & rules", () => {
     const aScore = mkBlank(core, rowA, { label: "score", value: 5 });
     const aName = mkBlank(core, rowA, { label: "name", value: "alice" });
 
-    expect(groupLabels(core, rowB)).toEqual(["score", "name"]);
-    expect(groupLabels(core, rowC)).toEqual(["score", "name"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "score", "name"]);
+    expect(groupLabels(core, rowC)).toEqual(["", "score", "name"]);
 
     core.commit((t) => t.move(aName, rowA, { at: 0 }));
-    expect(groupLabels(core, rowA)).toEqual(["name", "score"]);
-    expect(groupLabels(core, rowB)).toEqual(["name", "score"]);
-    expect(groupLabels(core, rowC)).toEqual(["name", "score"]);
+    expect(groupLabels(core, rowA)).toEqual(["name", "", "score"]);
+    expect(groupLabels(core, rowB)).toEqual(["name", "", "score"]);
+    expect(groupLabels(core, rowC)).toEqual(["name", "", "score"]);
 
     core.commit((t) => t.remove(aScore));
-    expect(groupLabels(core, rowA)).toEqual(["name"]);
-    expect(groupLabels(core, rowB)).toEqual(["name"]);
-    expect(groupLabels(core, rowC)).toEqual(["name"]);
+    expect(groupLabels(core, rowA)).toEqual(["name", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["name", ""]);
+    expect(groupLabels(core, rowC)).toEqual(["name", ""]);
 
     assertCoreInvariants(core, rootId);
   });
@@ -922,21 +936,21 @@ describe("core/view shapes & rules", () => {
     mkBlank(core, rowA, { value: "a0" });
     mkBlank(core, rowA, { value: "a1" });
 
-    expect(groupLabels(core, rowA)).toEqual(["", ""]);
-    expect(groupLabels(core, rowB)).toEqual(["", ""]);
+    expect(groupLabels(core, rowA)).toEqual(["", "", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["", "", ""]);
 
     core.commit((t) => {
       const inserted = t.insertChild(rowB, { at: 1 });
       t.setValue(inserted, "b1");
     });
 
+    expect(groupLabels(core, rowA)).toEqual(["", "", "", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["", "", "", ""]);
+
+    core.commit((t) => t.remove(childrenOf(core, rowA)[3]!));
+
     expect(groupLabels(core, rowA)).toEqual(["", "", ""]);
     expect(groupLabels(core, rowB)).toEqual(["", "", ""]);
-
-    core.commit((t) => t.remove(childrenOf(core, rowA)[2]!));
-
-    expect(groupLabels(core, rowA)).toEqual(["", ""]);
-    expect(groupLabels(core, rowB)).toEqual(["", ""]);
 
     assertCoreInvariants(core, rootId);
   });
@@ -954,13 +968,13 @@ describe("core/view shapes & rules", () => {
     mkBlank(core, rowA, { value: 10 });
     mkBlank(core, rowA, { label: "score", value: 5 });
 
-    expect(groupLabels(core, rowA)).toEqual(["name", "", "score"]);
-    expect(groupLabels(core, rowB)).toEqual(["name", "", "score"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "name", "", "score"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "name", "", "score"]);
 
-    core.commit((t) => t.move(childrenOf(core, rowB)[2]!, rowB, { at: 0 }));
+    core.commit((t) => t.move(childrenOf(core, rowB)[3]!, rowB, { at: 1 }));
 
-    expect(groupLabels(core, rowA)).toEqual(["score", "name", ""]);
-    expect(groupLabels(core, rowB)).toEqual(["score", "name", ""]);
+    expect(groupLabels(core, rowA)).toEqual(["", "score", "name", ""]);
+    expect(groupLabels(core, rowB)).toEqual(["", "score", "name", ""]);
 
     assertCoreInvariants(core, rootId);
   });
@@ -987,7 +1001,7 @@ describe("core/view shapes & rules", () => {
       });
     });
 
-    const [bFormula, bQuery] = childrenOf(core, rowB);
+    const [, bFormula, bQuery] = childrenOf(core, rowB);
     expect(core.item(bFormula!).mode).toEqual({
       type: "connected",
       conn: { type: "formula", expr: "1 + 2" },
@@ -1048,20 +1062,20 @@ describe("core/view shapes & rules", () => {
 
     const aCell = mkBlank(core, rowA, { label: "a", value: 1 });
 
-    expect(groupLabels(core, rowA)).toEqual(["a"]);
-    expect(groupLabels(core, rowB)).toEqual(["a"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "a"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "a"]);
 
     core.commit((t) => t.setLabel(aCell, "x"));
-    expect(groupLabels(core, rowA)).toEqual(["x"]);
-    expect(groupLabels(core, rowB)).toEqual(["x"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "x"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "x"]);
 
     core.undo();
-    expect(groupLabels(core, rowA)).toEqual(["a"]);
-    expect(groupLabels(core, rowB)).toEqual(["a"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "a"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "a"]);
 
     core.redo();
-    expect(groupLabels(core, rowA)).toEqual(["x"]);
-    expect(groupLabels(core, rowB)).toEqual(["x"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "x"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "x"]);
 
     assertCoreInvariants(core, rootId);
   });
@@ -1077,20 +1091,20 @@ describe("core/view shapes & rules", () => {
 
     const bCell = mkBlank(core, rowB, { label: "a", value: 2 });
 
-    expect(groupLabels(core, rowA)).toEqual(["a"]);
-    expect(groupLabels(core, rowB)).toEqual(["a"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "a"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "a"]);
 
     core.commit((t) => t.setLabel(bCell, "y"));
-    expect(groupLabels(core, rowA)).toEqual(["y"]);
-    expect(groupLabels(core, rowB)).toEqual(["y"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "y"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "y"]);
 
     core.undo();
-    expect(groupLabels(core, rowA)).toEqual(["a"]);
-    expect(groupLabels(core, rowB)).toEqual(["a"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "a"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "a"]);
 
     core.redo();
-    expect(groupLabels(core, rowA)).toEqual(["y"]);
-    expect(groupLabels(core, rowB)).toEqual(["y"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "y"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "y"]);
 
     assertCoreInvariants(core, rootId);
   });
@@ -1111,10 +1125,10 @@ describe("core/view shapes & rules", () => {
       t.setValue(inserted, "extra");
     });
 
-    expect(groupLabels(core, rowA)).toEqual(["name", ""]);
-    expect(groupLabels(core, rowB)).toEqual(["name", ""]);
-    expect(childrenOf(core, rowA)).toHaveLength(2);
-    expect(childrenOf(core, rowB)).toHaveLength(2);
+    expect(groupLabels(core, rowA)).toEqual(["", "", "name"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "", "name"]);
+    expect(childrenOf(core, rowA)).toHaveLength(3);
+    expect(childrenOf(core, rowB)).toHaveLength(3);
 
     assertCoreInvariants(core, rootId);
   });
@@ -1131,8 +1145,8 @@ describe("core/view shapes & rules", () => {
       t.setLabel(c, "col");
       t.setValue(c, 1);
     });
-    expect(groupLabels(core, rowA)).toEqual(["col"]);
-    expect(groupLabels(core, rowB)).toEqual(["col"]);
+    expect(groupLabels(core, rowA)).toEqual(["", "col"]);
+    expect(groupLabels(core, rowB)).toEqual(["", "col"]);
 
     const nextBefore = nextEntryId(core);
     let created = "";

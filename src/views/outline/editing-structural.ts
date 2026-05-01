@@ -1,6 +1,5 @@
 import type { Core, Intent, ItemId, Location } from "../../core";
 import { CONTENT_TEXT_TARGET } from "../../core";
-import { getDomSelectionPointsInRoot } from "../../dom";
 
 import { outlineCmd } from "./commands";
 import {
@@ -57,31 +56,6 @@ export function isHorizontalEditingBoundary(
   if (!isPlainValueItem(snap)) return false;
   const textLen = valueToText(snap.content.value).length;
   return dir === "left" ? caretOffset === 0 : caretOffset === textLen;
-}
-
-export function isVerticalEditingBoundary(
-  core: Core,
-  root: HTMLElement,
-  dir: "up" | "down",
-): boolean {
-  const selection = core.selection();
-  if (
-    selection.type !== "editing" ||
-    selection.target !== CONTENT_TEXT_TARGET
-  ) {
-    return false;
-  }
-  if (!getDomSelectionPointsInRoot(root)?.isCollapsed) return false;
-  const caretOffset = valueCaretOffset(root, selection.location.item, true);
-  if (caretOffset == null) return false;
-  const snap = core.item(selection.location.item);
-  if (!isPlainValueItem(snap)) return false;
-  const text = valueToText(snap.content.value);
-  const totalLogicalLines = text.split("\n").length;
-  const logicalLineIdx = text.slice(0, caretOffset).split("\n").length - 1;
-  return dir === "up"
-    ? logicalLineIdx === 0
-    : logicalLineIdx === totalLogicalLines - 1;
 }
 
 export function handleOutlineEditingEnter(args: {

@@ -299,7 +299,6 @@ type DropTarget =
       at: number;
       side: "before" | "after";
       anchorEl: HTMLElement;
-      referenceItemId?: ItemId;
     }
   | { type: "replace"; itemId: ItemId; anchorEl: HTMLElement };
 

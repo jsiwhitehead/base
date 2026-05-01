@@ -5,6 +5,7 @@ import { createDragController } from "../src/dom";
 
 import {
   childrenOf,
+  dispatchViewIntentKey,
   dispatchPointerEvent,
   dispatchKey,
   expectSel,
@@ -53,7 +54,7 @@ describe("views/table", () => {
     const headerCols = [
       ...(header?.querySelectorAll(":scope > .ui-table-cell") ?? []),
     ] as HTMLElement[];
-    expect(headerCols.length).toBe(3);
+    expect(headerCols.length).toBe(childrenOf(core, r1).length + 1);
 
     unmount();
   });
@@ -67,8 +68,9 @@ describe("views/table", () => {
     const r1 = mkGroup(core, tableId, { label: "r1" });
     const r2 = mkGroup(core, tableId, { label: "r2" });
 
-    const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c1", value: 1 });
     mkBlank(core, r1, { label: "c2", value: 2 });
+    const [shapeCell] = childrenOf(core, r1);
 
     core.focus({
       type: "item",
@@ -96,7 +98,7 @@ describe("views/table", () => {
     key = dispatchKey(domView.root, "ArrowRight");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: c11, portals: [] });
+    expectSel(core, { item: shapeCell!, portals: [] });
 
     unmount();
   });
@@ -113,8 +115,7 @@ describe("views/table", () => {
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     const c12 = mkBlank(core, r1, { label: "c2", value: 2 });
 
-    const c21 = childrenOf(core, r2)[0]!;
-    const c22 = childrenOf(core, r2)[1]!;
+    const [r2ShapeCell, r2C1, r2C2] = childrenOf(core, r2);
 
     core.focus({
       type: "item",
@@ -137,12 +138,17 @@ describe("views/table", () => {
     key = dispatchKey(domView.root, "ArrowDown");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: c22, portals: [] });
+    expectSel(core, { item: r2C2!, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
     expect(key).toBe(true);
-    expectSel(core, { item: c21, portals: [] });
+    expectSel(core, { item: r2C1!, portals: [] });
+
+    key = dispatchKey(domView.root, "ArrowLeft");
+    await flushDomEffects();
+    expect(key).toBe(true);
+    expectSel(core, { item: r2ShapeCell!, portals: [] });
 
     key = dispatchKey(domView.root, "ArrowLeft");
     await flushDomEffects();
@@ -164,7 +170,7 @@ describe("views/table", () => {
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
     const c12 = mkBlank(core, r1, { label: "c2", value: 2 });
 
-    const c21 = childrenOf(core, r2)[0]!;
+    const [r2ShapeCell] = childrenOf(core, r2);
 
     core.focus({
       type: "item",
@@ -187,7 +193,7 @@ describe("views/table", () => {
     const tab2 = dispatchKey(domView.root, "Tab");
     await flushDomEffects();
     expect(tab2).toBe(true);
-    expectSel(core, { item: c21, portals: [] });
+    expectSel(core, { item: r2ShapeCell!, portals: [] });
 
     unmount();
   });
@@ -292,6 +298,42 @@ describe("views/table", () => {
     unmount();
   });
 
+  test("INSERT from row item preserves table columns", async () => {
+    const { core, rootId } = makeCoreRuntime();
+
+    const tableId = mkGroup(core, rootId, { label: "table" });
+    setView(core, tableId, "table");
+
+    const r1 = mkGroup(core, tableId, { label: "r1" });
+    mkBlank(core, r1, { label: "c1", value: 1 });
+    mkBlank(core, r1, { label: "c2", value: 2 });
+
+    core.focus({
+      type: "item",
+      anchor: { item: r1, portals: [] },
+      head: { item: r1, portals: [] },
+    });
+
+    const { domView, unmount } = await mountLocalView({
+      view: "table",
+      core,
+      id: tableId,
+      location: { item: tableId, portals: [] },
+    });
+    const rowCountBefore = childrenOf(core, tableId).length;
+
+    dispatchViewIntentKey(domView, "Enter", { metaKey: true });
+    await flushDomEffects();
+
+    const rows = childrenOf(core, tableId);
+    expect(rows.length).toBe(rowCountBefore + 1);
+    expect(childrenOf(core, rows.at(-1)!).length).toBe(
+      childrenOf(core, r1).length,
+    );
+
+    unmount();
+  });
+
   test("NAV beyond grid edges does nothing", async () => {
     const { core, rootId } = makeCoreRuntime();
 
@@ -384,7 +426,7 @@ describe("views/table", () => {
 
     const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
     mkBlank(core, r1, { label: "c2", value: "b" });
-    const c21 = childrenOf(core, r2)[0]!;
+    const [, r2C1] = childrenOf(core, r2);
 
     const cap = installCapturedWindowHandlers();
     const drag = createDragController(core);
@@ -397,7 +439,7 @@ describe("views/table", () => {
 
     try {
       const c11Frame = requireFrameEl(document.body, c11);
-      const c21Frame = requireFrameEl(document.body, c21);
+      const r2C1Frame = requireFrameEl(document.body, r2C1!);
       dispatchPointerEvent(c11Frame, "pointerdown", {
         pointerId: 31,
         clientX: 0,
@@ -415,7 +457,7 @@ describe("views/table", () => {
         throw new Error("Drag not active");
       drag.state.value = {
         ...drag.state.value,
-        drop: { type: "replace", itemId: c21, anchorEl: c21Frame },
+        drop: { type: "replace", itemId: r2C1!, anchorEl: r2C1Frame },
       };
 
       cap.emitPointer("pointerup", { pointerId: 31, clientX: 0, clientY: 0 });
@@ -423,10 +465,12 @@ describe("views/table", () => {
 
       const nextR1 = childrenOf(core, r1);
       const nextR2 = childrenOf(core, r2);
-      expect(nextR2[0]).toBe(c11);
+      const [, nextR2C1] = nextR2;
+      const [, sourceReplacement] = nextR1;
+      expect(nextR2C1).toBe(c11);
       expect(valueOfId(core, c11)).toBe("a");
-      expect(nextR1[0]).not.toBe(c11);
-      expect(valueOfId(core, nextR1[0]!)).toBe(null);
+      expect(sourceReplacement).not.toBe(c11);
+      expect(valueOfId(core, sourceReplacement!)).toBe(null);
     } finally {
       drag.dispose();
       cap.dispose();
@@ -434,7 +478,7 @@ describe("views/table", () => {
     }
   });
 
-  test("slot edge drop inserts a new row and clears the source slot", async () => {
+  test("slot edge drop inserts the dragged item as a new row and clears the source slot", async () => {
     const { core, rootId } = makeCoreRuntime();
 
     const tableId = mkGroup(core, rootId, { label: "table" });
@@ -445,8 +489,6 @@ describe("views/table", () => {
 
     const c11 = mkBlank(core, r1, { label: "c1", value: "a" });
     mkBlank(core, r1, { label: "c2", value: "b" });
-    const c21 = childrenOf(core, r2)[0]!;
-
     const cap = installCapturedWindowHandlers();
     const drag = createDragController(core);
     const { unmount } = await mountView({
@@ -484,7 +526,6 @@ describe("views/table", () => {
           at: insertAt,
           side: "before",
           anchorEl: r2Frame,
-          referenceItemId: c21,
         },
       };
 
@@ -493,16 +534,14 @@ describe("views/table", () => {
 
       const rows = childrenOf(core, tableId);
       const insertedRow = rows[insertAt]!;
-      const insertedCells = childrenOf(core, insertedRow);
       const nextR1 = childrenOf(core, r1);
+      const [, sourceReplacement] = nextR1;
 
       expect(rows).toHaveLength(rowsBefore.length + 1);
-      expect(insertedRow).not.toBe(r1);
+      expect(insertedRow).toBe(c11);
       expect(insertedRow).not.toBe(r2);
-      expect(insertedCells[0]).toBe(c11);
-      expect(insertedCells).toHaveLength(2);
-      expect(nextR1[0]).not.toBe(c11);
-      expect(valueOfId(core, nextR1[0]!)).toBe(null);
+      expect(sourceReplacement).not.toBe(c11);
+      expect(valueOfId(core, sourceReplacement!)).toBe(null);
     } finally {
       drag.dispose();
       cap.dispose();

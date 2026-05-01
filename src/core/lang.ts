@@ -576,11 +576,8 @@ function iterGroupValues(group: Result, env: EvalEnv): Result[] {
 function groupNumbersOpt(group: Result, env: EvalEnv): number[] {
   const out: number[] = [];
   for (const result of iterGroupValues(group, env)) {
-    if (isIssueResult(result)) throw new TypeError(result.message);
-    if (isBlankResult(result)) continue;
-    if (isScalarResult(result) && typeof result.result === "number")
-      out.push(result.result);
-    else throw new TypeError(ISSUE.numOrBlank);
+    const number = numOpt(result);
+    if (number !== null) out.push(number);
   }
   return out;
 }

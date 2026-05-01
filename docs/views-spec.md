@@ -268,6 +268,7 @@ Rules:
 - Table item children represent rows.
 - Row item children represent cells.
 - Tables MUST always have at least one row.
+- Rows MUST always have at least one cell.
 - Navigation follows spreadsheet-like row/column movement.
 - Table distinguishes **item selection** from **cell edit focus**.
 
@@ -298,6 +299,7 @@ Structural rules:
 - `.ui-frame.ui-table-row` and `.ui-frame.ui-table-cell` wrappers MUST stay stable for visible rows/cells.
 - Cell bodies MAY swap by view name.
 - Slot-capable cell frames MUST set `data-drag="slot"` for shared drag slot resolution.
+- Dropping an item on a cell's top/bottom edge MUST insert the dragged item as a row before/after the target row.
 
 Notes:
 

@@ -24,10 +24,7 @@ import {
   deleteSingleItemRange,
   readSelectionText,
 } from "./commands";
-import {
-  isHorizontalEditingBoundary,
-  isVerticalEditingBoundary,
-} from "./editing-structural";
+import { isHorizontalEditingBoundary } from "./editing-structural";
 import {
   extendBlockSelectionByArrow,
   isPlainValueItem,
@@ -45,7 +42,7 @@ import {
 } from "./dom-mapping";
 import {
   handleArrowHorizontal,
-  handleArrowVertical,
+  handleVerticalArrowIntent,
   type ApplyEditingResult,
 } from "./runtime-navigation";
 import {
@@ -614,22 +611,14 @@ function bindOutlineKeydownEvents(args: {
         !isMod
       ) {
         const dir = e.key === "ArrowUp" ? "up" : "down";
-        if (isVerticalEditingBoundary(core, root, dir)) {
-          e.preventDefault();
-          resetStickyCaretX();
-          core.dispatch({
-            type: "NAV",
-            dir,
-          });
-          return;
-        }
         if (
-          handleArrowVertical(
+          handleVerticalArrowIntent(
             core,
             root,
             inputCtx.stops.value,
             getStickyCaretX,
             setStickyCaretX,
+            resetStickyCaretX,
             applyNavigationEditingResult,
             e,
             dir,

@@ -193,17 +193,17 @@ export function buildOutlineRoot(
       isComposing: () => isComposing,
     });
     mutationSync.bind(ctx.effect);
-      inputRuntime.bind({
-        on: ctx.on,
-        getCompositionEndedAt,
-        setCompositionEndedAt,
-        getStickyCaretX,
-        setStickyCaretX,
-        resetStickyCaretX,
-        onValueTab,
-        setIsComposing: (next) => {
-          isComposing = next;
-        },
+    inputRuntime.bind({
+      on: ctx.on,
+      getCompositionEndedAt,
+      setCompositionEndedAt,
+      getStickyCaretX,
+      setStickyCaretX,
+      resetStickyCaretX,
+      onValueTab,
+      setIsComposing: (next) => {
+        isComposing = next;
+      },
     });
 
     ctx.on(root, "keydown", (e: KeyboardEvent) => {

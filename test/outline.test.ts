@@ -9,7 +9,9 @@ import {
   type Ctx,
   type UiCore,
 } from "../src/dom";
+import { collectStops } from "../src/views/outline/navigation";
 import { createOutlineInputRuntime } from "../src/views/outline/runtime-input";
+import { handleVerticalArrowIntent } from "../src/views/outline/runtime-navigation";
 import { bindOutlineSelectionCleanupEffect } from "../src/views/outline/runtime-selection";
 import {
   childrenOf,
@@ -3051,6 +3053,142 @@ describe("outline/block-selection", () => {
 });
 
 describe("outline/vertical-navigation", () => {
+  test("single-line plain values traverse vertically between plain neighbors", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const top = mkBlank(core, rootId, { label: "top", value: "top" });
+    const mid = mkBlank(core, rootId, { label: "mid", value: "mid" });
+    const bot = mkBlank(core, rootId, { label: "bot", value: "bot" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: mid, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+
+    setContentEditableSelection(requireOutlineValueEl(document.body, mid), 1);
+    const up = dispatchKey(root, "ArrowUp");
+    await flushDomEffects();
+    expect(up).toBe(true);
+    expectSel(core, { item: top, target: CONTENT_TEXT_TARGET, portals: [] });
+
+    core.focus(
+      {
+        type: "editing",
+        location: { item: mid, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 1 },
+    );
+    await flushDomEffects();
+
+    setContentEditableSelection(requireOutlineValueEl(document.body, mid), 1);
+    const down = dispatchKey(root, "ArrowDown");
+    await flushDomEffects();
+    expect(down).toBe(true);
+    expectSel(core, { item: bot, target: CONTENT_TEXT_TARGET, portals: [] });
+
+    unmount();
+  });
+
+  test("vertical boundary with no adjacent stop is a stable handled no-op", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const a = mkBlank(core, rootId, { label: "a", value: "hello" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: a, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 0 },
+    );
+
+    const { unmount } = await mountOutline(core, rootId);
+    const root = requireOutlineRoot(document.body);
+    const valueEl = requireOutlineValueEl(document.body, a);
+
+    setContentEditableSelection(valueEl, 0);
+    const up = dispatchKey(root, "ArrowUp");
+    await flushDomEffects();
+    expect(up).toBe(true);
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expect(readContentEditableCaret(valueEl)).toBe(0);
+
+    setContentEditableSelection(valueEl, 5);
+    const down = dispatchKey(root, "ArrowDown");
+    await flushDomEffects();
+    expect(down).toBe(true);
+    expectSel(core, { item: a, target: CONTENT_TEXT_TARGET, portals: [] });
+    expect(readContentEditableCaret(valueEl)).toBe(5);
+
+    unmount();
+  });
+
+  test("boundary fallback clears sticky state and next vertical move still works", async () => {
+    const { core, rootId } = makeCoreRuntime();
+    const top = mkBlank(core, rootId, { label: "top", value: "topline" });
+    const mid = mkBlank(core, rootId, { label: "mid", value: "middle" });
+    core.focus(
+      {
+        type: "editing",
+        location: { item: top, portals: [] },
+        target: CONTENT_TEXT_TARGET,
+      },
+      { caret: 1 },
+    );
+
+    const { unmount, root } = await mountOutline(core, rootId);
+
+    let sticky: number | null = 123;
+    let resetCount = 0;
+    const runVertical = (dir: "up" | "down"): boolean => {
+      const e = new KeyboardEvent("keydown", {
+        key: dir === "up" ? "ArrowUp" : "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+      });
+      return handleVerticalArrowIntent(
+        core,
+        root,
+        collectStops(core, rootId, []),
+        () => sticky,
+        (next) => {
+          sticky = next;
+        },
+        () => {
+          sticky = null;
+          resetCount += 1;
+        },
+        ({ location, target, caret }) => {
+          core.focus(
+            { type: "editing", location, target },
+            caret !== undefined ? { caret } : undefined,
+          );
+        },
+        e,
+        dir,
+      );
+    };
+
+    setContentEditableSelection(requireOutlineValueEl(document.body, top), 1);
+    expect(runVertical("up")).toBe(true);
+    await flushDomEffects();
+    expectSel(core, { item: top, target: CONTENT_TEXT_TARGET, portals: [] });
+    expect(resetCount).toBe(1);
+    expect(sticky).toBeNull();
+
+    setContentEditableSelection(requireOutlineValueEl(document.body, top), 0);
+    expect(runVertical("down")).toBe(true);
+    await flushDomEffects();
+    expectSel(core, { item: mid, target: CONTENT_TEXT_TARGET, portals: [] });
+
+    unmount();
+  });
+
   test("ArrowUp from content:text lands on connected item stop and then continues structurally", async () => {
     const { core, rootId } = makeCoreRuntime();
     const top = mkBlank(core, rootId, { label: "top", value: "zz" });

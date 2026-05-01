@@ -988,9 +988,9 @@ describe("dom runtime: UiCore target binding and view mounting", () => {
 
     mkBlank(core, row1, { label: "name", value: "alice" });
     mkBlank(core, row1, { label: "score", value: 1 });
-    const cell = childrenOf(core, row2)[1]!;
+    const cell = childrenOf(core, row2)[2]!;
     const schemaRow = childrenOf(core, tableId)[0]!;
-    const schemaCell = childrenOf(core, schemaRow)[1]!;
+    const schemaCell = childrenOf(core, schemaRow)[2]!;
 
     core.commit((t) => t.setValue(cell, 2));
 

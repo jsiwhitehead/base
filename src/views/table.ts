@@ -20,7 +20,7 @@ import {
 
 const tableShape = defineShape({
   type: "group",
-  children: { type: "group", children: { type: "any" } },
+  children: { type: "group", nonEmpty: true, children: { type: "any" } },
   nonEmpty: true,
   alignChildren: true,
 });
@@ -290,14 +290,41 @@ const cmd = {
   ): ItemId {
     const afterIdx = afterRowId ? rows.indexOf(afterRowId) : rows.length - 1;
     const at = afterIdx >= 0 ? afterIdx + 1 : rows.length;
+    const schemaRowId = rows[0] ?? null;
+    const schemaRow =
+      schemaRowId != null ? core.item(schemaRowId).content : null;
+    const schemaCellIds = schemaRow?.type === "group" ? schemaRow.children : [];
 
     let id: ItemId = "";
     core.commit((t) => {
       id = t.insertChild(tableId, { at });
       t.setGroup(id);
+      for (const schemaCellId of schemaCellIds) {
+        const cellId = t.insertChild(id);
+        t.setValue(cellId, null);
+        const label = core.item(schemaCellId).label;
+        if (label != null) t.setLabel(cellId, label);
+      }
     });
 
     return id;
+  },
+
+  addColumnAfter(
+    core: UiCore,
+    rows: readonly ItemId[],
+    afterColIdx: number,
+    focusRowId: ItemId,
+  ): ItemId | null {
+    let focusedCellId: ItemId | null = null;
+    core.commit((t) => {
+      for (const rowId of rows) {
+        const cellId = t.insertChild(rowId, { at: afterColIdx + 1 });
+        t.setValue(cellId, null);
+        if (rowId === focusRowId) focusedCellId = cellId;
+      }
+    });
+    return focusedCellId;
   },
 
   clearCell(core: UiCore, cellId: ItemId): void {
@@ -308,6 +335,35 @@ const cmd = {
 function focusItem(core: UiCore, location: Location | null): void {
   if (!location) return;
   core.focus({ type: "item", location });
+}
+
+function insertRowAfterAndFocus(
+  core: UiCore,
+  tableId: ItemId,
+  rows: readonly ItemId[],
+  afterRowId: ItemId,
+  portals: readonly ItemId[],
+): void {
+  const newId = cmd.addRowAfter(core, tableId, rows, afterRowId);
+  core.focus({
+    type: "item",
+    location: { item: newId, portals },
+  });
+}
+
+function insertColumnAfterAndFocus(
+  core: UiCore,
+  rows: readonly ItemId[],
+  afterColIdx: number,
+  focusRowId: ItemId,
+  portals: readonly ItemId[],
+): void {
+  const newCellId = cmd.addColumnAfter(core, rows, afterColIdx, focusRowId);
+  if (!newCellId) return;
+  core.focus({
+    type: "item",
+    location: { item: newCellId, portals },
+  });
 }
 
 function buildHeader(mountCtx: TableMountCtx): Component {
@@ -582,16 +638,13 @@ export const tableView = defineShapedView(
         case "ENTER": {
           const rows = signals.rows.value;
           if (isRowItemSel(core, selection, tableId)) {
-            const newId = cmd.addRowAfter(
+            insertRowAfterAndFocus(
               core,
               tableId,
               rows,
               selection.anchor.item,
+              rootPortals,
             );
-            core.focus({
-              type: "item",
-              location: { item: newId, portals: rootPortals },
-            });
             return;
           }
           return;
@@ -603,7 +656,40 @@ export const tableView = defineShapedView(
           }
           return;
         }
-        case "INSERT":
+        case "INSERT": {
+          const rows = signals.rows.value;
+          const cellPosition = resolveCellPosition(
+            core,
+            tableReader,
+            tableId,
+            rows,
+            selection.anchor.item,
+          );
+          const selectedRowId = isRowItemSel(core, selection, tableId)
+            ? selection.anchor.item
+            : cellPosition?.rowId;
+          if (!selectedRowId) return;
+
+          if (intent.scope === "after-parent") {
+            insertColumnAfterAndFocus(
+              core,
+              rows,
+              cellPosition ? cellPosition.colIdx : signals.colCount.value - 1,
+              selectedRowId,
+              rootPortals,
+            );
+            return;
+          }
+
+          insertRowAfterAndFocus(
+            core,
+            tableId,
+            rows,
+            selectedRowId,
+            rootPortals,
+          );
+          return;
+        }
         case "TYPE":
           return;
         case "DELETE": {

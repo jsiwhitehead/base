@@ -73,7 +73,7 @@ describe("system/keyboard routing & focus ownership", () => {
     const r2 = mkGroup(core, tableId, { label: "r2" });
 
     const c11 = mkBlank(core, r1, { label: "c1", value: 1 });
-    const c21 = childrenOf(core, r2)[0]!;
+    const c21 = childrenOf(core, r2)[1]!;
 
     const unmount = mountAppShell(core, rootId);
     await flushDomEffects();
@@ -118,6 +118,45 @@ describe("system/keyboard routing & focus ownership", () => {
     await flushDomEffects();
 
     expectSel(core, { item: itemId, portals: [] });
+
+    app.dispose();
+    document.body.replaceChildren();
+  });
+
+  test("toolbar table conversion bootstraps a row and cell", async () => {
+    const host = document.createElement("div");
+    document.body.replaceChildren(host);
+
+    const app = createApp({ host, rootView: "outline" });
+    const { core, rootId } = app;
+
+    let itemId: ItemId = "";
+    core.commit((t) => {
+      itemId = t.insertChild(rootId);
+      t.setValue(itemId, null);
+    });
+
+    core.focus({ type: "item", location: { item: itemId, portals: [] } });
+    await flushDomEffects();
+
+    const toolbarButton = document.body.querySelector(
+      '.ui-toolbar-button[data-command="table"]',
+    ) as HTMLButtonElement | null;
+    expect(toolbarButton).toBeTruthy();
+
+    pointerDown(toolbarButton!);
+    toolbarButton!.click();
+    await flushDomEffects();
+
+    expect(core.view(itemId)).toBe("table");
+    expect(core.item(itemId).content.type).toBe("group");
+
+    const rows = childrenOf(core, itemId);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(core.item(rows[0]!).content.type).toBe("group");
+
+    const cells = childrenOf(core, rows[0]!);
+    expect(cells.length).toBeGreaterThanOrEqual(1);
 
     app.dispose();
     document.body.replaceChildren();
